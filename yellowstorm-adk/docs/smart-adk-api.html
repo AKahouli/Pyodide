@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart ADK API &ndash; Documentation détaillée</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --primary: #1f3c88;
+            --secondary: #f2f5f9;
+            --accent: #f9a826;
+            --text: #1a1a1a;
+            --border: #d0d7de;
+        }
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            margin: 0;
+            font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text);
+            background: var(--secondary);
+        }
+        header {
+            background: linear-gradient(135deg, var(--primary), #2a5298);
+            color: white;
+            padding: 2.5rem 2rem 2rem;
+        }
+        header h1 {
+            margin: 0 0 0.5rem;
+            font-size: 2.4rem;
+            letter-spacing: 0.03em;
+        }
+        header p {
+            margin: 0;
+            max-width: 60rem;
+        }
+        main {
+            margin: -2rem auto 0;
+            padding: 0 1.5rem 3rem;
+            max-width: 1100px;
+        }
+        section {
+            background: white;
+            border-radius: 16px;
+            padding: 2rem;
+            margin-top: 1.5rem;
+            border: 1px solid var(--border);
+            box-shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+        }
+        h2 {
+            color: var(--primary);
+            margin-top: 0;
+        }
+        h3 {
+            color: #0f172a;
+            margin-top: 2rem;
+        }
+        p {
+            margin: 0 0 1rem;
+        }
+        code {
+            font-family: "Fira Code", "Courier New", monospace;
+            padding: 0.15rem 0.35rem;
+            border-radius: 6px;
+            background: rgba(15, 23, 42, 0.08);
+            font-size: 0.95rem;
+        }
+        pre {
+            background: #0f172a;
+            color: #f8fafc;
+            padding: 1.25rem;
+            border-radius: 12px;
+            overflow-x: auto;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        pre code {
+            background: transparent;
+            padding: 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 1.25rem 0;
+            font-size: 0.95rem;
+        }
+        th, td {
+            border: 1px solid var(--border);
+            padding: 0.75rem 0.9rem;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background: rgba(31, 60, 136, 0.08);
+            font-weight: 600;
+        }
+        ul {
+            padding-left: 1.2rem;
+        }
+        .tag {
+            display: inline-block;
+            padding: 0.3rem 0.6rem;
+            border-radius: 6px;
+            background: rgba(31, 60, 136, 0.15);
+            color: var(--primary);
+            font-weight: 600;
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.8rem;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.35rem 0.75rem;
+            border-radius: 999px;
+            background: rgba(249, 168, 38, 0.15);
+            color: #a16207;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-right: 0.75rem;
+        }
+        .toc ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        .toc li {
+            margin-bottom: 0.35rem;
+        }
+        .toc a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        .toc a:hover {
+            text-decoration: underline;
+        }
+        .http-method {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 4.4rem;
+            font-weight: 700;
+            padding: 0.35rem 0.3rem;
+            border-radius: 10px;
+            color: white;
+            margin-right: 0.8rem;
+            letter-spacing: 0.05em;
+        }
+        .http-method.post {
+            background: linear-gradient(135deg, #16a34a, #22c55e);
+        }
+        .status-list {
+            display: grid;
+            gap: 0.5rem;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            margin: 1rem 0 0;
+        }
+        .status-card {
+            background: rgba(15, 23, 42, 0.04);
+            border-radius: 12px;
+            padding: 0.8rem 1rem;
+        }
+        footer {
+            text-align: center;
+            padding: 2rem 1rem 3rem;
+            color: rgba(15, 23, 42, 0.6);
+            font-size: 0.9rem;
+        }
+        @media (max-width: 768px) {
+            header {
+                padding: 2rem 1.5rem 1.5rem;
+            }
+            section {
+                padding: 1.5rem;
+            }
+            pre {
+                font-size: 0.85rem;
+            }
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Smart ADK API &ndash; Documentation</h1>
+    <p>
+        Cette page décrit en détail les deux endpoints exposés par le service <strong>api-metachatbot-adk</strong>.
+        Vous trouverez un résumé de l&rsquo;authentification, du format de diffusion en <em>Server-Sent Events</em> (SSE),
+        ainsi qu&rsquo;un inventaire exhaustif des paramètres attendus pour chaque requête.
+    </p>
+</header>
+<main>
+    <section class="toc" id="sommaire">
+        <h2>Sommaire</h2>
+        <ul>
+            <li><a href="#overview">1. Aperçu g&eacute;n&eacute;ral</a></li>
+            <li><a href="#auth">2. Authentification &amp; s&eacute;curit&eacute;</a></li>
+            <li><a href="#sse">3. Format de r&eacute;ponse SSE</a></li>
+            <li><a href="#errors">4. Gestion des erreurs</a></li>
+            <li><a href="#chatWithADK">5. POST /chatbots/chatWithADK</a></li>
+            <li><a href="#runAgentTeam">6. POST /agentic/run_agent_team</a></li>
+            <li><a href="#statusCodes">7. Codes HTTP</a></li>
+        </ul>
+    </section>
+
+    <section id="overview">
+        <h2>1. Aperçu g&eacute;n&eacute;ral</h2>
+        <p class="badge">Version: V1</p>
+        <p class="badge">BasePath par d&eacute;faut: <code>http://localhost:8001</code></p>
+        <p>
+            L&rsquo;API FastAPI <strong>Smart ADK API</strong> expose deux routes regroup&eacute;es sous les pr&eacute;fixes
+            <code>/chatbots</code> et <code>/agentic</code>. Chaque route retourne une r&eacute;ponse diffus&eacute;e par flux SSE,
+            permettant d&rsquo;afficher en temps r&eacute;el la production des agents cognitifs.<sup><a href="#ref-router">[1]</a></sup>
+        </p>
+    </section>
+
+    <section id="auth">
+        <h2>2. Authentification &amp; s&eacute;curit&eacute;</h2>
+        <p>
+            Toutes les routes exigent un <strong>jeton Bearer</strong> valide. Le service d&rsquo;authentification repose sur
+            le flux OAuth2 Password : FastAPI fournit un sch&eacute;ma <code>OAuth2PasswordBearer</code> dont l&rsquo;URL du jeton
+            est <code>{API_URL}token</code>. Le jeton JWT doit &ecirc;tre pr&eacute;sent&eacute; dans l&rsquo;en-t&ecirc;te
+            <code>Authorization: Bearer &lt;token&gt;</code>.<sup><a href="#ref-auth">[2]</a></sup>
+        </p>
+        <p>
+            Lorsqu&rsquo;une requ&ecirc;te arrive :
+        </p>
+        <ul>
+            <li>le jeton est valid&eacute; et d&eacute;cod&eacute; pour r&eacute;cup&eacute;rer l&rsquo;identifiant utilisateur,</li>
+            <li>les informations du compte sont charg&eacute;es depuis Redis,</li>
+            <li>si l&rsquo;utilisateur est inactif ou inconnu, une erreur <code>401</code> ou <code>400</code> est lev&eacute;e.</li>
+        </ul>
+    </section>
+
+    <section id="sse">
+        <h2>3. Format de r&eacute;ponse Server-Sent Events</h2>
+        <p>
+            Les deux endpoints retournent une r&eacute;ponse de type <code>text/event-stream</code>. Chaque &eacute;v&eacute;nement SSE
+            encapsule un objet JSON s&eacute;rialis&eacute; via la cl&eacute; <code>data:</code>.<sup><a href="#ref-router">[1]</a></sup>
+        </p>
+        <h3>Structure g&eacute;n&eacute;rale d&rsquo;un &eacute;v&eacute;nement</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Champ</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>agent_id</code></td>
+                    <td>string</td>
+                    <td>Identifiant interne de l&rsquo;agent &eacute;metteur (si disponible, sinon <code>"no_id"</code>).</td>
+                </tr>
+                <tr>
+                    <td><code>agent_name</code></td>
+                    <td>string</td>
+                    <td>Nom de l&rsquo;agent (&laquo;&nbsp;manager&nbsp;&raquo;, &laquo;&nbsp;system&nbsp;&raquo;, etc.).</td>
+                </tr>
+                <tr>
+                    <td><code>agent_type</code></td>
+                    <td>string</td>
+                    <td>Type fonctionnel (manager, agent, html, suggestions, ...).</td>
+                </tr>
+                <tr>
+                    <td><code>chunk</code></td>
+                    <td>string</td>
+                    <td>Contenu diffus&eacute; (texte, JSON ou indicateur <code>end_of_message</code>).</td>
+                </tr>
+                <tr>
+                    <td><code>message_id</code></td>
+                    <td>string</td>
+                    <td>Identifiant du message courant dans la conversation.</td>
+                </tr>
+                <tr>
+                    <td><code>message_type</code></td>
+                    <td>string</td>
+                    <td>
+                        <code>streaming</code> pour les flux en continu, <code>no-streaming</code> pour les messages syst&egrave;me,
+                        ou <code>error</code> en cas d&rsquo;incident.<sup><a href="#ref-streaming">[3]</a></sup>
+                    </td>
+                </tr>
+                <tr>
+                    <td><code>content_type</code></td>
+                    <td>string</td>
+                    <td>Nature du contenu : <code>chunk</code>, <code>description</code>, <code>function_call</code>,
+                        <code>source</code>, <code>File</code>, <code>error</code>, <code>final_response</code>,
+                        <code>suggestions</code>, etc.<sup><a href="#ref-streaming">[3]</a>, <a href="#ref-message-helper">[4]</a></sup></td>
+                </tr>
+            </tbody>
+        </table>
+        <p>
+            Exemple de trame SSE re&ccedil;ue par le client :
+        </p>
+        <pre><code>data: {"agent_name": "manager", "agent_type": "manager", "chunk": "Bonjour, que puis-je faire pour vous ?", "message_id": "...", "message_type": "streaming", "content_type": "chunk"}
+
+</code></pre>
+    </section>
+
+    <section id="errors">
+        <h2>4. Gestion des erreurs</h2>
+        <ul>
+            <li><strong>401 Unauthorized</strong> &ndash; jeton invalide ou utilisateur inexistant.<sup><a href="#ref-auth">[2]</a></sup></li>
+            <li><strong>400 Bad Request</strong> &ndash; utilisateur authentifi&eacute; mais inactif.<sup><a href="#ref-auth">[2]</a></sup></li>
+            <li><strong>422 Unprocessable Entity</strong> &ndash; erreur de validation Pydantic (sch&eacute;ma JSON incorrect).</li>
+            <li><strong>500 Internal Server Error</strong> &ndash; exception inattendue durant le traitement asynchrone.<sup><a href="#ref-router">[1]</a></sup></li>
+        </ul>
+    </section>
+
+    <section id="chatWithADK">
+        <span class="tag">Chatbots</span>
+        <h2>5. <span class="http-method post">POST</span> /chatbots/chatWithADK</h2>
+        <p>
+            Lance un dialogue RAG classique avec l&rsquo;ADK. Le service <code>ChatRAGService</code> orchestre les appels &agrave;
+            l&rsquo;engine traditionnel et renvoie les contributions du manager en flux continu.<sup><a href="#ref-router">[1]</a></sup>
+        </p>
+        <h3>Body (JSON)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Param&egrave;tre</th>
+                    <th>Type</th>
+                    <th>Obligatoire</th>
+                    <th>Par d&eacute;faut</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>user_id</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Identifiant unique de l&rsquo;utilisateur &agrave; des fins de tra&ccedil;abilit&eacute;.</td>
+                </tr>
+                <tr>
+                    <td><code>session_id</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Identifiant de session Langfuse / conversation.</td>
+                </tr>
+                <tr>
+                    <td><code>message</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Prompt utilisateur initial.</td>
+                </tr>
+                <tr>
+                    <td><code>chatbot_name</code></td>
+                    <td>object</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Description du fournisseur/mod&egrave;le &agrave; utiliser (ex: <code>{"provider": "gpt-4"}</code>).</td>
+                </tr>
+                <tr>
+                    <td><code>max_tokens</code></td>
+                    <td>integer</td>
+                    <td>Non</td>
+                    <td>512</td>
+                    <td>Budget de tokens pour la r&eacute;ponse.</td>
+                </tr>
+                <tr>
+                    <td><code>instructions</code></td>
+                    <td>string</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Prompt syst&egrave;me additionnel pour personnaliser le comportement.</td>
+                </tr>
+                <tr>
+                    <td><code>top_k</code></td>
+                    <td>integer</td>
+                    <td>Non</td>
+                    <td>2</td>
+                    <td>Nombre de documents &agrave; r&eacute;cup&eacute;rer depuis la base vectorielle.</td>
+                </tr>
+                <tr>
+                    <td><code>vectorstore_name</code></td>
+                    <td>string</td>
+                    <td>Non</td>
+                    <td><code>"vectorstorerec"</code></td>
+                    <td>Nom de la base vectorielle &agrave; interroger.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_ids</code></td>
+                    <td>array&lt;string&gt;</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Identifiants de connaissances &agrave; charger.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_documents</code></td>
+                    <td>array</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Documents suppl&eacute;mentaires pass&eacute;s &agrave; l&rsquo;orchestrateur.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_relations</code></td>
+                    <td>object</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Relations graphe (nodes/relationships) li&eacute;es aux documents.</td>
+                </tr>
+                <tr>
+                    <td><code>languages</code></td>
+                    <td>array&lt;string&gt;</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Langues attendues pour la r&eacute;ponse.</td>
+                </tr>
+                <tr>
+                    <td><code>enable_multilingual</code></td>
+                    <td>boolean</td>
+                    <td>Non</td>
+                    <td>false</td>
+                    <td>Active la r&eacute;daction multilingue si le mod&egrave;le le permet.</td>
+                </tr>
+                <tr>
+                    <td><code>search_web</code></td>
+                    <td>boolean</td>
+                    <td>Non</td>
+                    <td>false</td>
+                    <td>Autorise la recherche web externe lors du raisonnement.</td>
+                </tr>
+            </tbody>
+        </table>
+        <h3>Exemple de requ&ecirc;te</h3>
+        <pre><code class="language-json">POST /chatbots/chatWithADK
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{
+  "user_id": "user-123",
+  "session_id": "sess-456",
+  "message": "R&eacute;sume les tendances ESG 2023",
+  "chatbot_name": { "provider": "gpt-4" },
+  "brain_ids": ["knowledge-base-1"],
+  "search_web": true
+}
+</code></pre>
+        <h3>Flux de sortie typique</h3>
+        <pre><code>data: {"agent_name": "manager", "agent_type": "manager", "chunk": "Recherche interne : ESG 2023", "message_id": "...", "message_type": "streaming", "content_type": "chunk"}
+
+data: {"agent_name": "manager", "agent_type": "manager", "chunk": "end_of_message", "message_id": "...", "message_type": "streaming", "content_type": "final_response"}
+</code></pre>
+    </section>
+
+    <section id="runAgentTeam">
+        <span class="tag">Agentic RAG</span>
+        <h2>6. <span class="http-method post">POST</span> /agentic/run_agent_team</h2>
+        <p>
+            Lance une orchestration multi-agents. Selon le mode (<code>auto</code> ou <code>manual</code>), la plateforme
+            peut sugg&eacute;rer des agents sp&eacute;cialis&eacute;s ou exploiter une liste explicitement fournie.<sup><a href="#ref-router">[1]</a>, <a href="#ref-workflow">[5]</a></sup>
+        </p>
+        <h3>Body (JSON)</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Param&egrave;tre</th>
+                    <th>Type</th>
+                    <th>Obligatoire</th>
+                    <th>Par d&eacute;faut</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>user_id</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Identifiant utilisateur.</td>
+                </tr>
+                <tr>
+                    <td><code>session_id</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Identifiant de session global (Langfuse).</td>
+                </tr>
+                <tr>
+                    <td><code>message</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Demande utilisateur &agrave; traiter.</td>
+                </tr>
+                <tr>
+                    <td><code>chatbot_name</code></td>
+                    <td>object</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td>Configuration du mod&egrave;le &agrave; employer.</td>
+                </tr>
+                <tr>
+                    <td><code>agent_mode</code></td>
+                    <td>string</td>
+                    <td>Oui</td>
+                    <td>&mdash;</td>
+                    <td><code>"auto"</code> pour demander des suggestions, <code>"manual"</code> pour utiliser la liste fournie.</td>
+                </tr>
+                <tr>
+                    <td><code>manager_prompt</code></td>
+                    <td>string</td>
+                    <td>Non</td>
+                    <td>"You are a manager agent..."</td>
+                    <td>Prompt syst&egrave;me du manager (peut contenir des balises sp&eacute;ciales et instructions).</td>
+                </tr>
+                <tr>
+                    <td><code>agents</code></td>
+                    <td>array&lt;AgentSuggestion&gt;</td>
+                    <td>Non</td>
+                    <td>[]</td>
+                    <td>Agents &agrave; pr&eacute;-configurer quand <code>agent_mode = "manual"</code>.</td>
+                </tr>
+                <tr>
+                    <td><code>available_agents</code></td>
+                    <td>array&lt;AgentSuggestion&gt;</td>
+                    <td>Non</td>
+                    <td>[]</td>
+                    <td>Catalogue d&rsquo;agents existants utilisables pour les suggestions.</td>
+                </tr>
+                <tr>
+                    <td><code>top_k</code></td>
+                    <td>integer</td>
+                    <td>Non</td>
+                    <td>10</td>
+                    <td>Nombre maximum de r&eacute;sultats lors des recherches documentaires.</td>
+                </tr>
+                <tr>
+                    <td><code>vectorstore_name</code></td>
+                    <td>string</td>
+                    <td>Non</td>
+                    <td><code>"default"</code></td>
+                    <td>Entrep&ocirc;t vectoriel &agrave; consulter.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_ids</code></td>
+                    <td>array&lt;string&gt;</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Identifiants de connaissances (m&ecirc;me logique que ci-dessus).</td>
+                </tr>
+                <tr>
+                    <td><code>brain_documents</code></td>
+                    <td>array</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Documents &agrave; injecter dans le contexte des agents.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_relations</code></td>
+                    <td>object</td>
+                    <td>Non</td>
+                    <td><em>null</em></td>
+                    <td>Relations graphe (n&oelig;uds, ar&ecirc;tes) pour la navigation de connaissances.</td>
+                </tr>
+                <tr>
+                    <td><code>search_web</code></td>
+                    <td>boolean</td>
+                    <td>Non</td>
+                    <td>false</td>
+                    <td>Permet aux agents de d&eacute;l&eacute;guer des recherches web.</td>
+                </tr>
+            </tbody>
+        </table>
+        <h3>Structure <code>AgentSuggestion</code></h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Champ</th>
+                    <th>Type</th>
+                    <th>Par d&eacute;faut</th>
+                    <th>Description</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>id</code></td>
+                    <td>string</td>
+                    <td><code>"no_id"</code></td>
+                    <td>Identifiant optionnel de l&rsquo;agent.</td>
+                </tr>
+                <tr>
+                    <td><code>name</code></td>
+                    <td>string</td>
+                    <td>&mdash;</td>
+                    <td>Nom utilis&eacute; par le manager pour invoquer l&rsquo;agent.</td>
+                </tr>
+                <tr>
+                    <td><code>description</code></td>
+                    <td>string</td>
+                    <td>&mdash;</td>
+                    <td>R&ocirc;le/metiers de l&rsquo;agent.</td>
+                </tr>
+                <tr>
+                    <td><code>prompt</code></td>
+                    <td>string</td>
+                    <td>&mdash;</td>
+                    <td>Instructions syst&egrave;me propres &agrave; cet agent.</td>
+                </tr>
+                <tr>
+                    <td><code>tools</code></td>
+                    <td>array&lt;string&gt;</td>
+                    <td><em>null</em></td>
+                    <td>Liste des outils accessibles (<code>search</code>, <code>search_web</code>, <code>calculator</code>, ...).</td>
+                </tr>
+                <tr>
+                    <td><code>vectorstore_name</code></td>
+                    <td>string</td>
+                    <td><code>"vectorstorerec"</code></td>
+                    <td>Base vectorielle associ&eacute;e &agrave; l&rsquo;agent.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_ids</code></td>
+                    <td>array&lt;string&gt;</td>
+                    <td>[]</td>
+                    <td>Knowledge bases accessibles.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_documents</code></td>
+                    <td>array</td>
+                    <td>[]</td>
+                    <td>Documents pr&eacute;-charg&eacute;s.</td>
+                </tr>
+                <tr>
+                    <td><code>brain_relations</code></td>
+                    <td>object</td>
+                    <td>{"nodes": [], "relationships": []}</td>
+                    <td>Graphes de relations utilisables pendant la recherche.</td>
+                </tr>
+                <tr>
+                    <td><code>chatbot_name</code></td>
+                    <td>object</td>
+                    <td><em>null</em></td>
+                    <td>Sp&eacute;cifie un mod&egrave;le diff&eacute;rent pour l&rsquo;agent (sinon h&eacute;rite de la requ&ecirc;te).</td>
+                </tr>
+            </tbody>
+        </table>
+        <h3>Exemple de requ&ecirc;te (<code>agent_mode = "auto"</code>)</h3>
+        <pre><code class="language-json">POST /agentic/run_agent_team
+Authorization: Bearer &lt;token&gt;
+Content-Type: application/json
+
+{
+  "user_id": "user-123",
+  "session_id": "sess-456",
+  "message": "Cr&eacute;e un plan marketing pour notre nouveau produit IA",
+  "chatbot_name": { "provider": "gpt-4" },
+  "agent_mode": "auto",
+  "available_agents": [],
+  "brain_ids": ["marketing-base"],
+  "search_web": true
+}
+</code></pre>
+        <h3>Flux de sortie typique</h3>
+        <pre><code>data: {"agent_name": "system", "agent_type": "suggestions", "chunk": "[{...}]", "message_id": "sess-456", "message_type": "no-streaming", "content_type": "suggestions"}
+
+data: {"agent_name": "manager", "agent_type": "manager", "chunk": "@analyst commence la recherche documentaire", "message_id": "...", "message_type": "streaming", "content_type": "chunk"}
+
+data: {"agent_name": "manager", "agent_type": "manager", "chunk": "end_of_message", "message_id": "...", "message_type": "streaming", "content_type": "final_response"}
+</code></pre>
+        <p>
+            En mode manuel, la trame de suggestions n&rsquo;est pas envoy&eacute;e. Les agents fournis sont pr&eacute;configur&eacute;s avant
+            ex&eacute;cution.<sup><a href="#ref-workflow">[5]</a></sup>
+        </p>
+    </section>
+
+    <section id="statusCodes">
+        <h2>7. Codes HTTP r&eacute;currents</h2>
+        <div class="status-list">
+            <div class="status-card">
+                <strong>200 OK</strong>
+                <p>La requ&ecirc;te est accept&eacute;e ; le flux SSE d&eacute;bute imm&eacute;diatement.</p>
+            </div>
+            <div class="status-card">
+                <strong>400 Bad Request</strong>
+                <p>Compte utilisateur inactif.</p>
+            </div>
+            <div class="status-card">
+                <strong>401 Unauthorized</strong>
+                <p>Jeton manquant ou invalide.</p>
+            </div>
+            <div class="status-card">
+                <strong>422 Unprocessable Entity</strong>
+                <p>Sch&eacute;ma JSON invalide (erreurs Pydantic).</p>
+            </div>
+            <div class="status-card">
+                <strong>500 Internal Server Error</strong>
+                <p>Erreur serveur pendant le traitement asynchrone.</p>
+            </div>
+        </div>
+    </section>
+
+    <section id="references">
+        <h2>Annexe &ndash; R&eacute;f&eacute;rences techniques</h2>
+        <ol>
+            <li id="ref-router">Routers FastAPI et diffusion SSE &ndash; <code>src/routers/chatbot.py</code></li>
+            <li id="ref-auth">Cha&icirc;ne d&rsquo;authentification OAuth2 &ndash; <code>src/authentification/get_current_user.py</code></li>
+            <li id="ref-streaming">Format des &eacute;v&eacute;nements streaming &ndash; <code>src/smart_rag/messaging/formatters.py</code></li>
+            <li id="ref-message-helper">Messages syst&egrave;me / suggestions &ndash; <code>src/smart_rag/infrastructure/external/message_helper.py</code></li>
+            <li id="ref-workflow">Workflows multi-agents &ndash; <code>src/smart_rag/engines/multi_agent/workflow_processor.py</code></li>
+        </ol>
+    </section>
+</main>
+<footer>
+    <p>Smart ADK API &ndash; Documentation g&eacute;n&eacute;r&eacute;e automatiquement.</p>
+</footer>
+</body>
+</html>

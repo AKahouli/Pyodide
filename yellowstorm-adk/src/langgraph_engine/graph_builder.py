@@ -1,0 +1,705 @@
+"""Dynamic LangGraph execution graph builder.
+
+Creates unique graphs per playbook where each task becomes its own node.
+Supports parallel execution, HITL via interrupt(), and dependency-based routing.
+"""
+
+from typing import Dict, Any, List, Optional, Callable
+from datetime import datetime
+
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph import StateGraph, END
+from langgraph.checkpoint.base import BaseCheckpointSaver
+from structlog import get_logger
+
+from src.langgraph_engine.state import (
+    ExecutionState,
+    TaskConfig,
+    EdgeConfig,
+)
+from src.langgraph_engine.checkpointer import get_checkpointer_sync
+from src.langgraph_engine.playbook_queue import get_queue
+
+logger = get_logger(__name__)
+SKIP_STEP_REASON = "__SKIP_STEP__"
+
+
+class DynamicGraphBuilder:
+    """Builds dynamic execution graphs from playbook task definitions."""
+
+    def __init__(self, checkpointer: Optional[BaseCheckpointSaver] = None):
+        self.checkpointer = checkpointer or get_checkpointer_sync()
+
+    @staticmethod
+    def _is_skip_step_response(response: Any) -> bool:
+        return (
+            isinstance(response, dict)
+            and response.get("approved") is False
+            and response.get("reason") == SKIP_STEP_REASON
+        )
+
+    def _create_task_node(self, task_id: str, task: TaskConfig) -> Callable:
+        """Create a node function for a specific task.
+
+        Each task node handles:
+        1. Clarification check (if allow_clarification)
+        2. interrupt_before (approval)
+        3. Build context from dependency results
+        4. Execute with LangChain agent
+        5. interrupt_after (review)
+        6. Return result in state
+        """
+
+        async def task_node(state: ExecutionState, config: RunnableConfig) -> Dict[str, Any]:
+            from langchain_openai import ChatOpenAI
+            from langgraph.types import interrupt
+            from src.config.settings import get_settings
+            import time
+            import json
+
+            settings = get_settings()
+            task_config = task
+            playbook_id = state.get("playbook_id", "")
+            thread_id = state.get("thread_id")
+            agent_id = task_config.get("assigned_agent_id")
+
+            if not agent_id or agent_id not in state["agents"]:
+                error_msg = f"No agent assigned to task {task_id}"
+                logger.error(f"[{task_id}] {error_msg}")
+                return {
+                    "completed_task_ids": [task_id],
+                    "results": {task_id: {"error": error_msg}},
+                    "error": error_msg,
+                    "status": "failed",
+                }
+
+            agent = state["agents"][agent_id]
+
+            start_time = time.time()
+            started_at = datetime.utcnow().isoformat() + "Z"
+
+            logger.info(f"[{task_id}] Starting task", title=task_config.get("title"))
+
+            # --- streaming helper ---
+            queue = get_queue(thread_id)
+
+            async def _push_step_update(status, result=None, interrupt_data=None):
+                if queue is None:
+                    return
+                update = {
+                    "task_id": task_id,
+                    "task_title": task_config.get("title", ""),
+                    "status": status,
+                }
+                if result is not None:
+                    update["result"] = result
+                if interrupt_data is not None:
+                    update["interrupt"] = interrupt_data
+                await queue.put({"step_update": update})
+
+            try:
+                await _push_step_update("in_progress")
+                task_for_execution = task_config
+
+                # === STEP 1: Clarification check ===
+                if task_config.get("allow_clarification", False):
+                    clarification_prompt = task_config.get("clarification_prompt") or (
+                        f"Review the task below and determine if you have enough information to complete it.\n"
+                        f"Task: {task_config['title']}\n"
+                        f"Description: {task_config['description']}\n"
+                        f"If you need clarification, respond with a clear question. "
+                        f"If everything is clear, respond with exactly 'CLEAR'."
+                    )
+
+                    model_name = agent.get("model") or "gpt-4.1"
+                    llm = ChatOpenAI(
+                        base_url=settings.LITELLM_API_BASE_URL,
+                        api_key=settings.LITELLM_API_SECRET_KEY,
+                        model=model_name,
+                        temperature=0.3,
+                    )
+
+                    from langchain_core.messages import HumanMessage
+                    check_result = await llm.ainvoke([HumanMessage(content=clarification_prompt)])
+                    check_text = check_result.content.strip()
+
+                    if check_text.upper() != "CLEAR":
+                        clarification_payload = {
+                            "type": "clarification",
+                            "task_id": task_id,
+                            "task_title": task_config.get("title", ""),
+                            "message": check_text,
+                            "thread_id": thread_id,
+                        }
+                        await _push_step_update("suspended", interrupt_data=clarification_payload)
+                        response = interrupt(clarification_payload)
+
+                        if isinstance(response, str):
+                            task_for_execution = {
+                                **task_config,
+                                "description": f"{task_config['description']}\n\nClarification from user: {response}",
+                            }
+                        elif isinstance(response, dict) and response.get("input"):
+                            task_for_execution = {
+                                **task_config,
+                                "description": f"{task_config['description']}\n\nClarification from user: {response['input']}",
+                            }
+
+                # === STEP 2: interrupt_before (approval) ===
+                if task_config.get("interrupt_before", False):
+                    logger.info(f"[{task_id}] Requires approval before execution")
+
+                    approval_payload = {
+                        "type": "approval_request",
+                        "task_id": task_id,
+                        "task_title": task_config.get("title", ""),
+                        "task_description": task_config.get("description", ""),
+                        "message": f"Task '{task_config.get('title', '')}' requires approval before execution.",
+                        "thread_id": thread_id,
+                    }
+                    await _push_step_update("suspended", interrupt_data=approval_payload)
+                    approval_response = interrupt(approval_payload)
+
+                    logger.info(f"[{task_id}] Approval response received", response=approval_response)
+
+                    if self._is_skip_step_response(approval_response):
+                        completed_at = datetime.utcnow().isoformat() + "Z"
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        skipped_result = {
+                            "task_id": task_id,
+                            "status": "skipped",
+                            "output": "",
+                            "error": "",
+                            "duration_ms": duration_ms,
+                            "components": [],
+                            "usage": {},
+                            "tool_trace": [],
+                            "llm_prompt_trace": [],
+                            "semantic_match": None,
+                        }
+                        await _push_step_update("skipped", result=skipped_result)
+                        return {
+                            "completed_task_ids": [task_id],
+                            "results": {task_id: {"status": "skipped", "output": ""}},
+                            "node_timings": {
+                                task_id: {
+                                    "started_at": started_at,
+                                    "completed_at": completed_at,
+                                    "duration_ms": duration_ms,
+                                }
+                            },
+                        }
+
+                    if isinstance(approval_response, dict) and approval_response.get("approved") is False:
+                        error_msg = approval_response.get("reason", "Task rejected by human")
+                        return {
+                            "completed_task_ids": [task_id],
+                            "results": {task_id: {"error": error_msg}},
+                            "error": error_msg,
+                            "status": "failed",
+                        }
+
+                    if isinstance(approval_response, dict) and approval_response.get("feedback"):
+                        task_for_execution = {
+                            **task_for_execution,
+                            "description": f"{task_for_execution['description']}\n\nHuman Feedback: {approval_response['feedback']}",
+                        }
+
+                # === STEP 3: Build context from dependency results ===
+                context = ""
+                for edge in state["edges"]:
+                    if edge["target_id"] == task_id:
+                        source_id = edge["source_id"]
+                        if source_id in state["results"]:
+                            source_task = next(
+                                (t for t in state["tasks"] if t.get("id") == source_id),
+                                None,
+                            )
+                            if source_task:
+                                output = state["results"][source_id].get("output", "")
+                                context += f"\n\nPrevious task '{source_task['title']}' result:\n{output}"
+
+                # Build prompts
+                agent_instructions = agent.get("instructions") or agent.get("prompt", "")
+                system_prompt = (
+                    f"You are {agent['name']}.\n\n"
+                    f"Your instructions:\n{agent_instructions}\n\n"
+                    f"You are working on a task as part of a larger playbook execution."
+                )
+
+                user_prompt = (
+                    f"Task: {task_for_execution['title']}\n\n"
+                    f"Description:\n{task_for_execution['description']}"
+                )
+
+                if context:
+                    user_prompt += f"\n\nContext from previous tasks:{context}"
+
+                # Add query context if available
+                if state.get("query"):
+                    user_prompt += f"\n\nUser query: {state['query']}"
+
+                workspace_filenames = []
+                seen_workspace_files = set()
+                for workspace in state.get("workspace_context") or []:
+                    for doc in workspace.get("documents", []):
+                        filename = str(doc.get("filename", "")).strip()
+                        if filename and filename not in seen_workspace_files:
+                            workspace_filenames.append(filename)
+                            seen_workspace_files.add(filename)
+
+                if workspace_filenames:
+                    visible_files = workspace_filenames[:12]
+                    suffix = ""
+                    if len(workspace_filenames) > 12:
+                        suffix = f" (+{len(workspace_filenames) - 12} more)"
+                    user_prompt += (
+                        "\n\nWorkspace files already available in the sandbox:\n"
+                        f"{', '.join(visible_files)}{suffix}\n"
+                        "Do not ask the user to upload these files again."
+                    )
+
+                user_prompt += "\n\nPlease complete this task and provide a clear output."
+
+                # === STEP 4: Execute with agent (real tools if available) ===
+                model_name = agent.get("model") or "gpt-4.1"
+                agent_params = agent.get("agent_params") or {}
+                temperature = float(agent_params.get("temperature", 0.7))
+
+                from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
+                from src.langgraph_engine.step_executor import _execute_with_tools, _execute_replay_tool_calls
+
+                # Get input_files from task config if available (for document filtering)
+                input_files = task_config.get("input_files")
+
+                logger.info(
+                    f"[{task_id}] INPUT_FILES_DEBUG",
+                    has_input_files=input_files is not None,
+                    input_files_count=len(input_files) if input_files else 0,
+                )
+
+                lc_tools, collector = create_langchain_tools(
+                    agent, workspace_context=state.get("workspace_context"),
+                    input_files=input_files
+                )
+                components: List[Dict[str, Any]] = []
+                tool_trace: List[Dict[str, Any]] = []
+                llm_prompt_trace: List[Dict[str, Any]] = []
+                step_execution_modes = state.get("step_execution_modes") or {}
+                execution_mode = step_execution_modes.get(task_id) or state.get("execution_mode", "live")
+                validated_replay = (state.get("validated_replays_by_task") or {}).get(task_id)
+                logger.info(
+                    f"[{task_id}] EXECUTION_MODE_DECISION",
+                    execution_mode=execution_mode,
+                    has_validated_replay=bool(validated_replay),
+                    replay_id=(validated_replay or {}).get("replay_id"),
+                    replay_tool_calls=len((validated_replay or {}).get("tool_calls", []) or []),
+                    available_tools=[tool.name for tool in lc_tools],
+                )
+
+                if execution_mode in ("replay_strict", "replay_flex", "replay_adaptive") and validated_replay:
+                    if not lc_tools:
+                        raise ValueError(f"Validated replay for task {task_id} cannot run because no tools are configured")
+                    logger.info(f"[{task_id}] Executing replay mode",
+                                mode=execution_mode,
+                                replay_id=validated_replay.get("replay_id"),
+                                tool_calls=len(validated_replay.get("tool_calls", []) or []))
+                    strict_response, components, tool_trace, synthesis_context = await _execute_replay_tool_calls(
+                        lc_tools,
+                        collector,
+                        validated_replay,
+                        prompt_trace=llm_prompt_trace,
+                        adaptive=execution_mode == "replay_adaptive",
+                        adaptation_context={
+                            "task_id": task_id,
+                            "task_title": task_for_execution.get("title", ""),
+                            "task_description": task_for_execution.get("description", ""),
+                            "current_query": state.get("query", ""),
+                            "dependency_context": context,
+                            "reference_task_title": validated_replay.get("task_title", ""),
+                            "reference_task_description": validated_replay.get("reference_task_description", ""),
+                        },
+                        settings=settings,
+                        model_name=model_name,
+                    )
+                    if execution_mode in ("replay_flex", "replay_adaptive"):
+                        format_guide = (validated_replay.get("output_format_guide") or "").strip()
+                        format_instruction = ""
+                        if validated_replay.get("preserve_output_format") and format_guide:
+                            format_instruction = (
+                                f"""\n\n#Output Furmat guidelines
+                                Preserve the validated output format.\n
+                                {format_guide}\n\n
+                                Keep the structure and presentation style, but refresh the content from the current replay evidence only."""
+                            )
+                        replay_user_prompt = (
+                            f"{user_prompt}\n\n"
+                            "Use the following replayed tool execution results to produce the final answer.\n\n"
+                            f"{synthesis_context}"
+                            f"{format_instruction}"
+                        )
+                        response, usage = await self._llm_direct_call(
+                            settings, model_name, system_prompt, replay_user_prompt,
+                            temperature=temperature, prompt_trace=llm_prompt_trace, stage="replay_final_synthesis"
+                        )
+                    else:
+                        response = strict_response
+                        usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": ""}
+                elif lc_tools:
+                    logger.info(f"[{task_id}] Executing with real tools",
+                                count=len(lc_tools), tools=[t.name for t in lc_tools])
+                    response, components, usage, tool_trace, llm_prompt_trace = await _execute_with_tools(
+                        settings, model_name, system_prompt, user_prompt, lc_tools, collector, temperature=temperature
+                    )
+                else:
+                    response, usage = await self._llm_direct_call(
+                        settings, model_name, system_prompt, user_prompt,
+                        temperature=temperature, prompt_trace=llm_prompt_trace, stage="task_direct_completion"
+                    )
+                    components = []
+                    tool_trace = []
+
+                # Wrap visualizer agent output as a web_preview component
+                is_visualizer = (
+                    agent.get("agent_type") == "visualizer"
+                    or agent["name"] == "Visualizer Agent"
+                    or "visualizer_agent" in agent["name"].lower()
+                )
+                if is_visualizer and response:
+                    components.insert(0, {
+                        "type": "web_preview",
+                        "data": {"content": response},
+                    })
+
+                task_result = {
+                    "output": "" if is_visualizer else response,
+                    "task_id": task_id,
+                    "task_title": task_config["title"],
+                    "agent_name": agent["name"],
+                    "components": components,
+                    "usage": usage,
+                    "tool_trace": tool_trace,
+                    "llm_prompt_trace": llm_prompt_trace,
+                }
+
+                # Semantic evaluation is deferred to backend enrichment so
+                # task completion is not blocked on evaluator latency.
+
+                # === STEP 5: interrupt_after (review) ===
+                if task_config.get("interrupt_after", False):
+                    logger.info(f"[{task_id}] Requires review after execution")
+
+                    review_payload = {
+                        "type": "review_request",
+                        "task_id": task_id,
+                        "task_title": task_config.get("title", ""),
+                        "result": response,
+                        "message": f"Task '{task_config.get('title', '')}' completed. Please review the result.",
+                        "thread_id": thread_id,
+                    }
+                    await _push_step_update("suspended", interrupt_data=review_payload)
+                    review_response = interrupt(review_payload)
+
+                    if self._is_skip_step_response(review_response):
+                        completed_at = datetime.utcnow().isoformat() + "Z"
+                        duration_ms = int((time.time() - start_time) * 1000)
+                        skipped_result = {
+                            "task_id": task_id,
+                            "status": "skipped",
+                            "output": "",
+                            "error": "",
+                            "duration_ms": duration_ms,
+                            "components": task_result.get("components", []),
+                            "usage": task_result.get("usage", {}),
+                            "tool_trace": task_result.get("tool_trace", []),
+                            "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
+                            "semantic_match": None,
+                        }
+                        await _push_step_update("skipped", result=skipped_result)
+                        return {
+                            "completed_task_ids": [task_id],
+                            "results": {task_id: skipped_result},
+                            "node_timings": {
+                                task_id: {
+                                    "started_at": started_at,
+                                    "completed_at": completed_at,
+                                    "duration_ms": duration_ms,
+                                }
+                            },
+                        }
+
+                    if isinstance(review_response, dict) and review_response.get("approved") is False:
+                        error_msg = review_response.get("reason", "Task result rejected by human")
+                        failed_result = {
+                            "task_id": task_id,
+                            "status": "failed",
+                            "output": task_result.get("output", ""),
+                            "error": error_msg,
+                            "duration_ms": int((time.time() - start_time) * 1000),
+                            "components": task_result.get("components", []),
+                            "usage": task_result.get("usage", {}),
+                            "tool_trace": task_result.get("tool_trace", []),
+                            "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
+                            "semantic_match": task_result.get("semantic_match"),
+                        }
+                        await _push_step_update("failed", result=failed_result)
+                        return {
+                            "completed_task_ids": [task_id],
+                            "results": {task_id: failed_result},
+                            "error": error_msg,
+                            "status": "failed",
+                        }
+
+                # Track timing
+                completed_at = datetime.utcnow().isoformat() + "Z"
+                duration_ms = int((time.time() - start_time) * 1000)
+
+                new_node_timings = {
+                    task_id: {
+                        "started_at": started_at,
+                        "completed_at": completed_at,
+                        "duration_ms": duration_ms,
+                    }
+                }
+
+                logger.info(f"[{task_id}] Completed", duration_ms=duration_ms)
+
+                await _push_step_update("completed", result={
+                    "task_id": task_id,
+                    "status": "completed",
+                    "output": task_result.get("output", ""),
+                    "error": "",
+                    "duration_ms": duration_ms,
+                    "components": task_result.get("components", []),
+                    "usage": task_result.get("usage", {}),
+                    "tool_trace": task_result.get("tool_trace", []),
+                    "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
+                    "semantic_match": task_result.get("semantic_match"),
+                })
+
+                return {
+                    "completed_task_ids": [task_id],
+                    "results": {task_id: task_result},
+                    "node_timings": new_node_timings,
+                }
+
+            except Exception as e:
+                # Let GraphInterrupt propagate — it's how LangGraph signals HITL
+                if "GraphInterrupt" in type(e).__name__:
+                    raise
+
+                completed_at = datetime.utcnow().isoformat() + "Z"
+                duration_ms = int((time.time() - start_time) * 1000)
+                error_msg = str(e)
+
+                logger.error(f"[{task_id}] Failed", error=error_msg, duration_ms=duration_ms)
+
+                await _push_step_update("failed", result={
+                    "task_id": task_id,
+                    "status": "failed",
+                    "output": "",
+                    "error": error_msg,
+                    "duration_ms": duration_ms,
+                    "components": components,
+                    "tool_trace": tool_trace,
+                    "llm_prompt_trace": llm_prompt_trace,
+                })
+
+                return {
+                    "completed_task_ids": [task_id],
+                    "results": {
+                        task_id: {
+                            "task_id": task_id,
+                            "status": "failed",
+                            "output": "",
+                            "error": error_msg,
+                            "duration_ms": duration_ms,
+                            "components": components,
+                            "tool_trace": tool_trace,
+                            "llm_prompt_trace": llm_prompt_trace,
+                            "semantic_match": None,
+                        }
+                    },
+                    "error": error_msg,
+                    "status": "failed",
+                    "node_timings": {
+                        task_id: {
+                            "started_at": started_at,
+                            "completed_at": completed_at,
+                            "duration_ms": duration_ms,
+                        }
+                    },
+                }
+
+        task_node.__name__ = f"task_{task_id}"
+        return task_node
+
+    @staticmethod
+    async def _llm_direct_call(
+        settings,
+        model_name: str,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        prompt_trace: Optional[List[Dict[str, Any]]] = None,
+        stage: str = "llm_call",
+    ) -> tuple:
+        """Direct LLM call without tools via LiteLLM/ChatOpenAI.
+
+        Returns:
+            Tuple of (content_str, usage_dict).
+        """
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import SystemMessage, HumanMessage
+        from src.langgraph_engine.step_executor import _extract_usage, _append_prompt_trace
+
+        llm = ChatOpenAI(
+            base_url=settings.LITELLM_API_BASE_URL,
+            api_key=settings.LITELLM_API_SECRET_KEY,
+            model=model_name,
+            temperature=temperature,
+        )
+        _append_prompt_trace(
+            prompt_trace,
+            stage=stage,
+            model=model_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        result = await llm.ainvoke([
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
+        ])
+        return result.content, _extract_usage(result)
+
+    def _find_entry_tasks(self, tasks: List[TaskConfig], edges: List[EdgeConfig]) -> List[str]:
+        """Find tasks with no dependencies (entry points)."""
+        all_task_ids = {t["id"] for t in tasks if t.get("id")}
+        target_ids = {e["target_id"] for e in edges}
+        entry_ids = list(all_task_ids - target_ids)
+
+        if not entry_ids and all_task_ids:
+            entry_ids = [
+                min(
+                    all_task_ids,
+                    key=lambda tid: next(
+                        (t.get("execution_order", 999) for t in tasks if t.get("id") == tid),
+                        999,
+                    ),
+                )
+            ]
+
+        return entry_ids
+
+    def _find_exit_tasks(self, tasks: List[TaskConfig], edges: List[EdgeConfig]) -> List[str]:
+        """Find tasks with no dependents (exit points)."""
+        all_task_ids = {t["id"] for t in tasks if t.get("id")}
+        source_ids = {e["source_id"] for e in edges}
+        exit_ids = list(all_task_ids - source_ids)
+
+        if not exit_ids and all_task_ids:
+            exit_ids = list(all_task_ids)
+
+        return exit_ids
+
+    def build_execution_graph(
+        self,
+        tasks: List[TaskConfig],
+        edges: List[EdgeConfig],
+        playbook_id: str,
+    ):
+        """Build a dynamic execution graph with one node per task.
+
+        Args:
+            tasks: List of task configurations
+            edges: Dependency edges between tasks
+            playbook_id: Unique playbook identifier
+
+        Returns:
+            Compiled LangGraph ready for execution
+        """
+        workflow = StateGraph(ExecutionState)
+
+        # Add a node for each task
+        for task in tasks:
+            task_id = task.get("id")
+            if not task_id:
+                continue
+
+            node_func = self._create_task_node(task_id, task)
+            node_name = f"task_{task_id}"
+            workflow.add_node(node_name, node_func)
+            logger.info("[DynamicGraphBuilder] Added node", node=node_name, title=task.get("title"))
+
+        # Find entry tasks (no dependencies)
+        entry_task_ids = self._find_entry_tasks(tasks, edges)
+        logger.info("[DynamicGraphBuilder] Entry tasks", entry_ids=entry_task_ids)
+
+        if len(entry_task_ids) == 1:
+            workflow.set_entry_point(f"task_{entry_task_ids[0]}")
+        else:
+            async def start_node(state: ExecutionState) -> Dict[str, Any]:
+                return {}
+
+            workflow.add_node("__start_parallel__", start_node)
+            workflow.set_entry_point("__start_parallel__")
+
+            for tid in entry_task_ids:
+                workflow.add_edge("__start_parallel__", f"task_{tid}")
+
+        # Add edges based on dependencies. Multi-parent nodes must wait for all
+        # upstream tasks, so use a barrier edge when a task has multiple inputs.
+        incoming_by_target: Dict[str, List[str]] = {}
+        for edge in edges:
+            source_id = edge["source_id"]
+            target_id = edge["target_id"]
+            if not source_id or not target_id:
+                continue
+            incoming_by_target.setdefault(target_id, []).append(source_id)
+
+        for target_id, source_ids in incoming_by_target.items():
+            target_node = f"task_{target_id}"
+            source_nodes = [f"task_{source_id}" for source_id in source_ids]
+
+            if len(source_nodes) == 1:
+                workflow.add_edge(source_nodes[0], target_node)
+                logger.info("[DynamicGraphBuilder] Added edge", source=source_nodes[0], target=target_node)
+                continue
+
+            workflow.add_edge(source_nodes, target_node)
+            logger.info("[DynamicGraphBuilder] Added barrier edge", sources=source_nodes, target=target_node)
+
+        # Connect exit tasks to completion node
+        exit_task_ids = self._find_exit_tasks(tasks, edges)
+        logger.info("[DynamicGraphBuilder] Exit tasks", exit_ids=exit_task_ids)
+
+        async def completion_node(state: ExecutionState) -> Dict[str, Any]:
+            logger.info("[completion_node] All tasks completed")
+            return {"status": "completed"}
+
+        workflow.add_node("__completion__", completion_node)
+
+        exit_nodes = [f"task_{tid}" for tid in exit_task_ids]
+        if len(exit_nodes) == 1:
+            workflow.add_edge(exit_nodes[0], "__completion__")
+        elif exit_nodes:
+            workflow.add_edge(exit_nodes, "__completion__")
+
+        workflow.add_edge("__completion__", END)
+
+        # Compile with checkpointer
+        compiled = workflow.compile(checkpointer=self.checkpointer)
+        compiled._playbook_id = playbook_id
+        compiled._task_count = len(tasks)
+        compiled._edge_count = len(edges)
+
+        logger.info(
+            "[DynamicGraphBuilder] Compiled graph",
+            playbook_id=playbook_id,
+            tasks=len(tasks),
+            edges=len(edges),
+        )
+
+        return compiled

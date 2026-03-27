@@ -1,0 +1,546 @@
+syntax = "proto3";
+
+package chatbot;
+
+import "google/protobuf/struct.proto";
+
+// ===== COMMON MESSAGES =====
+
+message ImageData {
+    string filepath = 1;
+    string createdAt = 2;
+}
+
+message DocumentData {
+    // === Identity & Location ===
+    string filepath = 1;                 // Path in Azure Data Lake (e.g., "workspaceId/docId.pdf")
+    string filename = 2;                 // Display name (e.g., "report_q4.pdf")
+    string external_id = 3;              // Unique document ID across systems
+    string workspace_id = 4;                 // Brain/workspace this file belongs to
+    string source = 5;                   // Source reference (defaults to filepath if empty)
+    string createdAt = 6;                // creation date
+    // === Indexing Configuration ===
+    string brain_type = 7;               // "doc" (vector search) or "graph" (knowledge graph)
+    string lang_code = 8;                // Language code (ISO 639-1: "en", "fr", "auto")
+    int32 chunk_size = 9;                // Max characters per chunk (default: 4000)
+    int32 chunk_overlap = 10;            // Overlap between consecutive chunks (default: 100)
+    bool enable_smart_chunk = 11;        // Style-aware chunking respecting headings/paragraphs
+    bool enable_extract_images = 12;     // Extract and index images from PDF via YOLO pipeline
+    string sheet_name = 13;              // Sheet name filter for Excel files (optional)
+    bool in_memory = 14;                 // Whether to cache document in memory
+}
+
+message AttachedFile {
+    string type = 1;                     // "image" or "document"
+    oneof data {
+        ImageData image = 2;             // Set when type = "image"
+        DocumentData document = 3;       // Set when type = "document"
+    }
+}
+
+message Chatbot {
+    string model = 1;  // Full LiteLLM model identifier (e.g., "anthropic/claude-sonnet-4-5", "azure/gpt-4.1")
+}
+
+message Tool {
+    string name = 1;
+    string prompt = 2;
+    string description = 3;
+    int32 top_k = 4;
+}
+
+message AgentParams {
+    map<string, string> params = 1;
+}
+
+message Document {
+    // === Required Core Fields ===
+    string _id = 1;                      // Unique document identifier (MongoDB ObjectId)
+                                         // Used for: Document lookup, deduplication, search
+
+    string filename = 2;                 // Display name (e.g., "marketing_finance.xlsx")
+                                         // Used for: Display, search results, agent context
+
+    // === Storage & Access Fields ===
+    string filepath = 3;                 // Full file path (e.g., "workspaceId/documentId.xlsx")
+                                         // Used for: File retrieval, storage access
+
+    bool in_memory = 4;                  // Whether document is cached in memory
+                                         // Used for: Performance optimization
+
+    // === Metadata Fields ===
+    string language = 5;                 // Detected language (ISO 639-1: "en", "fr", "es")
+                                         // Used for: Language filtering, multilingual search
+                                         // Client maps: detected_language → language
+
+    int32 indexing_token = 6;            // Tokens used for indexing
+                                         // Used for: Cost tracking, metrics
+
+    string workspace_id = 7;             // Workspace ID this document belongs to
+                                         // Used for: Multi-workspace isolation, access control
+
+    string createdAt = 8;                // creation date
+}
+
+message WorkspaceContext {
+    string workspace_id = 1;
+    repeated Document workspace_documents = 2;
+}
+
+// ===== AGENT SUGGESTION MESSAGE =====
+
+message Agent {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string prompt = 4;
+    repeated Tool tools = 5;
+    repeated WorkspaceContext brain_context = 6;
+    Chatbot chatbot = 7;
+    AgentParams agent_params = 8;
+    string agent_type = 9;
+    bool save_memory = 10;
+}
+
+// ===== V2 REQUEST MESSAGES =====
+
+message UserContext {
+    string user_id = 1;
+    string username = 2;
+}
+
+message RunAgentTeamRequest {
+    UserContext user_context = 1;
+    string conversation_id = 2;
+    string query = 3;
+    repeated Agent agents = 6;
+    repeated WorkspaceContext workspace_context = 8;
+    string agent_mode = 9;
+    repeated AttachedFile attached_files = 10;                   // Files attached in this turn (images + documents)
+    repeated Document previous_attached_files = 11;  // Already-indexed files from previous turns
+}
+
+message GenerateConversationNameRequest {
+    string query = 1;
+    string model = 2;
+}
+
+message GenerateConversationNameResponse {
+    string conversation_name = 1;
+}
+
+// ===== RESPONSE MESSAGES =====
+
+// Component type definitions
+message TextComponent {
+    string content = 1;          // Text/Markdown content
+}
+
+message CodeComponent {
+    string content = 1;          // The code itself
+    string language = 2;         // e.g., "typescript", "python"
+    string filename = 3;         // Optional filename
+}
+
+message ReasoningComponent {
+    string content = 1;          // Internal thought process
+}
+
+// Task status enum
+enum TaskStatus {
+    PENDING = 0;                 // Task not started yet (default)
+    IN_PROGRESS = 1;             // Task currently being executed
+    COMPLETED = 2;               // Task successfully completed
+    ERROR = 3;                   // Task failed with error
+}
+
+message PlanStep {
+    string task = 1;             // Task description
+    string agent = 2;            // Agent assigned to this task
+    TaskStatus status = 3;       // Task status (pending by default)
+}
+
+message PlanComponent {
+    string title = 1;            // Plan title
+    repeated PlanStep steps = 2; // Plan steps with agent assignments
+    TaskStatus status = 3;       // Overall plan status
+}
+
+message TaskItem {
+    string text = 1;             // Task item text
+}
+
+message TaskComponent {
+    string title = 1;            // Task title
+    repeated TaskItem items = 2; // List of task items
+    string status = 3;           // "pending", "in_progress", or "completed"
+}
+
+message QueueItem {
+    string id = 1;               // Item ID
+    string title = 2;            // Item title
+    string status = 3;           // "pending", "active", or "completed"
+}
+
+message QueueComponent {
+    string title = 1;            // Queue title
+    repeated QueueItem items = 2; // List of queue items
+}
+
+message CheckpointComponent {
+    string label = 1;            // Checkpoint label
+}
+
+message ChartComponent {
+    string title = 1;            // Optional chart title
+    string data = 2;             // JSON string of data array
+    string config = 3;           // JSON string of ChartConfig
+    string xAxisKey = 4;         // Key for X-axis
+    string series = 5;           // JSON string of series array
+}
+
+message ErrorComponent {
+    string title = 1;            // Error title
+    string content = 2;          // Error message/content
+}
+
+message SourceItem {
+    string title = 1;            // Source title (e.g., "Wikipedia.org")
+    string url = 2;              // Source URL
+}
+
+message SourcesComponent {
+    repeated SourceItem sources = 1;  // List of web sources
+}
+
+message SandboxComponent {
+    string code = 1;             // Python code being executed
+    string output = 2;           // stdout from execution
+    string error = 3;            // stderr from execution
+    bool output_available = 4;   // true when output/error is sent (function_response)
+}
+
+message WebPreviewComponent {
+    string content = 1;          // HTML/CSS/JS content to preview
+}
+
+message ArtifactComponent {
+    string file_path = 1;        // Path to the generated file
+    string filename = 2;         // Name of the generated file
+}
+
+message TextSourceData {
+    string type = 1;             // "text"
+    string source = 2;           // Filename (e.g., "report.pdf")
+    string external_id = 3;      // Document external ID
+    string page = 4;             // Page info (e.g., "report.pdf - page 5")
+    string page_content = 5;     // The actual text content
+    string workspace_id = 6;     // Workspace ID
+    string reference = 7;        // Citation reference (e.g., "[1]", "[2]")
+}
+
+message ImageSourceData {
+    string type = 1;             // "image"
+    string path = 2;             // Image path
+    string page = 3;             // Page number or info
+    string file_name = 4;        // Source filename
+    string external_id = 5;      // Document external ID
+    string workspace_id = 6;     // Workspace ID
+    string height = 7;           // Image height
+    string width = 8;            // Image width
+    string reference = 9;        // Citation reference (e.g., "[1]", "[2]")
+}
+
+message CitationComponent {
+    string parent_id = 1;        // ID of the parent text component
+    oneof source_data {
+        TextSourceData text_source = 2;
+        ImageSourceData image_source = 3;
+    }
+}
+
+// Main Component message using oneof for type safety
+message Component {
+    string id = 1;               // Component unique identifier
+    oneof data {
+        TextComponent text = 2;
+        CodeComponent code = 3;
+        ReasoningComponent reasoning = 4;
+        PlanComponent plan = 5;
+        QueueComponent queue = 6;
+        CheckpointComponent checkpoint = 7;
+        ChartComponent chart = 8;
+        TaskComponent task = 9;
+        ErrorComponent error = 10;
+        SourcesComponent sources = 11;  // Web sources
+        SandboxComponent sandbox = 12;  // Python execution sandbox
+        WebPreviewComponent web_preview = 13;  // HTML/CSS/JS web preview
+        ArtifactComponent artifact = 14;  // Generated file artifact
+        CitationComponent citation = 15;  // Document citation reference
+    }
+}
+
+message Metadata {
+    string message_id = 1;       // Message/session ID
+    string agent_id = 2;         // Agent ID
+}
+
+message Usage {
+    int32 input_tokens = 1;      // Input tokens sent to LLM
+    int32 output_tokens = 2;     // Output tokens generated by LLM
+    int32 total_tokens = 3;      // Total tokens (input + output)
+    string model = 4;            // Model/chatbot name used (e.g., "gpt-4.1")
+}
+
+message StreamChunk {
+    string action = 1;           // "add", "update", or "delete"
+    Component component = 2;     // The component data (optional if only sending usage)
+    Metadata metadata = 3;       // Metadata about the chunk
+    Usage usage = 4;             // Token usage data (optional)
+}
+
+// ===== SERVICES =====
+
+service ChatbotService {
+    rpc RunAgentTeam(RunAgentTeamRequest) returns (stream StreamChunk);
+    rpc GenerateConversationName(GenerateConversationNameRequest) returns (GenerateConversationNameResponse);
+    rpc RunPlaybookWorkflow(RunPlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
+    rpc ResumePlaybookWorkflow(ResumePlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
+    rpc RunStep(RunStepRequest) returns (StepResponse);
+    rpc ResumeStep(ResumeStepRequest) returns (StepResponse);
+    rpc EvaluateSemanticMatch(EvaluateSemanticMatchRequest) returns (EvaluateSemanticMatchResponse);
+    rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
+    rpc StopPlaybookWorkflow(StopPlaybookWorkflowRequest) returns (StopPlaybookWorkflowResponse);
+}
+
+// ===== PLAYBOOK LANGGRAPH SERVICE =====
+
+message MCPToolConfig {
+    string name = 1;
+    string transport = 2;           // "streamable_http" | "sse"
+    string url = 3;
+    string api_key = 4;
+    map<string, string> headers = 5;
+}
+
+message PlaybookTaskConfig {
+    string id = 1;
+    string title = 2;
+    string description = 3;
+    string assigned_agent_id = 4;
+    int32 execution_order = 5;
+    bool interrupt_before = 6;      // Pause for approval before execution
+    bool interrupt_after = 7;       // Pause for review after execution
+    bool allow_clarification = 8;   // Enable agent-initiated clarification
+    string clarification_prompt = 9;
+    int32 max_clarifications = 10;
+    repeated string input_keys = 11;
+    string output_key = 12;
+    repeated string input_files = 13;  // Document IDs for this task
+}
+
+message PlaybookEdgeConfig {
+    string source_id = 1;
+    string target_id = 2;
+}
+
+message PlaybookNodeConfig {
+    string id = 1;
+    string title = 2;
+    string description = 3;
+    string assigned_agent_id = 4;
+    int32 execution_order = 5;
+    optional float x = 6;               // X position pour le layout visuel
+    optional float y = 7;               // Y position pour le layout visuel
+    bool interrupt_before = 8;
+    bool interrupt_after = 9;
+    bool allow_clarification = 10;
+    string clarification_prompt = 11;
+    int32 max_clarifications = 12;
+    repeated string input_keys = 13;
+    string output_key = 14;
+}
+
+message ExistingPlaybook {
+    repeated PlaybookNodeConfig nodes = 1;
+    repeated PlaybookEdgeConfig edges = 2;
+}
+
+message GeneratePlaybookRequest {
+    string query = 1;
+    repeated Agent available_agents = 2;
+    repeated WorkspaceContext workspace_context = 3;
+    ExistingPlaybook existing_playbook = 4;   // Vide pour creation, rempli pour modification
+    string model = 5;                         // Modele LLM (ex: "azure/gpt-4.1")
+}
+
+message GeneratePlaybookResponse {
+    repeated PlaybookNodeConfig nodes = 1;
+    repeated PlaybookEdgeConfig edges = 2;
+    Usage usage = 3;
+}
+
+// --- Request messages ---
+
+message RunPlaybookWorkflowRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    string query = 4;
+    repeated PlaybookTaskConfig tasks = 5;
+    repeated Agent agents = 6;
+    repeated PlaybookEdgeConfig edges = 7;
+    repeated WorkspaceContext workspace_context = 8;
+    string execution_mode = 9;
+    repeated ValidatedTaskReplay validated_replays = 10;
+    map<string, string> step_execution_modes = 11;
+}
+
+message ResumePlaybookWorkflowRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    string thread_id = 4;
+    HumanResponse human_response = 5;
+    string task_id = 6;
+}
+
+message RunStepRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    PlaybookTaskConfig task = 4;
+    Agent agent = 5;
+    string context_from_dependencies = 6;
+    repeated WorkspaceContext workspace_context = 7;
+    string execution_mode = 8;
+    ValidatedTaskReplay validated_replay = 9;
+}
+
+message ResumeStepRequest {
+    UserContext user_context = 1;
+    string playbook_id = 2;
+    string thread_id = 3;
+    HumanResponse human_response = 4;
+    string task_id = 5;
+}
+
+message StopPlaybookWorkflowRequest {
+    UserContext user_context = 1;
+    string thread_id = 2;
+}
+
+message StopPlaybookWorkflowResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+// --- Human-in-the-loop messages ---
+
+message HumanResponse {
+    bool approved = 1;               // Whether the human approved or rejected
+    string reason = 2;               // Optional: reason for rejection
+    string feedback = 3;             // Optional: feedback to enhance task context
+}
+
+// --- Response messages ---
+
+message ToolTraceItem {
+    int32 call_index = 1;
+    string tool_name = 2;
+    google.protobuf.Struct args = 3;
+    string output_summary = 4;
+}
+
+message LLMPromptTraceItem {
+    string stage = 1;
+    string model = 2;
+    string prompt = 3;
+}
+
+message ValidatedTaskReplay {
+    string replay_id = 1;
+    string task_id = 2;
+    int32 validation_version = 3;
+    string mode = 4;
+    repeated ToolTraceItem tool_calls = 5;
+    string reference_output = 6;
+    bool preserve_output_format = 7;
+    string output_format_guide = 8;
+}
+
+message SemanticMatch {
+    int32 match_score = 1;
+    int32 semantic_similarity_score = 2;
+    int32 judge_score = 3;
+    string reason = 4;
+    repeated string missing_points = 5;
+    repeated string changed_points = 6;
+    string model = 7;
+    bool judge_used = 8;
+    int32 evidence_consistency_score = 9;
+}
+
+message PlaybookTaskResult {
+    string task_id = 1;
+    string status = 2;              // "completed" | "failed" | "cancelled"
+    reserved 3;                     // was: string output (now in TextComponent inside components)
+    string error = 4;
+    int64 duration_ms = 5;
+    repeated Component components = 6;  // Ordered display components (TextComponent first, then tool components)
+    Usage usage = 7;                // Token usage for this task's LLM calls
+    repeated ToolTraceItem tool_trace = 8;
+    SemanticMatch semantic_match = 9;
+    repeated LLMPromptTraceItem llm_prompt_trace = 10;
+}
+
+message InterruptPayload {
+    string type = 1;                // "approval_request" | "review_request" | "clarification"
+    string task_id = 2;
+    string task_title = 3;
+    string message = 4;
+    string thread_id = 5;
+    string task_description = 6;    // Set for approval_request
+    string result = 7;              // Set for review_request
+}
+
+message PlaybookWorkflowResponse {
+    string status = 1;              // "completed" | "interrupted" | "failed"
+    repeated PlaybookTaskResult task_results = 2;
+    InterruptPayload interrupt = 3;
+    string thread_id = 4;
+    string error = 5;
+}
+
+message PlaybookStepUpdate {
+    string task_id = 1;
+    string task_title = 2;
+    string status = 3;               // "in_progress" | "suspended" | "completed" | "failed"
+    PlaybookTaskResult result = 4;   // Set when completed/failed
+    InterruptPayload interrupt = 5;  // Set when suspended
+}
+
+message PlaybookStreamChunk {
+    PlaybookStepUpdate step_update = 1;
+    string thread_id = 4;
+}
+
+message StepResponse {
+    string status = 1;              // "completed" | "interrupted" | "failed"
+    PlaybookTaskResult result = 2;
+    InterruptPayload interrupt = 3;
+    string thread_id = 4;
+}
+
+message EvaluateSemanticMatchRequest {
+    UserContext user_context = 1;
+    string baseline_output = 2;
+    string current_output = 3;
+    string task_title = 4;
+    string task_description = 5;
+    repeated string baseline_tool_summaries = 6;
+    repeated string current_tool_summaries = 7;
+}
+
+message EvaluateSemanticMatchResponse {
+    bool has_match = 1;
+    SemanticMatch semantic_match = 2;
+}
+

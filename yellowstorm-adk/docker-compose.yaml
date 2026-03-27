@@ -1,0 +1,19 @@
+name: yellowstorm-dev
+
+services:
+  yellowstorm-adk-dev:
+    image: yscrmetachatbot001.azurecr.io/yellowstorm-adk
+    container_name: yellowstorm-adk-dev
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "3017:8001"  # FastAPI/REST endpoint
+      - "50051:50051"  # gRPC endpoint
+  celery-worker-attribute-extraction:
+   image: yscrmetachatbot001.azurecr.io/yellowstorm-adk
+   container_name: yellowstorm-celery-worker-attr-extract
+   restart: always
+   env_file:
+      - .env
+   entrypoint: bash -c "celery -A src.infrastructure.celery_app.celery_app worker --loglevel=info --queues=attribute_extraction --pool=threads --concurrency=4 -n attribute-extraction@%h"

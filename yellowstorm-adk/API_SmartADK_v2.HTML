@@ -1,0 +1,1535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart ADK API Documention &ndash; Yellowsys</title>
+    <style>
+        :root {
+            color-scheme: light dark;
+            --bg: #0f172a;
+            --fg: #f8fafc;
+            --accent: #38bdf8;
+            --muted: #94a3b8;
+        }
+        body {
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(15,23,42,0.85)), url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 100 100"><g fill="%2334d399" opacity="0.12"><circle cx="10" cy="10" r="2"/><circle cx="90" cy="20" r="3"/><circle cx="45" cy="45" r="1.5"/><circle cx="70" cy="80" r="2.5"/><circle cx="15" cy="70" r="1"/></g></svg>');
+            color: var(--fg);
+            line-height: 1.6;
+        }
+        header {
+            background: rgba(8, 47, 73, 0.85);
+            backdrop-filter: blur(8px);
+            border-bottom: 2px solid rgba(56, 189, 248, 0.4);
+            padding: 2.5rem 3.5rem 1.5rem;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+        }
+        header h1 {
+            margin: 0;
+            font-size: 2.4rem;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+        }
+        header p {
+            margin: 0.5rem 0 0;
+            color: var(--muted);
+        }
+        nav#summary {
+            background: rgba(15, 118, 110, 0.16);
+            border-left: 4px solid var(--accent);
+            margin: 2rem 3rem;
+            padding: 1.5rem 2rem;
+            border-radius: 1rem;
+            box-shadow: 0 18px 30px rgba(15,23,42,0.35);
+        }
+        nav#summary h2 {
+            margin-top: 0;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 0.2em;
+            font-size: 1rem;
+        }
+        nav#summary ul {
+            list-style: none;
+            margin: 0;
+            padding-left: 0;
+            columns: auto 2;
+            column-gap: 3rem;
+        }
+        nav#summary li {
+            margin: 0.25rem 0;
+        }
+        nav#summary a {
+            color: #f0f9ff;
+            text-decoration: none;
+            border-bottom: 1px dotted rgba(56, 189, 248, 0.5);
+            transition: color 0.2s ease, border-color 0.2s ease;
+            font-size: 0.95rem;
+        }
+        nav#summary a:hover,
+        nav#summary a:focus {
+            color: var(--accent);
+            border-color: var(--accent);
+        }
+        main {
+            margin: 0 3rem 3rem;
+        }
+        section.module {
+            background: rgba(15, 23, 42, 0.72);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            border-radius: 1.25rem;
+            margin-bottom: 2.75rem;
+            box-shadow: 0 24px 40px rgba(15,23,42,0.35);
+            overflow: hidden;
+        }
+        section.module > header {
+            background: rgba(30, 64, 175, 0.4);
+            border-bottom: 1px solid rgba(56, 189, 248, 0.35);
+            padding: 1.5rem 2rem;
+            position: relative;
+        }
+        section.module > header h2 {
+            margin: 0;
+            font-size: 1.6rem;
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+        }
+        section.module > header p {
+            margin: 0.65rem 0 0;
+            color: rgba(226, 232, 240, 0.85);
+        }
+        article.element {
+            padding: 1.75rem 2.5rem 1.5rem;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+        }
+        article.element:last-of-type {
+            border-bottom: none;
+        }
+        article.element h3 {
+            margin-top: 0;
+            font-size: 1.3rem;
+            color: var(--accent);
+        }
+        article.element h4 {
+            margin-bottom: 0.25rem;
+            font-size: 1.05rem;
+            color: #bae6fd;
+        }
+        .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1.2rem;
+            margin: 0.5rem 0 1rem;
+            font-size: 0.9rem;
+            color: rgba(148, 163, 184, 0.9);
+        }
+        .meta span {
+            background: rgba(15, 118, 110, 0.22);
+            border-radius: 999px;
+            padding: 0.3rem 0.9rem;
+        }
+        dl {
+            margin: 0.75rem 0 1.25rem;
+        }
+        dl dt {
+            font-weight: 600;
+            color: #e0f2fe;
+        }
+        dl dd {
+            margin: 0.25rem 0 0.75rem;
+            color: rgba(226, 232, 240, 0.92);
+        }
+        ul, ol {
+            padding-left: 1.4rem;
+        }
+        ul li {
+            margin-bottom: 0.3rem;
+        }
+        code {
+            background: rgba(15, 23, 42, 0.75);
+            border-radius: 0.4rem;
+            padding: 0.15rem 0.4rem;
+            font-family: "Fira Code", "Consolas", monospace;
+            color: #fbcfe8;
+            font-size: 0.95rem;
+        }
+        details {
+            margin-top: 0.75rem;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            border-radius: 0.75rem;
+            padding: 0.75rem 1rem;
+        }
+        summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: #c7d2fe;
+        }
+        summary::marker {
+            color: var(--accent);
+        }
+        footer {
+            text-align: center;
+            padding: 2rem 3rem 3rem;
+            color: rgba(148, 163, 184, 0.85);
+            border-top: 1px solid rgba(56, 189, 248, 0.25);
+            background: rgba(15, 23, 42, 0.78);
+        }
+        @media (max-width: 1024px) {
+            nav#summary ul {
+                columns: 1;
+            }
+            main {
+                margin: 0 1.5rem 2rem;
+            }
+            section.module > header,
+            article.element {
+                padding: 1.5rem 1.75rem;
+            }
+        }
+        a.anchor {
+            color: inherit;
+            text-decoration: none;
+        }
+        a.anchor:hover {
+            color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+<header>
+    <h1>Yellowsys &middot; Smart ADK API Documention</h1>
+    <p>Deep-dive reference for the FastAPI services, routers, models, middleware, and orchestration powering the Smart ADK platform.</p>
+</header>
+<nav id="summary">
+    <h2>Interactive Summary</h2>
+    <ul>
+        <li><a href="#module-main">Application bootstrap (main.py)</a>
+            <ul>
+                <li><a href="#function-lifespan">lifespan</a></li>
+                <li><a href="#function-validation-exception-handler">validation_exception_handler</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-routers-chatbot">Routers &amp; streaming endpoints</a>
+            <ul>
+                <li><a href="#function-event-stream">_event_stream</a></li>
+                <li><a href="#function-chat-with-adk">chat_with_adk_endpoint</a></li>
+                <li><a href="#function-run-agent-team">run_agent_team_endpoint</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-schemas-chatbot">Chatbot request schemas</a>
+            <ul>
+                <li><a href="#class-chatwithadkrequest">ChatWithADKRequest</a></li>
+                <li><a href="#class-agentsuggestion">AgentSuggestion</a></li>
+                <li><a href="#class-runagentteamrequest">RunAgentTeamRequest</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-schemas-auth">Authentication schemas</a>
+            <ul>
+                <li><a href="#class-user">User</a></li>
+                <li><a href="#class-userindb">UserInDB</a></li>
+                <li><a href="#class-token">Token</a></li>
+                <li><a href="#class-tokendata">TokenData</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-auth-get-current-user">Authentication helpers</a>
+            <ul>
+                <li><a href="#class-redisconnectionmanager">RedisConnectionManager</a></li>
+                <li><a href="#function-auth-get-redis-connection">get_redis_connection</a></li>
+                <li><a href="#function-auth-get-user">get_user</a></li>
+                <li><a href="#function-get-current-user">get_current_user</a></li>
+                <li><a href="#function-get-current-active-user">get_current_active_user</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-auth-get-user">User lookup utilities</a>
+            <ul>
+                <li><a href="#function-auth-shared-get-redis">get_redis_connection (shared)</a></li>
+                <li><a href="#function-auth-shared-get-user">get_user (shared)</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-config-settings">Configuration (settings.py)</a>
+            <ul>
+                <li><a href="#class-settings">Settings</a></li>
+                <li><a href="#function-get-settings">get_settings</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-middleware">Middleware suite</a>
+            <ul>
+                <li><a href="#function-add-middleware">add_middleware</a></li>
+                <li><a href="#class-correlationidmiddleware">CorrelationIdMiddleware</a></li>
+                <li><a href="#function-get-correlation-id">get_correlation_id</a></li>
+                <li><a href="#function-get-user-context">get_user (context)</a></li>
+                <li><a href="#function-add-cors">add_cors</a></li>
+                <li><a href="#function-add-logging">add_logging</a></li>
+                <li><a href="#function-logging-middleware">logging_middleware</a></li>
+                <li><a href="#function-add-tracing">add_tracing</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-logging">Logging &amp; telemetry</a>
+            <ul>
+                <li><a href="#class-correlationidfilter">CorrelationIdFilter</a></li>
+                <li><a href="#function-configure-logging">configure_logging</a></li>
+                <li><a href="#function-get-logger">get_logger</a></li>
+                <li><a href="#function-rename-event-key">rename_event_key</a></li>
+                <li><a href="#function-drop-color-message-key">drop_color_message_key</a></li>
+                <li><a href="#function-tracer-injection">tracer_injection</a></li>
+                <li><a href="#function-setup-logging">setup_logging</a></li>
+                <li><a href="#function-handle-exception">handle_exception</a></li>
+                <li><a href="#function-elastic-search-logging">elastic_search_logging</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-core-services">Core services</a>
+            <ul>
+                <li><a href="#class-chatragservice">ChatRAGService</a></li>
+                <li><a href="#class-agentteamservice">AgentTeamService</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-traditional-engine">Traditional RAG engine</a>
+            <ul>
+                <li><a href="#class-smartaragorchestrator">SmartRAGOrchestrator</a></li>
+                <li><a href="#class-eventextractor">EventExtractor</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-agents-core">Agent core utilities</a>
+            <ul>
+                <li><a href="#class-documenthelpers">DocumentHelpers</a></li>
+                <li><a href="#class-agenthelper">AgentHelper</a></li>
+                <li><a href="#class-agentrepository">AgentRepository</a></li>
+                <li><a href="#class-agentrunner">AgentRunner</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-agents-factories">Agent factories</a>
+            <ul>
+                <li><a href="#class-agentfactory">AgentFactory</a></li>
+                <li><a href="#class-agentdelegationfactory">AgentDelegationFactory</a></li>
+                <li><a href="#function-create-agent-for-delegation">create_agent_for_delegation</a></li>
+                <li><a href="#function-create-regular-agent">create_regular_agent</a></li>
+                <li><a href="#function-prepare-agent-data">prepare_agent_data</a></li>
+                <li><a href="#function-get-enhanced-prompt">get_enhanced_prompt</a></li>
+                <li><a href="#function-create-search-agent-with-tools">create_search_agent_with_tools</a></li>
+                <li><a href="#function-create-standard-agent-with-tools">create_standard_agent_with_tools</a></li>
+                <li><a href="#class-manageragentfactory">ManagerAgentFactory</a></li>
+                <li><a href="#class-toolfactory">ToolFactory</a></li>
+                <li><a href="#function-create-enhanced-prompt">create_enhanced_prompt</a></li>
+                <li><a href="#function-process-execution-summary">process_execution_summary</a></li>
+                <li><a href="#function-process-execution-step">process_execution_step</a></li>
+                <li><a href="#function-add-function-execution-event">add_function_execution_event</a></li>
+                <li><a href="#function-update-span-with-result">update_span_with_execution_result</a></li>
+                <li><a href="#function-determine-execution-success">determine_execution_success</a></li>
+                <li><a href="#function-get-error-count">get_error_count</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-agents-generators">Agent suggestion engine</a>
+            <ul>
+                <li><a href="#class-agentsuggestiongenerator">AgentSuggestionGenerator</a></li>
+                <li><a href="#function-model-supports-structured-output">model_supports_structured_output</a></li>
+                <li><a href="#function-parse-suggestions-response">parse_suggestions_response</a></li>
+                <li><a href="#function-extract-json-from-text">extract_json_from_text</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-agents-tools">Delegation &amp; tool management</a>
+            <ul>
+                <li><a href="#class-delegationtools">DelegationTools</a></li>
+                <li><a href="#class-agenttoolsmanager">AgentToolsManager</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-infrastructure-factories">LLM factory</a>
+            <ul>
+                <li><a href="#class-llmfactory">LLMFactory</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-processing">Prompt &amp; callback processing</a>
+            <ul>
+                <li><a href="#class-promptprocessor">PromptProcessor</a></li>
+                <li><a href="#class-contextbuilder">ContextBuilder</a></li>
+                <li><a href="#function-add-additional-context">add_additional_context</a></li>
+                <li><a href="#function-get-structured-context">get_structured_context</a></li>
+                <li><a href="#function-catch-images-after-tool">catch_images_after_tool</a></li>
+                <li><a href="#function-inject-images-before-model">inject_images_before_model</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-external">External integrations</a>
+            <ul>
+                <li><a href="#class-mcphelper">MCPHelper</a></li>
+                <li><a href="#function-create-common-helpers">create_common_helpers</a></li>
+                <li><a href="#class-messagehelper">MessageHelper</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-session">Session management</a>
+            <ul>
+                <li><a href="#class-patcheddatabasesessionservice">PatchedDatabaseSessionService</a></li>
+                <li><a href="#class-sessionhelper">SessionHelper</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-monitoring">Monitoring &amp; tracing</a>
+            <ul>
+                <li><a href="#class-tracerecorder">TraceRecorder</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-tools-common">Shared tool utilities</a>
+            <ul>
+                <li><a href="#class-commonhelpers">CommonHelpers</a></li>
+                <li><a href="#class-tooldescriptionprovider">ToolDescriptionProvider</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-tools-search">Search tools &amp; toolkit</a>
+            <ul>
+                <li><a href="#class-searchtooladk">SearchToolADK</a></li>
+                <li><a href="#function-get-transformed-ids-by-names">get_transformed_ids_by_names</a></li>
+                <li><a href="#function-create-search-schema">create_search_schema</a></li>
+                <li><a href="#function-validate-search-parameters">validate_search_parameters</a></li>
+                <li><a href="#function-get-attribute-mapping-info">get_attribute_mapping_info</a></li>
+                <li><a href="#class-searchresultprocessor">SearchResultProcessor</a></li>
+                <li><a href="#class-searchtoolkit">SearchToolkit</a></li>
+                <li><a href="#class-websearchtool">WebSearchTool</a></li>
+                <li><a href="#function-web-search">web_search (legacy)</a></li>
+                <li><a href="#function-create-web-search-tool">create_web_search_tool</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-tools-utilities">Low-level utilities</a>
+            <ul>
+                <li><a href="#function-transform-id">transform_id</a></li>
+                <li><a href="#function-assign-transformed-ids">assign_transformed_ids_and_extract_attributes</a></li>
+                <li><a href="#function-build-brain-tree">build_brain_tree</a></li>
+                <li><a href="#function-generate-brain-tree-schema">generate_brain_tree_schema</a></li>
+                <li><a href="#function-build-tree">build_tree</a></li>
+                <li><a href="#function-construct-json">construct_json</a></li>
+                <li><a href="#function-inmemory-construct-json">inmemory_construct_json</a></li>
+                <li><a href="#function-convert-sources-structure">convert_sources_structure</a></li>
+                <li><a href="#function-safe-eval">_safe_eval</a></li>
+                <li><a href="#function-calculator">calculator</a></li>
+                <li><a href="#function-is-safe-expression">is_safe_expression</a></li>
+                <li><a href="#function-get-supported-operations">get_supported_operations</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-messaging">Streaming &amp; messaging</a>
+            <ul>
+                <li><a href="#class-streamingformatter">StreamingFormatter</a></li>
+                <li><a href="#class-messagetransformer">MessageTransformer</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-multi-agent-config">Multi-agent configuration</a>
+            <ul>
+                <li><a href="#class-agentteamconfig">AgentTeamConfig</a></li>
+            </ul>
+        </li>
+        <li><a href="#module-multi-agent-workflow">Multi-agent workflow orchestration</a>
+            <ul>
+                <li><a href="#function-run-agent-team-logic">run_agent_team_logic</a></li>
+                <li><a href="#function-execute-workflow">execute_workflow</a></li>
+                <li><a href="#class-autoagentgenerationteam">AutoAgentGenerationTeam</a></li>
+                <li><a href="#class-streamingeventprocessor">StreamingEventProcessor</a></li>
+                <li><a href="#function-initialize-dependencies">initialize_dependencies</a></li>
+                <li><a href="#function-create-team-config">create_team_config</a></li>
+                <li><a href="#function-create-team">create_team</a></li>
+                <li><a href="#function-handle-no-agents-workflow">handle_no_agents_workflow</a></li>
+                <li><a href="#function-run-team-with-suggestions">_run_team_with_suggestions</a></li>
+                <li><a href="#function-handle-agents-provided-workflow">handle_agents_provided_workflow</a></li>
+                <li><a href="#function-run-provided-agent-team">_run_provided_agent_team</a></li>
+            </ul>
+        </li>
+    </ul>
+</nav>
+<main>
+    <section class="module" id="module-main">
+        <header>
+            <h2>Application Bootstrap &ndash; <a class="anchor" href="#module-main">main.py</a></h2>
+            <p>Initialises logging, middleware, lifespan hooks and binds the Smart ADK routers to the FastAPI app.</p>
+        </header>
+        <article class="element" id="function-lifespan">
+            <h3><code>lifespan(app: FastAPI)</code></h3>
+            <div class="meta">
+                <span>Async lifespan context manager</span>
+                <span>Initialises observability per deployment mode</span>
+            </div>
+            <p>Executed when the FastAPI app starts and stops. When Application Insights logging is enabled it configures structured logging, correlation identifiers, and Azure Monitor exporters; otherwise it boots the Elastic/console logging pipeline using environment toggles.</p>
+            <dl>
+                <dt>Responsibilities</dt>
+                <dd>
+                    <ul>
+                        <li>Announces router availability on start and shutdown.</li>
+                        <li>Branches between Application Insights and Elastic/console logging stacks.</li>
+                        <li>Applies correlation ID filters when Application Insights logging is active.</li>
+                        <li>Builds JSON/colour logging based on <code>LOG_JSON_FORMAT</code> and <code>COLOR_LOGS</code> environment variables.</li>
+                    </ul>
+                </dd>
+                <dt>Parameters</dt>
+                <dd><strong>app</strong>: FastAPI application instance entering the lifespan.</dd>
+                <dt>Yield</dt>
+                <dd>Suspends after setup so FastAPI can serve requests, then resumes for teardown logging.</dd>
+            </dl>
+        </article>
+        <article class="element" id="function-validation-exception-handler">
+            <h3><code>validation_exception_handler(request, exc)</code></h3>
+            <div class="meta">
+                <span>FastAPI exception handler</span>
+                <span>Returns RFC 7807 style validation responses</span>
+            </div>
+            <p>Catches <code>RequestValidationError</code> thrown by FastAPI/Pydantic, logs the issue with correlation metadata, and replies with HTTP 422 containing the aggregated validation errors.</p>
+            <dl>
+                <dt>Parameters</dt>
+                <dd>
+                    <ul>
+                        <li><strong>request</strong>: The incoming Starlette request used for contextual logging.</li>
+                        <li><strong>exc</strong>: The validation exception encapsulating field errors.</li>
+                    </ul>
+                </dd>
+                <dt>Returns</dt>
+                <dd><code>JSONResponse</code> with <code>{"detail": exc.errors()}</code> and status 422.</dd>
+                <dt>Notes</dt>
+                <dd>Ensures even streaming endpoints surface structured validation issues to API clients.</dd>
+            </dl>
+        </article>
+    </section>
+
+    <section class="module" id="module-routers-chatbot">
+        <header>
+            <h2>Routers &amp; Streaming Endpoints &ndash; <a class="anchor" href="#module-routers-chatbot">routers/chatbot.py</a></h2>
+            <p>Defines SSE streaming endpoints for classic RAG chat and multi-agent orchestration, guarded by bearer-token authentication.</p>
+        </header>
+        <article class="element" id="function-event-stream">
+            <h3><code>_event_stream(q, bg_task)</code></h3>
+            <div class="meta">
+                <span>Async generator</span>
+                <span>Serialises queue events to SSE frames</span>
+            </div>
+            <p>Continuously awaits dictionary payloads on an <code>asyncio.Queue</code>, JSON serialises them, and yields Server-Sent Event formatted strings (<code>data: ...\n\n</code>). If a <code>None</code> sentinel is received or the client disconnects, it gracefully stops and cancels the background producer task.</p>
+            <dl>
+                <dt>Parameters</dt>
+                <dd>
+                    <ul>
+                        <li><strong>q</strong>: Queue populated by the orchestrator services.</li>
+                        <li><strong>bg_task</strong>: Background task responsible for streaming production, cancelled when the consumer leaves.</li>
+                    </ul>
+                </dd>
+                <dt>Raises</dt>
+                <dd>Propagates <code>asyncio.CancelledError</code> after logging so upstream StreamingResponse terminates cleanly.</dd>
+            </dl>
+        </article>
+        <article class="element" id="function-chat-with-adk">
+            <h3><code>chat_with_adk_endpoint(user_request, current_user)</code></h3>
+            <div class="meta">
+                <span>POST /chatbots/chatWithADK</span>
+                <span>StreamingResponse (text/event-stream)</span>
+            </div>
+            <p>Handles authenticated chat requests against the traditional Smart RAG engine. After verifying the JWT-derived user, it instantiates <code>ChatRAGService</code>, spawns a background task to process the request, and streams the orchestrated events to the client.</p>
+            <dl>
+                <dt>Parameters</dt>
+                <dd>
+                    <ul>
+                        <li><strong>user_request</strong>: Validated <code>ChatWithADKRequest</code> payload.</li>
+                        <li><strong>current_user</strong>: Active <code>User</code> injected via dependency (<code>get_current_active_user</code>).</li>
+                    </ul>
+                </dd>
+                <dt>Returns</dt>
+                <dd>Server-Sent Events stream summarising manager messages, tool calls, and final completion markers.</dd>
+                <dt>Error handling</dt>
+                <dd>Logs unexpected exceptions, aborts the background task, and surfaces a 500 JSON error response.</dd>
+            </dl>
+        </article>
+        <article class="element" id="function-run-agent-team">
+            <h3><code>run_agent_team_endpoint(user_request, current_user)</code></h3>
+            <div class="meta">
+                <span>POST /agentic/run_agent_team</span>
+                <span>Streams multi-agent team execution</span>
+            </div>
+            <p>Bootstraps the multi-agent orchestration flow for complex tasks. It instantiates <code>AgentTeamService</code>, launches asynchronous processing of the agent workflow (auto-suggestion or manual selection), and relays streaming updates to the caller.</p>
+            <dl>
+                <dt>Parameters</dt>
+                <dd>
+                    <ul>
+                        <li><strong>user_request</strong>: Validated <code>RunAgentTeamRequest</code> with manager prompt, available agents, search options, and agent mode.</li>
+                        <li><strong>current_user</strong>: Authenticated principal ensuring task execution context.</li>
+                    </ul>
+                </dd>
+                <dt>Output</dt>
+                <dd>Emits description chunks, tool invocations, HTML snippets, and completion markers through SSE.</dd>
+                <dt>Error handling</dt>
+                <dd>Returns HTTP 500 with error details if orchestration raises an exception.</dd>
+            </dl>
+        </article>
+    </section>
+
+    <section class="module" id="module-schemas-chatbot">
+        <header>
+            <h2>Chatbot Request Schemas &ndash; <a class="anchor" href="#module-schemas-chatbot">schema/chatbot_schema.py</a></h2>
+            <p>Pydantic models describing the request contracts accepted by the chat and agentic endpoints.</p>
+        </header>
+        <article class="element" id="class-chatwithadkrequest">
+            <h3><code>ChatWithADKRequest</code></h3>
+            <div class="meta">
+                <span>Pydantic BaseModel</span>
+                <span>Represents classic RAG chat payload</span>
+            </div>
+            <p>Captures user identity, session, prompt, and retrieval configuration for the chat endpoint.</p>
+            <dl>
+                <dt>Key fields</dt>
+                <dd>
+                    <ul>
+                        <li><code>user_id</code>, <code>session_id</code>: Correlate streaming output to the caller.</li>
+                        <li><code>message</code>: Natural language query to the knowledge base.</li>
+                        <li><code>chatbot_name</code>: Dict describing the preferred model provider.</li>
+                        <li><code>brain_documents</code>, <code>brain_relations</code>, <code>brain_ids</code>: Optional dynamic knowledge graph inputs.</li>
+                        <li><code>search_web</code>, <code>enable_multilingual</code>, <code>languages</code>: Orchestration toggles.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="element" id="class-agentsuggestion">
+            <h3><code>AgentSuggestion</code></h3>
+            <div class="meta">
+                <span>Pydantic BaseModel</span>
+                <span>Describes a candidate specialised agent</span>
+            </div>
+            <p>Used both for suggested agents and existing catalog entries, including prompt, tools, document bindings, and fallback chatbot configuration.</p>
+            <dl>
+                <dt>Highlights</dt>
+                <dd>
+                    <ul>
+                        <li>Supports optional tool lists (<code>calculator</code>, <code>search</code>, <code>search_web</code>, <code>in_memory</code>).</li>
+                        <li>Stores document graph metadata for ingestion into search toolkits.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="element" id="class-runagentteamrequest">
+            <h3><code>RunAgentTeamRequest</code></h3>
+            <div class="meta">
+                <span>Pydantic BaseModel</span>
+                <span>Aggregates manager prompt, agents, and orchestration mode</span>
+            </div>
+            <p>Defines the control payload for the multi-agent endpoint, including manual agent rosters or placeholders for automatic suggestion.</p>
+            <dl>
+                <dt>Notable fields</dt>
+                <dd>
+                    <ul>
+                        <li><code>manager_prompt</code>: Baseline instructions for the manager agent.</li>
+                        <li><code>available_agents</code>, <code>agents</code>: Provide initial agent pools and manual selections.</li>
+                        <li><code>agent_mode</code>: Chooses between <code>auto</code> suggestion and <code>manual</code> execution.</li>
+                        <li><code>search_web</code>, <code>vectorstore_name</code>, <code>brain_documents</code>: Fine-tune retrieval behaviour.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+    </section>
+
+    <section class="module" id="module-schemas-auth">
+        <header>
+            <h2>Authentication Schemas &ndash; <a class="anchor" href="#module-schemas-auth">schema/authentification_schema.py</a></h2>
+            <p>Typed models for user representation and JWT exchange.</p>
+        </header>
+        <article class="element" id="class-user">
+            <h3><code>User</code></h3>
+            <div class="meta">
+                <span>Base identity model</span>
+                <span>Optional email, name, disabled flag</span>
+            </div>
+            <p>Represents an authenticated principal carried through dependency injection.</p>
+        </article>
+        <article class="element" id="class-userindb">
+            <h3><code>UserInDB</code></h3>
+            <div class="meta">
+                <span>Extends User</span>
+                <span>Includes hashed password from credential store</span>
+            </div>
+            <p>Used when deserialising Redis records for token validation.</p>
+        </article>
+        <article class="element" id="class-token">
+            <h3><code>Token</code></h3>
+            <div class="meta">
+                <span>JWT response payload</span>
+            </div>
+            <p>Encapsulates <code>access_token</code> and <code>token_type</code> for OAuth2 password flow compatibility.</p>
+        </article>
+        <article class="element" id="class-tokendata">
+            <h3><code>TokenData</code></h3>
+            <div class="meta">
+                <span>Claims container</span>
+            </div>
+            <p>Holds the <code>username</code> claim extracted from a decoded JWT.</p>
+        </article>
+    </section>
+    <section class="module" id="module-auth-get-current-user">
+        <header>
+            <h2>Authentication Helpers &ndash; <a class="anchor" href="#module-auth-get-current-user">authentification/get_current_user.py</a></h2>
+            <p>Validates bearer tokens, manages Redis-backed user sessions, and ensures only active accounts can access endpoints.</p>
+        </header>
+        <article class="element" id="class-redisconnectionmanager">
+            <h3><code>RedisConnectionManager</code></h3>
+            <div class="meta">
+                <span>Singleton</span>
+                <span>Async connection pool manager</span>
+            </div>
+            <p>Creates and caches a single <code>redis.asyncio</code> connection pool configured either with TLS (<code>rediss://</code>) or plaintext (<code>redis://</code>) based on environment flags.</p>
+            <dl>
+                <dt>Key methods</dt>
+                <dd>
+                    <ul>
+                        <li><strong><code>__new__</code></strong>: Ensures the class behaves as a singleton.</li>
+                        <li><strong><code>get_connection_pool()</code></strong>: Lazily initialises the pool with retry-on-timeout behaviour and logs destination details.</li>
+                        <li><strong><code>get_redis_connection()</code></strong>: Returns a Redis client bound to the shared pool.</li>
+                        <li><strong><code>close_pool()</code></strong>: Gracefully disconnects and resets the cached pool.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="element" id="function-auth-get-redis-connection">
+            <h3><code>get_redis_connection()</code></h3>
+            <p>Convenience coroutine returning a Redis client from the shared connection manager, easing dependency injection.</p>
+        </article>
+        <article class="element" id="function-auth-get-user">
+            <h3><code>get_user(r, username)</code></h3>
+            <div class="meta">
+                <span>Redis lookup</span>
+                <span>Returns <code>UserInDB</code> or None</span>
+            </div>
+            <p>Fetches the cached user JSON by username, logs retrieval outcomes, and instantiates <code>UserInDB</code>; returns <code>None</code> when the user is absent.</p>
+        </article>
+        <article class="element" id="function-get-current-user">
+            <h3><code>get_current_user(token)</code></h3>
+            <div class="meta">
+                <span>Depends on OAuth2PasswordBearer</span>
+                <span>Decodes JWT and validates session</span>
+            </div>
+            <p>Decodes the bearer token using the configured secret and algorithm, verifies the <code>sub</code> claim, retrieves the Redis-stored user, and raises HTTP 401 on any error.</p>
+            <dl>
+                <dt>Logging</dt>
+                <dd>Keeps detailed audit logs of token decoding, Redis lookup, and authentication success or failure.</dd>
+            </dl>
+        </article>
+        <article class="element" id="function-get-current-active-user">
+            <h3><code>get_current_active_user(current_user)</code></h3>
+            <p>Ensures that the authenticated user is not flagged as disabled before allowing API access; otherwise returns HTTP 400 “Inactive user”.</p>
+        </article>
+    </section>
+
+    <section class="module" id="module-auth-get-user">
+        <header>
+            <h2>User Lookup Utilities &ndash; <a class="anchor" href="#module-auth-get-user">authentification/get_user.py</a></h2>
+            <p>Shared helper functions reused across authentication modules.</p>
+        </header>
+        <article class="element" id="function-auth-shared-get-redis">
+            <h3><code>get_redis_connection()</code> (shared)</h3>
+            <p>Proxy to <code>redis_manager.get_redis_connection</code> so other modules can acquire a Redis client without importing the full manager.</p>
+        </article>
+        <article class="element" id="function-auth-shared-get-user">
+            <h3><code>get_user(r, username)</code> (shared)</h3>
+            <p>Mirrors the retrieval logic used in the authentication guard, performing JSON decoding and error logging.</p>
+        </article>
+    </section>
+
+    <section class="module" id="module-config-settings">
+        <header>
+            <h2>Configuration Management &ndash; <a class="anchor" href="#module-config-settings">config/settings.py</a></h2>
+            <p>Centralised environment-driven configuration with extensive validation for runtime critical settings.</p>
+        </header>
+        <article class="element" id="class-settings">
+            <h3><code>Settings</code></h3>
+            <div class="meta">
+                <span>Pydantic BaseSettings</span>
+                <span>Strong validation on critical secrets and URLs</span>
+            </div>
+            <p>Encapsulates application, Azure, Redis, authentication, LLM, and tracing configuration. Numerous field validators guard against missing or malformed values, ensuring deployments fail fast if required variables are absent or invalid.</p>
+            <details>
+                <summary>Highlighted validators</summary>
+                <ul>
+                    <li>Azure storage/account secrets must be non-empty strings.</li>
+                    <li><code>DATABASE_URL</code> must start with supported schemes (PostgreSQL, MySQL, SQLite, MSSQL, Oracle).</li>
+                    <li>URL fields (<code>API_URL</code>, <code>LITELLM_API_BASE_URL</code>, <code>EXCEL_MCP_URL</code>, <code>LANGFUSE_HOST</code>) are parsed with <code>urlparse</code> to guarantee scheme and host.</li>
+                    <li>Numeric constraints on <code>REDIS_PORT</code>, concurrency limits, and similar toggles.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="function-get-settings">
+            <h3><code>get_settings()</code></h3>
+            <div class="meta">
+                <span>LRU cached</span>
+                <span>Selects .env file based on ENVIRONMENT</span>
+            </div>
+            <p>Determines the active environment (<code>local</code>, <code>dev</code>, <code>prod</code>), loads the appropriate <code>.env</code> file, and returns a cached <code>Settings</code> instance for reuse across the application.</p>
+        </article>
+    </section>
+
+    <section class="module" id="module-middleware">
+        <header>
+            <h2>Middleware Suite &ndash; <a class="anchor" href="#module-middleware">middleware package</a></h2>
+            <p>Cross-cutting concerns for CORS, logging, tracing, and correlation propagation.</p>
+        </header>
+        <article class="element" id="function-add-middleware">
+            <h3><code>add_middleware(app, app_settings)</code></h3>
+            <p>Registers CORS for all origins, and depending on Application Insights mode either installs <code>CorrelationIdMiddleware</code> or configures Structlog and Datadog tracing middleware for local/Elastic logging scenarios.</p>
+        </article>
+        <article class="element" id="class-correlationidmiddleware">
+            <h3><code>CorrelationIdMiddleware</code></h3>
+            <div class="meta">
+                <span>Starlette <code>BaseHTTPMiddleware</code></span>
+                <span>Propagates correlation-id &amp; user headers</span>
+            </div>
+            <p>Reads custom headers (<code>correlation-id</code>, <code>user</code>), stores them in <code>contextvars</code>, attaches them to OpenTelemetry spans, and ensures downstream responses echo the correlation identifier.</p>
+        </article>
+        <article class="element" id="function-get-correlation-id">
+            <h3><code>get_correlation_id()</code> &amp; <code>get_user()</code></h3>
+            <p>Expose the current request's correlation ID and user from the context variables for logging filters and trace enrichment.</p>
+        </article>
+        <article class="element" id="function-add-cors">
+            <h3><code>add_cors(app)</code></h3>
+            <p>Applies permissive CORS policy (all origins, headers, and methods) suitable for controlled API consumers.</p>
+        </article>
+        <article class="element" id="function-add-logging">
+            <h3><code>add_logging(app)</code></h3>
+            <p>Wraps requests in a Structlog-powered access logger replicating Uvicorn format while enriching events with request IDs, durations, and network metadata.</p>
+        </article>
+        <article class="element" id="function-logging-middleware">
+            <h3><code>logging_middleware(request, call_next)</code></h3>
+            <p>Measures request duration, captures unhandled exceptions, sets <code>X-Process-Time</code> headers, and logs structured access records. When exceptions occur, the middleware logs with <code>api.error</code> logger before re-raising.</p>
+        </article>
+        <article class="element" id="function-add-tracing">
+            <h3><code>add_tracing(app)</code></h3>
+            <p>Ensures Datadog's <code>TraceMiddleware</code> sits at the outermost position to capture full request spans when tracing is enabled.</p>
+        </article>
+    </section>
+
+    <section class="module" id="module-logging">
+        <header>
+            <h2>Logging &amp; Telemetry &ndash; <a class="anchor" href="#module-logging">logger package</a></h2>
+            <p>Utilities for consistent structured logging and optional ElasticSearch export.</p>
+        </header>
+        <article class="element" id="class-correlationidfilter">
+            <h3><code>CorrelationIdFilter</code></h3>
+            <p>Augments log records with correlation ID, user, and component metadata by tapping into the middleware context.</p>
+        </article>
+        <article class="element" id="function-configure-logging">
+            <h3><code>configure_logging()</code></h3>
+            <p>Builds a <code>logging</code> configuration for Application Insights mode, attaches <code>CorrelationIdFilter</code>, and sets formatted output covering level, timestamp, module, line, correlation ID, and user.</p>
+        </article>
+        <article class="element" id="function-get-logger">
+            <h3><code>get_logger(name, setup_logger=False)</code></h3>
+            <p>Returns a named logger, optionally bootstrapping Structlog/Datadog pipeline when <code>setup_logger</code> is <code>True</code>.</p>
+        </article>
+        <article class="element" id="function-rename-event-key">
+            <h3><code>rename_event_key</code></h3>
+            <p>Structlog processor renaming the <code>event</code> field to <code>message</code> for Datadog compatibility.</p>
+        </article>
+        <article class="element" id="function-drop-color-message-key">
+            <h3><code>drop_color_message_key</code></h3>
+            <p>Removes redundant <code>color_message</code> entries emitted by Uvicorn when formatting JSON logs.</p>
+        </article>
+        <article class="element" id="function-tracer-injection">
+            <h3><code>tracer_injection</code></h3>
+            <p>Enriches Structlog events with Datadog trace and span identifiers so traces correlate with log entries.</p>
+        </article>
+        <article class="element" id="function-setup-logging">
+            <h3><code>setup_logging(json_logs=False, log_level='INFO', color_logs=True)</code></h3>
+            <p>Configures Structlog processors, selects JSON versus console renderers, patches Uvicorn loggers, suppresses verbose libraries, and installs a global exception hook.</p>
+        </article>
+        <article class="element" id="function-handle-exception">
+            <h3><code>handle_exception(exc_type, exc_value, exc_traceback)</code></h3>
+            <p>Global exception hook capturing uncaught exceptions (except <code>KeyboardInterrupt</code>) and routing them through the structured logger.</p>
+        </article>
+        <article class="element" id="function-elastic-search-logging">
+            <h3><code>elastic_search_logging(record, log_source, es_connection, index_name)</code></h3>
+            <p>Persists log entries to ElasticSearch, auto-creating an index with mapped fields if necessary.</p>
+        </article>
+    </section>
+    <section class="module" id="module-core-services">
+        <header>
+            <h2>Core Services &ndash; <a class="anchor" href="#module-core-services">smart_rag/core</a></h2>
+            <p>Abstractions bridging FastAPI endpoints with underlying orchestration engines.</p>
+        </header>
+        <article class="element" id="class-chatragservice">
+            <h3><code>ChatRAGService</code></h3>
+            <div class="meta">
+                <span>Traditional RAG orchestration</span>
+            </div>
+            <p>Initialises <code>SmartRAGOrchestrator</code> from the traditional engine and forwards chat requests to it.</p>
+            <dl>
+                <dt>Methods</dt>
+                <dd>
+                    <ul>
+                        <li><code>__init__()</code>: Instantiates <code>SmartRAGOrchestrator</code>.</li>
+                        <li><code>process_chat_request(request, queue)</code>: Delegates to <code>orchestrator.chat_smart_rag</code>, streaming responses into the provided queue.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="element" id="class-agentteamservice">
+            <h3><code>AgentTeamService</code></h3>
+            <div class="meta">
+                <span>Multi-agent orchestration gateway</span>
+            </div>
+            <p>Acts as the entry point for multi-agent workflows, delegating to the multi-agent engine.</p>
+            <dl>
+                <dt>Methods</dt>
+                <dd>
+                    <ul>
+                        <li><code>__init__()</code>: Currently a placeholder for future initialisation.</li>
+                        <li><code>process_team_request(request, queue)</code>: Calls <code>run_agent_team_logic</code> to handle suggestion, configuration, and streaming.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+    </section>
+
+    <section class="module" id="module-traditional-engine">
+        <header>
+            <h2>Traditional RAG Engine &ndash; <a class="anchor" href="#module-traditional-engine">smart_rag/engines/traditional</a></h2>
+            <p>Single-agent retrieval augmented generation with hierarchical prompt orchestration and Langfuse tracing.</p>
+        </header>
+        <article class="element" id="class-smartaragorchestrator">
+            <h3><code>SmartRAGOrchestrator</code></h3>
+            <p>Coordinates prompt extraction, agent creation, tool wiring, and streaming response handling for the classic Smart RAG workflow.</p>
+            <details>
+                <summary>Key workflow steps</summary>
+                <ul>
+                    <li>Extracts specialised prompts (agent, operator, report writer, HTML, manager, suggestion) via <code>PromptProcessor</code>.</li>
+                    <li>Constructs document and brain trees from request payloads for search tooling.</li>
+                    <li>Creates delegation functions for search, operator, report writer, and HTML agents using <code>DelegationTools</code>.</li>
+                    <li>Initialises a manager agent with delegation tools, runs it via <code>SessionHelper</code>, and streams SSE events through <code>StreamingFormatter</code>.</li>
+                    <li>Emits Langfuse traces for orchestration spans and ensures resources are cleaned up.</li>
+                </ul>
+            </details>
+            <p><strong><code>chat_smart_rag(user_request, queue)</code></strong> orchestrates the entire lifecycle, pushing structured streaming events onto the queue and terminating with a final <code>end_of_message</code> chunk.</p>
+        </article>
+        <article class="element" id="class-eventextractor">
+            <h3><code>EventExtractor</code></h3>
+            <p>Utility class encapsulating methods to inspect Google ADK event objects.</p>
+            <details>
+                <summary>Important methods</summary>
+                <ul>
+                    <li><code>extract_function_call_info</code>, <code>extract_function_response_info</code>, <code>extract_text_content</code>: Retrieve human-readable descriptions of streaming parts.</li>
+                    <li><code>is_final_response</code>, <code>has_function_call</code>, <code>has_function_response</code>: Boolean helpers for event routing.</li>
+                    <li><code>extract_function_name</code>, <code>extract_function_args</code>: Parse function call metadata from parts.</li>
+                    <li><code>extract_error_info</code>: Detects tool response errors.</li>
+                    <li><code>extract_comprehensive_event_info</code>: Aggregates multiple inspectors into a single dictionary.</li>
+                </ul>
+            </details>
+        </article>
+    </section>
+
+    <section class="module" id="module-agents-core">
+        <header>
+            <h2>Agent Core Utilities &ndash; <a class="anchor" href="#module-agents-core">smart_rag/agents/core</a></h2>
+            <p>Helper classes for manipulating agent metadata, documents, and execution pipelines.</p>
+        </header>
+        <article class="element" id="class-documenthelpers">
+            <h3><code>DocumentHelpers</code></h3>
+            <p>Static utilities to merge brain documents/relations, deduplicate entries, and prepare document tree information for prompts.</p>
+            <details>
+                <summary>Selected methods</summary>
+                <ul>
+                    <li><code>_build_trees(user_request)</code>: Builds document and brain trees from raw payloads.</li>
+                    <li><code>_store_original_brain_data</code>: Preserves agent-specific brain data before merging for prompt optimisation.</li>
+                    <li><code>_get_base_brain_documents</code>, <code>_get_base_brain_relations</code>, <code>_get_base_brain_ids</code>: Resolve fallback context from team configuration or user request.</li>
+                    <li><code>_combine_brain_documents</code>, <code>_combine_brain_relations</code>, <code>_combine_brain_ids</code>, <code>_merge_brain_relations</code>: Merge agent-specific, team-level, and request-level knowledge configurations.</li>
+                    <li><code>_merge_documents_without_duplicates</code>, <code>_extract_document_id</code>: Prevent duplicate document entries when agents extend context.</li>
+                    <li><code>_populate_brain_data</code>, <code>_get_agent_original_brain_documents</code>, <code>_get_agent_original_brain_relations</code>: Enrich agent dictionaries with combined knowledge while retaining originals.</li>
+                    <li><code>get_document_tree_info_without_ids</code>, <code>_remove_ids_from_tree</code>, <code>_remove_ids_from_brain_tree</code>: Produce anonymised hierarchical descriptions suitable for manager prompts.</li>
+                    <li><code>_get_consolidated_document_tree_info_for_manager</code>: Summarises shared and agent-specific document availability.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-agenthelper">
+            <h3><code>AgentHelper</code></h3>
+            <p>Normalises agent names, augments prompts with tool information, and prepares agent dictionaries for execution.</p>
+            <details>
+                <summary>Key capabilities</summary>
+                <ul>
+                    <li><code>sanitize_function_name</code>: Produces safe function identifiers from arbitrary agent names.</li>
+                    <li><code>normalize_agent_name</code>: Standardises names for repository lookups.</li>
+                    <li><code>get_document_tree_info</code>: Formats document and brain trees for prompt inclusion.</li>
+                    <li><code>pre_agent_run_config</code>: Inserts default report writer/HTML agents, applies fallback chatbot names, and enriches descriptions with available tools.</li>
+                    <li><code>_prepare_agent_data</code>: Clones agent dicts, populates brain data using <code>DocumentHelpers</code>, and prunes unusable search tools.</li>
+                    <li><code>_remove_search_if_empty</code>: Removes the search tool when no documents or relations are available and annotates prompts accordingly.</li>
+                    <li><code>_create_enhanced_manager_prompt</code>: Builds manager instructions listing delegates and usage guidance.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-agentrepository">
+            <h3><code>AgentRepository</code></h3>
+            <p>In-memory collection managing agent definitions, normalised lookups, and capability checks.</p>
+            <dl>
+                <dt>Methods</dt>
+                <dd>
+                    <ul>
+                        <li><code>add_agent</code>, <code>set_agents</code>: Insert or replace agent lists.</li>
+                        <li><code>get_agent_by_name</code>, <code>get_agent_id_by_name</code>: Resolve agent metadata and IDs case-insensitively.</li>
+                        <li><code>get_all_agents</code>: Returns the current roster.</li>
+                        <li><code>has_search_agents</code>: Flags whether any agent exposes search tools, used for prompt shaping.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="element" id="class-agentrunner">
+            <h3><code>AgentRunner</code></h3>
+            <p>Executes Google ADK agents, streams intermediate events, and records Langfuse traces.</p>
+            <details>
+                <summary>Primary methods</summary>
+                <ul>
+                    <li><code>run_agent_tool</code>: Handles session initialisation, agent type detection (standard/report/html), and streaming of task descriptions, chunks, sources, and final results.</li>
+                    <li><code>_run_standard_agent</code>: Iterates over streaming events, emits search and delegate notifications, records function calls/responses, and returns the final result along with MCP usage and execution summary.</li>
+                    <li><code>_run_html_agent</code>: Tailored streaming for HTML agents, chunking large payloads into 250-character segments.</li>
+                    <li><code>_handle_function_call</code>, <code>_handle_final_response</code>: Format and queue function call events and sources for downstream clients.</li>
+                </ul>
+            </details>
+        </article>
+    </section>
+    <section class="module" id="module-agents-factories">
+        <header>
+            <h2>Agent Factories &ndash; <a class="anchor" href="#module-agents-factories">smart_rag/agents/factories</a></h2>
+            <p>Create, configure, and delegate specialised agents with toolkits, prompts, and observability hooks.</p>
+        </header>
+        <article class="element" id="class-agentfactory">
+            <h3><code>AgentFactory</code></h3>
+            <p>Central factory for constructing Google ADK agents with optional calculators, search toolkits, MCP integrations, and HTML capabilities.</p>
+            <details>
+                <summary>Signature methods</summary>
+                <ul>
+                    <li><code>create_agent(...)</code>: Builds a generic agent with optional calculator, document search, and MCP toolset; automatically chooses between tool-capable and plain LLMs.</li>
+                    <li><code>create_report_writer_agent(prompt, chatbot_name)</code>: Produces a report writer without tools.</li>
+                    <li><code>create_html_agent(prompt, chatbot_name, tools, name)</code>: Creates an HTML/visualisation agent optionally configured with additional tools.</li>
+                    <li><code>create_operator_agent(prompt, excel_mcp_headers, chatbot_name)</code>: Includes calculator and Excel MCP toolset when available.</li>
+                    <li><code>create_search_agent(...)</code>: Assembles search-capable agents, generates document tree info, optionally adds <code>perform_standard_search</code>, and returns both the agent and <code>SearchToolkit</code>.</li>
+                    <li><code>create_manager_agent(prompt, chatbot_name, tools)</code>: Builds the manager agent with delegation tools and additional context callback.</li>
+                    <li><code>create_tools_for_agent(...)</code>: Convenience helper forwarding to <code>ToolFactory</code> for simple cases.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-agentdelegationfactory">
+            <h3><code>AgentDelegationFactory</code></h3>
+            <p>Generates asynchronous delegate functions that the manager agent can call to execute specialised agents while maintaining Langfuse trace hierarchies.</p>
+            <details>
+                <summary>Important methods</summary>
+                <ul>
+                    <li><code>make_delegate_function(agent_name, q, search_web, parent_span)</code>: Returns an async delegate that records input/output spans, creates the agent on demand, and streams results.</li>
+                    <li><code>_create_agent_with_error_handling(...)</code>: Validates agent availability, enhances prompts with tool descriptions, and instantiates the agent/toolkit pair.</li>
+                    <li><code>_execute_agent_with_error_handling(...)</code>: Runs the agent via <code>AgentRunner</code>, records execution summaries, updates spans, and streams queue events.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="function-create-agent-for-delegation">
+            <h3><code>create_agent_for_delegation(...)</code></h3>
+            <p>Dispatcher choosing between <code>create_search_agent_with_tools</code> and <code>create_standard_agent_with_tools</code> depending on agent configuration.</p>
+        </article>
+        <article class="element" id="function-create-regular-agent">
+            <h3><code>create_regular_agent(...)</code></h3>
+            <p>Builds non-HTML agents, optionally enabling search capabilities and web search depth based on tools.</p>
+        </article>
+        <article class="element" id="function-prepare-agent-data">
+            <h3><code>prepare_agent_data(helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name)</code></h3>
+            <p>Constructs document/brain trees, enriches prompts, resolves brain IDs, vectorstore names, and normalises chatbot names before delegation.</p>
+        </article>
+        <article class="element" id="function-get-enhanced-prompt">
+            <h3><code>get_enhanced_prompt(...)</code></h3>
+            <p>Combines base prompts with document tree information when search tools are present.</p>
+        </article>
+        <article class="element" id="function-create-search-agent-with-tools">
+            <h3><code>create_search_agent_with_tools(...)</code></h3>
+            <p>Initialises a search-enabled agent via <code>AgentFactory.create_search_agent</code>, stores toolkit references for source handling, and appends calculator tools when requested.</p>
+        </article>
+        <article class="element" id="function-create-standard-agent-with-tools">
+            <h3><code>create_standard_agent_with_tools(...)</code></h3>
+            <p>Constructs non-search agents, optionally layering calculator or web search utilities based on tool list.</p>
+        </article>
+        <article class="element" id="class-manageragentfactory">
+            <h3><code>ManagerAgentFactory</code></h3>
+            <p>Produces the manager agent, injecting contextual callbacks and consolidated document overview when search agents exist.</p>
+            <dl>
+                <dt>Key operations</dt>
+                <dd>
+                    <ul>
+                        <li><code>create_manager_agent(manager_prompt, tools, delegation_factory)</code>: Configures before/after callbacks to track search agent availability and maintain task order state.</li>
+                        <li><code>_create_manager_instruction</code>: Cleans the manager prompt, adds web search context, and appends document tree summaries.</li>
+                        <li><code>_get_document_tree_info</code>: Delegates to <code>AgentHelper</code> for formatted tree information.</li>
+                    </ul>
+                </dd>
+            </dl>
+        </article>
+        <article class="element" id="class-toolfactory">
+            <h3><code>ToolFactory</code></h3>
+            <p>Constructs search tool wrappers, MCP toolsets, and determines when to enable web or in-memory extraction.</p>
+            <details>
+                <summary>Highlights</summary>
+                <ul>
+                    <li><code>create_search_tools</code>: Generates <code>SearchToolkit</code> functions for document search, brain search, web search, and in-memory extraction depending on available schemas.</li>
+                    <li><code>create_tools_for_agent</code>: Adds calculator/search/web search tools based on flags.</li>
+                    <li><code>create_mcp_toolset</code>: Builds MCP toolsets from connection headers via <code>MCPHelper</code>.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="function-create-enhanced-prompt">
+            <h3><code>create_enhanced_prompt(agent_config, tool_provider, agent_repository)</code></h3>
+            <p>Combines base prompts with tool descriptions, citation requirements, and report sourcing rules when search agents are present.</p>
+        </article>
+        <article class="element" id="function-process-execution-summary">
+            <h3><code>process_execution_summary(execution_summary, delegation_span)</code></h3>
+            <p>Iterates over execution flow entries, routing them to <code>process_execution_step</code> and attaching detailed Langfuse events.</p>
+        </article>
+        <article class="element" id="function-process-execution-step">
+            <h3><code>process_execution_step(step, delegation_span)</code></h3>
+            <p>Dispatches step handling based on type (function execution, text generation, error, etc.).</p>
+        </article>
+        <article class="element" id="function-add-function-execution-event">
+            <h3><code>add_function_execution_event(step, delegation_span)</code></h3>
+            <p>Emits Langfuse events for tool calls, ensuring input arguments and outputs are captured.</p>
+        </article>
+        <article class="element" id="function-update-span-with-result">
+            <h3><code>update_span_with_execution_result(delegation_span, result, execution_summary, agent_name)</code></h3>
+            <p>Marks spans as success or failure based on execution statistics, including error counts when present.</p>
+        </article>
+        <article class="element" id="function-determine-execution-success">
+            <h3><code>determine_execution_success(execution_summary)</code></h3>
+            <p>Returns <code>True</code> when no errors are recorded in the execution summary.</p>
+        </article>
+        <article class="element" id="function-get-error-count">
+            <h3><code>get_error_count(execution_summary)</code></h3>
+            <p>Extracts aggregated error counts, defaulting to zero when absent.</p>
+        </article>
+    </section>
+    <section class="module" id="module-agents-generators">
+        <header>
+            <h2>Agent Suggestion Engine &ndash; <a class="anchor" href="#module-agents-generators">smart_rag/agents/generators</a></h2>
+            <p>Analyses user prompts to propose relevant specialised agents and parse model responses.</p>
+        </header>
+        <article class="element" id="class-agentsuggestiongenerator">
+            <h3><code>AgentSuggestionGenerator</code></h3>
+            <p>Produces suggestions by prompting an LLM, supports structured output when available, and maps suggestion IDs back to pre-existing agents.</p>
+            <details>
+                <summary>Core methods</summary>
+                <ul>
+                    <li><code>generate_suggestions(suggestions_prompt, user_prompt, available_agents, config, ...)</code>: Formats prompts with available agents, runs the suggestion agent, and returns parsed suggestions with an ID mapping.</li>
+                    <li><code>_create_suggestion_agent</code>: Builds the generator agent, configuring <code>output_schema</code> if the chosen model supports structured output, otherwise injecting JSON instructions into the prompt.</li>
+                    <li><code>_run_suggestion_agent</code>: Manages the ADK session, streams events, and parses the first non-empty suggestion payload.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="function-model-supports-structured-output">
+            <h3><code>model_supports_structured_output(model_name)</code></h3>
+            <p>Heuristic determining whether a model can natively emit structured JSON (excludes known OSS GPT variants).</p>
+        </article>
+        <article class="element" id="function-parse-suggestions-response">
+            <h3><code>parse_suggestions_response(response)</code></h3>
+            <p>Attempts to parse JSON from model responses; falls back to <code>extract_json_from_text</code> when plain-text output is returned.</p>
+        </article>
+        <article class="element" id="function-extract-json-from-text">
+            <h3><code>extract_json_from_text(text)</code></h3>
+            <p>Uses regex to locate JSON fragments inside free-form responses and parses them, returning empty structures when parsing fails.</p>
+        </article>
+    </section>
+
+    <section class="module" id="module-agents-tools">
+        <header>
+            <h2>Delegation &amp; Tool Management &ndash; <a class="anchor" href="#module-agents-tools">smart_rag/agents/tools</a></h2>
+            <p>Handles creation of delegate functions exposed to the manager and extraction of agent mentions from prompts.</p>
+        </header>
+        <article class="element" id="class-delegationtools">
+            <h3><code>DelegationTools</code></h3>
+            <p>Builds predefined delegate coroutines for search, operator, report writer, and HTML agents. Each delegate manages Langfuse spans, streams queue updates, and handles MCP file uploads or errors.</p>
+            <details>
+                <summary>Delegate responsibilities</summary>
+                <ul>
+                    <li><strong>Search delegate</strong>: Configures <code>SearchToolkit</code>, records function execution flow, and streams source metadata.</li>
+                    <li><strong>Operator delegate</strong>: Executes calculator/MCP tasks, uploads files to the data lake, and streams file metadata.</li>
+                    <li><strong>Report writer delegate</strong>: Produces synthesised reports and marks spans according to success state.</li>
+                    <li><strong>HTML delegate</strong>: Streams HTML chunks and updates execution spans.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-agenttoolsmanager">
+            <h3><code>AgentToolsManager</code></h3>
+            <p>Parses <code>@agent</code> mentions from user prompts, generates corresponding delegate functions via <code>AgentDelegationFactory</code>, and provides fallbacks when no mentions are found.</p>
+            <details>
+                <summary>Key methods</summary>
+                <ul>
+                    <li><code>extract_agent_tools_from_mentions(user_prompt, q, search_web)</code>: Detects mentions, sanitises names, and builds delegate functions.</li>
+                    <li><code>create_tools_from_all_agents(q, search_web)</code>: Creates delegates for every repository agent when no mentions are provided.</li>
+                    <li><code>get_agent_tools(user_prompt, q, search_web)</code>: Preferred entry point combining mention extraction with all-agent fallback and error reporting.</li>
+                </ul>
+            </details>
+        </article>
+    </section>
+    <section class="module" id="module-infrastructure-factories">
+        <header>
+            <h2>LLM Factory &ndash; <a class="anchor" href="#module-infrastructure-factories">smart_rag/infrastructure/factories</a></h2>
+            <p>Creates LiteLLM-backed adapters for Azure OpenAI, OpenRouter, and Ollama models while injecting user context.</p>
+        </header>
+        <article class="element" id="class-llmfactory">
+            <h3><code>LLMFactory</code></h3>
+            <p>Provides two static constructors:</p>
+            <ul>
+                <li><code>create_parallel_tool_calls_llm(model_name)</code>: Builds a streaming LLM with parallel tool calls disabled (or Ollama equivalent) suitable for tool-enabled agents.</li>
+                <li><code>create_no_tool_calls_llm(model_name)</code>: Returns a streaming LLM without tool invocation support.</li>
+            </ul>
+            <p>Both methods detect dictionary-based chatbot descriptors, extract provider identifiers, set environment variables for Ollama, and log model creation success.</p>
+        </article>
+    </section>
+
+    <section class="module" id="module-processing">
+        <header>
+            <h2>Prompt &amp; Callback Processing &ndash; <a class="anchor" href="#module-processing">smart_rag/infrastructure/processing</a></h2>
+            <p>Cleans prompts, builds contextual history, and injects additional context/images before and after tool execution.</p>
+        </header>
+        <article class="element" id="class-promptprocessor">
+            <h3><code>PromptProcessor</code></h3>
+            <p>Handles prompt extraction and normalisation.</p>
+            <details>
+                <summary>Key methods</summary>
+                <ul>
+                    <li><code>extract_chatbot_name_and_clean_prompt</code>: Detects chatbot tags in prompts and strips them from instructions.</li>
+                    <li><code>extract_prompts</code>: Splits composite prompt descriptions into agent-specific segments.</li>
+                    <li><code>get_web_search_prompt(index)</code>: Retrieves canned web search guidance from environment configuration.</li>
+                    <li><code>extract_task_description</code>: Pulls task descriptions from tagged text.</li>
+                    <li><code>clean_prompt_text</code>, <code>validate_prompt_structure</code>, <code>merge_prompts_with_context</code>, <code>process_manager_prompt</code>, <code>process_agent_prompt</code>: Normalise whitespace, ensure required sections exist, and merge context snippets.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-contextbuilder">
+            <h3><code>ContextBuilder</code></h3>
+            <p>Builds structured context strings from previous session events, differentiating manager-specific and agent-specific views by including recent responses.</p>
+        </article>
+        <article class="element" id="function-add-additional-context">
+            <h3><code>add_additional_context(tool, args, tool_context)</code></h3>
+            <p>Before-tool callback that appends structured context to delegate calls, enforces presence of <code>expected_output</code> and <code>task_description</code>, increments task order counters for search agents, and strips source tags when handing context to search delegates.</p>
+        </article>
+        <article class="element" id="function-get-structured-context">
+            <h3><code>get_structured_context(events, search_agent=False)</code></h3>
+            <p>Formats prior session events into XML-like blocks for additional context, removing source tags for search agents to avoid duplication.</p>
+        </article>
+        <article class="element" id="function-catch-images-after-tool">
+            <h3><code>catch_images_after_tool(tool, args, tool_context, tool_response)</code></h3>
+            <p>Post-tool callback for search functions that buffers images, annotates text sources with ordering, and returns cleaned source lists to the agent.</p>
+        </article>
+        <article class="element" id="function-inject-images-before-model">
+            <h3><code>inject_images_before_model(callback_context, llm_request)</code></h3>
+            <p>Pre-model callback that injects buffered images (with filenames) into the LLM request content and clears the buffer.</p>
+        </article>
+    </section>
+    <section class="module" id="module-external">
+        <header>
+            <h2>External Integrations &ndash; <a class="anchor" href="#module-external">smart_rag/infrastructure/external</a></h2>
+            <p>Bridges Smart ADK with external MCP servers and emits system-level queue messages.</p>
+        </header>
+        <article class="element" id="class-mcphelper">
+            <h3><code>MCPHelper</code></h3>
+            <p>Static helper for interacting with the Excel MCP server.</p>
+            <ul>
+                <li><code>create_excel_mcp_headers</code>: Encodes brain documents and session metadata into HTTP headers.</li>
+                <li><code>upload_files_to_datalake</code>: Opens SSE client connections, initialises MCP sessions, invokes the <code>upload_files</code> tool, and parses results.</li>
+                <li><code>validate_mcp_headers</code>: Ensures required headers are present.</li>
+                <li><code>create_mcp_connection_params</code>, <code>create_mcp_toolset</code>: Build Google ADK MCP toolset instances from header metadata.</li>
+            </ul>
+        </article>
+        <article class="element" id="function-create-common-helpers">
+            <h3><code>create_common_helpers(file_path=&quot;./tmp&quot;)</code></h3>
+            <p>Factory exposed for convenience (implemented in <code>smart_rag/tools/infrastructure/common_helpers.py</code>) that instantiates <code>CommonHelpers</code> for shared file operations.</p>
+        </article>
+        <article class="element" id="class-messagehelper">
+            <h3><code>MessageHelper</code></h3>
+            <p>Provides internal methods <code>_send_suggestions</code> and <code>_send_error_message</code> to push structured system updates into streaming queues (using constants such as <code>SYSTEM_AGENT_NAME</code> and <code>SUGGESTIONS_CONTENT_TYPE</code>).</p>
+        </article>
+    </section>
+    <section class="module" id="module-session">
+        <header>
+            <h2>Session Management &ndash; <a class="anchor" href="#module-session">smart_rag/infrastructure/session</a></h2>
+            <p>Provides resilient database-backed sessions for Google ADK agents.</p>
+        </header>
+        <article class="element" id="class-patcheddatabasesessionservice">
+            <h3><code>PatchedDatabaseSessionService</code></h3>
+            <p>Extends the default ADK <code>DatabaseSessionService</code> to enable connection pooling with health checks, recycling, and overflow limits.</p>
+        </article>
+        <article class="element" id="class-sessionhelper">
+            <h3><code>SessionHelper</code></h3>
+            <p>Lifecycle manager for ADK sessions per user.</p>
+            <ul>
+                <li><code>init_session(agent, session_id=None)</code>: Ensures sessions exist (creating when needed), initialises <code>Runner</code>, and returns the session ID.</li>
+                <li><code>set_session()</code>: Reuses existing sessions when available, otherwise creates new ones.</li>
+                <li><code>add_exit_stack</code>: Registers async exit stacks for cleanup.</li>
+                <li><code>cleanup()</code>: Closes exit stacks, disposes database engines, and resets internal state.</li>
+            </ul>
+        </article>
+    </section>
+
+    <section class="module" id="module-monitoring">
+        <header>
+            <h2>Monitoring &amp; Tracing &ndash; <a class="anchor" href="#module-monitoring">smart_rag/infrastructure/monitoring</a></h2>
+            <p>Integrates Langfuse tracing and exposes helper utilities to capture agent execution flow.</p>
+        </header>
+        <article class="element" id="class-tracerecorder">
+            <h3><code>TraceRecorder</code></h3>
+            <p>Aggregates text chunks, function calls, responses, and errors for each agent, producing structured execution summaries consumed by Langfuse spans.</p>
+            <details>
+                <summary>Notable methods</summary>
+                <ul>
+                    <li><code>record_chunk</code>, <code>record_function_call</code>, <code>record_function_response</code>, <code>record_error</code>, <code>record_final_result</code>: Append corresponding events to the history.</li>
+                    <li><code>get_execution_summary</code>: Merges history into chronological execution steps with statistics (text length, function call count, errors, final result).</li>
+                    <li><code>_get_timestamp</code>: Supplies timestamps for recorded events.</li>
+                </ul>
+            </details>
+            <p>The module also initialises a reusable <code>langfuse_client</code> and OTEL exporter headers derived from settings.</p>
+        </article>
+    </section>
+    <section class="module" id="module-tools-common">
+        <header>
+            <h2>Shared Tool Utilities &ndash; <a class="anchor" href="#module-tools-common">smart_rag/tools/infrastructure</a></h2>
+            <p>Provides reusable helpers for file downloads, vectorstore interactions, and tool documentation.</p>
+        </header>
+        <article class="element" id="class-commonhelpers">
+            <h3><code>CommonHelpers</code></h3>
+            <p>Asynchronous utility class for document retrieval and vectorstore calls.</p>
+            <details>
+                <summary>Key methods</summary>
+                <ul>
+                                        <li><code>async_download_from_azure_datalake</code>: Streams files from Azure Data Lake to local storage, supporting SSL and asynchronous writes.</li>
+                    <li><code>create_search_payload</code>: Generates standardised payloads for similarity search endpoints.</li>
+                    <li><code>create_text_object</code>, <code>create_image_object</code>: Normalise search results into consistent dictionaries.</li>
+                    <li><code>process_image_downloads</code>, <code>process_downloaded_images</code>, <code>wrap_images</code>: Download, read, and base64-encode images for tool injection.</li>
+                    <li><code>filter_ids</code>: Filters attribute mappings based on user-provided filters (with special handling for <code>id</code> lookups).</li>
+                    <li><code>post_vectorstore</code>: Executes local similarity search requests using the integrated vectorstore functionality.</li>
+                    <li><code>validate_metadata</code>, <code>extract_filename_from_path</code>, <code>ensure_directory_exists</code>: Utility helpers for metadata validation and filesystem hygiene.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-tooldescriptionprovider">
+            <h3><code>ToolDescriptionProvider</code></h3>
+            <p>Supplies human-readable tool descriptions and citation requirements to enrich agent prompts. Methods include:</p>
+            <ul>
+                <li><code>get_tools_description</code>: Formats markdown sections describing each available tool.</li>
+                <li><code>get_source_citation_requirements</code>: Returns detailed instructions for citing document, in-memory, and web sources.</li>
+                <li><code>get_source_reference_requirements_for_reports</code>: Tailors citation guidance for report writer outputs.</li>
+            </ul>
+        </article>
+    </section>
+    <section class="module" id="module-tools-search">
+        <header>
+            <h2>Search Tools &amp; Toolkit &ndash; <a class="anchor" href="#module-tools-search">smart_rag/tools/search</a></h2>
+            <p>Implements document, brain, in-memory, and web search utilities along with helper schemas.</p>
+        </header>
+        <article class="element" id="class-searchtooladk">
+            <h3><code>SearchToolADK</code></h3>
+            <p>Extends Google ADK's <code>FunctionTool</code> to use pre-built JSON schemas, ensuring consistent function declarations for search actions.</p>
+        </article>
+        <article class="element" id="function-get-transformed-ids-by-names">
+            <h3><code>get_transformed_ids_by_names(attribute_mapping, names)</code></h3>
+            <p>Returns transformed brain IDs associated with name attributes, supporting both single values and lists.</p>
+        </article>
+        <article class="element" id="function-create-search-schema">
+            <h3><code>create_search_schema(name, description, properties, required)</code></h3>
+            <p>Generates JSON schema dictionaries describing search functions.</p>
+        </article>
+        <article class="element" id="function-validate-search-parameters">
+            <h3><code>validate_search_parameters(params, schema)</code></h3>
+            <p>Ensures required parameters are present before executing search functions.</p>
+        </article>
+        <article class="element" id="function-get-attribute-mapping-info">
+            <h3><code>get_attribute_mapping_info(attribute_mapping)</code></h3>
+            <p>Summarises attribute mapping statistics for diagnostics (total attributes, values, IDs).</p>
+        </article>
+        <article class="element" id="class-searchresultprocessor">
+            <h3><code>SearchResultProcessor</code></h3>
+            <p>Static helper with methods <code>deduplicate_by_id</code>, <code>format_search_response</code>, and <code>extract_metadata_fields</code> to post-process search results.</p>
+        </article>
+        <article class="element" id="class-searchtoolkit">
+            <h3><code>SearchToolkit</code></h3>
+            <p>Comprehensive toolkit orchestrating document, brain, in-memory, and web search across Smart ADK knowledge sources.</p>
+            <details>
+                <summary>Key methods</summary>
+                <ul>
+                    <li><code>perform_standard_search(query)</code>: Executes combined text/image searches and returns sources plus filenames.</li>
+                    <li><code>perform_document_search(query, **filters)</code>: Applies attribute filters before performing standard search.</li>
+                    <li><code>preform_all_brain_search(query, brain_name, document_filter)</code>: Focuses search on specific brains or documents.</li>
+                    <li><code>perform_in_memory_extraction(file_name)</code>: Retrieves full content of in-memory documents, handling download/read errors.</li>
+                    <li><code>perform_web_search(query)</code>: Delegates to <code>WebSearchTool</code> when enabled.</li>
+                    <li><code>set_in_memory_documents(doc_tree, in_memory_attribute_mapping)</code>: Registers in-memory files for later extraction.</li>
+                    <li><code>generate_search_function</code>, <code>generate_generic_function</code>, <code>generate_function</code>: Dynamically create callable wrappers with validated signatures and OpenAI-compatible schemas.</li>
+                    <li>Private helpers <code>_search_text_documents</code>, <code>_search_image_documents</code>, <code>_empty_search_result</code>, <code>get_search_stats</code> support retrieval and analytics.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-websearchtool">
+            <h3><code>WebSearchTool</code></h3>
+            <p>Async LinkUp API client capable of standard or deep searches, returning formatted answers and sources.</p>
+            <ul>
+                <li><code>perform_web_search</code>, <code>web_search</code>: Execute searches with depth selection.</li>
+                <li><code>_format_search_response</code>: Formats answers with bullet-point sources.</li>
+                <li><code>search_with_filters</code>: Allows custom output types.</li>
+                <li><code>get_search_capabilities</code>, <code>validate_api_key</code>: Provide introspection and validation.</li>
+            </ul>
+        </article>
+        <article class="element" id="function-web-search">
+            <h3><code>web_search(query, search_web=&quot;standard&quot;)</code></h3>
+            <p>Legacy convenience coroutine that instantiates <code>WebSearchTool</code> and delegates to <code>web_search</code>.</p>
+        </article>
+        <article class="element" id="function-create-web-search-tool">
+            <h3><code>create_web_search_tool(api_key=None)</code></h3>
+            <p>Factory returning a <code>WebSearchTool</code> with optional custom API key.</p>
+        </article>
+    </section>
+    <section class="module" id="module-tools-utilities">
+        <header>
+            <h2>Low-level Utilities &ndash; <a class="anchor" href="#module-tools-utilities">smart_rag/tools/utilities</a></h2>
+            <p>Foundational helpers for building document trees, schemas, and evaluating expressions.</p>
+        </header>
+        <article class="element" id="function-transform-id">
+            <h3><code>transform_id(node_id)</code></h3>
+            <p>Placeholder transformation function used when assigning synthetic IDs.</p>
+        </article>
+        <article class="element" id="function-assign-transformed-ids">
+            <h3><code>assign_transformed_ids_and_extract_attributes(brain_tree, attribute_values, attribute_mapping)</code></h3>
+            <p>Recursively traverses brain trees to populate attribute mappings for names and documents.</p>
+        </article>
+        <article class="element" id="function-build-brain-tree">
+            <h3><code>build_brain_tree(brain_relations)</code></h3>
+            <p>Constructs hierarchical nodes and child relationships from <code>brain_relations</code>.</p>
+        </article>
+        <article class="element" id="function-generate-brain-tree-schema">
+            <h3><code>generate_brain_tree_schema(brain_tree)</code></h3>
+            <p>Generates schemas and attribute mappings for brain search functions.</p>
+        </article>
+        <article class="element" id="function-build-tree">
+            <h3><code>build_tree(brain_documents, brain_relations)</code></h3>
+            <p>Combines document metadata and brain relationships into parallel tree structures for toolkit consumption.</p>
+        </article>
+        <article class="element" id="function-construct-json">
+            <h3><code>construct_json(documents)</code></h3>
+            <p>Assigns synthetic IDs, builds attribute mappings, and produces JSON schemas for document search functions.</p>
+        </article>
+        <article class="element" id="function-inmemory-construct-json">
+            <h3><code>inmemory_construct_json(documents_tree)</code></h3>
+            <p>Creates schemas and mappings for in-memory document extraction.</p>
+        </article>
+        <article class="element" id="function-convert-sources-structure">
+            <h3><code>convert_sources_structure(sources)</code></h3>
+            <p>Transforms LangChain <code>Document</code> objects into serialisable dictionaries.</p>
+        </article>
+        <article class="element" id="function-safe-eval">
+            <h3><code>_safe_eval(node)</code></h3>
+            <p>Recursively evaluates AST nodes representing allowed mathematical expressions.</p>
+        </article>
+        <article class="element" id="function-calculator">
+            <h3><code>calculator(expression)</code></h3>
+            <p>Safely evaluates arithmetic expressions (supporting <code>sqrt</code>, exponentiation, modulo, etc.) and returns the result as a string.</p>
+        </article>
+        <article class="element" id="function-is-safe-expression">
+            <h3><code>is_safe_expression(expression)</code></h3>
+            <p>Validates that an expression only contains permitted operations.</p>
+        </article>
+        <article class="element" id="function-get-supported-operations">
+            <h3><code>get_supported_operations()</code></h3>
+            <p>Describes supported calculator operations and sample expressions.</p>
+        </article>
+    </section>
+    <section class="module" id="module-messaging">
+        <header>
+            <h2>Streaming &amp; Messaging &ndash; <a class="anchor" href="#module-messaging">smart_rag/messaging</a></h2>
+            <p>Formats streaming payloads and adds consistent task tagging to agent outputs.</p>
+        </header>
+        <article class="element" id="class-streamingformatter">
+            <h3><code>StreamingFormatter</code></h3>
+            <p>Static class that produces dictionary payloads consumed by the FastAPI SSE stream.</p>
+            <details>
+                <summary>Key methods</summary>
+                <ul>
+                    <li><code>format_streaming_event</code>, <code>format_task_description_event</code>, <code>format_function_call_event</code>, <code>format_search_event</code>, <code>format_calculation_event</code>, <code>format_source_event</code>, <code>format_file_event</code>, <code>format_error_event</code>, <code>format_final_response_event</code>, <code>format_html_chunk_event</code>: Build consistent message structures for different content types.</li>
+                    <li><code>split_and_format_large_content</code>: Splits large responses into manageable chunks.</li>
+                    <li><code>create_search_events_for_function</code>: Generates human-readable search annotations based on function names and arguments.</li>
+                    <li><code>validate_event_format</code>: Confirms required fields exist in custom events.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-messagetransformer">
+            <h3><code>MessageTransformer</code></h3>
+            <p>Applies Smart ADK tagging conventions to agent text.</p>
+            <ul>
+                <li><code>tag_full_text(raw_text, task_n)</code>: Adds task-prefixed tags to text/image references for final responses.</li>
+                <li><code>simple_tag_transformer(tempmsg, task_n, buffer, max_length)</code>: Streaming-friendly transformer that accumulates partial tags across chunks.</li>
+            </ul>
+        </article>
+    </section>
+    <section class="module" id="module-multi-agent-config">
+        <header>
+            <h2>Multi-agent Configuration &ndash; <a class="anchor" href="#module-multi-agent-config">smart_rag/engines/multi_agent/config.py</a></h2>
+            <p>Holds multi-agent constants, Langfuse client initialisation, and dataclasses for agent team configuration.</p>
+        </header>
+        <article class="element" id="class-agentteamconfig">
+            <h3><code>AgentTeamConfig</code></h3>
+            <p>Dataclass containing session identifiers, user IDs, chatbot selection, document/brain trees, brain IDs, <code>top_k</code>, and vectorstore names used throughout multi-agent orchestration.</p>
+        </article>
+    </section>
+    <section class="module" id="module-multi-agent-workflow">
+        <header>
+            <h2>Multi-agent Workflow Orchestration &ndash; <a class="anchor" href="#module-multi-agent-workflow">smart_rag/engines/multi_agent</a></h2>
+            <p>Coordinates suggestion, selection, and execution of multiple specialised agents with real-time streaming and tracing.</p>
+        </header>
+        <article class="element" id="function-run-agent-team-logic">
+            <h3><code>run_agent_team_logic(user_request, q)</code></h3>
+            <p>Entry point for multi-agent requests: creates a Langfuse trace, initialises dependencies, builds configuration, constructs the auto-agent team, and invokes <code>execute_workflow</code>. Marks traces as success or failure and flushes Langfuse buffers.</p>
+        </article>
+        <article class="element" id="function-execute-workflow">
+            <h3><code>execute_workflow(team, user_request, q, main_trace)</code></h3>
+            <p>Selects the appropriate workflow based on <code>agent_mode</code>: <code>auto</code> triggers <code>handle_no_agents_workflow</code>, <code>manual</code> triggers <code>handle_agents_provided_workflow</code>.</p>
+        </article>
+        <article class="element" id="class-autoagentgenerationteam">
+            <h3><code>AutoAgentGenerationTeam</code></h3>
+            <p>Central orchestrator maintaining agent repositories, generating suggestions, creating manager agents, and processing streaming events.</p>
+            <details>
+                <summary>Key methods</summary>
+                <ul>
+                    <li><code>__init__</code>: Wires prompt processors, LLM factory, agent factory, runner, streaming formatter, suggestion generator, and supporting helpers.</li>
+                    <li><code>get_agent_id_by_name</code>, <code>has_search_agents</code>, <code>get_document_tree_info</code>: Convenience accessors for agent metadata.</li>
+                    <li><code>get_agent_suggestions</code>: Invokes suggestion generator, enriches suggestions with brain data, updates repository, and returns aggregated agents.</li>
+                    <li><code>make_delegate_function</code>: Forwards to <code>AgentDelegationFactory</code>.</li>
+                    <li><code>run_agent_team(user_prompt, manager_prompt, session_id, q, parent_trace)</code>: Creates manager agent tools, initialises sessions, processes streaming events, and flushes Langfuse traces.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="class-streamingeventprocessor">
+            <h3><code>StreamingEventProcessor</code></h3>
+            <p>Consumes streaming events from the manager agent, emits SSE payloads, tracks delegations, and updates Langfuse spans with generated text.</p>
+            <details>
+                <summary>Methods</summary>
+                <ul>
+                    <li><code>process_streaming_events(session_helper, session_id, user_prompt, manager_agent, agent_runner, q, span)</code>: Core loop iterating through ADK events and delegating to <code>_handle_event_parts</code>.</li>
+                    <li><code>_handle_event_parts(event, manager_agent, message_id, q, span, delegation_count, accumulated_text)</code>: Processes text, function calls/responses, final responses, and updates counters.</li>
+                    <li><code>_handle_text_event</code>, <code>_handle_final_response</code>: Format SSE payloads for manager chunks and completions.</li>
+                </ul>
+            </details>
+        </article>
+        <article class="element" id="function-initialize-dependencies">
+            <h3><code>initialize_dependencies()</code></h3>
+            <p>Instantiates <code>PromptProcessor</code>, <code>LLMFactory</code>, <code>AgentFactory</code>, <code>StreamingFormatter</code>, <code>EventExtractor</code>, and <code>AgentRunner</code> used by the team.</p>
+        </article>
+        <article class="element" id="function-create-team-config">
+            <h3><code>create_team_config(user_request)</code></h3>
+            <p>Builds <code>AgentTeamConfig</code> by constructing document/brain trees from the request and capturing vectorstore settings.</p>
+        </article>
+        <article class="element" id="function-create-team">
+            <h3><code>create_team(config, dependencies)</code></h3>
+            <p>Creates an <code>AutoAgentGenerationTeam</code> using prepared dependencies and configuration.</p>
+        </article>
+        <article class="element" id="function-handle-no-agents-workflow">
+            <h3><code>handle_no_agents_workflow(team, user_request, q, main_trace)</code></h3>
+            <p>Generates agent suggestions, streams them to the client, and if successful, calls <code>_run_team_with_suggestions</code>; otherwise emits error messages.</p>
+        </article>
+        <article class="element" id="function-run-team-with-suggestions">
+            <h3><code>_run_team_with_suggestions(team, user_request, suggestions, q, main_trace)</code></h3>
+            <p>Enhances manager prompts with suggested agents, runs the agent team, and records Langfuse events for prompt enrichment and execution outcomes.</p>
+        </article>
+        <article class="element" id="function-handle-agents-provided-workflow">
+            <h3><code>handle_agents_provided_workflow(team, user_request, q, main_trace)</code></h3>
+            <p>Adds manually provided agents to the repository (preparing their brain data), enhances prompts, and executes the team via <code>_run_provided_agent_team</code>.</p>
+        </article>
+        <article class="element" id="function-run-provided-agent-team">
+            <h3><code>_run_provided_agent_team(team, user_request, manager_prompt, session_id, q)</code></h3>
+            <p>Builds enhanced manager prompts listing provided agents, constructs the manager user prompt, and runs the team with streaming updates.</p>
+        </article>
+    </section>
+</main>
+<footer>
+    <p>&copy; Yellowsys &ndash; Smart ADK API Documention. Built for observability, extensibility, and richly instrumented agentic workflows.</p>
+</footer>
+</body>
+</html>

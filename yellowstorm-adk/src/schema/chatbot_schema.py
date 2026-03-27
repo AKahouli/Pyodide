@@ -1,0 +1,119 @@
+"""Pydantic models for chatbot endpoints."""
+
+from typing import Dict, List, Optional
+
+from pydantic import BaseModel
+
+
+class ChatWithADKRequest(BaseModel):
+    """Schema for chat requests sent to the ADK."""
+    user_id: str
+    session_id: str
+    max_tokens: int = 512
+    instructions: Optional[str] = None
+    chatbot_name: dict
+    message: str
+    image_input: Optional[List[Dict]] = None
+    top_k: int = 2
+    vectorstore_name: Optional[str] = "vectorstorerec"
+    brain_ids: Optional[List[str]] = None
+    enable_multilingual: bool = False
+    brain_documents: Optional[List] = None
+    brain_relations: Optional[Dict] = None
+    languages: Optional[List[str]] = None
+    search_web: Optional[bool] = False
+
+
+class AgentSuggestion(BaseModel):
+    """Schema for agent suggestions."""
+    id: str = "no_id"
+    name: str
+    description: str
+    prompt: str
+    tools: Optional[List[Dict]] = None
+    #tools example : [{"name": "search_web","prompt":"","description": "Useful for when you need to answer questions about current events or the web. Input should be a search query.", "top_k": 3}]
+    html: Optional[bool] = False
+    vectorstore_name: Optional[str] = "vectorstorerec"
+    brain_ids: Optional[List[str]] = []
+    brain_documents: Optional[List] = []
+    brain_relations: Optional[Dict] = {'nodes': [], 'relationships': []}
+    chatbot_name: Optional[dict] = None  # If not provided, will inherit from RunAgentTeamRequest.chatbot_name
+    agent_params: Optional[Dict] = None
+    agent_type: Optional[str] = None  # Can be "normal" or "manager"
+    save_memory: Optional[bool] = False
+
+
+class RunAgentTeamRequest(BaseModel):
+    """Schema for running agent team requests."""
+
+    user_id: str
+    session_id: str
+    message: str
+    image_input: Optional[List[Dict]] = None
+    attached_files: Optional[List[Dict]] = None
+    attached_images: Optional[List[Dict]] = None
+    previous_attached_files: Optional[List[Dict]] = None
+    manager_prompt: str = "You are a manager agent that coordinates tasks between specialized agents."
+    chatbot_name: dict
+    agents: Optional[List[AgentSuggestion]] = []
+    available_agents: Optional[List[AgentSuggestion]] = []
+    available_tools: Optional[List[Dict]] = []
+    vectorstore_name: str = "default"
+    brain_ids: Optional[List[str]] = None
+    brain_documents: Optional[List] = None
+    brain_relations: Optional[Dict] = None
+    search_web: Optional[bool] = False
+    agent_mode: str
+
+class UserContext(BaseModel):
+    """Schema for user context (user_id + username together)."""
+    user_id: str
+    username: str
+
+
+class Document(BaseModel):
+    """Schema for document with minimal required fields."""
+    _id: str
+    filename: str
+    type: str
+
+
+class WorkspaceContext(BaseModel):
+    """Schema for workspace context (single workspace_id + documents)."""
+    workspace_id: str
+    workspace_documents: List[Document]
+
+
+class Chatbot(BaseModel):
+    """Schema for chatbot configuration."""
+    name: str
+    prompt: str
+
+
+class ConfigAgentsWithSkillsRequest(BaseModel):
+    """Schema for configuring an agent with skills."""
+
+    agent: AgentSuggestion
+    skills: str
+
+class RunSingleAgentRequest(BaseModel):
+    """Schema for running a single agent request."""
+
+    user_id: str
+    session_id: str
+    message: str
+    agent: AgentSuggestion
+
+class ClearAgentMemoryRequest(BaseModel):
+    """Schema for clearing agent memory request."""
+
+    agent_id: str
+
+class ChatCompletionRequest(BaseModel):
+    """Schema for simple chat completion request."""
+
+    message: str
+    model: str
+    temperature: Optional[float] = 0.7
+    max_tokens: Optional[int] = None
+

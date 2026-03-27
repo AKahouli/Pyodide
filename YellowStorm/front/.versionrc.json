@@ -1,0 +1,17 @@
+{
+  "tagPrefix": "front-v",
+  "path": ".",
+  "header": "# Frontend Changelog\n\nAll notable changes to the YelloStorm frontend.\n",
+  "types": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "refactor", "section": "Refactoring" },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "chore", "hidden": true },
+    { "type": "test", "hidden": true },
+    { "type": "style", "hidden": true }
+  ],
+  "commitUrlFormat": "{{host}}/{{owner}}/{{repository}}/commit/{{hash}}",
+  "compareUrlFormat": "{{host}}/{{owner}}/{{repository}}/compare/{{previousTag}}...{{currentTag}}"
+}

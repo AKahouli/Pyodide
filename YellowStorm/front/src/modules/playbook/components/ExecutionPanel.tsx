@@ -1,0 +1,523 @@
+import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { AlertCircle, Clock, Square, X, ChevronDown, History, GitCompareArrows, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { PlaybookStatusBadge } from './PlaybookStatusBadge';
+import { ExecutionStepList } from './ExecutionStepList';
+import { ExecutionStepDetail } from './ExecutionStepDetail';
+import {
+  usePlaybookStore,
+  useCurrentExecution,
+  useCurrentPlaybook,
+  useSelectedStep,
+  useExecutionHistory,
+  useIsStopping,
+  useIsExecuting,
+} from '../store';
+import { useModuleTranslation } from '@/modules/localization';
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function formatDuration(ms: number | null): string {
+  if (ms === null) return '-';
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+function getExecutionModeLabel(mode?: string): string {
+  if (mode === 'replay_strict') return 'Replay (Strict)';
+  if (mode === 'replay_flex') return 'Replay (Flex)';
+  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
+  return 'Live';
+}
+
+function ExecutionHistoryPicker({
+  currentExecutionId,
+  label,
+  baselineExecutionId,
+}: {
+  currentExecutionId?: string;
+  label: string;
+  baselineExecutionId?: string | null;
+}) {
+  const history = useExecutionHistory();
+  const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
+
+  if (history.length === 0) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="h-6 text-xs px-2">
+          <History className="h-3 w-3 mr-1" />
+          {label}
+          <ChevronDown className="h-3 w-3 ml-1" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-[340px] p-0">
+        <ScrollArea className="h-72">
+          <div className="p-1">
+            {history.map((exec) => (
+              <DropdownMenuItem
+                key={exec.id}
+                className={`cursor-pointer ${exec.id === currentExecutionId ? 'bg-accent' : ''}`}
+                onClick={() => viewExecutionInPanel(exec.id)}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="text-sm">#{exec.executionNumber}</span>
+                  <div className="flex items-center gap-2">
+                    {baselineExecutionId === exec.id && (
+                      <span className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700">
+                        Baseline
+                      </span>
+                    )}
+                    <PlaybookStatusBadge status={exec.status} size="sm" />
+                    <span className="text-xs text-muted-foreground">
+                      {new Date(exec.createdAt).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+              </DropdownMenuItem>
+            ))}
+          </div>
+        </ScrollArea>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Shared header actions: Compare, History picker, Close */
+function PanelHeaderActions({
+  compareUrl,
+  historyPickerLabel,
+  currentExecutionId,
+  baselineExecutionId,
+  onDeleteAll,
+  canDeleteAll,
+}: {
+  compareUrl: string | null;
+  historyPickerLabel: string;
+  currentExecutionId?: string;
+  baselineExecutionId?: string | null;
+  onDeleteAll?: () => void;
+  canDeleteAll?: boolean;
+}) {
+  const navigate = useNavigate();
+  const { t } = useModuleTranslation('playbook');
+  const history = useExecutionHistory();
+  const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
+
+  return (
+    <div className="flex items-center gap-1">
+      {history.length >= 2 && compareUrl && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs px-2"
+          onClick={() => navigate(compareUrl)}
+          title={t('compare.compare')}
+        >
+          <GitCompareArrows className="h-3 w-3 mr-1" />
+          <span className="hidden sm:inline">{t('compare.compare')}</span>
+        </Button>
+      )}
+      {canDeleteAll && onDeleteAll && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs px-2 text-destructive"
+          onClick={onDeleteAll}
+          title="Delete all executions"
+        >
+          <Trash2 className="h-3 w-3 mr-1" />
+          <span className="hidden sm:inline">Delete All</span>
+        </Button>
+      )}
+      <ExecutionHistoryPicker
+        currentExecutionId={currentExecutionId}
+        label={historyPickerLabel}
+        baselineExecutionId={baselineExecutionId}
+      />
+      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExecutionPanelOpen(false)}>
+        <X className="h-3.5 w-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+export function ExecutionPanel() {
+  const { t } = useModuleTranslation('playbook');
+  const execution = useCurrentExecution();
+  const playbook = useCurrentPlaybook();
+  const selectedStepId = useSelectedStep();
+  const history = useExecutionHistory();
+  const isStopping = useIsStopping();
+  const isExecuting = useIsExecuting(execution?.playbookId);
+  const selectStep = usePlaybookStore((s) => s.selectStep);
+  const stopExecution = usePlaybookStore((s) => s.stopExecution);
+  const deleteAllExecutions = usePlaybookStore((s) => s.deleteAllExecutions);
+  const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
+  const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
+  const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
+  const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
+  const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
+  const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
+  const updateTasks = usePlaybookStore((s) => s.updateTasks);
+  const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
+  const [validateDialogTaskId, setValidateDialogTaskId] = useState<string | null>(null);
+  const [isSavingReplayBaseline, setIsSavingReplayBaseline] = useState(false);
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
+  const [activeDetailTab, setActiveDetailTab] = useState('results');
+
+  // Auto-load the latest execution when panel opens with no execution loaded
+  // Guard: only if history belongs to the current playbook
+  useEffect(() => {
+    if (!execution && history.length > 0 && playbook && history[0].playbookId === playbook.id) {
+      viewExecutionInPanel(history[0].id);
+    }
+  }, [execution, history, playbook, viewExecutionInPanel]);
+
+  // Auto-follow running/interrupted steps during a live execution
+  useEffect(() => {
+    if (!execution) return;
+    const isLive = execution.status === 'running' || execution.status === 'interrupted';
+    if (!isLive) return;
+    if (selectedStepId && execution.taskResults.some((tr) => tr.taskId === selectedStepId)) return;
+
+    const sorted = [...execution.taskResults].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
+    // Interrupted steps take priority
+    const interrupted = sorted.find((tr) => tr.status === 'interrupted');
+    if (interrupted) {
+      selectStep(interrupted.taskId);
+      return;
+    }
+
+    // Then follow the first running step
+    const running = sorted.find((tr) => tr.status === 'running');
+    if (running) {
+      selectStep(running.taskId);
+    }
+  }, [execution?.status, execution?.taskResults, selectedStepId, selectStep]);
+
+  const handleSelectStep = useCallback(
+    (taskId: string) => selectStep(taskId),
+    [selectStep],
+  );
+
+  const openValidateDialog = useCallback((taskId: string) => {
+    setValidateDialogTaskId(taskId);
+  }, []);
+
+  const handleValidateStep = useCallback(
+    async (taskId: string, options?: { preserveOutputFormat?: boolean }) => {
+      if (!execution) return;
+
+      let taskResult = execution.taskResults.find((tr) => tr.taskId === taskId) || null;
+      if (!taskResult?.toolTrace || taskResult.toolTrace.length === 0) {
+        await fetchExecution(execution.playbookId, execution.id);
+        const refreshedExecution = usePlaybookStore.getState().executionCache[execution.id]
+          || usePlaybookStore.getState().currentExecution;
+        taskResult = refreshedExecution?.taskResults.find((tr) => tr.taskId === taskId) || null;
+      }
+
+      if (!taskResult?.toolTrace || taskResult.toolTrace.length === 0) {
+        toast.error('This step has no replayable tool trace yet.');
+        return;
+      }
+
+      await validateTaskReplay(execution.playbookId, taskId, execution.id, {
+        preserveOutputFormat: options?.preserveOutputFormat || false,
+      });
+    },
+    [execution, fetchExecution, validateTaskReplay],
+  );
+
+  const handleGrabOutputFormat = useCallback(
+    async (taskId: string) => {
+      if (!execution) return;
+
+      let taskResult = execution.taskResults.find((tr) => tr.taskId === taskId) || null;
+      if (!taskResult?.output) {
+        await fetchExecution(execution.playbookId, execution.id);
+        const refreshedExecution = usePlaybookStore.getState().executionCache[execution.id]
+          || usePlaybookStore.getState().currentExecution;
+        taskResult = refreshedExecution?.taskResults.find((tr) => tr.taskId === taskId) || null;
+      }
+
+      if (!taskResult?.output) {
+        toast.error('This step has no output to capture as a format template.');
+        return;
+      }
+
+      await grabOutputFormatTemplate(execution.playbookId, taskId, {
+        executionId: execution.id,
+      });
+    },
+    [execution, fetchExecution, grabOutputFormatTemplate],
+  );
+
+  const handleRunEvaluation = useCallback(
+    async (taskId: string) => {
+      if (!execution || !playbook) return;
+      setActiveDetailTab('evaluation');
+      const task = playbook.tasks.find((candidate) => candidate.id === taskId);
+      await rerunStepInExecution(
+        execution.playbookId,
+        execution.id,
+        taskId,
+        true,
+        task?.stepReplayMode || 'live',
+      );
+    },
+    [execution, playbook, rerunStepInExecution],
+  );
+
+  const confirmValidateStep = useCallback(async () => {
+    if (!validateDialogTaskId) return;
+    setIsSavingReplayBaseline(true);
+    try {
+      await handleValidateStep(validateDialogTaskId, { preserveOutputFormat: false });
+      setValidateDialogTaskId(null);
+    } finally {
+      setIsSavingReplayBaseline(false);
+    }
+  }, [handleValidateStep, validateDialogTaskId]);
+
+  const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
+
+  const selectedResult = execution?.taskResults.find(
+    (tr) => tr.taskId === selectedStepId,
+  ) || null;
+  const selectedTask = playbook?.tasks.find((task) => task.id === selectedResult?.taskId) || null;
+  const selectedResultRenderKey = [
+    execution?.id || 'no-exec',
+    selectedResult?.taskId || 'no-step',
+    selectedResult?.status || 'no-status',
+    selectedResult?.completedAt || 'no-completed-at',
+    selectedResult?.output || '',
+    selectedResult?.error || '',
+    selectedResult?.components?.length || 0,
+    selectedResult?.toolTrace?.length || 0,
+    selectedResult?.llmPromptTrace?.length || 0,
+    selectedResult?.semanticMatch?.matchScore ?? 'no-semantic-match',
+  ].join('|');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadBaselineExecutionId() {
+      if (!execution?.playbookId || !selectedResult?.taskId) {
+        if (!cancelled) setBaselineExecutionId(null);
+        return;
+      }
+
+      try {
+        const replays = await fetchTaskReplays(execution.playbookId, selectedResult.taskId);
+        if (cancelled) return;
+        const activeReplay = replays.find((replay) => replay.status === 'active') || null;
+        setBaselineExecutionId(activeReplay?.referenceExecutionId || null);
+      } catch {
+        if (!cancelled) setBaselineExecutionId(null);
+      }
+    }
+
+    loadBaselineExecutionId();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    execution?.playbookId,
+    selectedResult?.taskId,
+    selectedTask?.activeReplayId,
+    selectedTask?.activeReplayVersion,
+    fetchTaskReplays,
+  ]);
+
+  const compareUrl = playbook ? `/playbooks/${playbook.id}/executions` : null;
+  const canDeleteAll = history.some((exec) => exec.status !== 'running' && exec.status !== 'interrupted');
+
+  const handleStepReplayModeChange = useCallback(
+    (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => {
+      if (!playbook) return;
+      const updatedTasks = playbook.tasks.map((task) =>
+        task.id === taskId ? { ...task, stepReplayMode: mode } : task,
+      );
+      updateTasks(updatedTasks);
+    },
+    [playbook, updateTasks],
+  );
+
+  const handleDeleteAllExecutions = useCallback(async () => {
+    const targetPlaybookId = execution?.playbookId || playbook?.id;
+    if (!targetPlaybookId) return;
+    await deleteAllExecutions(targetPlaybookId);
+    setDeleteAllDialogOpen(false);
+  }, [deleteAllExecutions, execution?.playbookId, playbook?.id]);
+
+  if (!execution) {
+    return (
+      <div className="flex flex-col h-full bg-background">
+        <div className="flex items-center justify-between px-4 py-1.5 border-b shrink-0">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium">{t('execution.title')}</span>
+          </div>
+          <PanelHeaderActions
+            compareUrl={compareUrl}
+            historyPickerLabel={t('execution.selectRun')}
+            baselineExecutionId={baselineExecutionId}
+            onDeleteAll={() => setDeleteAllDialogOpen(true)}
+            canDeleteAll={canDeleteAll}
+          />
+        </div>
+        <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
+          {history.length > 0
+            ? t('execution.selectRunHint')
+            : t('execution.noExecution')}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full bg-background">
+      {/* Compact header */}
+      <div className="flex items-center justify-between px-4 py-1.5 border-b bg-background shrink-0">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium">{t('execution.title')}</span>
+          <PlaybookStatusBadge status={execution.status} size="md" />
+          <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+            {getExecutionModeLabel(execution.executionMode)}
+          </span>
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Clock className="h-3 w-3" />
+            <span>{formatDuration(execution.durationMs)}</span>
+          </div>
+          {canStop && (
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-6 text-xs px-2"
+              disabled={isStopping}
+              onClick={() => stopExecution(execution.playbookId, execution.id)}
+            >
+              <Square className="h-3 w-3 mr-1" />
+              {isStopping ? t('execution.stopping') : t('execution.stop')}
+            </Button>
+          )}
+          {execution.status === 'failed' && execution.error && (
+            <div className="flex items-center gap-1 text-xs text-destructive">
+              <AlertCircle className="h-3 w-3 shrink-0" />
+              <span className="truncate max-w-[200px]" title={execution.error}>
+                {execution.error}
+              </span>
+            </div>
+          )}
+        </div>
+        <PanelHeaderActions
+          compareUrl={`/playbooks/${execution.playbookId}/executions`}
+          historyPickerLabel={`#${execution.executionNumber}`}
+          currentExecutionId={execution.id}
+          baselineExecutionId={baselineExecutionId}
+          onDeleteAll={() => setDeleteAllDialogOpen(true)}
+          canDeleteAll={canDeleteAll}
+        />
+      </div>
+
+      {/* Step list + detail */}
+      <div className="flex flex-1 min-h-0">
+        <ExecutionStepList
+          taskResults={execution.taskResults}
+          selectedStepId={selectedStepId}
+          onSelectStep={handleSelectStep}
+        />
+        <ExecutionStepDetail
+          key={selectedResultRenderKey}
+          step={selectedResult}
+          execution={execution}
+          onRequestValidateReplay={openValidateDialog}
+          onRequestRunEvaluation={handleRunEvaluation}
+          onRequestGrabOutputFormat={handleGrabOutputFormat}
+          onStepReplayModeChange={handleStepReplayModeChange}
+          isRunningEvaluation={isExecuting}
+          activeTab={activeDetailTab}
+          onActiveTabChange={setActiveDetailTab}
+        />
+      </div>
+
+      <Dialog open={!!validateDialogTaskId} onOpenChange={(open) => {
+        if (!open) {
+          setValidateDialogTaskId(null);
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save Replay Baseline</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Save this completed step execution as a validated replay baseline.
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setValidateDialogTaskId(null);
+              }}
+              disabled={isSavingReplayBaseline}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void confirmValidateStep()} disabled={isSavingReplayBaseline}>
+              {isSavingReplayBaseline ? 'Saving...' : 'Save Baseline'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete all executions</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Delete all saved executions for this playbook in one shot. Running or interrupted executions will be kept.
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteAllDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteAllExecutions()}
+            >
+              Delete All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

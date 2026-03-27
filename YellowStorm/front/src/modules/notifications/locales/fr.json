@@ -1,0 +1,13 @@
+{
+  "service.toasts.connecting": "Connexion aux services de notifications en temps réel",
+  "service.toasts.connected": "Connecté aux services de notifications en temps réel",
+  "service.toasts.connectionFailed": "Échec de connexion aux services en temps réel",
+  "service.toasts.tooManyTabs": "Trop d'onglets ouverts",
+  "service.toasts.tooManyTabsDescription": "Veuillez fermer certains onglets et rafraîchir cette page.",
+  "context.errors.connectionError": "Erreur de connexion",
+  "context.errors.tooManyTabs": "Trop d'onglets ouverts",
+  "context.errors.fetchFailed": "Échec de récupération des notifications",
+  "context.errors.markReadFailed": "Échec du marquage des notifications comme lues",
+  "context.errors.markAllReadFailed": "Échec du marquage de toutes les notifications comme lues",
+  "context.errors.deleteFailed": "Échec de la suppression de la notification"
+}

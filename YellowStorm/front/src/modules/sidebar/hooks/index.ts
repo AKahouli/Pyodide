@@ -1,0 +1,1 @@
+export { useAutoCollapse } from "./useAutoCollapse";

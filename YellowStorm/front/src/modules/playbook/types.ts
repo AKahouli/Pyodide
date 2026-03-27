@@ -1,0 +1,606 @@
+/**
+ * Playbook Module Types
+ */
+
+import type { MessageComponent } from '@/modules/conversation/types';
+
+/** Playbook components extend conversation components with humanFeedback */
+export type PlaybookComponent = MessageComponent | { type: 'humanFeedback'; data: Record<string, unknown> };
+
+// ===== Domain Entities =====
+
+export interface InputFile {
+  type: 'workspace' | 'document';
+  id: string;
+  name: string;
+  workspaceId?: string;
+  metadata?: {
+    workspaceId?: string;
+    documentId?: string;
+    filename?: string;
+    filepath?: string;
+    language?: string;
+  };
+}
+
+export interface PlaybookTask {
+  id: string;
+  title: string;
+  description: string;
+  assignedAgentId: string | null;
+  executionOrder: number;
+  positionX: number;
+  positionY: number;
+  interruptBefore: boolean;
+  interruptAfter: boolean;
+  allowClarification: boolean;
+  clarificationPrompt: string;
+  maxClarifications: number;
+  inputKeys: string[];
+  outputKey: string;
+  enabled?: boolean;
+  notifyOnComplete: boolean;
+  notifyEmails: string[];
+  hasValidatedReplay?: boolean;
+  activeReplayId?: string | null;
+  activeReplayVersion?: number | null;
+  activeReplayIsStale?: boolean;
+  activeReplayStaleReasons?: string[];
+  activeReplayPreserveOutputFormat?: boolean;
+  activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
+  activeReplayFormatGuideError?: string | null;
+  hasOutputFormatTemplate?: boolean;
+  activeOutputFormatTemplateId?: string | null;
+  activeOutputFormatTemplateVersion?: number | null;
+  activeOutputFormatStatus?: 'pending' | 'ready' | 'failed' | null;
+  activeOutputFormatError?: string | null;
+  stepReplayMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  inputFiles: InputFile[];
+}
+
+export interface PlaybookEdge {
+  id: string;
+  sourceId: string;
+  targetId: string;
+}
+
+export interface PlaybookSummary {
+  id: string;
+  name: string;
+  description: string;
+  taskCount: number;
+  isFavorite: boolean;
+  lastExecutionAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaybookQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  sortBy?: 'updatedAt' | 'createdAt' | 'name' | 'taskCount' | 'lastExecutionAt';
+  sortOrder?: 'asc' | 'desc';
+  minTasks?: number;
+  maxTasks?: number;
+  dateField?: 'createdAt' | 'updatedAt' | 'lastExecutionAt';
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface Playbook {
+  id: string;
+  name: string;
+  description: string;
+  tasks: PlaybookTask[];
+  edges: PlaybookEdge[];
+  workspaces: string[];
+  createdBy: string;
+  isFavorite: boolean;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CloneShareResult {
+  succeeded: { email: string; playbookId: string }[];
+  failed: { email: string; reason: string }[];
+}
+
+export interface ToolTraceItem {
+  callIndex: number;
+  toolName: string;
+  args: Record<string, unknown>;
+  outputSummary: string | null;
+}
+
+export interface LLMPromptTraceItem {
+  stage: string;
+  model: string;
+  prompt: string;
+}
+
+export interface SemanticMatchResult {
+  matchScore: number;
+  semanticSimilarityScore: number;
+  evidenceConsistencyScore: number;
+  judgeScore: number;
+  reason: string;
+  missingPoints: string[];
+  changedPoints: string[];
+  model: string;
+  judgeUsed: boolean;
+}
+
+export interface StepEvaluationHistoryEntry {
+  id: string;
+  createdAt: string;
+  attemptNumber: number | null;
+  trigger: 'manual' | 'auto';
+  baselineReplayId: string | null;
+  baselineValidationVersion: number | null;
+  semanticMatch: SemanticMatchResult;
+}
+
+export interface TaskResult {
+  taskId: string;
+  nodeTitle: string;
+  agentName: string;
+  order: number;
+  status: StepStatus;
+  output: string | null;
+  error: string | null;
+  durationMs: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  modelName?: string | null;
+  semanticMatch?: SemanticMatchResult | null;
+  evaluationHistory?: StepEvaluationHistoryEntry[];
+  attemptNumber?: number | null;
+  isStale?: boolean;
+  staleReason?: string | null;
+  invalidatedByTaskId?: string | null;
+}
+
+export interface PlaybookExecution {
+  id: string;
+  playbookId: string;
+  executedBy: string;
+  executionNumber: number;
+  currentAttemptNumber?: number;
+  status: ExecutionStatus;
+  executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
+  taskResults: TaskResult[];
+  attemptHistory?: Array<{
+    attemptNumber: number;
+    type: 'initial' | 'resume_interrupt' | 'rerun_step' | 'resume_from_step';
+    taskId?: string | null;
+    threadId?: string | null;
+    startedAt: string;
+    completedAt?: string | null;
+  }>;
+  threadId: string | null;
+  interruptPayload: InterruptPayload | null;
+  error: string | null;
+  durationMs: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  singleStepTaskId: string | null;
+  playbookSnapshot: Record<string, unknown> | null;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalTokens: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Summary type returned by execution list endpoint (no taskResults/playbookSnapshot) */
+export interface PlaybookExecutionSummary {
+  id: string;
+  playbookId: string;
+  executedBy: string;
+  executionNumber: number;
+  currentAttemptNumber?: number;
+  status: ExecutionStatus;
+  error: string | null;
+  durationMs: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  singleStepTaskId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ValidatedReplayToolCall {
+  callIndex: number;
+  toolName: string;
+  args: Record<string, unknown>;
+  outputSummary: string | null;
+}
+
+export interface ValidatedTaskReplay {
+  id: string;
+  playbookId: string;
+  taskId: string;
+  taskTitle: string;
+  agentName: string;
+  createdBy: string;
+  referenceExecutionId: string;
+  referenceExecutionNumber: number;
+  validationVersion: number;
+  status: 'active' | 'inactive' | 'archived';
+  mode: 'strict_replay';
+  referenceTaskDescription?: string;
+  referenceAssignedAgentId?: string | null;
+  referenceWorkspaceIds?: string[];
+  toolCalls: ValidatedReplayToolCall[];
+  referenceOutput: string | null;
+  preserveOutputFormat?: boolean;
+  outputFormatGuide?: string | null;
+  formatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
+  formatGuideError?: string | null;
+  llmPromptTrace?: LLMPromptTraceItem[];
+  isStale?: boolean;
+  staleReasons?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OutputFormatTemplate {
+  id: string;
+  playbookId: string;
+  taskId: string;
+  sourceExecutionId: string;
+  sourceExecutionNumber: number;
+  templateVersion: number;
+  status: 'active' | 'inactive' | 'archived';
+  generationStatus: 'pending' | 'ready' | 'failed';
+  generationError?: string | null;
+  formatGuide?: string | null;
+  llmPromptTrace?: LLMPromptTraceItem[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ===== Enums =====
+
+export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted';
+export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
+
+// ===== Interrupt =====
+
+export type InterruptType = 'approval_request' | 'review_request' | 'clarification';
+
+export interface InterruptPayload {
+  type: InterruptType | string;
+  taskId: string;
+  taskTitle: string;
+  message: string;
+  threadId: string;
+  payloadJson?: string;
+  taskDescription?: string;
+  result?: string;
+}
+
+export interface HumanFeedbackData {
+  interruptType: InterruptType | string;
+  message: string;
+  status: 'pending' | 'answered';
+  humanResponse?: string;
+  taskDescription?: string;
+  result?: string;
+  approved?: boolean;
+  reason?: string;
+  feedback?: string;
+}
+
+// ===== ReactFlow Node Data =====
+
+export interface PlaybookNodeData extends PlaybookTask {
+  stepStatus?: StepStatus;
+  stepSemanticMatch?: SemanticMatchResult | null;
+  [key: string]: unknown;
+}
+
+// ===== SSE Events =====
+
+export interface PlaybookExecutionStartEvent {
+  executionId: string;
+  playbookId: string;
+  executionNumber: number;
+  status: string;
+  executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
+  taskResults?: TaskResult[];
+}
+
+export interface PlaybookStepStartEvent {
+  executionId: string;
+  taskId: string;
+  status: string;
+}
+
+export interface PlaybookStepCompleteEvent {
+  executionId: string;
+  taskId: string;
+  status: string;
+  output?: string;
+  error?: string;
+  durationMs?: number;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  modelName?: string;
+  semanticMatch?: SemanticMatchResult | null;
+}
+
+export interface PlaybookStepEvaluationUpdatedEvent {
+  executionId: string;
+  taskId: string;
+  semanticMatch: SemanticMatchResult | null;
+  evaluationEntry?: StepEvaluationHistoryEntry | null;
+}
+
+export interface PlaybookReplayFormatGuideUpdatedEvent {
+  playbookId: string;
+  taskId: string;
+  replay: ValidatedTaskReplay;
+}
+
+export interface PlaybookOutputFormatTemplateUpdatedEvent {
+  playbookId: string;
+  taskId: string;
+  template: OutputFormatTemplate;
+}
+
+export interface PlaybookExecutionCompleteEvent {
+  executionId: string;
+  status: string;
+  durationMs?: number;
+  error?: string;
+  skippedTaskIds?: string[];
+  totalInputTokens?: number;
+  totalOutputTokens?: number;
+  totalTokens?: number;
+}
+
+export interface PlaybookInterruptEvent {
+  executionId: string;
+  taskId: string;
+  type: string;
+  message: string;
+  threadId: string;
+  taskDescription?: string;
+  result?: string;
+}
+
+// ===== DTOs =====
+
+export interface CreatePlaybookData {
+  name: string;
+  description?: string;
+  workspaces?: string[];
+}
+
+export interface GeneratePlaybookData {
+  name: string;
+  prompt: string;
+  workspaces?: string[];
+}
+
+export interface PlaybookSnapshot {
+  tasks: PlaybookTask[];
+  edges: PlaybookEdge[];
+}
+
+export interface DesignMessage {
+  id: string;
+  playbookId: string;
+  userQuery: string;
+  aiSummary: string;
+  snapshotBefore: PlaybookSnapshot;
+  status: 'completed' | 'failed' | 'reverted';
+  revertedFromMessageId: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesignPlaybookData {
+  query: string;
+}
+
+export interface UpdatePlaybookData {
+  name?: string;
+  description?: string;
+  tasks?: PlaybookTask[];
+  edges?: PlaybookEdge[];
+  workspaces?: string[];
+}
+
+export interface ExecutePlaybookData {
+  singleStepTaskId?: string;
+  query?: string;
+  executionMode?: 'live' | 'inherit';
+  stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
+  runEvaluation?: boolean;
+}
+
+export interface ValidateTaskReplayData {
+  executionId: string;
+  preserveOutputFormat?: boolean;
+}
+
+export interface UpdateTaskReplayFormatData {
+  preserveOutputFormat?: boolean;
+  outputFormatGuide?: string;
+}
+
+export interface GrabOutputFormatTemplateData {
+  executionId: string;
+}
+
+export interface UpdateOutputFormatTemplateData {
+  formatGuide?: string;
+}
+
+export interface ResumePlaybookData {
+  executionId: string;
+  taskId: string;
+  approved: boolean;
+  reason?: string;
+  feedback?: string;
+}
+
+export interface RerunStepData {
+  taskId: string;
+  runEvaluation?: boolean;
+  executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+}
+
+// ===== Store =====
+
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+}
+
+export interface PlaybookState {
+  playbooks: PlaybookSummary[];
+  playbooksLoading: boolean;
+  playbooksPagination: PaginationMeta | null;
+  playbooksQuery: PlaybookQueryParams;
+  currentPlaybook: Playbook | null;
+  currentPlaybookLoading: boolean;
+  isDirty: boolean;
+  dirtyVersion: number;
+  isSaving: boolean;
+  currentExecution: PlaybookExecution | null;
+  currentExecutionLoading: boolean;
+  executionCache: Record<string, PlaybookExecution>;
+  executionHistory: PlaybookExecutionSummary[];
+  executionsLoading: boolean;
+  executingPlaybookIds: string[];
+  isGenerating: boolean;
+  generateRetryData: GeneratePlaybookData | null;
+  selectedStepId: string | null;
+  error: string | null;
+  designMessages: DesignMessage[];
+  designMessagesLoading: boolean;
+  isStopping: boolean;
+  isDesigning: boolean;
+  designerOpen: boolean;
+  executionPanelOpen: boolean;
+  workspaceExplorerOpen: boolean;
+}
+
+export interface PlaybookActions {
+  // CRUD
+  fetchPlaybooks: (query?: PlaybookQueryParams) => Promise<void>;
+  fetchMorePlaybooks: () => Promise<void>;
+  fetchPlaybook: (id: string) => Promise<void>;
+  createPlaybook: (data: CreatePlaybookData) => Promise<Playbook>;
+  generatePlaybook: (data: GeneratePlaybookData) => Promise<string>;
+  clearGenerateRetry: () => void;
+  updatePlaybook: (id: string, data: UpdatePlaybookData) => Promise<void>;
+  deletePlaybook: (id: string) => Promise<void>;
+  clonePlaybook: (id: string) => Promise<Playbook>;
+  toggleFavorite: (id: string) => Promise<void>;
+  bulkDeletePlaybooks: (ids: string[]) => Promise<void>;
+
+  // Canvas
+  updateTasks: (tasks: PlaybookTask[]) => void;
+  updateEdges: (edges: PlaybookEdge[]) => void;
+  updateWorkspaces: (workspaces: string[]) => void;
+  setDirty: (dirty: boolean) => void;
+  saveCurrentPlaybook: () => Promise<void>;
+
+  // Execution
+  executePlaybook: (id: string, data?: ExecutePlaybookData) => Promise<string>;
+  resumeExecution: (id: string, data: ResumePlaybookData) => Promise<void>;
+  rerunStepInExecution: (
+    playbookId: string,
+    executionId: string,
+    taskId: string,
+    runEvaluation?: boolean,
+    executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+  ) => Promise<void>;
+  resumeFromStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
+  skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
+  stopExecution: (playbookId: string, executionId: string) => Promise<void>;
+  deleteExecution: (playbookId: string, executionId: string) => Promise<void>;
+  deleteAllExecutions: (playbookId: string) => Promise<void>;
+  validateTaskReplay: (
+    playbookId: string,
+    taskId: string,
+    executionId: string,
+    options?: { preserveOutputFormat?: boolean },
+  ) => Promise<ValidatedTaskReplay>;
+  updateTaskReplayFormatGuide: (
+    playbookId: string,
+    taskId: string,
+    replayId: string,
+    data: UpdateTaskReplayFormatData,
+  ) => Promise<ValidatedTaskReplay>;
+  fetchTaskReplays: (playbookId: string, taskId: string) => Promise<ValidatedTaskReplay[]>;
+  activateTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<ValidatedTaskReplay>;
+  grabOutputFormatTemplate: (
+    playbookId: string,
+    taskId: string,
+    data: GrabOutputFormatTemplateData,
+  ) => Promise<OutputFormatTemplate>;
+  fetchOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<OutputFormatTemplate | null>;
+  updateOutputFormatTemplate: (
+    playbookId: string,
+    taskId: string,
+    data: UpdateOutputFormatTemplateData,
+  ) => Promise<OutputFormatTemplate>;
+
+  // SSE handlers
+  onExecutionStart: (data: PlaybookExecutionStartEvent) => void;
+  onStepStart: (data: PlaybookStepStartEvent) => void;
+  onStepComplete: (data: PlaybookStepCompleteEvent) => void;
+  onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => void;
+  onReplayFormatGuideUpdated: (data: PlaybookReplayFormatGuideUpdatedEvent) => void;
+  onOutputFormatTemplateUpdated: (data: PlaybookOutputFormatTemplateUpdatedEvent) => void;
+  onExecutionComplete: (data: PlaybookExecutionCompleteEvent) => void;
+  onInterrupt: (data: PlaybookInterruptEvent) => void;
+
+  // Catch-up
+  hydrateActiveExecutions: (executions: PlaybookExecution[]) => void;
+
+  // History
+  fetchExecutions: (playbookId: string) => Promise<void>;
+  fetchExecution: (playbookId: string, execId: string) => Promise<void>;
+  selectStep: (taskId: string | null) => void;
+
+  // Designer
+  fetchDesignMessages: (playbookId: string) => Promise<void>;
+  designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
+  revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
+  setDesignerOpen: (open: boolean) => void;
+  setExecutionPanelOpen: (open: boolean) => void;
+  viewExecutionInPanel: (executionId: string) => void;
+
+  // Workspace Explorer
+  setWorkspaceExplorerOpen: (open: boolean) => void;
+  addInputFileToTask: (taskId: string, inputFile: InputFile) => void;
+  removeInputFileFromTask: (taskId: string, inputFileId: string) => void;
+
+  // Cleanup
+  reset: () => void;
+}
+
+export type PlaybookStore = PlaybookState & PlaybookActions;

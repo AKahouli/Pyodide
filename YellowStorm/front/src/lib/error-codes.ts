@@ -1,0 +1,182 @@
+import { i18nInstance } from '@/modules/localization/i18nInstance';
+import enErrors from '@/modules/localization/locales/en/errors.json';
+
+/**
+ * Error codes mapping - mirrors backend error codes
+ * Maps error codes to user-friendly messages
+ */
+
+export enum ErrorCode {
+  // General errors (1000-1099)
+  INTERNAL_ERROR = 'ERR_1000',
+  VALIDATION_ERROR = 'ERR_1001',
+  NOT_FOUND = 'ERR_1002',
+  UNAUTHORIZED = 'ERR_1003',
+  FORBIDDEN = 'ERR_1004',
+  CONFLICT = 'ERR_1005',
+  BAD_REQUEST = 'ERR_1006',
+  TOO_MANY_REQUESTS = 'ERR_1007',
+  SERVICE_UNAVAILABLE = 'ERR_1008',
+
+  // Authentication errors (1100-1199)
+  AUTH_INVALID_CREDENTIALS = 'ERR_1100',
+  AUTH_TOKEN_EXPIRED = 'ERR_1101',
+  AUTH_TOKEN_INVALID = 'ERR_1102',
+  AUTH_SESSION_EXPIRED = 'ERR_1103',
+  AUTH_EMAIL_NOT_VERIFIED = 'ERR_1104',
+  AUTH_PROFILE_INCOMPLETE = 'ERR_1105',
+  AUTH_SESSION_NOT_FOUND = 'ERR_1106',
+  AUTH_REFRESH_TOKEN_INVALID = 'ERR_1107',
+  AUTH_REFRESH_TOKEN_EXPIRED = 'ERR_1108',
+  AUTH_MICROSOFT_AUTH_FAILED = 'ERR_1109',
+  AUTH_ACCOUNT_SUSPENDED = 'ERR_1110',
+  INVALID_CREDENTIALS = 'ERR_1111',
+  INVALID_TOKEN = 'ERR_1112',
+  AUTH_SESSION_REVOKED = 'ERR_1113',
+
+  // User errors (1200-1299)
+  USER_NOT_FOUND = 'ERR_1200',
+  USER_ALREADY_EXISTS = 'ERR_1201',
+  USER_INACTIVE = 'ERR_1202',
+
+  // Agent errors (1300-1399)
+  AGENT_NOT_FOUND = 'ERR_1300',
+  AGENT_UNAVAILABLE = 'ERR_1301',
+  AGENT_LIMIT_REACHED = 'ERR_1302',
+
+  // Chat errors (1400-1499)
+  CHAT_NOT_FOUND = 'ERR_1400',
+  CHAT_MESSAGE_TOO_LONG = 'ERR_1401',
+  CHAT_RATE_LIMITED = 'ERR_1402',
+  CHAT_GRPC_UNAVAILABLE = 'ERR_1417',
+
+  // External service errors (1500-1599)
+  EXTERNAL_SERVICE_ERROR = 'ERR_1500',
+  AI_SERVICE_ERROR = 'ERR_1501',
+  AI_SERVICE_TIMEOUT = 'ERR_1502',
+
+  // Usage and plan errors (1700-1799)
+  USAGE_LIMIT_EXCEEDED = 'ERR_1700',
+  USAGE_RATE_LIMITED = 'ERR_1701',
+  USAGE_REQUEST_TOO_LARGE = 'ERR_1702',
+  PLAN_NOT_FOUND = 'ERR_1710',
+  PLAN_ALREADY_EXISTS = 'ERR_1711',
+  PLAN_INACTIVE = 'ERR_1712',
+  PLAN_INVALID = 'ERR_1713',
+  PLAN_UPGRADE_REQUIRED = 'ERR_1714',
+  PLAN_FEATURE_NOT_AVAILABLE = 'ERR_1715',
+
+  // Notification errors (1800-1899)
+  NOTIFICATION_NOT_FOUND = 'ERR_1800',
+  NOTIFICATION_FORBIDDEN = 'ERR_1801',
+  NOTIFICATION_INVALID_DESTINATION = 'ERR_1802',
+  NOTIFICATION_PAYLOAD_TOO_LARGE = 'ERR_1803',
+  NOTIFICATION_SSE_CONNECTION_LIMIT = 'ERR_1804',
+  NOTIFICATION_SSE_CONNECTION_FAILED = 'ERR_1805',
+  NOTIFICATION_RATE_LIMITED = 'ERR_1806',
+
+  // Workspace errors (1900-1999)
+  WORKSPACE_NOT_FOUND = 'ERR_1900',
+  WORKSPACE_NAME_EXISTS = 'ERR_1901',
+  WORKSPACE_FORBIDDEN = 'ERR_1902',
+  WORKSPACE_ALIAS_EXISTS = 'ERR_1903',
+  WORKSPACE_MAX_LIMIT_REACHED = 'ERR_1904',
+
+  // Workspace Setting errors (1910-1919)
+  WORKSPACE_SETTING_NOT_FOUND = 'ERR_1910',
+  WORKSPACE_SETTING_FORBIDDEN = 'ERR_1911',
+
+  // Workspace Document errors (1920-1929)
+  WORKSPACE_DOCUMENT_NOT_FOUND = 'ERR_1920',
+  WORKSPACE_DOCUMENT_FORBIDDEN = 'ERR_1921',
+  WORKSPACE_DOCUMENT_INVALID_TYPE = 'ERR_1922',
+  WORKSPACE_DOCUMENT_UPLOAD_FAILED = 'ERR_1923',
+  WORKSPACE_DOCUMENT_NOT_IN_BLOB = 'ERR_1924',
+
+  // Workspace Storage errors (1930-1939)
+  WORKSPACE_STORAGE_QUOTA_EXCEEDED = 'ERR_1930',
+  WORKSPACE_STORAGE_FILE_TOO_LARGE = 'ERR_1931',
+
+  // Workspace Upload Session errors (1940-1949)
+  WORKSPACE_UPLOAD_SESSION_NOT_FOUND = 'ERR_1940',
+  WORKSPACE_UPLOAD_SESSION_EXPIRED = 'ERR_1941',
+  WORKSPACE_UPLOAD_TOO_MANY_FILES = 'ERR_1942',
+
+  // Models errors (2000-2099)
+  MODEL_NOT_FOUND = 'ERR_2000',
+  MODEL_INACTIVE = 'ERR_2003',
+  LITELLM_CONNECTION_FAILED = 'ERR_2001',
+  LITELLM_SYNC_FAILED = 'ERR_2002',
+
+  // RBAC/Authorization errors (2100-2199)
+  ROLE_NOT_FOUND = 'ERR_2100',
+  ROLE_ALREADY_EXISTS = 'ERR_2101',
+  ROLE_SYSTEM_PROTECTED = 'ERR_2102',
+  PERMISSION_DENIED = 'ERR_2103',
+  INVALID_PERMISSION = 'ERR_2104',
+
+  // Tool errors (2200-2299)
+  TOOL_NOT_FOUND = 'ERR_2200',
+  TOOL_ALREADY_EXISTS = 'ERR_2201',
+
+  // Agent Type errors (2300-2399)
+  AGENT_TYPE_NOT_FOUND = 'ERR_2300',
+  AGENT_TYPE_ALREADY_EXISTS = 'ERR_2301',
+  AGENT_TYPE_IN_USE = 'ERR_2302',
+  AGENT_TYPE_PROMPT_NOT_FOUND = 'ERR_2303',
+
+  // Custom Agent errors (2400-2499)
+  CUSTOM_AGENT_NOT_FOUND = 'ERR_2400',
+  CUSTOM_AGENT_ALREADY_EXISTS = 'ERR_2401',
+  CUSTOM_AGENT_FORBIDDEN = 'ERR_2402',
+  CUSTOM_AGENT_INVALID_NAME = 'ERR_2404',
+  CUSTOM_AGENT_DEFAULT_READONLY = 'ERR_2405',
+
+  // Playbook errors (2500-2599)
+  PLAYBOOK_NOT_FOUND = 'ERR_2500',
+  PLAYBOOK_EXECUTION_NOT_FOUND = 'ERR_2501',
+  PLAYBOOK_EXECUTION_IN_PROGRESS = 'ERR_2502',
+  PLAYBOOK_EXECUTION_NOT_INTERRUPTED = 'ERR_2503',
+  PLAYBOOK_EXECUTION_NO_THREAD = 'ERR_2504',
+  PLAYBOOK_GRPC_UNAVAILABLE = 'ERR_2505',
+  PLAYBOOK_EXECUTION_FAILED = 'ERR_2506',
+  PLAYBOOK_EXECUTION_TIMEOUT = 'ERR_2507',
+  PLAYBOOK_NO_TASKS = 'ERR_2508',
+  PLAYBOOK_GENERATE_FAILED = 'ERR_2509',
+}
+
+/**
+ * User-friendly error messages for each error code
+ */
+const FALLBACK_ERROR_CODE = ErrorCode.INTERNAL_ERROR;
+const fallbackMessages = enErrors as Record<string, string>;
+
+function normalizeErrorCode(code?: string): ErrorCode {
+  if (code && Object.prototype.hasOwnProperty.call(fallbackMessages, code)) {
+    return code as ErrorCode;
+  }
+  return FALLBACK_ERROR_CODE;
+}
+
+/**
+ * Get user-friendly message for an error code
+ */
+export function getErrorMessage(code: string | undefined): string {
+  const normalizedCode = normalizeErrorCode(code);
+  const fallback = fallbackMessages[normalizedCode] ?? fallbackMessages[FALLBACK_ERROR_CODE];
+  if (i18nInstance.isInitialized) {
+    const translated = i18nInstance.t(normalizedCode, { ns: 'errors' });
+    if (translated && translated !== normalizedCode) {
+      return translated;
+    }
+  }
+  return fallback;
+}
+
+/**
+ * Check if error code requires re-authentication
+ */
+export function requiresReAuth(code: string): boolean {
+  const reAuthCodes = [ErrorCode.AUTH_TOKEN_EXPIRED, ErrorCode.AUTH_TOKEN_INVALID, ErrorCode.AUTH_SESSION_EXPIRED, ErrorCode.AUTH_SESSION_NOT_FOUND, ErrorCode.AUTH_REFRESH_TOKEN_INVALID, ErrorCode.AUTH_REFRESH_TOKEN_EXPIRED, ErrorCode.AUTH_SESSION_REVOKED, ErrorCode.UNAUTHORIZED];
+  return reAuthCodes.includes(code as ErrorCode);
+}

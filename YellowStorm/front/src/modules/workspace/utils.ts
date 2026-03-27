@@ -1,0 +1,172 @@
+/**
+ * Workspace Module Utilities
+ * Shared constants and helper functions
+ */
+
+import { toast } from 'sonner';
+
+// ===== Upload Constants =====
+
+/**
+ * Allowed MIME types for document upload
+ * SYNC WITH: back/src/modules/document/constants/mime-types.constant.ts
+ */
+export const ALLOWED_MIME_TYPES = [
+  // Documents
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  // Text
+  'text/plain',
+  'text/csv',
+  'text/markdown',
+  'text/html',
+  'application/json',
+  // Images
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'image/svg+xml',
+] as const;
+
+/**
+ * File extensions for accept attribute in file inputs
+ */
+export const ACCEPT_EXTENSIONS =
+  '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.md,.html,.htm,.json,.png,.jpg,.jpeg,.gif,.webp,.svg';
+
+/**
+ * Maximum file size in bytes (500MB)
+ */
+export const MAX_FILE_SIZE = 500 * 1024 * 1024;
+
+/**
+ * Maximum files per upload batch
+ */
+export const MAX_FILES_PER_UPLOAD = 50;
+
+/**
+ * Small file threshold for direct upload vs presigned URL (10MB)
+ */
+export const SMALL_FILE_THRESHOLD = 10 * 1024 * 1024;
+
+/**
+ * Default pagination limit
+ */
+export const DEFAULT_PAGE_LIMIT = 10;
+
+// ===== Formatting Utilities =====
+
+/**
+ * Format bytes to human-readable size
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+export function formatFileSizeNumber(bytes: number): number {
+  if (bytes === 0) return 0;
+  const k = 1024;
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1));
+}
+
+/**
+ * Format date string to localized short format
+ */
+export function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  return date.toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
+/**
+ * Get file type label from MIME type
+ */
+export function getFileTypeLabel(mimeType: string): string {
+  const typeMap: Record<string, string> = {
+    'application/pdf': 'PDF',
+    'application/msword': 'DOC',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+    'application/vnd.ms-excel': 'XLS',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
+    'application/vnd.ms-powerpoint': 'PPT',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'PPTX',
+    'text/plain': 'TXT',
+    'text/csv': 'CSV',
+    'text/markdown': 'MD',
+    'text/html': 'HTML',
+    'application/json': 'JSON',
+    'image/png': 'PNG',
+    'image/jpeg': 'JPG',
+    'image/gif': 'GIF',
+    'image/webp': 'WEBP',
+    'image/svg+xml': 'SVG',
+  };
+  return typeMap[mimeType] || mimeType?.split('/')[1]?.toUpperCase() || 'FILE';
+}
+
+// ===== Validation Utilities =====
+
+export interface FileValidationResult {
+  validFiles: File[];
+  errors: string[];
+}
+
+/**
+ * Validate files for upload
+ * Returns valid files and any validation errors
+ */
+export function validateFiles(files: File[]): FileValidationResult {
+  const validFiles: File[] = [];
+  const errors: string[] = [];
+
+  if (files.length > MAX_FILES_PER_UPLOAD) {
+    toast.error(`Maximum ${MAX_FILES_PER_UPLOAD} files allowed per upload`);
+    return { validFiles: [], errors: [] };
+  }
+
+  for (const file of files) {
+    // Check file type
+    if (!ALLOWED_MIME_TYPES.includes(file.type as typeof ALLOWED_MIME_TYPES[number])) {
+      errors.push(`${file.name}: Unsupported file type`);
+      continue;
+    }
+
+    // Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      errors.push(`${file.name}: File too large (max 500MB)`);
+      continue;
+    }
+
+    // Check for empty files
+    if (file.size === 0) {
+      errors.push(`${file.name}: Empty file`);
+      continue;
+    }
+
+    validFiles.push(file);
+  }
+
+  // Show errors
+  if (errors.length > 0) {
+    const message =
+      errors.length > 3
+        ? `${errors.slice(0, 3).join('\n')}\n...and ${errors.length - 3} more`
+        : errors.join('\n');
+    toast.error('Some files were rejected', { description: message });
+  }
+
+  return { validFiles, errors };
+}

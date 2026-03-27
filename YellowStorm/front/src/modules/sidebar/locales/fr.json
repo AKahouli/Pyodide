@@ -1,0 +1,12 @@
+{
+  "actions.newChat.label": "Nouvelle discussion",
+  "actions.newChat.tooltip": "Démarrer une nouvelle conversation",
+  "actions.projects.label": "Projets",
+  "actions.projects.tooltip": "Workspaces de projet (bientôt)",
+  "history.label": "Historique",
+  "history.tooltip": "Conversations récentes",
+  "history.showMore": "Afficher plus",
+  "conversations.rename": "Renommer",
+  "conversations.share": "Partager",
+  "conversations.delete": "Supprimer"
+}

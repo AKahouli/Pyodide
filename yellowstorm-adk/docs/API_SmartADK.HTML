@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Yellowsys - Smart ADK API Documention</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --primary: #005f73;
+        --accent: #0a9396;
+        --bg: #f4f6f8;
+        --text: #1f2933;
+        --card-bg: #ffffffcc;
+        --border: #d0d7de;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b141a;
+          --text: #f9fafb;
+          --card-bg: #17212b;
+          --border: #22303c;
+        }
+      }
+
+      body {
+        font-family: "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        line-height: 1.6;
+      }
+
+      header {
+        background: linear-gradient(90deg, var(--primary), var(--accent));
+        color: #fff;
+        padding: 2.5rem 3rem;
+        text-align: center;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+      }
+
+      header h1 {
+        margin: 0;
+        font-size: 2.5rem;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+      }
+
+      header p {
+        margin: 0.5rem 0 0;
+        font-size: 1.1rem;
+        opacity: 0.85;
+      }
+
+      main {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 2.5rem 2rem 4rem;
+      }
+
+      section {
+        margin-bottom: 3rem;
+      }
+
+      .card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 1.75rem;
+        box-shadow: 0 10px 20px rgba(15, 23, 42, 0.12);
+        backdrop-filter: blur(6px);
+      }
+
+      h2 {
+        color: var(--primary);
+        margin-bottom: 1rem;
+      }
+
+      h3 {
+        color: var(--accent);
+        margin-top: 2rem;
+      }
+
+      ul {
+        padding-left: 1.2rem;
+      }
+
+      ul li {
+        margin: 0.35rem 0;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
+      }
+
+      a:hover,
+      a:focus {
+        text-decoration: underline;
+      }
+
+      .meta-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+        margin: 1rem 0;
+      }
+
+      .meta-item {
+        border-left: 4px solid var(--accent);
+        padding: 0.5rem 0.75rem;
+        background: rgba(10, 147, 150, 0.08);
+        border-radius: 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+        background: var(--card-bg);
+      }
+
+      table th,
+      table td {
+        border: 1px solid var(--border);
+        padding: 0.65rem 0.75rem;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      table thead {
+        background: rgba(0, 95, 115, 0.1);
+      }
+
+      code {
+        font-family: "Fira Code", "Source Code Pro", monospace;
+        background: rgba(15, 23, 42, 0.08);
+        padding: 0.15rem 0.35rem;
+        border-radius: 4px;
+        font-size: 0.95rem;
+      }
+
+      .note {
+        border-left: 4px solid var(--primary);
+        background: rgba(0, 95, 115, 0.08);
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        margin: 1.5rem 0;
+      }
+
+      footer {
+        text-align: center;
+        font-size: 0.9rem;
+        color: rgba(31, 41, 51, 0.7);
+        padding: 2rem 0 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Yellowsys &mdash; Smart ADK API Documention</h1>
+      <p>Comprehensive reference for the FastAPI routers powering the Smart ADK platform.</p>
+    </header>
+    <main>
+      <section id="summary" class="card">
+        <h2>Résumé &amp; Navigation</h2>
+        <p>
+          Cette page consolide la structure de l'API FastAPI du Smart ADK. Utilisez les liens ci-dessous
+          pour accéder rapidement aux définitions de chaque routeur et de leurs points d'entrée.
+        </p>
+        <ul>
+          <li>
+            <a href="#chatbot-router">Router&nbsp;: <code>chatbot_router</code></a>
+            <ul>
+              <li><a href="#event-stream">Utilitaire&nbsp;: <code>_event_stream</code></a></li>
+              <li><a href="#chat-with-adk">POST&nbsp;/chatbots/chatWithADK</a></li>
+            </ul>
+          </li>
+          <li>
+            <a href="#agentic-router">Router&nbsp;: <code>agentic_router</code></a>
+            <ul>
+              <li><a href="#run-agent-team">POST&nbsp;/agentic/run_agent_team</a></li>
+            </ul>
+          </li>
+          <li><a href="#root-router">Router&nbsp;agrégateur&nbsp;: <code>router</code></a></li>
+        </ul>
+      </section>
+
+      <section id="chatbot-router" class="card">
+        <h2>Router&nbsp;: <code>chatbot_router</code></h2>
+        <div class="meta-grid">
+          <div class="meta-item"><strong>Module</strong><br /><code>src.routers.chatbot</code></div>
+          <div class="meta-item"><strong>Préfixe</strong><br /><code>/chatbots</code></div>
+          <div class="meta-item"><strong>Tags OpenAPI</strong><br /><code>["chatbots"]</code></div>
+          <div class="meta-item"><strong>Authentification</strong><br />JWT Bearer via <code>get_current_active_user</code></div>
+        </div>
+        <p>
+          Ce router regroupe les interactions conversationnelles classiques avec l'ADK. Il s'appuie sur
+          le service <code>ChatRAGService</code> pour orchestrer les workflows RAG traditionnels et fournit
+          une réponse continue via Server-Sent Events (SSE).<sup><a href="#ref-chatbot-router">[1]</a></sup>
+        </p>
+
+        <section id="event-stream">
+          <h3>Utilitaire&nbsp;: <code>_event_stream</code></h3>
+          <p>
+            Générateur asynchrone qui transforme les éléments extraits d'une file <code>asyncio.Queue</code>
+            en événements SSE. Chaque bloc JSON est sérialisé puis envoyé avec l'en-tête
+            <code>data:</code>, ce qui permet un streaming compatible navigateur. Le générateur
+            surveille également les annulations afin d'arrêter la tâche d'arrière-plan lorsque le client se
+            déconnecte.<sup><a href="#ref-chatbot-router">[1]</a></sup>
+          </p>
+          <div class="note">
+            <strong>Flux de vie</strong>
+            <ol>
+              <li>Lecture bloquante sur la queue jusqu'à réception d'un dictionnaire ou de <code>None</code>.</li>
+              <li>Conversion en chaîne SSE&nbsp;: <code>data: {&lt;payload JSON&gt;}\n\n</code>.</li>
+              <li>Détection d'annulation client&nbsp;: journalisation puis arrêt de la tâche de fond.</li>
+            </ol>
+          </div>
+        </section>
+
+        <section id="chat-with-adk">
+          <h3>Endpoint&nbsp;: POST&nbsp;<code>/chatbots/chatWithADK</code></h3>
+          <div class="meta-grid">
+            <div class="meta-item"><strong>Fonction Python</strong><br /><code>chat_with_adk_endpoint</code></div>
+            <div class="meta-item"><strong>Réponse</strong><br /><code>StreamingResponse</code> (<code>text/event-stream</code>)</div>
+            <div class="meta-item"><strong>Service métier</strong><br /><code>ChatRAGService.process_chat_request</code></div>
+          </div>
+          <p>
+            Déclenche un échange avec le moteur RAG traditionnel. Après validation de l'utilisateur actif,
+            la requête est confiée à <code>ChatRAGService</code> qui délègue à
+            <code>SmartRAGOrchestrator</code>. Les éléments de réponse sont insérés dans la file de streaming,
+            puis diffusés au client via SSE.<sup><a href="#ref-chatbot-router">[1]</a>, <a href="#ref-chat-rag-service">[2]</a></sup>
+          </p>
+
+          <h4>Corps de requête&nbsp;: <code>ChatWithADKRequest</code></h4>
+          <table>
+            <thead>
+              <tr>
+                <th>Champ</th>
+                <th>Type</th>
+                <th>Obligatoire</th>
+                <th>Défaut</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>user_id</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Identifiant métier de l'utilisateur consommateur du service.</td>
+              </tr>
+              <tr>
+                <td><code>session_id</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Session conversationnelle à enrichir.</td>
+              </tr>
+              <tr>
+                <td><code>max_tokens</code></td>
+                <td>int</td>
+                <td>Non</td>
+                <td>512</td>
+                <td>Limite de génération pour le modèle de langage.</td>
+              </tr>
+              <tr>
+                <td><code>instructions</code></td>
+                <td>str | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Guidelines additionnelles transmises au moteur.</td>
+              </tr>
+              <tr>
+                <td><code>chatbot_name</code></td>
+                <td>dict</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Configuration identifiant le chatbot ciblé.</td>
+              </tr>
+              <tr>
+                <td><code>message</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Prompt utilisateur à traiter.</td>
+              </tr>
+              <tr>
+                <td><code>top_k</code></td>
+                <td>int</td>
+                <td>Non</td>
+                <td>2</td>
+                <td>Nombre maximal de documents récupérés pour enrichir la réponse.</td>
+              </tr>
+              <tr>
+                <td><code>vectorstore_name</code></td>
+                <td>str | None</td>
+                <td>Non</td>
+                <td><code>"vectorstorerec"</code></td>
+                <td>Vector store principal pour la recherche de contexte.</td>
+              </tr>
+              <tr>
+                <td><code>brain_ids</code></td>
+                <td>List[str] | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Sources neuronales explicites à charger.</td>
+              </tr>
+              <tr>
+                <td><code>enable_multilingual</code></td>
+                <td>bool</td>
+                <td>Non</td>
+                <td>false</td>
+                <td>Active la génération multilingue.</td>
+              </tr>
+              <tr>
+                <td><code>brain_documents</code></td>
+                <td>List | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Documents à greffer dynamiquement à la base de connaissances.</td>
+              </tr>
+              <tr>
+                <td><code>brain_relations</code></td>
+                <td>Dict | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Relations graphe pour contextualiser les documents.</td>
+              </tr>
+              <tr>
+                <td><code>languages</code></td>
+                <td>List[str] | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Langues à favoriser lors de la restitution.</td>
+              </tr>
+              <tr>
+                <td><code>search_web</code></td>
+                <td>bool | None</td>
+                <td>Non</td>
+                <td>false</td>
+                <td>Autorise un fallback vers la recherche web.</td>
+              </tr>
+            </tbody>
+          </table>
+          <p>
+            Une erreur inattendue déclenche une réponse HTTP&nbsp;500 avec un détail reprenant l'exception
+            interceptée.<sup><a href="#ref-chatbot-router">[1]</a></sup>
+          </p>
+        </section>
+      </section>
+
+      <section id="agentic-router" class="card">
+        <h2>Router&nbsp;: <code>agentic_router</code></h2>
+        <div class="meta-grid">
+          <div class="meta-item"><strong>Module</strong><br /><code>src.routers.chatbot</code></div>
+          <div class="meta-item"><strong>Préfixe</strong><br /><code>/agentic</code></div>
+          <div class="meta-item"><strong>Tags OpenAPI</strong><br /><code>["agentic_rag"]</code></div>
+          <div class="meta-item"><strong>Authentification</strong><br />JWT Bearer via <code>get_current_active_user</code></div>
+        </div>
+        <p>
+          Ce router expose la logique multi-agents permettant de piloter une équipe de spécialistes virtuels.
+          Les flux de sortie utilisent le même mécanisme SSE que le router chatbot afin de présenter les
+          avancées en temps réel.<sup><a href="#ref-chatbot-router">[1]</a></sup>
+        </p>
+
+        <section id="run-agent-team">
+          <h3>Endpoint&nbsp;: POST&nbsp;<code>/agentic/run_agent_team</code></h3>
+          <div class="meta-grid">
+            <div class="meta-item"><strong>Fonction Python</strong><br /><code>run_agent_team_endpoint</code></div>
+            <div class="meta-item"><strong>Réponse</strong><br /><code>StreamingResponse</code> (<code>text/event-stream</code>)</div>
+            <div class="meta-item"><strong>Service métier</strong><br /><code>AgentTeamService.process_team_request</code></div>
+          </div>
+          <p>
+            Lance un workflow agentique orchestré par <code>run_agent_team_logic</code> via
+            <code>AgentTeamService</code>. L'appelant peut fournir sa propre composition d'agents ou laisser
+            le système sélectionner la meilleure équipe. Les résultats sont remontés par SSE au fur et à
+            mesure de l'exécution.<sup><a href="#ref-chatbot-router">[1]</a>, <a href="#ref-agent-team-service">[3]</a></sup>
+          </p>
+
+          <h4>Corps de requête&nbsp;: <code>RunAgentTeamRequest</code></h4>
+          <table>
+            <thead>
+              <tr>
+                <th>Champ</th>
+                <th>Type</th>
+                <th>Obligatoire</th>
+                <th>Défaut</th>
+                <th>Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>user_id</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Identifiant de l'utilisateur pilote de la mission agentique.</td>
+              </tr>
+              <tr>
+                <td><code>session_id</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Session à laquelle rattacher le workflow.</td>
+              </tr>
+              <tr>
+                <td><code>message</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Objectif ou brief partagé avec les agents.</td>
+              </tr>
+              <tr>
+                <td><code>manager_prompt</code></td>
+                <td>str</td>
+                <td>Non</td>
+                <td><em>"You are a manager agent..."</em></td>
+                <td>Instruction initiale donnée à l'agent manager.</td>
+              </tr>
+              <tr>
+                <td><code>chatbot_name</code></td>
+                <td>dict</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Paramétrage du collectif conversationnel.</td>
+              </tr>
+              <tr>
+                <td><code>agents</code></td>
+                <td>List[AgentSuggestion] | None</td>
+                <td>Non</td>
+                <td><code>[]</code></td>
+                <td>Agents imposés par le client. À vide, le manager sélectionne.</td>
+              </tr>
+              <tr>
+                <td><code>available_agents</code></td>
+                <td>List[AgentSuggestion] | None</td>
+                <td>Non</td>
+                <td><code>[]</code></td>
+                <td>Catalogue alternatif proposé au manager.</td>
+              </tr>
+              <tr>
+                <td><code>top_k</code></td>
+                <td>int</td>
+                <td>Non</td>
+                <td>10</td>
+                <td>Nombre d'éléments contextuels à récupérer.</td>
+              </tr>
+              <tr>
+                <td><code>vectorstore_name</code></td>
+                <td>str</td>
+                <td>Non</td>
+                <td><code>"default"</code></td>
+                <td>Vector store multi-agent prioritaire.</td>
+              </tr>
+              <tr>
+                <td><code>brain_ids</code></td>
+                <td>List[str] | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Brains explicites à aligner avec l'équipe.</td>
+              </tr>
+              <tr>
+                <td><code>brain_documents</code></td>
+                <td>List | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Documents complémentaires pour la mission.</td>
+              </tr>
+              <tr>
+                <td><code>brain_relations</code></td>
+                <td>Dict | None</td>
+                <td>Non</td>
+                <td><em>None</em></td>
+                <td>Relations graphe décrivant les liens entre ressources.</td>
+              </tr>
+              <tr>
+                <td><code>search_web</code></td>
+                <td>bool | None</td>
+                <td>Non</td>
+                <td>false</td>
+                <td>Active la recherche web si nécessaire.</td>
+              </tr>
+              <tr>
+                <td><code>agent_mode</code></td>
+                <td>str</td>
+                <td>Oui</td>
+                <td>&mdash;</td>
+                <td>Mode opératoire (ex. brainstorming, synthèse, exécution technique).</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4>Structure imbriquée&nbsp;: <code>AgentSuggestion</code></h4>
+          <p>
+            Les éléments de <code>agents</code> et <code>available_agents</code> utilisent ce modèle, qui
+            décrit un agent individuel (identité, description, prompt, outils disponibles et configuration de
+            vector store).<sup><a href="#ref-chatbot-schema">[4]</a></sup>
+          </p>
+          <p>
+            Comme pour l'endpoint précédent, toute exception non gérée se traduit par une réponse HTTP&nbsp;500
+            détaillant la cause côté serveur.<sup><a href="#ref-chatbot-router">[1]</a></sup>
+          </p>
+        </section>
+      </section>
+
+      <section id="root-router" class="card">
+        <h2>Router agrégateur&nbsp;: <code>router</code></h2>
+        <p>
+          Le module déclare également un router racine qui inclut <code>chatbot_router</code> et
+          <code>agentic_router</code>. Ce composant est destiné à être monté dans l'application FastAPI
+          principale pour exposer l'ensemble des routes documentées ci-dessus sous leurs préfixes respectifs.<sup><a href="#ref-chatbot-router">[1]</a></sup>
+        </p>
+      </section>
+
+      <section class="card">
+        <h2>Authentification &amp; Sécurité</h2>
+        <p>
+          Les deux endpoints utilisent la dépendance <code>get_current_active_user</code>. Celle-ci vérifie le
+          jeton JWT via <code>OAuth2PasswordBearer</code>, récupère l'utilisateur correspondant dans Redis,
+          puis confirme que le compte n'est pas désactivé avant de laisser passer la requête.<sup><a href="#ref-auth">[5]</a></sup>
+        </p>
+      </section>
+    </main>
+    <footer>
+      &copy; <span id="year"></span> Yellowsys &mdash; Smart ADK API Documention
+    </footer>
+    <script>
+      document.getElementById("year").textContent = new Date().getFullYear();
+    </script>
+
+    <section style="display:none;">
+      <h2>Références</h2>
+      <ol>
+        <li id="ref-chatbot-router">Définition des routeurs et endpoints dans <code>src/routers/chatbot.py</code>.</li>
+        <li id="ref-chat-rag-service">Implémentation du service RAG dans <code>src/smart_rag/core/chat_rag_service.py</code>.</li>
+        <li id="ref-agent-team-service">Implémentation du service multi-agent dans <code>src/smart_rag/core/agent_team_service.py</code>.</li>
+        <li id="ref-chatbot-schema">Modèles Pydantic associés dans <code>src/schema/chatbot_schema.py</code>.</li>
+        <li id="ref-auth">Flux d'authentification dans <code>src/authentification/get_current_user.py</code>.</li>
+      </ol>
+    </section>
+  </body>
+</html>
