@@ -1,0 +1,9 @@
+*cwd*
+
+*/.claude
+knownIssues.md
+CLAUDE.md
+back/.env.example
+nul
+.claude/settings.local.json
+.history
