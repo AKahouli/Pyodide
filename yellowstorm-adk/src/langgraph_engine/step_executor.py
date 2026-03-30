@@ -1,18 +1,21 @@
-"""Single-step task executor for isolated task execution with LangChain agents."""
+"""Single-step task executor utilities for LangChain agent execution.
+
+Shared helpers used by graph_builder.py (full workflow) and by the
+legacy RunStep / ResumeStep gRPC RPCs.  HITL logic is consolidated
+in workflow_service.py / graph_builder.py — this module no longer
+creates its own mini StateGraph.
+"""
 
 import json
+import re
 import time
-import uuid
 from typing import Dict, Any, Optional, List
 
 from structlog import get_logger
 
-from langchain_core.runnables import RunnableConfig
-from src.langgraph_engine.state import TaskConfig, AgentConfig
-
 logger = get_logger(__name__)
 
-MAX_TOOL_ITERATIONS = 10  # Guard against infinite tool-calling loops
+MAX_TOOL_ITERATIONS = 10
 SKIP_STEP_REASON = "__SKIP_STEP__"
 
 
@@ -42,7 +45,6 @@ def _append_prompt_trace(
 
 
 def _summarize_tool_args(args: Any, max_length: int = 500) -> str:
-    """Return a bounded JSON-ish string for logging tool args."""
     text = str(args)
     if len(text) <= max_length:
         return text
@@ -50,7 +52,6 @@ def _summarize_tool_args(args: Any, max_length: int = 500) -> str:
 
 
 def _summarize_tool_result(result: Any, max_length: int = 2000) -> str:
-    """Return a bounded text summary suitable for persistence in execution traces."""
     text = str(result)
     if len(text) <= max_length:
         return text
@@ -58,11 +59,6 @@ def _summarize_tool_result(result: Any, max_length: int = 2000) -> str:
 
 
 def _extract_interrupt_from_snapshot(state_snapshot, task_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
-    """Extract interrupt payload from a LangGraph state snapshot.
-
-    After ainvoke returns, if state_snapshot.next is non-empty the graph
-    is suspended. The interrupt values are stored in state_snapshot.tasks.
-    """
     for pregel_task in state_snapshot.tasks:
         if hasattr(pregel_task, "interrupts") and pregel_task.interrupts:
             iv = pregel_task.interrupts[0].value
@@ -75,24 +71,22 @@ def _extract_interrupt_from_snapshot(state_snapshot, task_id: str, thread_id: st
                     "thread_id": thread_id,
                     "task_description": iv.get("task_description", ""),
                     "result": iv.get("result", ""),
+                    "interrupt_id": iv.get("interrupt_id", ""),
+                    "round": iv.get("round", 0),
+                    "conversation_json": iv.get("conversation_json", ""),
+                    "resumable_actions": iv.get("resumable_actions", []),
                 }
     return None
 
 
 def _extract_usage(response) -> Dict[str, Any]:
-    """Extract token usage from a LangChain AIMessage response.
-
-    Checks usage_metadata (LangChain >=0.2) then response_metadata fallback.
-    """
     usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": ""}
 
-    # LangChain >= 0.2: usage_metadata
     if hasattr(response, "usage_metadata") and response.usage_metadata:
         um = response.usage_metadata
         usage["input_tokens"] = um.get("input_tokens", 0)
         usage["output_tokens"] = um.get("output_tokens", 0)
         usage["total_tokens"] = um.get("total_tokens", 0)
-    # Fallback: response_metadata.token_usage
     elif hasattr(response, "response_metadata") and response.response_metadata:
         tu = response.response_metadata.get("token_usage", {})
         usage["input_tokens"] = tu.get("prompt_tokens", 0)
@@ -105,7 +99,7 @@ def _extract_usage(response) -> Dict[str, Any]:
     return usage
 
 
-def _is_skip_step_response(response: Any) -> bool:
+def is_skip_step_response(response: Any) -> bool:
     return (
         isinstance(response, dict)
         and response.get("approved") is False
@@ -113,8 +107,52 @@ def _is_skip_step_response(response: Any) -> bool:
     )
 
 
+def normalize_interrupt_action(response: Any, interrupt_type: str) -> str:
+    if is_skip_step_response(response):
+        return "skip"
+    if isinstance(response, dict):
+        action = str(response.get("action") or "").strip().lower()
+        if action in {"reply", "approve", "reject", "skip"}:
+            return action
+        if response.get("approved") is True:
+            return "approve"
+        if response.get("approved") is False:
+            if interrupt_type == "review_request" and (response.get("feedback") or response.get("message")):
+                return "reply"
+            return "reject"
+    return "reply" if interrupt_type == "clarification" else "approve"
+
+
+def extract_interrupt_message(response: Any) -> str:
+    if isinstance(response, str):
+        return response.strip()
+    if isinstance(response, dict):
+        for key in ("message", "feedback", "input", "reason"):
+            value = response.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    return ""
+
+
+def extract_follow_up_question(text: Any) -> str:
+    if not isinstance(text, str):
+        return ""
+    normalized = text.strip()
+    if not normalized or "?" not in normalized:
+        return ""
+
+    lines = [line.strip(" -*\t") for line in normalized.splitlines() if line.strip()]
+    for line in reversed(lines):
+        if "?" in line:
+            return line[-500:]
+
+    match = re.search(r"([^?.!\n][^?\n]{0,400}\?)\s*$", normalized)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
 def _format_workspace_file_hint(workspace_context: Optional[list], max_files: int = 12) -> str:
-    """Build a short hint listing files already available from workspace context."""
     filenames: List[str] = []
     seen = set()
     for workspace in workspace_context or []:
@@ -135,64 +173,61 @@ def _format_workspace_file_hint(workspace_context: Optional[list], max_files: in
 
 
 async def execute_step(
-    task: TaskConfig,
-    agent: AgentConfig,
+    task: Dict[str, Any],
+    agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
 ) -> Dict[str, Any]:
-    """Execute a single task with an agent.
+    """Execute a single task.
 
-    If HITL is needed (interrupt_before/after), wraps in a mini LangGraph
-    with interrupt support.
-
-    Args:
-        task: Task configuration
-        agent: Agent configuration
-        context_from_dependencies: Context string from dependency task results
-        workspace_context: Optional workspace context
-
-    Returns:
-        Dict with keys: status, result (TaskResult-like dict), interrupt, thread_id
+    Delegates to :func:`_execute_step_direct` for simple tasks.  For
+    tasks requiring HITL (interrupt_before / interrupt_after /
+    allow_clarification), wraps in a thin LangGraph via
+    :func:`workflow_service.run_single_step_graph` so that the same
+    interrupt / resume machinery used by full-playbook workflows is
+    reused — no duplicated HITL code.
     """
-    task_id = task.get("id", "unknown")
-    tool_configs = agent.get("tools", [])
-    needs_hitl = task.get("interrupt_before", False) or task.get("interrupt_after", False)
+    needs_hitl = (
+        task.get("interrupt_before", False)
+        or task.get("interrupt_after", False)
+        or task.get("allow_clarification", False)
+    )
 
     if needs_hitl:
-        return await _execute_step_with_hitl(
-            task,
-            agent,
-            context_from_dependencies,
-            workspace_context,
-            execution_mode,
-            validated_replay,
-            evaluation_user_id,
+        from src.langgraph_engine.workflow_service import run_single_step_graph
+        return await run_single_step_graph(
+            task=task,
+            agent=agent,
+            context_from_dependencies=context_from_dependencies,
+            workspace_context=workspace_context,
+            execution_mode=execution_mode,
+            validated_replay=validated_replay,
+            evaluation_user_id=evaluation_user_id,
         )
 
-    return await _execute_step_simple(
-        task,
-        agent,
-        context_from_dependencies,
-        workspace_context,
-        execution_mode,
-        validated_replay,
-        evaluation_user_id,
+    return await _execute_step_direct(
+        task=task,
+        agent=agent,
+        context_from_dependencies=context_from_dependencies,
+        workspace_context=workspace_context,
+        execution_mode=execution_mode,
+        validated_replay=validated_replay,
+        evaluation_user_id=evaluation_user_id,
     )
 
 
-async def _execute_step_simple(
-    task: TaskConfig,
-    agent: AgentConfig,
+async def _execute_step_direct(
+    task: Dict[str, Any],
+    agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
 ) -> Dict[str, Any]:
-    """Execute a step without HITL — direct agent call, with real tools if available."""
     from src.config.settings import get_settings
 
     settings = get_settings()
@@ -224,10 +259,8 @@ async def _execute_step_simple(
     llm_prompt_trace: List[Dict[str, Any]] = []
 
     try:
-        # Create real LangChain tools from agent config
         from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
 
-        # Get input_files from task config if available (for document filtering)
         input_files = task.get("input_files")
 
         logger.info(
@@ -307,7 +340,6 @@ async def _execute_step_simple(
             components = []
             tool_trace = []
 
-        # Wrap visualizer agent output as a web_preview component
         is_visualizer = (
             agent.get("agent_type") == "visualizer"
             or agent.get("name") == "Visualizer Agent"
@@ -360,190 +392,23 @@ async def _execute_step_simple(
         }
 
 
-async def _execute_step_with_hitl(
-    task: TaskConfig,
-    agent: AgentConfig,
-    context_from_dependencies: str = "",
-    workspace_context: Optional[list] = None,
-    execution_mode: str = "live",
-    validated_replay: Optional[Dict[str, Any]] = None,
-    evaluation_user_id: str = "unknown",
+async def resume_step(
+    thread_id: str,
+    human_response: dict,
+    task_id: str = "",
 ) -> Dict[str, Any]:
-    """Execute a step with HITL support — wraps in a mini LangGraph with interrupt."""
-    from langgraph.graph import StateGraph, END
-    from langgraph.types import interrupt
-    from src.langgraph_engine.checkpointer import get_checkpointer
-    from src.langgraph_engine.graph_cache import store_thread_graph
-    from typing_extensions import TypedDict
-    from typing import Annotated
+    """Resume an interrupted step with the human response.
 
-    task_id = task.get("id", "unknown")
-    thread_id = f"step_{task_id}_{uuid.uuid4().hex[:8]}"
+    Uses the same graph cache and resume machinery as full-playbook
+    workflows instead of maintaining a separate per-step graph.
+    """
+    from src.langgraph_engine.workflow_service import resume_single_step
 
-    class StepState(TypedDict):
-        task: Dict[str, Any]
-        agent: Dict[str, Any]
-        context: str
-        output: Optional[str]
-        status: str
-        error: Optional[str]
-        components: List[Dict[str, Any]]
-        usage: Dict[str, Any]
-        tool_trace: List[Dict[str, Any]]
-        llm_prompt_trace: List[Dict[str, Any]]
-        semantic_match: Optional[Dict[str, Any]]
-        execution_mode: str
-        validated_replay: Optional[Dict[str, Any]]
-
-    async def execute_node(state: StepState, config: RunnableConfig) -> Dict[str, Any]:
-        t = state["task"]
-        a = state["agent"]
-
-        if t.get("interrupt_before", False):
-            approval_payload = {
-                "type": "approval_request",
-                "task_id": t.get("id", ""),
-                "task_title": t.get("title", ""),
-                "message": f"Task '{t.get('title', '')}' requires approval.",
-                "thread_id": thread_id,
-            }
-            approval_response = interrupt(approval_payload)
-            if _is_skip_step_response(approval_response):
-                return {
-                    "status": "skipped",
-                    "error": None,
-                }
-            if isinstance(approval_response, dict) and approval_response.get("approved") is False:
-                return {
-                    "status": "failed",
-                    "error": approval_response.get("reason", "Rejected"),
-                }
-
-        result = await _execute_step_simple(
-            t,
-            a,
-            state.get("context", ""),
-            workspace_context,
-            state.get("execution_mode", "live"),
-            state.get("validated_replay"),
-            evaluation_user_id,
-        )
-
-        if t.get("interrupt_after", False) and result["status"] == "completed":
-            review_payload = {
-                "type": "review_request",
-                "task_id": t.get("id", ""),
-                "task_title": t.get("title", ""),
-                "result": result["result"]["output"],
-                "message": f"Task '{t.get('title', '')}' completed. Please review.",
-                "thread_id": thread_id,
-            }
-            review_response = interrupt(review_payload)
-            if _is_skip_step_response(review_response):
-                return {
-                    "status": "skipped",
-                    "error": None,
-                }
-            if isinstance(review_response, dict) and review_response.get("approved") is False:
-                return {
-                    "status": "failed",
-                    "error": review_response.get("reason", "Rejected"),
-                }
-
-        return {
-            "output": result["result"]["output"] if result["status"] == "completed" else None,
-            "status": result["status"],
-            "error": result.get("result", {}).get("error"),
-            "components": result.get("result", {}).get("components", []),
-            "usage": result.get("result", {}).get("usage", {}),
-            "tool_trace": result.get("result", {}).get("tool_trace", []),
-            "llm_prompt_trace": result.get("result", {}).get("llm_prompt_trace", []),
-            "semantic_match": result.get("result", {}).get("semantic_match"),
-        }
-
-    workflow = StateGraph(StepState)
-    workflow.add_node("execute", execute_node)
-    workflow.set_entry_point("execute")
-    workflow.add_edge("execute", END)
-
-    checkpointer = await get_checkpointer()
-    compiled = workflow.compile(checkpointer=checkpointer)
-
-    store_thread_graph(thread_id, compiled)
-
-    initial_state: StepState = {
-        "task": dict(task),
-        "agent": dict(agent),
-        "context": context_from_dependencies,
-        "output": None,
-        "status": "in_progress",
-        "error": None,
-        "components": [],
-        "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": ""},
-        "tool_trace": [],
-        "llm_prompt_trace": [],
-        "semantic_match": None,
-        "execution_mode": execution_mode,
-        "validated_replay": validated_replay,
-    }
-
-    config = {"configurable": {"thread_id": thread_id}}
-
-    try:
-        final_state = await compiled.ainvoke(initial_state, config)
-
-        # Check if the graph is suspended (HITL interrupt)
-        state_snapshot = await compiled.aget_state(config)
-        if state_snapshot.next:
-            interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
-            logger.info(f"[{task_id}] Graph suspended (HITL)", interrupt_type=interrupt_data.get("type") if interrupt_data else None)
-            return {
-                "status": "suspended",
-                "result": {
-                    "task_id": task_id,
-                    "status": "suspended",
-                    "output": "",
-                    "error": "",
-                    "duration_ms": 0,
-                },
-                "interrupt": interrupt_data,
-                "thread_id": thread_id,
-            }
-
-        final_status = final_state.get("status", "completed")
-        return {
-            "status": final_status,
-            "result": {
-                "task_id": task_id,
-                "status": final_status,
-                "output": final_state.get("output", ""),
-                "error": final_state.get("error", ""),
-                "duration_ms": 0,
-                "components": final_state.get("components", []),
-                "usage": final_state.get("usage", {}),
-                "tool_trace": final_state.get("tool_trace", []),
-                "llm_prompt_trace": final_state.get("llm_prompt_trace", []),
-                "semantic_match": final_state.get("semantic_match"),
-            },
-            "interrupt": None,
-            "thread_id": thread_id,
-        }
-
-    except Exception as e:
-        error_str = str(e)
-        logger.error(f"[{task_id}] HITL step execution failed", error=error_str)
-        return {
-            "status": "failed",
-            "result": {
-                "task_id": task_id,
-                "status": "failed",
-                "output": "",
-                "error": error_str,
-                "duration_ms": 0,
-            },
-            "interrupt": None,
-            "thread_id": thread_id,
-        }
+    return await resume_single_step(
+        thread_id=thread_id,
+        human_response=human_response,
+        task_id=task_id,
+    )
 
 
 async def _execute_with_tools(
@@ -555,14 +420,6 @@ async def _execute_with_tools(
     collector=None,
     temperature: float = 0.7,
 ) -> tuple:
-    """Execute an LLM call with tool binding and agentic tool-calling loop.
-
-    The LLM can iteratively call tools and receive results until it produces
-    a final text response (no more tool_calls).
-
-    Returns:
-        Tuple of (response_text, components_list, usage_dict, tool_trace, prompt_trace).
-    """
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
 
@@ -601,7 +458,6 @@ async def _execute_with_tools(
         response = await llm_with_tools.ainvoke(messages)
         messages.append(response)
 
-        # Accumulate usage from each LLM call
         iter_usage = _extract_usage(response)
         total_usage["input_tokens"] += iter_usage["input_tokens"]
         total_usage["output_tokens"] += iter_usage["output_tokens"]
@@ -641,11 +497,9 @@ async def _execute_with_tools(
                 "output_summary": _summarize_tool_result(result),
             })
 
-            # Collect components generated by this tool call
             if collector:
                 all_components.extend(collector.get_and_clear())
 
-    # Fallback: exceeded max iterations, return last content
     logger.warning("Max tool iterations reached", max=MAX_TOOL_ITERATIONS)
     last_content = messages[-1].content if hasattr(messages[-1], "content") else ""
     return last_content or "Max tool iterations reached without a final response.", all_components, total_usage, tool_trace, prompt_trace
@@ -661,11 +515,6 @@ async def _execute_replay_tool_calls(
     settings=None,
     model_name: Optional[str] = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
-    """Execute a recorded tool trajectory with exact recorded args.
-
-    Returns:
-        Tuple of (strict_reference_output, components, tool_trace, synthesis_context)
-    """
     tool_map = {tool.name: tool for tool in tools}
     all_components: List[Dict[str, Any]] = []
     tool_trace: List[Dict[str, Any]] = []
@@ -813,108 +662,6 @@ async def _adapt_replay_tool_args(
     return adapted_args
 
 
-async def resume_step(
-    thread_id: str,
-    human_response: dict,
-    task_id: str = "",
-) -> Dict[str, Any]:
-    """Resume an interrupted step with the human response.
-
-    Args:
-        thread_id: Thread ID from the interrupted step execution
-        human_response: Dict with approved, reason, feedback
-        task_id: Optional task ID being resumed
-
-    Returns:
-        Dict with keys: status, result, interrupt, thread_id
-    """
-    from langgraph.types import Command
-    from src.langgraph_engine.graph_cache import get_thread_graph, cleanup_thread_graph
-
-    graph = get_thread_graph(thread_id)
-    if graph is None:
-        logger.warning("[resume_step] Graph not found for thread", thread_id=thread_id)
-        return {
-            "status": "failed",
-            "result": {
-                "task_id": task_id,
-                "status": "failed",
-                "output": "",
-                "error": f"No active graph found for thread {thread_id}. The execution may have expired.",
-                "duration_ms": 0,
-            },
-            "interrupt": None,
-            "thread_id": thread_id,
-        }
-
-    config = {"configurable": {"thread_id": thread_id}}
-
-    response_data = human_response
-
-    logger.info("[resume_step] Resuming", thread_id=thread_id, task_id=task_id)
-
-    try:
-        final_state = await graph.ainvoke(Command(resume=response_data), config)
-
-        # Check if the graph is suspended again (e.g. interrupt_after following interrupt_before)
-        state_snapshot = await graph.aget_state(config)
-        if state_snapshot.next:
-            interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
-            logger.info("[resume_step] Graph suspended again (HITL)", interrupt_type=interrupt_data.get("type") if interrupt_data else None)
-            return {
-                "status": "suspended",
-                "result": {
-                    "task_id": task_id,
-                    "status": "suspended",
-                    "output": "",
-                    "error": "",
-                    "duration_ms": 0,
-                },
-                "interrupt": interrupt_data,
-                "thread_id": thread_id,
-            }
-
-        final_status = final_state.get("status", "completed")
-        logger.info("[resume_step] Resumed execution completed", status=final_status)
-
-        if final_status in ("completed", "failed", "skipped"):
-            cleanup_thread_graph(thread_id)
-
-        return {
-            "status": final_status,
-            "result": {
-                "task_id": task_id,
-                "status": final_status,
-                "output": final_state.get("output", ""),
-                "error": final_state.get("error", ""),
-                "duration_ms": 0,
-                "components": final_state.get("components", []),
-                "usage": final_state.get("usage", {}),
-                "tool_trace": final_state.get("tool_trace", []),
-                "semantic_match": final_state.get("semantic_match"),
-            },
-            "interrupt": None,
-            "thread_id": thread_id,
-        }
-
-    except Exception as e:
-        error_str = str(e)
-        logger.error("[resume_step] Failed", error=error_str)
-        cleanup_thread_graph(thread_id)
-        return {
-            "status": "failed",
-            "result": {
-                "task_id": task_id,
-                "status": "failed",
-                "output": "",
-                "error": error_str,
-                "duration_ms": 0,
-            },
-            "interrupt": None,
-            "thread_id": thread_id,
-        }
-
-
 async def _llm_call(
     settings,
     model_name: str,
@@ -924,11 +671,6 @@ async def _llm_call(
     prompt_trace: Optional[List[Dict[str, Any]]] = None,
     stage: str = "llm_call",
 ) -> tuple:
-    """Direct LLM call without tools.
-
-    Returns:
-        Tuple of (content_str, usage_dict).
-    """
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage
 

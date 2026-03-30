@@ -435,9 +435,11 @@ message StopPlaybookWorkflowResponse {
 // --- Human-in-the-loop messages ---
 
 message HumanResponse {
-    bool approved = 1;               // Whether the human approved or rejected
-    string reason = 2;               // Optional: reason for rejection
-    string feedback = 3;             // Optional: feedback to enhance task context
+    string action = 1;                 // "reply" | "approve" | "reject" | "skip"
+    string message = 2;                // Free-form user reply for conversational HITL
+    bool approved = 3;               // Legacy compatibility: whether the human approved or rejected
+    string reason = 4;               // Legacy compatibility: reason for rejection
+    string feedback = 5;             // Legacy compatibility: review/clarification feedback
 }
 
 // --- Response messages ---
@@ -499,6 +501,10 @@ message InterruptPayload {
     string thread_id = 5;
     string task_description = 6;    // Set for approval_request
     string result = 7;              // Set for review_request
+    string interrupt_id = 8;        // Stable interrupt instance identifier
+    int32 round = 9;                // Conversational HITL round number (1-based)
+    string conversation_json = 10;  // JSON-encoded transcript for the current interrupt thread
+    repeated string resumable_actions = 11; // Allowed actions for the current interrupt
 }
 
 message PlaybookWorkflowResponse {

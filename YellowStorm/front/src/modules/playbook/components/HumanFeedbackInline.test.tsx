@@ -1,26 +1,23 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import type { HumanFeedbackData } from '../types';
 
-const resumeMock = vi.fn();
-
-vi.mock('react-router-dom', () => ({
-  useParams: () => ({ id: 'p1' }),
-}));
+const setDesignerOpenMock = vi.fn();
+const setCopilotModeMock = vi.fn();
+const selectStepMock = vi.fn();
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('@/lib/api-error', () => ({
-  handleApiError: vi.fn(),
-}));
-
 vi.mock('../store', () => ({
-  useCurrentExecution: () => ({ id: 'e1', playbookId: 'p1' }),
-  usePlaybookStore: (sel: any) => sel({ resumeExecution: resumeMock }),
+  usePlaybookStore: (sel: any) => sel({
+    setDesignerOpen: setDesignerOpenMock,
+    setCopilotMode: setCopilotModeMock,
+    selectStep: selectStepMock,
+  }),
 }));
 
 const pendingApproval: HumanFeedbackData = {
@@ -47,40 +44,46 @@ const pendingClarification: HumanFeedbackData = {
 };
 
 describe('HumanFeedbackInline', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('renders approval title and copilot prompt for pending approval', () => {
+    render(<HumanFeedbackInline data={pendingApproval} taskId="t1" />);
+    expect(screen.getByText('interrupt.approvalTitle')).toBeInTheDocument();
+    expect(screen.getByText('Approve this action?')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.answerInCopilot')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.openCopilot')).toBeInTheDocument();
+  });
+
   it('renders approval title and message for pending approval', () => {
     render(<HumanFeedbackInline data={pendingApproval} taskId="t1" />);
     expect(screen.getByText('interrupt.approvalTitle')).toBeInTheDocument();
     expect(screen.getByText('Approve this action?')).toBeInTheDocument();
-    expect(screen.getByText('interrupt.approve')).toBeInTheDocument();
-    expect(screen.getByText('interrupt.reject')).toBeInTheDocument();
   });
 
   it('renders answered state for non-pending data', () => {
     render(<HumanFeedbackInline data={answeredApproval} taskId="t1" />);
     expect(screen.getByText('interrupt.approved')).toBeInTheDocument();
-    expect(screen.queryByText('interrupt.approve')).not.toBeInTheDocument();
+    expect(screen.queryByText('interrupt.openCopilot')).not.toBeInTheDocument();
   });
 
-  it('calls resumeExecution on approve click', async () => {
-    resumeMock.mockResolvedValueOnce(undefined);
+  it('opens interrupt copilot for the current step', async () => {
     render(<HumanFeedbackInline data={pendingApproval} taskId="t1" />);
-    await userEvent.click(screen.getByText('interrupt.approve'));
-    expect(resumeMock).toHaveBeenCalledWith('p1', expect.objectContaining({
-      executionId: 'e1',
-      taskId: 't1',
-      approved: true,
-    }));
+    await userEvent.click(screen.getByText('interrupt.openCopilot'));
+    expect(selectStepMock).toHaveBeenCalledWith('t1');
+    expect(setCopilotModeMock).toHaveBeenCalledWith('interrupt');
+    expect(setDesignerOpenMock).toHaveBeenCalledWith(true);
   });
 
-  it('shows clarification title and submit button for clarification type', () => {
+  it('shows clarification title and copilot affordance for clarification type', () => {
     render(<HumanFeedbackInline data={pendingClarification} taskId="t1" />);
     expect(screen.getByText('interrupt.clarificationTitle')).toBeInTheDocument();
-    expect(screen.getByText('interrupt.submit')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.openCopilot')).toBeInTheDocument();
   });
 
-  it('disables clarification submit when textarea is empty', () => {
+  it('keeps clarification pending state read-only in the step detail', () => {
     render(<HumanFeedbackInline data={pendingClarification} taskId="t1" />);
-    const submitBtn = screen.getByText('interrupt.submit').closest('button');
-    expect(submitBtn).toBeDisabled();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 });

@@ -96,6 +96,8 @@ export function usePlaybookCanvas() {
   const playbook = useCurrentPlaybook();
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
+  const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
+  const canvasSyncVersion = usePlaybookStore((s) => s.canvasSyncVersion);
 
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -122,6 +124,14 @@ export function usePlaybookCanvas() {
       setEdges(playbookEdgesToFlowEdges(playbook.edges));
     }
   }, [playbook]);
+
+  // Re-sync ReactFlow state after undo/redo (canvasSyncVersion bump)
+  useEffect(() => {
+    if (!playbook || canvasSyncVersion === 0) return;
+    syncedKeyRef.current = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
+    setNodes(tasksToNodes(playbook.tasks));
+    setEdges(playbookEdgesToFlowEdges(playbook.edges));
+  }, [canvasSyncVersion, playbook]);
 
   // Keep node metadata in sync when task data changes locally in the store
   // without a server-backed updatedAt change, e.g. after saving/activating
@@ -163,16 +173,14 @@ export function usePlaybookCanvas() {
   // Reads from nodesRef instead of setState updater to avoid nested updates.
   const onNodeDragStop: OnNodeDrag = useCallback(
     () => {
+      captureSnapshot();
       updateTasks(nodesToTasks(nodesRef.current));
     },
-    [updateTasks],
+    [updateTasks, captureSnapshot],
   );
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
-      // Selection-only changes are UI-local and should not trigger a store
-      // update / autosave, otherwise the API response replaces the local
-      // ReactFlow state and the selection is lost (preventing edge deletion).
       const hasStructuralChange = changes.some(
         (c) => c.type !== 'select',
       );
@@ -180,12 +188,13 @@ export function usePlaybookCanvas() {
       setEdges((eds) => {
         const updated = applyEdgeChanges(changes, eds);
         if (hasStructuralChange) {
+          captureSnapshot();
           deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
         }
         return updated;
       });
     },
-    [updateEdges],
+    [updateEdges, captureSnapshot],
   );
 
   const onConnect: OnConnect = useCallback(
@@ -201,11 +210,12 @@ export function usePlaybookCanvas() {
           type: 'animated',
         };
         const updated = addEdge(newEdge, eds) as Edge[];
+        captureSnapshot();
         deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
         return updated;
       });
     },
-    [updateEdges],
+    [updateEdges, captureSnapshot],
   );
 
   const addNode = useCallback(
@@ -218,15 +228,17 @@ export function usePlaybookCanvas() {
       };
       setNodes((nds) => {
         const updated = [...nds, newNode];
+        captureSnapshot();
         deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
         return updated;
       });
     },
-    [updateTasks],
+    [updateTasks, captureSnapshot],
   );
 
   const removeNode = useCallback(
     (nodeId: string) => {
+      captureSnapshot();
       setNodes((nds) => {
         const updated = nds.filter((n) => n.id !== nodeId);
         deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
@@ -240,7 +252,7 @@ export function usePlaybookCanvas() {
         return updated;
       });
     },
-    [updateTasks, updateEdges],
+    [updateTasks, updateEdges, captureSnapshot],
   );
 
   const updateNodeData = useCallback(
@@ -249,11 +261,12 @@ export function usePlaybookCanvas() {
         const updated = nds.map((n) =>
           n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n,
         );
+        captureSnapshot();
         deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
         return updated;
       });
     },
-    [updateTasks],
+    [updateTasks, captureSnapshot],
   );
 
   return {

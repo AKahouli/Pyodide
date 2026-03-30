@@ -30,6 +30,7 @@ import {
   useIsExecuting,
 } from '../store';
 import { useModuleTranslation } from '@/modules/localization';
+import type { PlaybookPageMode } from '../types';
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -44,11 +45,14 @@ function formatDuration(ms: number | null): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-function getExecutionModeLabel(mode?: string): string {
-  if (mode === 'replay_strict') return 'Replay (Strict)';
-  if (mode === 'replay_flex') return 'Replay (Flex)';
-  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
-  return 'Live';
+function getExecutionModeLabel(
+  mode: string | undefined,
+  t: (key: 'execution.mode.live' | 'execution.mode.replayStrict' | 'execution.mode.replayFlex' | 'execution.mode.replayAdaptive') => string,
+): string {
+  if (mode === 'replay_strict') return t('execution.mode.replayStrict');
+  if (mode === 'replay_flex') return t('execution.mode.replayFlex');
+  if (mode === 'replay_adaptive') return t('execution.mode.replayAdaptive');
+  return t('execution.mode.live');
 }
 
 function ExecutionHistoryPicker({
@@ -165,7 +169,12 @@ function PanelHeaderActions({
   );
 }
 
-export function ExecutionPanel() {
+interface ExecutionPanelProps {
+  pageMode?: PlaybookPageMode;
+  onOpenOutputFormatEditor?: (taskId: string) => void;
+}
+
+export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: ExecutionPanelProps) {
   const { t } = useModuleTranslation('playbook');
   const execution = useCurrentExecution();
   const playbook = useCurrentPlaybook();
@@ -184,8 +193,6 @@ export function ExecutionPanel() {
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
-  const [validateDialogTaskId, setValidateDialogTaskId] = useState<string | null>(null);
-  const [isSavingReplayBaseline, setIsSavingReplayBaseline] = useState(false);
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState('results');
 
@@ -221,13 +228,11 @@ export function ExecutionPanel() {
   }, [execution?.status, execution?.taskResults, selectedStepId, selectStep]);
 
   const handleSelectStep = useCallback(
-    (taskId: string) => selectStep(taskId),
+    (taskId: string) => {
+      selectStep(taskId);
+    },
     [selectStep],
   );
-
-  const openValidateDialog = useCallback((taskId: string) => {
-    setValidateDialogTaskId(taskId);
-  }, []);
 
   const handleValidateStep = useCallback(
     async (taskId: string, options?: { preserveOutputFormat?: boolean }) => {
@@ -249,6 +254,7 @@ export function ExecutionPanel() {
       await validateTaskReplay(execution.playbookId, taskId, execution.id, {
         preserveOutputFormat: options?.preserveOutputFormat || false,
       });
+      await fetchExecution(execution.playbookId, execution.id);
     },
     [execution, fetchExecution, validateTaskReplay],
   );
@@ -273,6 +279,7 @@ export function ExecutionPanel() {
       await grabOutputFormatTemplate(execution.playbookId, taskId, {
         executionId: execution.id,
       });
+      await fetchExecution(execution.playbookId, execution.id);
     },
     [execution, fetchExecution, grabOutputFormatTemplate],
   );
@@ -292,17 +299,6 @@ export function ExecutionPanel() {
     },
     [execution, playbook, rerunStepInExecution],
   );
-
-  const confirmValidateStep = useCallback(async () => {
-    if (!validateDialogTaskId) return;
-    setIsSavingReplayBaseline(true);
-    try {
-      await handleValidateStep(validateDialogTaskId, { preserveOutputFormat: false });
-      setValidateDialogTaskId(null);
-    } finally {
-      setIsSavingReplayBaseline(false);
-    }
-  }, [handleValidateStep, validateDialogTaskId]);
 
   const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
 
@@ -407,7 +403,7 @@ export function ExecutionPanel() {
           <span className="text-sm font-medium">{t('execution.title')}</span>
           <PlaybookStatusBadge status={execution.status} size="md" />
           <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-            {getExecutionModeLabel(execution.executionMode)}
+            {getExecutionModeLabel(execution.executionMode, t)}
           </span>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3 w-3" />
@@ -450,49 +446,25 @@ export function ExecutionPanel() {
           taskResults={execution.taskResults}
           selectedStepId={selectedStepId}
           onSelectStep={handleSelectStep}
+          pageMode={pageMode}
         />
         <ExecutionStepDetail
           key={selectedResultRenderKey}
           step={selectedResult}
           execution={execution}
-          onRequestValidateReplay={openValidateDialog}
+          pageMode={pageMode}
+          onRequestValidateReplay={(taskId) => {
+            void handleValidateStep(taskId, { preserveOutputFormat: false });
+          }}
           onRequestRunEvaluation={handleRunEvaluation}
           onRequestGrabOutputFormat={handleGrabOutputFormat}
+          onOpenOutputFormatEditor={onOpenOutputFormatEditor}
           onStepReplayModeChange={handleStepReplayModeChange}
           isRunningEvaluation={isExecuting}
           activeTab={activeDetailTab}
           onActiveTabChange={setActiveDetailTab}
         />
       </div>
-
-      <Dialog open={!!validateDialogTaskId} onOpenChange={(open) => {
-        if (!open) {
-          setValidateDialogTaskId(null);
-        }
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Save Replay Baseline</DialogTitle>
-          </DialogHeader>
-          <div className="text-sm text-muted-foreground">
-            Save this completed step execution as a validated replay baseline.
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setValidateDialogTaskId(null);
-              }}
-              disabled={isSavingReplayBaseline}
-            >
-              Cancel
-            </Button>
-            <Button onClick={() => void confirmValidateStep()} disabled={isSavingReplayBaseline}>
-              {isSavingReplayBaseline ? 'Saving...' : 'Save Baseline'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
         <DialogContent>

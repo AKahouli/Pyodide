@@ -54,6 +54,8 @@ export interface PlaybookTask {
   activeOutputFormatTemplateVersion?: number | null;
   activeOutputFormatStatus?: 'pending' | 'ready' | 'failed' | null;
   activeOutputFormatError?: string | null;
+  isSavingReplayBaseline?: boolean;
+  isCapturingOutputFormat?: boolean;
   stepReplayMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   inputFiles: InputFile[];
 }
@@ -273,10 +275,13 @@ export interface OutputFormatTemplate {
 
 export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted';
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
+export type PlaybookPageMode = 'design' | 'run';
+export type PlaybookCopilotMode = 'design' | 'interrupt';
 
 // ===== Interrupt =====
 
 export type InterruptType = 'approval_request' | 'review_request' | 'clarification';
+export type InterruptAction = 'reply' | 'approve' | 'reject' | 'skip';
 
 export interface InterruptPayload {
   type: InterruptType | string;
@@ -284,7 +289,10 @@ export interface InterruptPayload {
   taskTitle: string;
   message: string;
   threadId: string;
+  interruptId?: string;
+  round?: number;
   payloadJson?: string;
+  resumableActions?: string[];
   taskDescription?: string;
   result?: string;
 }
@@ -294,6 +302,12 @@ export interface HumanFeedbackData {
   message: string;
   status: 'pending' | 'answered';
   humanResponse?: string;
+  action?: InterruptAction | string;
+  replyMessage?: string;
+  interruptId?: string;
+  round?: number;
+  payloadJson?: string;
+  resumableActions?: string[];
   taskDescription?: string;
   result?: string;
   approved?: boolean;
@@ -380,6 +394,10 @@ export interface PlaybookInterruptEvent {
   type: string;
   message: string;
   threadId: string;
+  interruptId?: string;
+  round?: number;
+  payloadJson?: string;
+  resumableActions?: string[];
   taskDescription?: string;
   result?: string;
 }
@@ -401,6 +419,13 @@ export interface GeneratePlaybookData {
 export interface PlaybookSnapshot {
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
+}
+
+export interface PlaybookUndoSnapshot {
+  tasks: PlaybookTask[];
+  edges: PlaybookEdge[];
+  name: string;
+  workspaces: string[];
 }
 
 export interface DesignMessage {
@@ -457,7 +482,9 @@ export interface UpdateOutputFormatTemplateData {
 export interface ResumePlaybookData {
   executionId: string;
   taskId: string;
-  approved: boolean;
+  action?: InterruptAction;
+  message?: string;
+  approved?: boolean;
   reason?: string;
   feedback?: string;
 }
@@ -487,6 +514,8 @@ export interface PlaybookState {
   isDirty: boolean;
   dirtyVersion: number;
   isSaving: boolean;
+  saveRequestId: number;
+  savingDirtyVersion: number | null;
   currentExecution: PlaybookExecution | null;
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;
@@ -502,8 +531,13 @@ export interface PlaybookState {
   isStopping: boolean;
   isDesigning: boolean;
   designerOpen: boolean;
+  copilotMode: PlaybookCopilotMode;
   executionPanelOpen: boolean;
   workspaceExplorerOpen: boolean;
+  pageMode: PlaybookPageMode;
+  undoStack: PlaybookUndoSnapshot[];
+  redoStack: PlaybookUndoSnapshot[];
+  canvasSyncVersion: number;
 }
 
 export interface PlaybookActions {
@@ -585,12 +619,14 @@ export interface PlaybookActions {
   fetchExecutions: (playbookId: string) => Promise<void>;
   fetchExecution: (playbookId: string, execId: string) => Promise<void>;
   selectStep: (taskId: string | null) => void;
+  setPageMode: (mode: PlaybookPageMode) => void;
 
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;
+  setCopilotMode: (mode: PlaybookCopilotMode) => void;
   setExecutionPanelOpen: (open: boolean) => void;
   viewExecutionInPanel: (executionId: string) => void;
 
@@ -601,6 +637,12 @@ export interface PlaybookActions {
 
   // Cleanup
   reset: () => void;
+
+  // Undo/Redo
+  captureSnapshot: () => void;
+  undo: () => void;
+  redo: () => void;
+  clearUndoHistory: () => void;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;

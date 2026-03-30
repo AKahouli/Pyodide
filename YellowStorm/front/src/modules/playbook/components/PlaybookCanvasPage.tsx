@@ -34,6 +34,10 @@ import {
   useHasActiveExecution,
   useExecutionPanelOpen,
   useWorkspaceExplorerOpen,
+  usePageMode,
+  useSelectedStep,
+  useCanUndo,
+  useCanRedo,
 } from '../store';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ExecutionPanel } from './ExecutionPanel';
@@ -50,7 +54,7 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
-import type { PlaybookTask, StepStatus, SemanticMatchResult } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 
@@ -114,13 +118,22 @@ function PlaybookCanvasInner() {
   const hasActiveExecution = useHasActiveExecution(id);
   const executionPanelOpen = useExecutionPanelOpen();
   const workspaceExplorerOpen = useWorkspaceExplorerOpen();
+  const pageMode = usePageMode();
+  const selectedStepId = useSelectedStep();
+  const canUndo = useCanUndo();
+  const canRedo = useCanRedo();
   const setDesignerOpen = usePlaybookStore((s) => s.setDesignerOpen);
+  const setCopilotMode = usePlaybookStore((s) => s.setCopilotMode);
   const setWorkspaceExplorerOpen = usePlaybookStore((s) => s.setWorkspaceExplorerOpen);
+  const setPageMode = usePlaybookStore((s) => s.setPageMode);
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const updatePlaybook = usePlaybookStore((s) => s.updatePlaybook);
   const clonePlaybook = usePlaybookStore((s) => s.clonePlaybook);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
+  const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
+  const undo = usePlaybookStore((s) => s.undo);
+  const redo = usePlaybookStore((s) => s.redo);
   const fetchOutputFormatTemplate = usePlaybookStore((s) => s.fetchOutputFormatTemplate);
   const updateOutputFormatTemplate = usePlaybookStore((s) => s.updateOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
@@ -171,6 +184,7 @@ function PlaybookCanvasInner() {
         selectedStepId: null,
         executionPanelOpen: panelPref,
         executionHistory: [],
+        pageMode: 'design',
       });
       fetchPlaybook(id);
       fetchExecutions(id);
@@ -226,6 +240,26 @@ function PlaybookCanvasInner() {
     if (playbook) setNameValue(playbook.name);
   }, [playbook?.name]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey;
+      if (isMeta && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (canUndo) undo();
+      }
+      if (isMeta && e.key === 'z' && e.shiftKey) {
+        e.preventDefault();
+        if (canRedo) redo();
+      }
+      if (isMeta && e.key === 'y') {
+        e.preventDefault();
+        if (canRedo) redo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canUndo, canRedo, undo, redo]);
+
   // Refresh usage indicator when execution ends, generation or design completes
   const prevIsGenerating = useRef(isGenerating);
   const prevIsDesigning = useRef(isDesigning);
@@ -274,13 +308,12 @@ function PlaybookCanvasInner() {
 
   // Overlay step statuses onto nodes
   const liveNodes = useMemo(() => {
-    if (stepStatusMap.size === 0 && stepSemanticMatchMap.size === 0) return nodes;
     return nodes.map((node) => {
       const status = stepStatusMap.get(node.id);
       const semanticMatch = stepSemanticMatchMap.get(node.id) ?? null;
-      if (status === undefined && semanticMatch === null) return node;
       return {
         ...node,
+        selected: node.id === selectedStepId,
         data: {
           ...node.data,
           ...(status !== undefined ? { stepStatus: status } : {}),
@@ -288,7 +321,7 @@ function PlaybookCanvasInner() {
         },
       };
     });
-  }, [nodes, stepStatusMap, stepSemanticMatchMap]);
+  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap]);
 
   // Style edges based on source node status
   const liveEdges = useMemo(() => {
@@ -525,6 +558,7 @@ function PlaybookCanvasInner() {
   const handleRun = useCallback(async () => {
     if (!id || !playbook) return;
     if (isDirty) await saveNow();
+    setPageMode('run');
     if (executionMode === 'live') {
       await executePlaybook(id, { executionMode: 'live' });
     } else {
@@ -537,20 +571,24 @@ function PlaybookCanvasInner() {
       }
       await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes });
     }
-  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode]);
+  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, setPageMode]);
 
   const handleAutoLayout = useCallback(() => {
     if (!playbook) return;
+    captureSnapshot();
     const layoutedTasks = autoLayoutTasks(playbook.tasks, playbook.edges);
     setNodes(tasksToNodes(layoutedTasks));
     updateTasks(layoutedTasks);
-  }, [playbook, updateTasks, setNodes]);
+  }, [playbook, updateTasks, setNodes, captureSnapshot]);
 
-  const handleToggleDesigner = useCallback(() => {
+  const handleToggleCopilot = useCallback(() => {
     const newOpen = !designerOpen;
+    if (newOpen) {
+      setCopilotMode(pageMode === 'run' ? 'interrupt' : 'design');
+    }
     setDesignerOpen(newOpen);
     if (newOpen) setEditorOpen(false);
-  }, [designerOpen, setDesignerOpen]);
+  }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen]);
 
   const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
   const selectStep = usePlaybookStore((s) => s.selectStep);
@@ -558,39 +596,73 @@ function PlaybookCanvasInner() {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
+      selectStep(node.id);
+
       const executionForSelection =
         currentExecution?.playbookId === id
           ? currentExecution
           : execution;
 
-      if (!executionForSelection) return;
+      if (executionForSelection) {
+        setExecutionPanelOpen(true);
+        viewExecutionInPanel(executionForSelection.id);
+        setPageMode('run');
+        return;
+      }
+
+      if (pageMode === 'design') {
+        const targetNode = nodes.find((candidate) => candidate.id === node.id);
+        if (targetNode) {
+          setEditingTask(targetNode.data as unknown as PlaybookTask);
+          setEditorOpen(true);
+          setDesignerOpen(false);
+        }
+        return;
+      }
+
       setExecutionPanelOpen(true);
-      viewExecutionInPanel(executionForSelection.id);
-      selectStep(node.id);
     },
-    [currentExecution, execution, id, setExecutionPanelOpen, viewExecutionInPanel, selectStep],
+    [currentExecution, execution, id, nodes, pageMode, selectStep, setDesignerOpen, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
   );
 
   const handleViewExecutions = useCallback(() => {
-    setExecutionPanelOpen(!executionPanelOpen);
-  }, [executionPanelOpen, setExecutionPanelOpen]);
+    const nextOpen = !executionPanelOpen;
+    setExecutionPanelOpen(nextOpen);
+    if (nextOpen) {
+      setPageMode('run');
+    } else if (pageMode !== 'design') {
+      setPageMode('design');
+    }
+  }, [executionPanelOpen, pageMode, setExecutionPanelOpen, setPageMode]);
+
+  const handlePageModeChange = useCallback(
+    (mode: PlaybookPageMode) => {
+      setPageMode(mode);
+      if (mode === 'design') {
+        return;
+      }
+      setExecutionPanelOpen(true);
+    },
+    [setExecutionPanelOpen, setPageMode],
+  );
 
   const handleNameBlur = useCallback(() => {
     setEditingName(false);
     if (id && nameValue.trim() && nameValue !== playbook?.name) {
+      captureSnapshot();
       updatePlaybook(id, { name: nameValue.trim() });
     }
-  }, [id, nameValue, playbook?.name, updatePlaybook]);
+  }, [id, nameValue, playbook?.name, updatePlaybook, captureSnapshot]);
 
   const handleWorkspacesChange = useCallback(
     (workspaces: string[]) => {
+      captureSnapshot();
       updateWorkspaces(workspaces);
-      // Save immediately — workspace changes shouldn't wait for autosave
       if (id) {
         updatePlaybook(id, { workspaces });
       }
     },
-    [id, updateWorkspaces, updatePlaybook],
+    [id, updateWorkspaces, updatePlaybook, captureSnapshot],
   );
 
   // Show generating overlay while waiting for AI
@@ -619,6 +691,10 @@ function PlaybookCanvasInner() {
       </div>
     );
   }
+
+  const isExecutionPanelVisible = pageMode !== 'design' || executionPanelOpen;
+  const canvasDefaultSize = isExecutionPanelVisible ? 60 : 100;
+  const executionPanelDefaultSize = 40;
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -689,19 +765,27 @@ function PlaybookCanvasInner() {
             <span className="hidden sm:inline">Explorer</span>
           </Button>
           <PlaybookToolbar
+            pageMode={pageMode}
+            onPageModeChange={handlePageModeChange}
+            hasExecutionContext={Boolean(currentExecution || execution)}
+            hasPendingInterrupt={Boolean(currentExecution?.interruptPayload)}
             onAddStep={handleAddStep}
             onAutoLayout={handleAutoLayout}
             onRun={handleRun}
             onSave={saveNow}
             onViewExecutions={handleViewExecutions}
-            onToggleDesigner={handleToggleDesigner}
-            designerOpen={designerOpen}
+            onToggleCopilot={handleToggleCopilot}
+            copilotOpen={designerOpen}
             isDirty={isDirty}
             isSaving={isSaving}
             isExecuting={isExecuting}
             canRun={playbook.tasks.length > 0 && !hasActiveExecution && !isSaving && !isDirty}
             executionMode={executionMode}
             onExecutionModeChange={setExecutionMode}
+            canUndo={canUndo}
+            canRedo={canRedo}
+            onUndo={undo}
+            onRedo={redo}
           />
         </div>
       </div>
@@ -712,8 +796,8 @@ function PlaybookCanvasInner() {
         <WorkspaceExplorerSidebar />
 
         {/* Canvas + Execution split */}
-        <ResizablePanelGroup orientation="vertical" className="flex-1" key={executionPanelOpen ? 'split' : 'full'}>
-          <ResizablePanel defaultSize={executionPanelOpen ? 60 : 100} minSize={30}>
+        <ResizablePanelGroup orientation="vertical" className="flex-1" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
+          <ResizablePanel defaultSize={canvasDefaultSize} minSize={30}>
             <div className="relative h-full overflow-hidden">
               <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
                 <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor }}>
@@ -751,11 +835,16 @@ function PlaybookCanvasInner() {
             </div>
           </ResizablePanel>
 
-          {executionPanelOpen && (
+          {isExecutionPanelVisible && (
             <>
               <ResizableHandle withHandle orientation="vertical" />
-              <ResizablePanel defaultSize={40} minSize={15}>
-                <ExecutionPanel />
+              <ResizablePanel defaultSize={executionPanelDefaultSize} minSize={15}>
+                <ExecutionPanel
+                  pageMode={pageMode}
+                  onOpenOutputFormatEditor={(taskId) => {
+                    void openOutputFormatEditor(taskId);
+                  }}
+                />
               </ResizablePanel>
             </>
           )}

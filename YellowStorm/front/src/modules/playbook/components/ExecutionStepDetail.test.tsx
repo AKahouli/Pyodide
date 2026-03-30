@@ -1,7 +1,15 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
 import type { PlaybookExecution, TaskResult } from '../types';
+
+const storeState = vi.hoisted(() => ({
+  currentPlaybook: null as any,
+  deleteExecution: vi.fn(),
+  validateTaskReplay: vi.fn(),
+  fetchTaskReplays: vi.fn().mockResolvedValue([]),
+}));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -35,12 +43,7 @@ vi.mock('./HumanFeedbackInline', () => ({
 }));
 
 vi.mock('../store', () => ({
-  usePlaybookStore: (selector: any) => selector({
-    currentPlaybook: null,
-    deleteExecution: vi.fn(),
-    validateTaskReplay: vi.fn(),
-    fetchTaskReplays: vi.fn().mockResolvedValue([]),
-  }),
+  usePlaybookStore: (selector: any) => selector(storeState),
 }));
 
 const baseStep: TaskResult = {
@@ -57,6 +60,54 @@ const baseStep: TaskResult = {
 };
 
 describe('ExecutionStepDetail', () => {
+  it('renders replay and output-format badges immediately from task state and opens the format editor', async () => {
+    const onOpenOutputFormatEditor = vi.fn();
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{
+        id: 't1',
+        title: 'Analyze Data',
+        description: '',
+        assignedAgentId: null,
+        executionOrder: 0,
+        positionX: 0,
+        positionY: 0,
+        interruptBefore: false,
+        interruptAfter: false,
+        allowClarification: false,
+        clarificationPrompt: '',
+        maxClarifications: 0,
+        inputKeys: [],
+        outputKey: '',
+        notifyOnComplete: false,
+        notifyEmails: [],
+        inputFiles: [],
+        hasValidatedReplay: true,
+        activeReplayVersion: 4,
+        isSavingReplayBaseline: true,
+        hasOutputFormatTemplate: true,
+        activeOutputFormatTemplateVersion: 2,
+        activeOutputFormatStatus: 'pending',
+        isCapturingOutputFormat: true,
+      }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={baseStep}
+        onOpenOutputFormatEditor={onOpenOutputFormatEditor}
+      />,
+    );
+
+    expect(screen.getByText('detail.badges.replayBaseline')).toBeInTheDocument();
+    expect(screen.getByText('detail.badges.outputFormatTemplate')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'detail.badges.outputFormatTemplate' }));
+    expect(onOpenOutputFormatEditor).toHaveBeenCalledWith('t1');
+
+    storeState.currentPlaybook = null;
+  });
+
   it('shows placeholder when no step is selected', () => {
     render(<ExecutionStepDetail step={null} />);
     expect(screen.getByText('execution.selectStep')).toBeInTheDocument();
@@ -107,7 +158,7 @@ describe('ExecutionStepDetail', () => {
       ],
     };
     render(<ExecutionStepDetail step={withTrace} />);
-    expect(screen.getByText('Tool Trace')).toBeInTheDocument();
+    expect(screen.getByText('detail.tabs.toolTrace')).toBeInTheDocument();
     expect(screen.getByText('perform_document_search')).toBeInTheDocument();
     expect(screen.getByText('top hits')).toBeInTheDocument();
   });
@@ -129,8 +180,8 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={withSemanticMatch} />);
-    expect(screen.getByText('Semantic Match')).toBeInTheDocument();
-    expect(screen.getByText('Evidence Consistency')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.semanticMatch')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.evidenceConsistency')).toBeInTheDocument();
     expect(screen.getByText('93%')).toBeInTheDocument();
     expect(screen.getByText('Minor wording updates')).toBeInTheDocument();
   });
@@ -161,8 +212,8 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={baseStep} execution={execution} />);
-    expect(screen.getByText('Replay Provenance')).toBeInTheDocument();
-    expect(screen.getByText('Validated baseline: v3')).toBeInTheDocument();
+    expect(screen.getByText('detail.provenance.title')).toBeInTheDocument();
+    expect(screen.getByText('detail.provenance.baseline: v3')).toBeInTheDocument();
   });
 
   it('runs evaluation manually from the evaluation pane', async () => {
@@ -199,7 +250,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    screen.getByText('Run Evaluation').click();
+    await userEvent.click(screen.getAllByText('detail.actions.runEvaluation')[0]);
     expect(onRequestRunEvaluation).toHaveBeenCalledWith('t1');
   });
 
@@ -267,9 +318,9 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('Evaluation Run')).toBeInTheDocument();
-    expect(screen.getByText(/Trigger: manual/)).toBeInTheDocument();
-    expect(screen.getByText(/Baseline: v3/)).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.historyLabel')).toBeInTheDocument();
+    expect(screen.getByText(/detail.evaluation.trigger: manual/)).toBeInTheDocument();
+    expect(screen.getByText(/detail.provenance.baseline: v3/)).toBeInTheDocument();
   });
 
   it('shows an in-progress message while evaluation is running', () => {
@@ -305,8 +356,8 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('Evaluation in progress')).toBeInTheDocument();
-    expect(screen.getByText('Waiting for evaluation results...')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.inProgress')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.runningMessage')).toBeInTheDocument();
   });
 
   it('prefers evaluation history data when semantic match is not on the root task result', () => {

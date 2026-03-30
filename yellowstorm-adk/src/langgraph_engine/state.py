@@ -1,18 +1,24 @@
 """LangGraph state definitions for playbook execution."""
 
-from typing import List, Optional, Dict, Any, Annotated
+from typing import List, Optional, Dict, Any, Annotated, Callable, Awaitable
 from typing_extensions import TypedDict
+
+_STATUS_SEVERITY = {
+    "failed": 0,
+    "suspended": 1,
+    "in_progress": 2,
+    "completed": 3,
+    "skipped": 4,
+}
 
 
 class NodeTiming(TypedDict):
-    """Timing information for a task/node execution."""
     started_at: Optional[str]
     completed_at: Optional[str]
     duration_ms: Optional[int]
 
 
 class AgentConfig(TypedDict):
-    """Configuration for an agent."""
     id: str
     name: str
     description: str
@@ -27,7 +33,6 @@ class AgentConfig(TypedDict):
 
 
 class TaskConfig(TypedDict):
-    """Configuration for a task."""
     id: str
     title: str
     description: str
@@ -40,19 +45,33 @@ class TaskConfig(TypedDict):
     max_clarifications: int
     input_keys: Optional[List[str]]
     output_key: Optional[str]
-    input_files: Optional[List[str]]  # List of document external_ids to restrict search to
+    input_files: Optional[List[str]]
 
 
 class EdgeConfig(TypedDict):
-    """Configuration for a task dependency edge."""
     source_id: str
     target_id: str
 
 
-# --- Reducers for handling concurrent graph updates ---
+class StepUpdate(TypedDict, total=False):
+    task_id: str
+    task_title: str
+    status: str
+    result: Optional[Dict[str, Any]]
+    interrupt: Optional[Dict[str, Any]]
+
+
+StepCallback = Callable[[StepUpdate], Awaitable[None]]
+
+
+async def _noop_step_callback(_update: StepUpdate) -> None:
+    pass
+
+
+NoopStepCallback: StepCallback = _noop_step_callback
+
 
 def merge_results(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge results dictionaries from concurrent task executions."""
     if not left:
         return right
     if not right:
@@ -61,7 +80,6 @@ def merge_results(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]
 
 
 def merge_timings(left: Dict[str, NodeTiming], right: Dict[str, NodeTiming]) -> Dict[str, NodeTiming]:
-    """Merge node_timings dictionaries from concurrent task executions."""
     if not left:
         return right
     if not right:
@@ -70,7 +88,6 @@ def merge_timings(left: Dict[str, NodeTiming], right: Dict[str, NodeTiming]) -> 
 
 
 def merge_task_ids(left: List[str], right: List[str]) -> List[str]:
-    """Merge task ID lists from concurrent task executions (deduplicated)."""
     if not left:
         return right
     if not right:
@@ -84,8 +101,27 @@ def merge_task_ids(left: List[str], right: List[str]) -> List[str]:
     return result
 
 
+def merge_task_outputs(left: Dict[str, str], right: Dict[str, str]) -> Dict[str, str]:
+    if not left:
+        return right
+    if not right:
+        return left
+    return {**left, **right}
+
+
+def merge_status(left: str, right: str) -> str:
+    higher_severity_wins = (_STATUS_SEVERITY.get(left, 99)
+                            <= _STATUS_SEVERITY.get(right, 99))
+    return left if higher_severity_wins else right
+
+
+def merge_error(left: Optional[str], right: Optional[str]) -> Optional[str]:
+    if left:
+        return left
+    return right
+
+
 class ExecutionState(TypedDict):
-    """State for playbook task execution workflow."""
     playbook_id: str
     thread_id: Optional[str]
     tasks: List[TaskConfig]
@@ -94,8 +130,8 @@ class ExecutionState(TypedDict):
     current_task_ids: List[str]
     completed_task_ids: Annotated[List[str], merge_task_ids]
     results: Annotated[Dict[str, Any], merge_results]
-    status: str  # 'in_progress' | 'suspended' | 'completed' | 'failed'
-    error: Optional[str]
+    status: Annotated[str, merge_status]
+    error: Annotated[Optional[str], merge_error]
     interrupt_payload: Optional[Dict[str, Any]]
     node_timings: Annotated[Dict[str, NodeTiming], merge_timings]
     query: Optional[str]
@@ -104,3 +140,4 @@ class ExecutionState(TypedDict):
     execution_mode: Optional[str]
     validated_replays_by_task: Optional[Dict[str, Any]]
     step_execution_modes: Optional[Dict[str, str]]
+    task_outputs: Annotated[Dict[str, str], merge_task_outputs]

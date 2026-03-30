@@ -8,6 +8,9 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 const defaultProps = {
+  pageMode: 'design' as const,
+  onPageModeChange: vi.fn(),
+  hasExecutionContext: false,
   onAddStep: vi.fn(),
   onAutoLayout: vi.fn(),
   onRun: vi.fn(),
@@ -21,17 +24,29 @@ const defaultProps = {
   canRun: true,
   executionMode: 'live' as const,
   onExecutionModeChange: vi.fn(),
+  canUndo: false,
+  canRedo: false,
+  onUndo: vi.fn(),
+  onRedo: vi.fn(),
 };
 
 describe('PlaybookToolbar', () => {
   it('renders all toolbar buttons', () => {
     render(<PlaybookToolbar {...defaultProps} />);
+    expect(screen.getByText('mode.design')).toBeInTheDocument();
+    expect(screen.getByText('mode.run')).toBeInTheDocument();
     expect(screen.getByText('toolbar.designer')).toBeInTheDocument();
     expect(screen.getByText('toolbar.addStep')).toBeInTheDocument();
     expect(screen.getByText('toolbar.autoLayout')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.executions')).toBeInTheDocument();
     expect(screen.getByText('toolbar.saved')).toBeInTheDocument();
     expect(screen.getByText('toolbar.run')).toBeInTheDocument();
+  });
+
+  it('calls onPageModeChange when a mode is selected', async () => {
+    const onPageModeChange = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} onPageModeChange={onPageModeChange} />);
+    await userEvent.click(screen.getByText('mode.run'));
+    expect(onPageModeChange).toHaveBeenCalledWith('run');
   });
 
   it('calls onAddStep when add button is clicked', async () => {
@@ -79,8 +94,13 @@ describe('PlaybookToolbar', () => {
 
   it('calls onViewExecutions when executions button is clicked', async () => {
     const onViewExecutions = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onViewExecutions={onViewExecutions} />);
+    render(<PlaybookToolbar {...defaultProps} pageMode="run" onViewExecutions={onViewExecutions} />);
     await userEvent.click(screen.getByText('toolbar.executions'));
     expect(onViewExecutions).toHaveBeenCalledOnce();
+  });
+
+  it('hides executions button in design mode when there is no execution context', () => {
+    render(<PlaybookToolbar {...defaultProps} pageMode="design" hasExecutionContext={false} />);
+    expect(screen.queryByText('toolbar.executions')).not.toBeInTheDocument();
   });
 });

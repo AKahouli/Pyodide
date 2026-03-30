@@ -32,7 +32,8 @@ describe('ExecutionStepList', () => {
   it('highlights the selected step', () => {
     render(<ExecutionStepList taskResults={[baseResult]} selectedStepId="t1" onSelectStep={vi.fn()} />);
     const button = screen.getByRole('button');
-    expect(button.className).toContain('bg-accent');
+    expect(button.className).toContain('bg-primary/10');
+    expect(button.className).toContain('border-primary/30');
   });
 
   it('calls onSelectStep when a step is clicked', async () => {

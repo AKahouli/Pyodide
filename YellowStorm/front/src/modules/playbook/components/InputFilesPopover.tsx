@@ -12,9 +12,11 @@ import { cn } from '@/lib/utils';
 export function InputFilesPopover({
   files,
   onRemove,
+  alwaysVisible = false,
 }: {
   files: InputFile[];
   onRemove: (fileId: string) => void;
+  alwaysVisible?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
@@ -29,7 +31,9 @@ export function InputFilesPopover({
               'h-6 w-6',
               files.length > 0
                 ? 'text-primary hover:text-primary'
-                : 'text-muted-foreground hover:text-slate-700'
+                : alwaysVisible
+                  ? 'text-muted-foreground hover:text-slate-700'
+                  : 'text-muted-foreground/50 hover:text-slate-700'
             )}
           >
             <FolderOpen className="h-3.5 w-3.5" />

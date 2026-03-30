@@ -2152,6 +2152,7 @@ describe('PlaybookExecutionService', () => {
           executedBy: objectId('user1'),
           status: ExecutionStatus.INTERRUPTED,
           threadId: 'thread-abc',
+          interruptPayload: { interruptId: 'interrupt-1', type: 'clarification', round: 1 },
           singleStepTaskId: null,
           playbookSnapshot: { tasks: [{ id: 'task-1', title: 'T' }], edges: [] },
           taskResults: [{ taskId: 'task-1', status: StepStatus.RUNNING, components: [] }],
@@ -2177,7 +2178,13 @@ describe('PlaybookExecutionService', () => {
         step_update: {
           task_id: 'task-1',
           status: 'suspended',
-          interrupt: { type: 'approval', task_id: 'task-1', message: 'stale' },
+          interrupt: {
+            type: 'clarification',
+            task_id: 'task-1',
+            message: 'stale',
+            interrupt_id: 'interrupt-1',
+            round: 1,
+          },
         },
       });
 
@@ -2185,6 +2192,70 @@ describe('PlaybookExecutionService', () => {
       expect(mockLoggerService.log).toHaveBeenCalledWith(
         'Skipping stale re-emitted interrupt for resumed task',
         expect.objectContaining({ resumedTaskId: 'task-1' }),
+      );
+    });
+
+    it('should keep new interrupts for the same resumed task when interrupt id changes', async () => {
+      const execution = {
+        ...createMockExecution({
+          executedBy: objectId('user1'),
+          status: ExecutionStatus.INTERRUPTED,
+          threadId: 'thread-abc',
+          interruptPayload: { interruptId: 'interrupt-1', type: 'clarification', round: 1 },
+          singleStepTaskId: null,
+          playbookSnapshot: { tasks: [{ id: 'task-1', title: 'T' }], edges: [] },
+          taskResults: [{ taskId: 'task-1', status: StepStatus.RUNNING, components: [] }],
+        }),
+        markModified: jest.fn(),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+
+      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+
+      const mockStream = createMockStream();
+      mockGrpcService.resumePlaybookWorkflow.mockReturnValue(mockStream);
+
+      await service.resumeExecution(userId, objectId('pb1').toString(), {
+        executionId: objectId('exec1').toString(),
+        taskId: 'task-1',
+        approved: true,
+      } as any);
+
+      mockStream.emit('data', {
+        thread_id: 'thread-abc',
+        step_update: {
+          task_id: 'task-1',
+          status: 'suspended',
+          interrupt: {
+            type: 'clarification',
+            task_id: 'task-1',
+            message: 'next round',
+            interrupt_id: 'interrupt-2',
+            round: 2,
+          },
+        },
+      });
+
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockLoggerService.log).not.toHaveBeenCalledWith(
+        'Skipping stale re-emitted interrupt for resumed task',
+        expect.objectContaining({ interruptId: 'interrupt-2' }),
+      );
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_interrupt',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            taskId: 'task-1',
+            interruptId: 'interrupt-2',
+            round: 2,
+          }),
+        }),
       );
     });
 

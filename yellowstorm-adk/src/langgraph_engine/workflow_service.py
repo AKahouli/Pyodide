@@ -1,13 +1,16 @@
 """Workflow service for playbook execution and resume via LangGraph."""
 
 import asyncio
+import contextlib
 import uuid
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from structlog import get_logger
 
 from src.langgraph_engine.state import (
     ExecutionState,
+    StepUpdate,
+    StepCallback,
     TaskConfig,
     AgentConfig,
     EdgeConfig,
@@ -20,17 +23,12 @@ from src.langgraph_engine.graph_cache import (
     cleanup_thread_graph,
     cleanup_stale_graphs,
 )
-from src.langgraph_engine.playbook_queue import register_queue, remove_queue
+from src.langgraph_engine.playbook_queue import register_queue, get_queue, remove_queue
 
 logger = get_logger(__name__)
 
 
 def _extract_interrupt_from_snapshot(state_snapshot, thread_id: str) -> Optional[Dict[str, Any]]:
-    """Extract interrupt payload from a LangGraph state snapshot.
-
-    After ainvoke returns, if state_snapshot.next is non-empty the graph
-    is suspended. The interrupt values are stored in state_snapshot.tasks.
-    """
     for pregel_task in state_snapshot.tasks:
         if hasattr(pregel_task, "interrupts") and pregel_task.interrupts:
             iv = pregel_task.interrupts[0].value
@@ -43,8 +41,114 @@ def _extract_interrupt_from_snapshot(state_snapshot, thread_id: str) -> Optional
                     "thread_id": thread_id,
                     "task_description": iv.get("task_description", ""),
                     "result": iv.get("result", ""),
+                    "interrupt_id": iv.get("interrupt_id", ""),
+                    "round": iv.get("round", 0),
+                    "conversation_json": iv.get("conversation_json", ""),
+                    "resumable_actions": iv.get("resumable_actions", []),
                 }
     return None
+
+
+def _normalize_interrupt_value(interrupt_value: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(interrupt_value, dict):
+        return None
+
+    return {
+        "type": interrupt_value.get("type", ""),
+        "task_id": interrupt_value.get("task_id", ""),
+        "task_title": interrupt_value.get("task_title", ""),
+        "message": interrupt_value.get("message", ""),
+        "thread_id": thread_id,
+        "task_description": interrupt_value.get("task_description", ""),
+        "result": interrupt_value.get("result", ""),
+        "interrupt_id": interrupt_value.get("interrupt_id", ""),
+        "round": interrupt_value.get("round", 0),
+        "conversation_json": interrupt_value.get("conversation_json", ""),
+        "resumable_actions": interrupt_value.get("resumable_actions", []),
+    }
+
+
+def _extract_interrupt_from_stream_chunk(chunk: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(chunk, dict):
+        return None
+
+    chunk_type = chunk.get("type")
+    if chunk_type != "updates":
+        return None
+
+    data = chunk.get("data") or {}
+    interrupt_candidates = data.get("__interrupt__")
+
+    if not interrupt_candidates and chunk.get("interrupts"):
+        interrupt_candidates = chunk.get("interrupts")
+
+    if not interrupt_candidates:
+        return None
+
+    first_interrupt = interrupt_candidates[0]
+    interrupt_value = getattr(first_interrupt, "value", first_interrupt)
+    return _normalize_interrupt_value(interrupt_value, thread_id)
+
+
+async def _consume_graph_stream(
+    graph,
+    graph_input: Any,
+    config: Dict[str, Any],
+    thread_id: str,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Run the graph via LangGraph streaming and surface live interrupts."""
+    stream = graph.astream(
+        graph_input,
+        config=config,
+        stream_mode=["messages", "updates"],
+        subgraphs=True,
+        version="v2",
+    )
+
+    interrupt_data: Optional[Dict[str, Any]] = None
+
+    try:
+        async for chunk in stream:
+            streamed_interrupt = _extract_interrupt_from_stream_chunk(chunk, thread_id)
+            if streamed_interrupt:
+                interrupt_data = streamed_interrupt
+                logger.info(
+                    "[workflow_stream] Interrupt surfaced from stream",
+                    thread_id=thread_id,
+                    interrupt_type=interrupt_data.get("type"),
+                    task_id=interrupt_data.get("task_id"),
+                    round=interrupt_data.get("round"),
+                )
+                break
+    finally:
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            with contextlib.suppress(Exception):
+                await aclose()
+
+    state_snapshot = await graph.aget_state(config)
+    final_state = state_snapshot.values if hasattr(state_snapshot, "values") else None
+
+    if interrupt_data is None and state_snapshot.next:
+        interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, thread_id)
+
+    return interrupt_data, final_state if isinstance(final_state, dict) else None
+
+
+def _make_step_callback_for_thread(thread_id: str) -> StepCallback:
+    """Resolve the active stream queue lazily for the given thread."""
+    async def _callback(update: StepUpdate):
+        queue = get_queue(thread_id)
+        if queue is not None:
+            await queue.put({"step_update": update})
+
+    return _callback
+
+
+async def _send_sentinel(queue: Optional[asyncio.Queue]) -> None:
+    """Put the stream-end sentinel on *queue* if it is not None."""
+    if queue is not None:
+        await queue.put(None)
 
 
 async def run_playbook(
@@ -61,33 +165,25 @@ async def run_playbook(
     evaluation_user_id: str = "unknown",
     step_execution_modes: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
-    """Execute a playbook workflow with dynamic graph.
-
-    Args:
-        playbook_id: Unique playbook identifier
-        tasks: List of task configurations
-        agents: Dict of agent_id -> AgentConfig
-        edges: Dependency edges
-        query: User query
-        workspace_context: Optional workspace context
-        queue: Optional asyncio.Queue for streaming step updates
-        thread_id: Optional pre-generated thread ID (generated if not provided)
-
-    Returns:
-        Dict with: status, task_results, interrupt, thread_id, error
-    """
+    """Execute a playbook workflow with dynamic graph."""
     cleanup_stale_graphs()
 
+    if thread_id is None:
+        thread_id = f"{playbook_id}_{uuid.uuid4().hex[:8]}"
+
     checkpointer = await get_checkpointer()
-    graph = get_or_create_graph(
+    on_step_update = _make_step_callback_for_thread(thread_id)
+
+    graph_info = get_or_create_graph(
         playbook_id=playbook_id,
         tasks=tasks,
         edges=edges,
         checkpointer=checkpointer,
+        on_step_update=on_step_update,
+        force_rebuild=True,
     )
 
-    if thread_id is None:
-        thread_id = f"{playbook_id}_{uuid.uuid4().hex[:8]}"
+    compiled = graph_info["compiled"]
 
     initial_state: ExecutionState = {
         "playbook_id": playbook_id,
@@ -108,12 +204,12 @@ async def run_playbook(
         "execution_mode": execution_mode,
         "validated_replays_by_task": validated_replays_by_task or {},
         "step_execution_modes": step_execution_modes or {},
+        "task_outputs": {},
     }
 
     config = {"configurable": {"thread_id": thread_id}}
 
-    store_thread_graph(thread_id, graph)
-
+    store_thread_graph(thread_id, compiled)
     if queue is not None:
         register_queue(thread_id, queue)
 
@@ -127,12 +223,14 @@ async def run_playbook(
     )
 
     try:
-        result = await graph.ainvoke(initial_state, config)
+        interrupt_data, result = await _consume_graph_stream(
+            graph=compiled,
+            graph_input=initial_state,
+            config=config,
+            thread_id=thread_id,
+        )
 
-        # Check if the graph is suspended (HITL interrupt)
-        state_snapshot = await graph.aget_state(config)
-        if state_snapshot.next:
-            interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, thread_id)
+        if interrupt_data:
             logger.info("[run_playbook] Graph suspended (HITL)", thread_id=thread_id)
 
             response = {
@@ -143,15 +241,13 @@ async def run_playbook(
                 "error": None,
             }
 
-            if queue is not None:
-                await queue.put(None)
-
+            await _send_sentinel(queue)
             return response
 
+        result = result or {}
         final_status = result.get("status", "completed")
         logger.info("[run_playbook] Execution completed", status=final_status, thread_id=thread_id)
 
-        # Build task results
         task_results = _build_task_results(result, tasks)
 
         if final_status in ("completed", "failed"):
@@ -165,16 +261,12 @@ async def run_playbook(
             "error": result.get("error"),
         }
 
-        if queue is not None:
-            await queue.put(None)
-
+        await _send_sentinel(queue)
         return response
-
     except Exception as e:
         error_str = str(e)
         logger.error("[run_playbook] Exception during execution", error=error_str, exc_type=type(e).__name__)
 
-        # Real failure
         cleanup_thread_graph(thread_id)
 
         response = {
@@ -185,11 +277,8 @@ async def run_playbook(
             "error": error_str,
         }
 
-        if queue is not None:
-            await queue.put(None)
-
+        await _send_sentinel(queue)
         return response
-
     finally:
         remove_queue(thread_id)
 
@@ -201,18 +290,7 @@ async def resume_playbook(
     task_id: str = "",
     queue: Optional[asyncio.Queue] = None,
 ) -> Dict[str, Any]:
-    """Resume an interrupted playbook with the human response.
-
-    Args:
-        playbook_id: Playbook identifier
-        thread_id: Thread ID from the interrupted execution
-        human_response: Dict with approved, reason, feedback
-        task_id: Optional task ID being resumed
-        queue: Optional asyncio.Queue for streaming step updates
-
-    Returns:
-        Dict with: status, task_results, interrupt, thread_id, error
-    """
+    """Resume an interrupted playbook with the human response."""
     from langgraph.types import Command
 
     graph = get_thread_graph(thread_id)
@@ -225,26 +303,24 @@ async def resume_playbook(
             "thread_id": thread_id,
             "error": f"No active graph found for thread {thread_id}. The execution may have expired.",
         }
-        if queue is not None:
-            await queue.put(None)
+        await _send_sentinel(queue)
         return response
 
     config = {"configurable": {"thread_id": thread_id}}
-
-    response_data = human_response
-
     if queue is not None:
         register_queue(thread_id, queue)
 
     logger.info("[resume_playbook] Resuming", thread_id=thread_id, playbook_id=playbook_id)
 
     try:
-        result = await graph.ainvoke(Command(resume=response_data), config)
+        interrupt_data, result = await _consume_graph_stream(
+            graph=graph,
+            graph_input=Command(resume=human_response),
+            config=config,
+            thread_id=thread_id,
+        )
 
-        # Check if the graph is suspended again (HITL)
-        state_snapshot = await graph.aget_state(config)
-        if state_snapshot.next:
-            interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, thread_id)
+        if interrupt_data:
             logger.info("[resume_playbook] Graph suspended again (HITL)", thread_id=thread_id)
 
             response = {
@@ -255,15 +331,13 @@ async def resume_playbook(
                 "error": None,
             }
 
-            if queue is not None:
-                await queue.put(None)
-
+            await _send_sentinel(queue)
             return response
 
+        result = result or {}
         final_status = result.get("status", "completed")
         logger.info("[resume_playbook] Resumed execution completed", status=final_status)
 
-        # Get tasks from state for building results
         tasks = result.get("tasks", [])
         task_results = _build_task_results(result, tasks)
 
@@ -278,11 +352,8 @@ async def resume_playbook(
             "error": result.get("error"),
         }
 
-        if queue is not None:
-            await queue.put(None)
-
+        await _send_sentinel(queue)
         return response
-
     except Exception as e:
         error_str = str(e)
         logger.error("[resume_playbook] Exception during resume", error=error_str)
@@ -297,17 +368,226 @@ async def resume_playbook(
             "error": error_str,
         }
 
-        if queue is not None:
-            await queue.put(None)
-
+        await _send_sentinel(queue)
         return response
-
     finally:
         remove_queue(thread_id)
 
 
+async def run_single_step_graph(
+    task: Dict[str, Any],
+    agent: Dict[str, Any],
+    context_from_dependencies: str = "",
+    workspace_context: Optional[list] = None,
+    execution_mode: str = "live",
+    validated_replay: Optional[Dict[str, Any]] = None,
+    evaluation_user_id: str = "unknown",
+) -> Dict[str, Any]:
+    """Execute a single task via a dedicated LangGraph for HITL support.
+
+    Reuses ``DynamicGraphBuilder.build_single_step_graph`` so that
+    interrupt/resume logic is identical to the full-workflow path.
+    """
+    from src.langgraph_engine.graph_builder import DynamicGraphBuilder
+    from src.langgraph_engine.graph_cache import store_thread_graph, cleanup_thread_graph
+    from src.langgraph_engine.step_executor import _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot
+
+    checkpointer = await get_checkpointer()
+    builder = DynamicGraphBuilder(checkpointer=checkpointer)
+
+    task_id = task.get("id", "single_step")
+    thread_id = f"step_{task_id}_{uuid.uuid4().hex[:8]}"
+
+    initial_state: ExecutionState = {
+        "playbook_id": task_id,
+        "thread_id": thread_id,
+        "tasks": [task],
+        "edges": [],
+        "agents": {agent.get("id", "agent_single"): agent},
+        "current_task_ids": [],
+        "completed_task_ids": [],
+        "results": {},
+        "status": "in_progress",
+        "error": None,
+        "interrupt_payload": None,
+        "node_timings": {},
+        "query": "",
+        "workspace_context": workspace_context,
+        "evaluation_user_id": evaluation_user_id,
+        "execution_mode": execution_mode,
+        "validated_replays_by_task": {task_id: validated_replay} if validated_replay else {},
+        "step_execution_modes": {},
+        "task_outputs": {},
+    }
+
+    if context_from_dependencies:
+        initial_state["query"] = context_from_dependencies
+
+    graph_info = builder.build_single_step_graph(task, agent)
+    compiled = graph_info["compiled"]
+
+    store_thread_graph(thread_id, compiled)
+
+    config = {"configurable": {"thread_id": thread_id}}
+
+    try:
+        final_state = await compiled.ainvoke(initial_state, config)
+
+        state_snapshot = await compiled.aget_state(config)
+        if state_snapshot.next:
+            interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
+            logger.info(f"[{task_id}] Graph suspended (HITL)", interrupt_type=interrupt_data.get("type") if interrupt_data else None)
+            return {
+                "status": "suspended",
+                "result": {
+                    "task_id": task_id,
+                    "status": "suspended",
+                    "output": "",
+                    "error": "",
+                    "duration_ms": 0,
+                },
+                "interrupt": interrupt_data,
+                "thread_id": thread_id,
+            }
+
+        final_status = final_state.get("status", "completed")
+        results = final_state.get("results", {})
+        task_result = results.get(task_id, {})
+
+        if final_status in ("completed", "failed", "skipped"):
+            cleanup_thread_graph(thread_id)
+
+        return {
+            "status": final_status,
+            "result": {
+                "task_id": task_id,
+                "status": final_status,
+                "output": task_result.get("output", ""),
+                "error": task_result.get("error", final_state.get("error", "")),
+                "duration_ms": 0,
+                "components": task_result.get("components", []),
+                "usage": task_result.get("usage", {}),
+                "tool_trace": task_result.get("tool_trace", []),
+                "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
+                "semantic_match": task_result.get("semantic_match"),
+            },
+            "interrupt": None,
+            "thread_id": thread_id,
+        }
+
+    except Exception as e:
+        error_str = str(e)
+        logger.error(f"[{task_id}] Single step execution failed", error=error_str)
+        cleanup_thread_graph(thread_id)
+        return {
+            "status": "failed",
+            "result": {
+                "task_id": task_id,
+                "status": "failed",
+                "output": "",
+                "error": error_str,
+                "duration_ms": 0,
+            },
+            "interrupt": None,
+            "thread_id": thread_id,
+        }
+
+
+async def resume_single_step(
+    thread_id: str,
+    human_response: dict,
+    task_id: str = "",
+) -> Dict[str, Any]:
+    """Resume an interrupted single-step execution."""
+    from langgraph.types import Command
+    from src.langgraph_engine.graph_cache import get_thread_graph, cleanup_thread_graph
+    from src.langgraph_engine.step_executor import _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot
+
+    graph = get_thread_graph(thread_id)
+    if graph is None:
+        logger.warning("[resume_single_step] Graph not found for thread", thread_id=thread_id)
+        return {
+            "status": "failed",
+            "result": {
+                "task_id": task_id,
+                "status": "failed",
+                "output": "",
+                "error": f"No active graph found for thread {thread_id}. The execution may have expired.",
+                "duration_ms": 0,
+            },
+            "interrupt": None,
+            "thread_id": thread_id,
+        }
+
+    config = {"configurable": {"thread_id": thread_id}}
+
+    logger.info("[resume_single_step] Resuming", thread_id=thread_id, task_id=task_id)
+
+    try:
+        final_state = await graph.ainvoke(Command(resume=human_response), config)
+
+        state_snapshot = await graph.aget_state(config)
+        if state_snapshot.next:
+            interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
+            logger.info("[resume_single_step] Graph suspended again (HITL)", interrupt_type=interrupt_data.get("type") if interrupt_data else None)
+            return {
+                "status": "suspended",
+                "result": {
+                    "task_id": task_id,
+                    "status": "suspended",
+                    "output": "",
+                    "error": "",
+                    "duration_ms": 0,
+                },
+                "interrupt": interrupt_data,
+                "thread_id": thread_id,
+            }
+
+        final_status = final_state.get("status", "completed")
+        logger.info("[resume_single_step] Resumed execution completed", status=final_status)
+
+        if final_status in ("completed", "failed", "skipped"):
+            cleanup_thread_graph(thread_id)
+
+        results = final_state.get("results", {})
+        task_result = results.get(task_id, {})
+
+        return {
+            "status": final_status,
+            "result": {
+                "task_id": task_id,
+                "status": final_status,
+                "output": final_state.get("output", task_result.get("output", "")),
+                "error": final_state.get("error", task_result.get("error", "")),
+                "duration_ms": 0,
+                "components": final_state.get("components", task_result.get("components", [])),
+                "usage": final_state.get("usage", task_result.get("usage", {})),
+                "tool_trace": final_state.get("tool_trace", task_result.get("tool_trace", [])),
+                "semantic_match": final_state.get("semantic_match", task_result.get("semantic_match")),
+            },
+            "interrupt": None,
+            "thread_id": thread_id,
+        }
+
+    except Exception as e:
+        error_str = str(e)
+        logger.error("[resume_single_step] Failed", error=error_str)
+        cleanup_thread_graph(thread_id)
+        return {
+            "status": "failed",
+            "result": {
+                "task_id": task_id,
+                "status": "failed",
+                "output": "",
+                "error": error_str,
+                "duration_ms": 0,
+            },
+            "interrupt": None,
+            "thread_id": thread_id,
+        }
+
+
 def _build_task_results(state: Dict[str, Any], tasks: List[TaskConfig]) -> List[Dict[str, Any]]:
-    """Build task result list from execution state."""
     results = state.get("results", {})
     timings = state.get("node_timings", {})
     task_results = []

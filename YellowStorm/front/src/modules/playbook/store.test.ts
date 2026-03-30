@@ -103,8 +103,9 @@ describe('playbook store', () => {
     expect(state.currentExecution?.taskResults[0]).toMatchObject({ taskId: 't1', status: 'pending' });
     expect(state.currentExecution?.taskResults[1]).toMatchObject({ taskId: 't2', status: 'pending' });
     expect(state.selectedStepId).toBe('t1');
-    expect(state.executionPanelOpen).toBe(true);
-  });
+      expect(state.executionPanelOpen).toBe(true);
+      expect(state.pageMode).toBe('run');
+    });
 
   it('still marks the chosen step as running for single-step execution', async () => {
     const playbook = makePlaybook({
@@ -146,6 +147,122 @@ describe('playbook store', () => {
     expect(result.id).toBe('p2');
     expect(state.playbooks[0].id).toBe('p2');
     expect(toastMock.success).toHaveBeenCalled();
+  });
+
+  it('keeps newer local edits when an older save response returns', async () => {
+    let resolveUpdate: ((value: ReturnType<typeof makePlaybook>) => void) | null = null;
+    apiMock.updatePlaybook.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveUpdate = resolve as (value: ReturnType<typeof makePlaybook>) => void;
+    }));
+
+    const initialPlaybook = makePlaybook({
+      id: 'p1',
+      tasks: [makeTask({ id: 't1', inputFiles: [] })],
+      updatedAt: '2025-01-01T00:00:00.000Z',
+    });
+
+    usePlaybookStore.setState({
+      currentPlaybook: initialPlaybook,
+      playbooks: [{
+        id: 'p1',
+        name: initialPlaybook.name,
+        description: initialPlaybook.description,
+        taskCount: initialPlaybook.tasks.length,
+        isFavorite: initialPlaybook.isFavorite,
+        lastExecutionAt: null,
+        createdAt: initialPlaybook.createdAt,
+        updatedAt: initialPlaybook.updatedAt,
+      }],
+    });
+
+    usePlaybookStore.getState().addInputFileToTask('t1', {
+      id: 'doc-1',
+      name: 'Spec',
+      type: 'document',
+      metadata: { documentId: 'doc-1' },
+    });
+
+    const savePromise = usePlaybookStore.getState().saveCurrentPlaybook();
+
+    usePlaybookStore.getState().addInputFileToTask('t1', {
+      id: 'doc-2',
+      name: 'Checklist',
+      type: 'document',
+      metadata: { documentId: 'doc-2' },
+    });
+
+    if (resolveUpdate) {
+      const completeUpdate = resolveUpdate as (value: ReturnType<typeof makePlaybook>) => void;
+      completeUpdate(makePlaybook({
+        ...initialPlaybook,
+        id: 'p1',
+        tasks: [makeTask({
+          id: 't1',
+          inputFiles: [{
+            id: 'doc-1',
+            name: 'Spec',
+            type: 'document',
+            metadata: { documentId: 'doc-1' },
+          }],
+        })],
+        updatedAt: '2025-01-01T00:00:10.000Z',
+      }));
+    }
+    await savePromise;
+
+    const state = usePlaybookStore.getState();
+    expect(state.isSaving).toBe(false);
+    expect(state.isDirty).toBe(true);
+    expect(state.currentPlaybook?.tasks[0].inputFiles).toEqual([
+      {
+        id: 'doc-1',
+        name: 'Spec',
+        type: 'document',
+        metadata: { documentId: 'doc-1' },
+      },
+      {
+        id: 'doc-2',
+        name: 'Checklist',
+        type: 'document',
+        metadata: { documentId: 'doc-2' },
+      },
+    ]);
+    expect(state.currentPlaybook?.updatedAt).toBe('2025-01-01T00:00:10.000Z');
+  });
+
+  it('clears dirty state when the save response matches the latest local version', async () => {
+    const savedPlaybook = makePlaybook({
+      id: 'p1',
+      tasks: [makeTask({ id: 't1', title: 'Renamed task' })],
+      updatedAt: '2025-01-01T00:00:20.000Z',
+    });
+    apiMock.updatePlaybook.mockResolvedValueOnce(savedPlaybook);
+
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [makeTask({ id: 't1', title: 'Task' })],
+      }),
+      playbooks: [{
+        id: 'p1',
+        name: 'Playbook',
+        description: 'Description',
+        taskCount: 1,
+        isFavorite: false,
+        lastExecutionAt: null,
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-01T00:00:00.000Z',
+      }],
+    });
+
+    usePlaybookStore.getState().updateTasks([makeTask({ id: 't1', title: 'Renamed task' })]);
+    await usePlaybookStore.getState().saveCurrentPlaybook();
+
+    const state = usePlaybookStore.getState();
+    expect(state.isDirty).toBe(false);
+    expect(state.isSaving).toBe(false);
+    expect(state.currentPlaybook?.tasks[0].title).toBe('Renamed task');
+    expect(state.currentPlaybook?.updatedAt).toBe('2025-01-01T00:00:20.000Z');
   });
 
   it('merges step completion and preserves existing pending human feedback', () => {
@@ -255,6 +372,7 @@ describe('playbook store', () => {
     expect(state.currentExecution?.id).toBe('e1');
     expect(state.executionPanelOpen).toBe(true);
     expect(state.selectedStepId).toBe('task-1');
+    expect(state.pageMode).toBe('run');
   });
 
   it('viewExecutionInPanel preserves selected step when switching executions', () => {
@@ -329,6 +447,12 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
     usePlaybookStore.getState().setExecutionPanelOpen(false);
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(false);
+  });
+
+  it('updates page mode directly', () => {
+    usePlaybookStore.getState().setPageMode('run');
+    const state = usePlaybookStore.getState();
+    expect(state.pageMode).toBe('run');
   });
 
   it('onExecutionStart auto-opens panel when viewing the same playbook', () => {

@@ -30,6 +30,8 @@ import type {
   PlaybookInterruptEvent,
   ExecutionStatus,
   StepEvaluationHistoryEntry,
+  PlaybookPageMode,
+  PlaybookUndoSnapshot,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -86,6 +88,8 @@ const initialState: PlaybookState = {
   isDirty: false,
   dirtyVersion: 0,
   isSaving: false,
+  saveRequestId: 0,
+  savingDirtyVersion: null,
   currentExecution: null,
   currentExecutionLoading: false,
   executionCache: {},
@@ -101,8 +105,13 @@ const initialState: PlaybookState = {
   isStopping: false,
   isDesigning: false,
   designerOpen: false,
+  copilotMode: 'design',
   executionPanelOpen: (() => { try { return localStorage.getItem(EXEC_PANEL_KEY) === '1'; } catch { return false; } })(),
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
+  pageMode: 'design',
+  undoStack: [],
+  redoStack: [],
+  canvasSyncVersion: 0,
 };
 
 // ===== Stable empty references =====
@@ -112,6 +121,7 @@ const EMPTY_EXECUTIONS: PlaybookExecutionSummary[] = [];
 const EMPTY_DESIGN_MESSAGES: DesignMessage[] = [];
 const MAX_EXECUTION_HISTORY = 50;
 const MAX_EXECUTION_CACHE = 20;
+const MAX_UNDO_HISTORY = 50;
 
 function getPreferredSelectedStepId(
   taskResults: Array<{ taskId: string; status: string; order?: number | null }>,
@@ -335,7 +345,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set({ currentPlaybookLoading: true, error: null });
         try {
           const playbook = await api.getPlaybook(id);
-          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false });
+          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: [], redoStack: [], canvasSyncVersion: 0 });
         } catch (err) {
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.fetchOneFailed', 'Failed to fetch playbook');
           set({ currentPlaybookLoading: false, error: msg });
@@ -360,7 +370,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       generatePlaybook: async (data: GeneratePlaybookData) => {
-        set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null });
+        set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null, undoStack: [], redoStack: [], canvasSyncVersion: 0 });
         try {
           const result = await api.generatePlaybook(data);
           const playbook = await api.getPlaybook(result.id);
@@ -379,7 +389,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       clearGenerateRetry: () => set({ generateRetryData: null }),
 
       updatePlaybook: async (id, data) => {
-        set({ isSaving: true });
+        const requestId = get().saveRequestId + 1;
+        const saveStartDirtyVersion = get().dirtyVersion;
+        set({
+          isSaving: true,
+          saveRequestId: requestId,
+          savingDirtyVersion: saveStartDirtyVersion,
+        });
         try {
           const playbook = await api.updatePlaybook(id, data);
           const existing = get().playbooks.find((p) => p.id === id);
@@ -393,14 +409,36 @@ export const usePlaybookStore = create<PlaybookStore>()(
             createdAt: playbook.createdAt,
             updatedAt: playbook.updatedAt,
           };
+          const latestState = get();
+          const isLatestSaveRequest = latestState.saveRequestId === requestId;
+          const hasNewerLocalChanges = latestState.dirtyVersion !== saveStartDirtyVersion;
+
           set((state) => ({
             playbooks: state.playbooks.map((p) => (p.id === id ? summary : p)),
-            currentPlaybook: state.currentPlaybook?.id === id ? playbook : state.currentPlaybook,
-            isDirty: false,
-            isSaving: false,
+            currentPlaybook: state.currentPlaybook?.id !== id
+              ? state.currentPlaybook
+              : hasNewerLocalChanges
+                ? {
+                    ...state.currentPlaybook,
+                    updatedAt: playbook.updatedAt,
+                    createdAt: playbook.createdAt,
+                    name: playbook.name,
+                    description: playbook.description,
+                    workspaces: playbook.workspaces,
+                    isFavorite: playbook.isFavorite,
+                    isActive: playbook.isActive,
+                    createdBy: playbook.createdBy,
+                  }
+                : playbook,
+            isDirty: hasNewerLocalChanges ? state.isDirty : false,
+            isSaving: isLatestSaveRequest ? false : state.isSaving,
+            savingDirtyVersion: isLatestSaveRequest ? null : state.savingDirtyVersion,
           }));
         } catch (err) {
-          set({ isSaving: false });
+          const latestState = get();
+          if (latestState.saveRequestId === requestId) {
+            set({ isSaving: false, savingDirtyVersion: null });
+          }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
           toast.error(msg);
         }
@@ -507,7 +545,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
       setDirty: (dirty: boolean) => set({ isDirty: dirty }),
 
       saveCurrentPlaybook: async () => {
-        const { currentPlaybook } = get();
+        const { currentPlaybook, isSaving } = get();
+        if (isSaving) return;
         if (!currentPlaybook) return;
         await get().updatePlaybook(currentPlaybook.id, {
           name: currentPlaybook.name,
@@ -571,6 +610,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionCache: evictCache({ ...state.executionCache, [result.executionId]: optimisticExecution }),
               selectedStepId: data?.singleStepTaskId || sortedTasks[0]?.id || null,
               executionPanelOpen: true,
+              pageMode: 'run',
             };
           });
           return result.executionId;
@@ -677,6 +717,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       validateTaskReplay: async (playbookId, taskId, executionId, options) => {
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook?.id === playbookId
+            ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                        ...task,
+                        isSavingReplayBaseline: true,
+                      }
+                    : task,
+                ),
+              }
+            : state.currentPlaybook,
+        }));
         try {
           const replay = await api.validateTaskReplay(playbookId, taskId, {
             executionId,
@@ -703,6 +758,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                           activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
                           activeOutputFormatStatus: task.activeOutputFormatStatus || null,
                           activeOutputFormatError: task.activeOutputFormatError || null,
+                          isSavingReplayBaseline: false,
                         }
                       : task,
                   ),
@@ -712,6 +768,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
           toast.success(tPlaybook('store.toasts.saved', 'Replay baseline saved'));
           return replay;
         } catch (err) {
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) =>
+                    task.id === taskId
+                      ? {
+                          ...task,
+                          isSavingReplayBaseline: false,
+                        }
+                      : task,
+                  ),
+                }
+              : state.currentPlaybook,
+          }));
           handleApiError(err);
           throw err;
         }
@@ -750,6 +821,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                           activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
                           activeOutputFormatStatus: task.activeOutputFormatStatus || null,
                           activeOutputFormatError: task.activeOutputFormatError || null,
+                          isSavingReplayBaseline: false,
                         }
                       : task,
                   ),
@@ -788,6 +860,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                           activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
                           activeOutputFormatStatus: task.activeOutputFormatStatus || null,
                           activeOutputFormatError: task.activeOutputFormatError || null,
+                          isSavingReplayBaseline: false,
                         }
                       : task,
                   ),
@@ -803,6 +876,23 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       grabOutputFormatTemplate: async (playbookId, taskId, data) => {
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook?.id === playbookId
+            ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                        ...task,
+                        isCapturingOutputFormat: true,
+                        activeOutputFormatStatus: 'pending',
+                        activeOutputFormatError: null,
+                      }
+                    : task,
+                ),
+              }
+            : state.currentPlaybook,
+        }));
         try {
           const template = await api.grabOutputFormatTemplate(playbookId, taskId, data);
           set((state) => ({
@@ -818,6 +908,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                           activeOutputFormatTemplateVersion: template.templateVersion,
                           activeOutputFormatStatus: template.generationStatus,
                           activeOutputFormatError: template.generationError || null,
+                          isCapturingOutputFormat: template.generationStatus === 'pending',
                         }
                       : task,
                   ),
@@ -827,6 +918,22 @@ export const usePlaybookStore = create<PlaybookStore>()(
           toast.success('Output format captured');
           return template;
         } catch (err) {
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) =>
+                    task.id === taskId
+                      ? {
+                          ...task,
+                          isCapturingOutputFormat: false,
+                          activeOutputFormatStatus: task.activeOutputFormatTemplateId ? task.activeOutputFormatStatus : null,
+                        }
+                      : task,
+                  ),
+                }
+              : state.currentPlaybook,
+          }));
           handleApiError(err);
           throw err;
         }
@@ -852,15 +959,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
                     task.id === taskId
                       ? {
                           ...task,
-                          hasOutputFormatTemplate: true,
-                          activeOutputFormatTemplateId: template.id,
-                          activeOutputFormatTemplateVersion: template.templateVersion,
-                          activeOutputFormatStatus: template.generationStatus,
-                          activeOutputFormatError: template.generationError || null,
-                        }
-                      : task,
-                  ),
-                }
+                        hasOutputFormatTemplate: true,
+                        activeOutputFormatTemplateId: template.id,
+                        activeOutputFormatTemplateVersion: template.templateVersion,
+                        activeOutputFormatStatus: template.generationStatus,
+                        activeOutputFormatError: template.generationError || null,
+                        isCapturingOutputFormat: template.generationStatus === 'pending',
+                      }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           toast.success('Output format template updated');
@@ -872,6 +980,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       resumeExecution: async (id, data) => {
+        const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');
+        const message = data.message || data.feedback || data.reason || '';
         // Optimistically mark the humanFeedback component as answered
         set((state) => {
           if (!state.currentExecution) return state;
@@ -884,10 +994,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   data: {
                     ...comp.data,
                     status: 'answered',
+                    action,
+                    replyMessage: message,
                     approved: data.approved,
                     reason: data.reason || '',
                     feedback: data.feedback || '',
-                    humanResponse: data.approved ? 'approved' : 'rejected',
+                    humanResponse: action === 'approve' ? 'approved' : action === 'reject' ? 'rejected' : action,
                   },
                 };
               }
@@ -1217,6 +1329,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                         activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
                         activeOutputFormatStatus: task.activeOutputFormatStatus || null,
                         activeOutputFormatError: task.activeOutputFormatError || null,
+                        isSavingReplayBaseline: false,
                       }
                     : task,
                 ),
@@ -1239,6 +1352,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                         activeOutputFormatTemplateVersion: data.template.templateVersion,
                         activeOutputFormatStatus: data.template.generationStatus,
                         activeOutputFormatError: data.template.generationError || null,
+                        isCapturingOutputFormat: data.template.generationStatus === 'pending',
                       }
                     : task,
                 ),
@@ -1367,6 +1481,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 interruptType: data.type,
                 message: data.message,
                 status: 'pending',
+                interruptId: data.interruptId || '',
+                round: data.round || 0,
+                payloadJson: data.payloadJson || '',
+                resumableActions: data.resumableActions || [],
                 taskDescription: data.taskDescription || '',
                 result: data.result || '',
               },
@@ -1388,6 +1506,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
               taskTitle: '',
               message: data.message,
               threadId: data.threadId,
+              interruptId: data.interruptId || '',
+              round: data.round || 0,
+              payloadJson: data.payloadJson || '',
+              resumableActions: data.resumableActions || [],
               taskDescription: data.taskDescription || '',
               result: data.result || '',
             },
@@ -1403,6 +1525,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
             executionHistory,
             executingPlaybookIds,
             selectedStepId: data.taskId,
+            copilotMode: 'interrupt',
+            designerOpen: true,
             executionPanelOpen: true,
           };
         });
@@ -1552,6 +1676,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       selectStep: (taskId) => set({ selectedStepId: taskId }),
 
+      setPageMode: (mode: PlaybookPageMode) =>
+        set({ pageMode: mode }),
+
       // ===== Designer =====
 
       fetchDesignMessages: async (playbookId) => {
@@ -1565,6 +1692,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       designPlaybook: async (playbookId, data) => {
+        get().captureSnapshot();
         set({ isDesigning: true });
         try {
           const result = await api.designPlaybook(playbookId, data);
@@ -1599,6 +1727,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             currentPlaybook: result.playbook,
             designMessages: [...state.designMessages, result.message],
             isDirty: false,
+            undoStack: [],
+            redoStack: [],
+            canvasSyncVersion: state.canvasSyncVersion + 1,
           }));
           toast.success(tPlaybook('store.toasts.reverted', 'Reverted to snapshot'));
         } catch (err) {
@@ -1607,7 +1738,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      setDesignerOpen: (open) => set({ designerOpen: open }),
+      setDesignerOpen: (open) => set((state) => ({ designerOpen: open, copilotMode: open ? state.copilotMode : 'design' })),
+
+      setCopilotMode: (mode) => set({ copilotMode: mode }),
 
       setExecutionPanelOpen: (open) => {
         set({ executionPanelOpen: open });
@@ -1622,12 +1755,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
             currentExecution: cached,
             executionPanelOpen: true,
             selectedStepId,
+            pageMode: 'run',
           });
         } else {
           // Fetch from API — need the playbookId
           const playbookId = get().currentPlaybook?.id;
           if (!playbookId) return;
-          set({ executionPanelOpen: true });
+          set({
+            executionPanelOpen: true,
+            pageMode: 'run',
+          });
           get().fetchExecution(playbookId, executionId);
         }
       },
@@ -1642,6 +1779,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       addInputFileToTask: (taskId, inputFile) => {
         const { currentPlaybook } = get();
         if (!currentPlaybook) return;
+        get().captureSnapshot();
         const updatedTasks = currentPlaybook.tasks.map((task) => {
           if (task.id !== taskId) return task;
           const existing = task.inputFiles ?? [];
@@ -1661,6 +1799,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       removeInputFileFromTask: (taskId, inputFileId) => {
         const { currentPlaybook } = get();
         if (!currentPlaybook) return;
+        get().captureSnapshot();
         const updatedTasks = currentPlaybook.tasks.map((task) => {
           if (task.id !== taskId) return task;
           return { ...task, inputFiles: (task.inputFiles ?? []).filter((f) => f.id !== inputFileId) };
@@ -1673,6 +1812,77 @@ export const usePlaybookStore = create<PlaybookStore>()(
           dirtyVersion: state.dirtyVersion + 1,
         }));
       },
+
+      // ===== Undo/Redo =====
+
+      captureSnapshot: () => {
+        const { currentPlaybook, undoStack } = get();
+        if (!currentPlaybook) return;
+        const snapshot: PlaybookUndoSnapshot = {
+          tasks: structuredClone(currentPlaybook.tasks),
+          edges: structuredClone(currentPlaybook.edges),
+          name: currentPlaybook.name,
+          workspaces: [...currentPlaybook.workspaces],
+        };
+        const trimmed = undoStack.length >= MAX_UNDO_HISTORY
+          ? [...undoStack.slice(undoStack.length - MAX_UNDO_HISTORY + 1), snapshot]
+          : [...undoStack, snapshot];
+        set({ undoStack: trimmed, redoStack: [] });
+      },
+
+      undo: () => {
+        const { currentPlaybook, undoStack, redoStack, dirtyVersion, canvasSyncVersion } = get();
+        if (undoStack.length === 0 || !currentPlaybook) return;
+        const snapshot = undoStack[undoStack.length - 1];
+        const currentSnapshot: PlaybookUndoSnapshot = {
+          tasks: structuredClone(currentPlaybook.tasks),
+          edges: structuredClone(currentPlaybook.edges),
+          name: currentPlaybook.name,
+          workspaces: [...currentPlaybook.workspaces],
+        };
+        set({
+          undoStack: undoStack.slice(0, -1),
+          redoStack: [...redoStack, currentSnapshot],
+          currentPlaybook: {
+            ...currentPlaybook,
+            tasks: snapshot.tasks,
+            edges: snapshot.edges,
+            name: snapshot.name,
+            workspaces: snapshot.workspaces,
+          },
+          isDirty: true,
+          dirtyVersion: dirtyVersion + 1,
+          canvasSyncVersion: canvasSyncVersion + 1,
+        });
+      },
+
+      redo: () => {
+        const { currentPlaybook, undoStack, redoStack, dirtyVersion, canvasSyncVersion } = get();
+        if (redoStack.length === 0 || !currentPlaybook) return;
+        const snapshot = redoStack[redoStack.length - 1];
+        const currentSnapshot: PlaybookUndoSnapshot = {
+          tasks: structuredClone(currentPlaybook.tasks),
+          edges: structuredClone(currentPlaybook.edges),
+          name: currentPlaybook.name,
+          workspaces: [...currentPlaybook.workspaces],
+        };
+        set({
+          undoStack: [...undoStack, currentSnapshot],
+          redoStack: redoStack.slice(0, -1),
+          currentPlaybook: {
+            ...currentPlaybook,
+            tasks: snapshot.tasks,
+            edges: snapshot.edges,
+            name: snapshot.name,
+            workspaces: snapshot.workspaces,
+          },
+          isDirty: true,
+          dirtyVersion: dirtyVersion + 1,
+          canvasSyncVersion: canvasSyncVersion + 1,
+        });
+      },
+
+      clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
 
       // ===== Cleanup =====
 
@@ -1747,7 +1957,11 @@ export const useIsStopping = () => usePlaybookStore((s) => s.isStopping);
 
 export const useDesignerOpen = () => usePlaybookStore((s) => s.designerOpen);
 
+export const useCopilotMode = () => usePlaybookStore((s) => s.copilotMode);
+
 export const useExecutionPanelOpen = () => usePlaybookStore((s) => s.executionPanelOpen);
+
+export const usePageMode = () => usePlaybookStore((s) => s.pageMode);
 
 export const useHasActiveExecution = (playbookId: string | undefined) =>
   usePlaybookStore((s) => {
@@ -1763,3 +1977,6 @@ export const useHasActiveExecution = (playbookId: string | undefined) =>
   });
 
 export const useWorkspaceExplorerOpen = () => usePlaybookStore((s) => s.workspaceExplorerOpen);
+
+export const useCanUndo = () => usePlaybookStore((s) => s.undoStack.length > 0);
+export const useCanRedo = () => usePlaybookStore((s) => s.redoStack.length > 0);

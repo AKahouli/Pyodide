@@ -17,7 +17,7 @@ export default function App() {
       <WorkspaceSettingsModal />
       <UploadProgress />
       <FileFloatingWindow />
-      <Toaster position='top-right' richColors />
+      <Toaster position='top-right' richColors offset={80} />
     </CombinedProvider>
   );
 }

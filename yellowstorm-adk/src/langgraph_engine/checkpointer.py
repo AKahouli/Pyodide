@@ -2,7 +2,6 @@
 
 import os
 import tempfile
-from typing import Optional
 
 from structlog import get_logger
 

@@ -265,6 +265,26 @@ export class PlaybookExecutionService {
     return reason === SKIP_STEP_REASON;
   }
 
+  private normalizeResumeAction(dto: ResumePlaybookDto): 'reply' | 'approve' | 'reject' | 'skip' {
+    if (dto.action === 'reply' || dto.action === 'approve' || dto.action === 'reject' || dto.action === 'skip') {
+      return dto.action;
+    }
+    if (this.isSkipStepReason(dto.reason)) {
+      return 'skip';
+    }
+    if (dto.approved === true) {
+      return 'approve';
+    }
+    if (dto.approved === false) {
+      return dto.feedback ? 'reply' : 'reject';
+    }
+    return dto.message?.trim() ? 'reply' : 'approve';
+  }
+
+  private normalizeResumeMessage(dto: ResumePlaybookDto): string {
+    return dto.message?.trim() || dto.feedback?.trim() || dto.reason?.trim() || '';
+  }
+
   private normalizeEdgeId(value: any): string {
     return value?.toString?.() || value || '';
   }
@@ -718,7 +738,7 @@ export class PlaybookExecutionService {
     const executionNumber = await this.playbookService.getNextExecutionNumber(playbookId);
     const playbookSessionId = `playbook:${playbookId}:execution:${executionNumber}`;
 
-    // Resolve only agents referenced by playbook tasks — fully built for gRPC
+    // Resolve only agents referenced by playbook tasks Ã¢â‚¬â€ fully built for gRPC
     const grpcAgentMap = new Map<string, IGrpcAgent>();
     try {
       const referencedAgentIds = [...new Set(
@@ -754,7 +774,7 @@ export class PlaybookExecutionService {
       });
     }
 
-    // Topological sort by level — determines execution order and parallelism
+    // Topological sort by level Ã¢â‚¬â€ determines execution order and parallelism
     const orderedLevels = topologicalSortByLevel(enabledTasks, enabledEdges);
     const orderedTasks = orderedLevels.flat();
 
@@ -1051,7 +1071,7 @@ export class PlaybookExecutionService {
     for (const t of playbook.tasks) taskMap.set(t.id, t);
 
     const call = this.grpcService.runPlaybookWorkflow(request);
-    return this.consumePlaybookStream(userId, executionId, call, startedAt, undefined, taskMap, playbookName);
+    return this.consumePlaybookStream(userId, executionId, call, startedAt, undefined, undefined, taskMap, playbookName);
   }
 
   /**
@@ -1211,7 +1231,7 @@ export class PlaybookExecutionService {
       case 'suspended': {
         const existing = stepBuffer.get(taskId);
         if (existing) {
-          // Preserve completed data (output, components, durationMs) — only update status
+          // Preserve completed data (output, components, durationMs) Ã¢â‚¬â€ only update status
           existing.status = StepStatus.RUNNING;
         } else {
           stepBuffer.set(taskId, {
@@ -1280,7 +1300,7 @@ export class PlaybookExecutionService {
   }
 
   /**
-   * Handle stream interrupts — multiple steps can suspend per stream.
+   * Handle stream interrupts Ã¢â‚¬â€ multiple steps can suspend per stream.
    * Creates humanFeedback component + sends SSE for each suspended step.
    */
   private async handleStreamInterrupts(
@@ -1301,6 +1321,10 @@ export class PlaybookExecutionService {
           taskDescription: interrupt?.task_description || '',
           result: interrupt?.result || '',
           status: 'pending',
+          interruptId: interrupt?.interrupt_id || '',
+          round: interrupt?.round || 0,
+          payloadJson: interrupt?.conversation_json || '',
+          resumableActions: interrupt?.resumable_actions || [],
         });
       }
 
@@ -1312,6 +1336,10 @@ export class PlaybookExecutionService {
           type: interrupt?.type || 'unknown',
           message: interrupt?.message || '',
           threadId,
+          interruptId: interrupt?.interrupt_id || '',
+          round: interrupt?.round || 0,
+          payloadJson: interrupt?.conversation_json || '',
+          resumableActions: interrupt?.resumable_actions || [],
           taskDescription: interrupt?.task_description || '',
           result: interrupt?.result || '',
         },
@@ -1335,6 +1363,10 @@ export class PlaybookExecutionService {
               taskTitle: firstInterrupt.task_title,
               message: firstInterrupt.message,
               threadId: firstInterrupt.thread_id,
+              interruptId: firstInterrupt.interrupt_id || '',
+              round: firstInterrupt.round || 0,
+              payloadJson: firstInterrupt.conversation_json || '',
+              resumableActions: firstInterrupt.resumable_actions || [],
               taskDescription: firstInterrupt.task_description || '',
               result: firstInterrupt.result || '',
             }
@@ -1381,7 +1413,7 @@ export class PlaybookExecutionService {
   }
 
   /**
-   * Shared stream consumer — used by both runFullWorkflow and resume.
+   * Shared stream consumer Ã¢â‚¬â€ used by both runFullWorkflow and resume.
    * Collects step updates, detects suspended interrupts, handles completion.
    */
   private async consumePlaybookStream(
@@ -1390,6 +1422,7 @@ export class PlaybookExecutionService {
     call: grpc.ClientReadableStream<any>,
     startedAt: Date,
     resumedTaskId?: string,
+    resumedInterruptIdentity?: { interruptId?: string; type?: string; round?: number },
     taskMap: Map<string, any> = new Map(),
     playbookName: string = '',
   ): Promise<void> {
@@ -1430,12 +1463,29 @@ export class PlaybookExecutionService {
         if (chunk.step_update) {
           this.handleStepUpdate(userId, executionId, chunk.step_update, stepBuffer, taskMap, playbookName, evalEnabled);
           if (chunk.step_update.status === 'suspended' && chunk.step_update.interrupt) {
-            // Skip stale re-emitted interrupts for the task that was just resumed —
-            // its interrupt was already handled before the stream started.
             const interruptTaskId = chunk.step_update.interrupt.task_id || chunk.step_update.task_id;
-            if (resumedTaskId && interruptTaskId === resumedTaskId) {
+            const sameTask = resumedTaskId && interruptTaskId === resumedTaskId;
+            const interruptId = chunk.step_update.interrupt.interrupt_id || '';
+            const interruptType = chunk.step_update.interrupt.type || '';
+            const interruptRound = chunk.step_update.interrupt.round || 0;
+            const sameInterrupt =
+              !!sameTask
+              && (
+                (resumedInterruptIdentity?.interruptId && interruptId === resumedInterruptIdentity.interruptId)
+                || (
+                  !resumedInterruptIdentity?.interruptId
+                  && interruptType === (resumedInterruptIdentity?.type || '')
+                  && interruptRound === (resumedInterruptIdentity?.round || 0)
+                )
+              );
+
+            if (sameInterrupt) {
               this.logger.log('Skipping stale re-emitted interrupt for resumed task', {
-                executionId, resumedTaskId, interruptType: chunk.step_update.interrupt.type,
+                executionId,
+                resumedTaskId,
+                interruptType,
+                interruptId,
+                interruptRound,
               });
             } else {
               suspendedInterrupts.push({
@@ -1455,8 +1505,6 @@ export class PlaybookExecutionService {
           this.activeStepBuffers.delete(executionId);
           await this.recordStreamUsage(userId, executionId, stepBuffer, startedAt);
 
-          // If this was a resume and the stream didn't emit a completion for the resumed task,
-          // read its final status from DB and notify the frontend
           const resumedBuffered = resumedTaskId ? stepBuffer.get(resumedTaskId) : undefined;
           const resumedNeedsCompletion = resumedTaskId && (
             !resumedBuffered ||
@@ -1495,7 +1543,6 @@ export class PlaybookExecutionService {
           if (suspendedInterrupts.length > 0) {
             await this.handleStreamInterrupts(userId, executionId, suspendedInterrupts, taskMap, playbookName);
           } else {
-            // Check if the stream ended prematurely (API crash) — tasks still PENDING/RUNNING
             const freshExecCheck = await this.executionModel.findById(executionId)
               .select('taskResults').lean().exec();
             const hasPendingOrRunning = (freshExecCheck?.taskResults || []).some(
@@ -1969,6 +2016,12 @@ export class PlaybookExecutionService {
             interruptType: interrupt.type || 'unknown',
             message: interrupt.message || '',
             status: 'pending',
+            taskDescription: interrupt.task_description || '',
+            result: interrupt.result || '',
+            interruptId: interrupt.interrupt_id || '',
+            round: interrupt.round || 0,
+            payloadJson: interrupt.conversation_json || '',
+            resumableActions: interrupt.resumable_actions || [],
           });
         }
         await this.updateTaskResult(executionId, taskId, {
@@ -2070,7 +2123,7 @@ export class PlaybookExecutionService {
 
   /**
    * Send email notification when a step finishes (completed, failed, or interrupted).
-   * Fire-and-forget — never awaited, never blocks execution. Failures are logged only.
+   * Fire-and-forget Ã¢â‚¬â€ never awaited, never blocks execution. Failures are logged only.
    */
   private sendStepNotificationEmail(
     task: { id: string; title: string; notifyOnComplete?: boolean; notifyEmails?: string[] },
@@ -2089,7 +2142,7 @@ export class PlaybookExecutionService {
     const safeTitle = esc(task.title);
     const safeName = esc(playbookName);
 
-    const subject = `Playbook step "${task.title}" — ${statusLabel}`;
+    const subject = `Playbook step "${task.title}" Ã¢â‚¬â€ ${statusLabel}`;
 
     const errorRow = opts.error
       ? `<tr><td style="padding:8px 16px;color:#ef4444;" colspan="2"><strong>Error:</strong> ${esc(opts.error)}</td></tr>`
@@ -2102,7 +2155,7 @@ export class PlaybookExecutionService {
     const outputRow = outputPreview
       ? `<tr><td colspan="2" style="padding:12px 16px;">
 <div style="font-size:11px;color:#6b7280;margin-bottom:4px;font-weight:600;">Result</div>
-<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;">${nl2br(outputPreview)}${truncated ? '<br><em style="color:#9ca3af;">… truncated</em>' : ''}</div>
+<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;">${nl2br(outputPreview)}${truncated ? '<br><em style="color:#9ca3af;">Ã¢â‚¬Â¦ truncated</em>' : ''}</div>
 </td></tr>`
       : '';
 
@@ -2118,7 +2171,7 @@ ${outputRow}
 <p style="margin-top:16px;font-size:12px;color:#9ca3af;">Sent by YelloStorm Playbook</p>
 </div>`;
 
-    const textOutput = outputPreview ? `\n\nResult:\n${outputPreview}${truncated ? '\n… truncated' : ''}` : '';
+    const textOutput = outputPreview ? `\n\nResult:\n${outputPreview}${truncated ? '\nÃ¢â‚¬Â¦ truncated' : ''}` : '';
     const text = `Step "${task.title}" in playbook "${playbookName}" finished with status: ${statusLabel}${opts.error ? `\nError: ${opts.error}` : ''}${textOutput}`;
 
     this.emailService.send({ to: task.notifyEmails, subject, html, text }).catch((err) => {
@@ -2537,7 +2590,7 @@ ${outputRow}
     const startedAt = execution.startedAt || new Date();
 
     if (execution.status === ExecutionStatus.INTERRUPTED) {
-      // No active stream — cancel directly
+      // No active stream Ã¢â‚¬â€ cancel directly
       this.logger.log('stopExecution: interrupted, cancelling directly', { executionId });
       await this.markExecutionCancelled(userId, executionId, startedAt);
       return { status: ExecutionStatus.CANCELLED };
@@ -2556,7 +2609,7 @@ ${outputRow}
       activeCall.cancel();
       this.logger.log('stopExecution: cancelled active stream', { executionId });
     } else {
-      // No active stream (race condition) — cancel directly
+      // No active stream (race condition) Ã¢â‚¬â€ cancel directly
       this.logger.log('stopExecution: no active stream, cancelling directly', { executionId });
       await this.markExecutionCancelled(userId, executionId, startedAt);
     }
@@ -2603,12 +2656,14 @@ ${outputRow}
     dto: ResumePlaybookDto,
     userEmail: string = '',
   ): Promise<{ status: string }> {
+    const action = this.normalizeResumeAction(dto);
+    const message = this.normalizeResumeMessage(dto);
     this.logger.log('resumeExecution called', {
       userId,
       playbookId,
       executionId: dto.executionId,
       taskId: dto.taskId,
-      approved: dto.approved,
+      action,
     });
 
     const execution = await this.executionModel.findById(dto.executionId).exec();
@@ -2650,7 +2705,9 @@ ${outputRow}
       playbook_id: playbookId,
       thread_id: execution.threadId,
       human_response: {
-        approved: dto.approved,
+        action,
+        message,
+        approved: dto.approved ?? action === 'approve',
         reason: dto.reason || '',
         feedback: dto.feedback || '',
       },
@@ -2665,6 +2722,8 @@ ${outputRow}
 
     // Mark feedback as answered in DB
     await this.updateHumanFeedbackResponse(executionId, dto.taskId, {
+      action,
+      message,
       approved: dto.approved,
       reason: dto.reason,
       feedback: dto.feedback,
@@ -2684,7 +2743,7 @@ ${outputRow}
     });
 
     if (isSingleStep) {
-      // ResumeStep is still unary — process synchronously
+      // ResumeStep is still unary Ã¢â‚¬â€ process synchronously
       const rpcName = 'ResumeStep';
       this.logger.log(`${rpcName} gRPC request built`, {
         executionId, taskId: dto.taskId, playbookId, threadId: execution.threadId,
@@ -2823,8 +2882,26 @@ ${outputRow}
       for (const t of resumeSnapshot.tasks) resumeTaskMap.set(t.id, t);
     }
 
+    const resumedInterruptPayload = execution.interruptPayload as any;
+    const resumedInterruptIdentity = resumedInterruptPayload
+      ? {
+          interruptId: String(resumedInterruptPayload.interruptId || ''),
+          type: String(resumedInterruptPayload.type || ''),
+          round: Number(resumedInterruptPayload.round || 0),
+        }
+      : undefined;
+
     const call = this.grpcService.resumePlaybookWorkflow(grpcRequest);
-    this.consumePlaybookStream(userId, executionId, call, startedAt, resumedTaskId, resumeTaskMap, '').catch((err) => {
+    this.consumePlaybookStream(
+      userId,
+      executionId,
+      call,
+      startedAt,
+      resumedTaskId,
+      resumedInterruptIdentity,
+      resumeTaskMap,
+      '',
+    ).catch((err) => {
       this.logger.error('Resume stream failed', { executionId, error: (err as Error).message });
     });
 
@@ -2954,7 +3031,17 @@ ${outputRow}
   private async appendHumanFeedbackComponent(
     executionId: string,
     taskId: string,
-    data: { interruptType: string; message: string; status: string; taskDescription?: string; result?: string },
+    data: {
+      interruptType: string;
+      message: string;
+      status: string;
+      taskDescription?: string;
+      result?: string;
+      interruptId?: string;
+      round?: number;
+      payloadJson?: string;
+      resumableActions?: string[];
+    },
   ): Promise<void> {
     const component = {
       id: `hf-${taskId}-${Date.now()}`,
@@ -2981,12 +3068,12 @@ ${outputRow}
   private async updateHumanFeedbackResponse(
     executionId: string,
     taskId: string,
-    response: { approved: boolean; reason?: string; feedback?: string },
+    response: { action: string; message?: string; approved?: boolean; reason?: string; feedback?: string },
   ): Promise<void> {
     this.logger.log('Updating humanFeedback response', {
       executionId,
       taskId,
-      approved: response.approved,
+      action: response.action,
     });
 
     const execution = await this.executionModel.findById(executionId).exec();
@@ -3007,10 +3094,18 @@ ${outputRow}
       const comp = components[i] as any;
       if (comp.type === 'humanFeedback' && comp.data?.status === 'pending') {
         comp.data.status = 'answered';
+        comp.data.action = response.action;
+        comp.data.replyMessage = response.message || '';
         comp.data.approved = response.approved;
         comp.data.reason = response.reason || '';
         comp.data.feedback = response.feedback || '';
-        comp.data.humanResponse = response.approved ? 'approved' : 'rejected'; // backward compat
+        comp.data.humanResponse = response.action === 'approve'
+          ? 'approved'
+          : response.action === 'reject'
+            ? 'rejected'
+            : response.action === 'reply'
+              ? 'replied'
+              : response.action;
         break;
       }
     }

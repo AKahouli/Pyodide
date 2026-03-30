@@ -1,56 +1,105 @@
-import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid } from 'lucide-react';
+import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
+import type { PlaybookPageMode } from '../types';
 
 interface Props {
+  pageMode: PlaybookPageMode;
+  onPageModeChange: (mode: PlaybookPageMode) => void;
+  hasExecutionContext?: boolean;
+  hasPendingInterrupt?: boolean;
   onAddStep: () => void;
   onAutoLayout: () => void;
   onRun: () => void;
   onSave: () => void;
   onViewExecutions: () => void;
-  onToggleDesigner: () => void;
-  designerOpen: boolean;
+  onToggleCopilot?: () => void;
+  copilotOpen?: boolean;
   isDirty: boolean;
   isSaving: boolean;
   isExecuting: boolean;
   canRun: boolean;
   executionMode: 'live' | 'inherit';
   onExecutionModeChange: (mode: 'live' | 'inherit') => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
 }
 
 export function PlaybookToolbar({
+  pageMode,
+  onPageModeChange,
+  hasExecutionContext = false,
+  hasPendingInterrupt = false,
   onAddStep,
   onAutoLayout,
   onRun,
   onSave,
   onViewExecutions,
-  onToggleDesigner,
-  designerOpen,
+  onToggleCopilot = () => {},
+  copilotOpen = false,
   isDirty,
   isSaving,
   isExecuting,
   canRun,
   executionMode,
   onExecutionModeChange,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
+  const showCopilotAction = pageMode === 'design' || hasPendingInterrupt || copilotOpen;
+  const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
 
   return (
     <div className="flex items-center gap-1 sm:gap-2">
+      <div className="flex items-center rounded-md border p-0.5">
+        {(['design', 'run'] as const).map((mode) => (
+          <Button
+            key={mode}
+            type="button"
+            variant={pageMode === mode ? 'secondary' : 'ghost'}
+            size="sm"
+            className="h-8 px-2 sm:px-3"
+            onClick={() => onPageModeChange(mode)}
+          >
+            {t(`mode.${mode}`)}
+          </Button>
+        ))}
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onUndo}
+        disabled={!canUndo || isSaving}
+        className="h-8 px-2"
+        title="Undo (Ctrl+Z)"
+      >
+        <Undo2 className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onRedo}
+        disabled={!canRedo || isSaving}
+        className="h-8 px-2"
+        title="Redo (Ctrl+Shift+Z)"
+      >
+        <Redo2 className="h-4 w-4" />
+      </Button>
       <Select value={executionMode} onValueChange={(value) => onExecutionModeChange(value as 'live' | 'inherit')}>
         <SelectTrigger className="h-9 w-[140px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-        <SelectItem value="live">Live Mode</SelectItem>
-        <SelectItem value="inherit">Inherit Step Modes</SelectItem>
-      </SelectContent>
+          <SelectItem value="live">{t('toolbar.executionMode.live')}</SelectItem>
+          <SelectItem value="inherit">{t('toolbar.executionMode.inherit')}</SelectItem>
+        </SelectContent>
       </Select>
-      <Button variant={designerOpen ? "default" : "outline"} size="sm" onClick={onToggleDesigner} className="px-2 sm:px-3">
-        <Wand2 className="h-4 w-4 sm:mr-1" />
-        <span className="hidden sm:inline">{t('toolbar.designer')}</span>
-      </Button>
       <Button variant="outline" size="sm" onClick={onAddStep} className="px-2 sm:px-3">
         <Plus className="h-4 w-4 sm:mr-1" />
         <span className="hidden sm:inline">{t('toolbar.addStep')}</span>
@@ -59,11 +108,32 @@ export function PlaybookToolbar({
         <LayoutGrid className="h-4 w-4 sm:mr-1" />
         <span className="hidden sm:inline">{t('toolbar.autoLayout')}</span>
       </Button>
-      <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
-        <History className="h-4 w-4 sm:mr-1" />
-        <span className="hidden sm:inline">{t('toolbar.executions')}</span>
-      </Button>
-      <Button variant="outline" size="sm" onClick={onSave} disabled={!isDirty || isSaving} className="px-2 sm:px-3">
+      {showCopilotAction && (
+        <Button
+          variant={copilotOpen ? 'default' : 'outline'}
+          size="sm"
+          onClick={onToggleCopilot}
+          className="px-2 sm:px-3"
+        >
+          <Wand2 className="h-4 w-4 sm:mr-1" />
+          <span className="hidden sm:inline">
+            {pageMode === 'run' ? t('toolbar.copilot') : t('toolbar.designer')}
+          </span>
+        </Button>
+      )}
+      {showExecutionsAction && (
+        <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
+          <History className="h-4 w-4 sm:mr-1" />
+          <span className="hidden sm:inline">{t('toolbar.executions')}</span>
+        </Button>
+      )}
+      <Button
+        variant={isDirty ? 'outline' : 'ghost'}
+        size="sm"
+        onClick={onSave}
+        disabled={!isDirty || isSaving}
+        className="px-2 sm:px-3"
+      >
         {isSaving ? (
           <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
         ) : isDirty ? (

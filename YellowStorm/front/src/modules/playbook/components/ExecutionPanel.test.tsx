@@ -5,14 +5,6 @@ import { ExecutionPanel } from './ExecutionPanel';
 import { usePlaybookStore } from '../store';
 import { makeExecution, makeExecutionSummary, makePlaybook } from '../test-utils';
 
-vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
-}));
-
-vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: (key: string) => key }),
-}));
-
 vi.mock('./PlaybookStatusBadge', () => ({
   PlaybookStatusBadge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
 }));
@@ -124,6 +116,23 @@ describe('ExecutionPanel', () => {
       selectedStepId: 't1',
     });
     render(<ExecutionPanel />);
+    expect(usePlaybookStore.getState().selectedStepId).toBe('t1');
+  });
+
+  it('selects a step when clicked in the list', async () => {
+    const execution = makeExecution({
+      status: 'completed',
+      taskResults: [
+        { taskId: 't1', nodeTitle: 'Step 1', agentName: '', order: 1, status: 'completed', output: 'done', error: null, durationMs: 100, startedAt: '', completedAt: '' },
+      ],
+    });
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+      selectedStepId: null,
+    });
+    render(<ExecutionPanel pageMode="run" />);
+    await userEvent.click(screen.getByText('Step 1'));
     expect(usePlaybookStore.getState().selectedStepId).toBe('t1');
   });
 

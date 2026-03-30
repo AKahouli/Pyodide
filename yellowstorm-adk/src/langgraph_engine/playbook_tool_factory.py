@@ -232,57 +232,6 @@ def _format_available_filenames(brain_documents: list, max_files: int = 12) -> s
     return ", ".join(visible) + suffix
 
 
-def _extract_citation_components(toolkit) -> List[dict]:
-    """Extract citation components from a SearchToolkit's accumulated sources.
-
-    Reads toolkit.sources_text and toolkit.sources_image and converts them
-    to component dicts ready for the collector.
-    """
-    components = []
-
-    for src in getattr(toolkit, "sources_text", []):
-        obj = src.get("object", {})
-        content = obj.get("content", {})
-        components.append({
-            "type": "citation",
-            "data": {
-                "parent_id": "",
-                "text_source": {
-                    "type": "text",
-                    "source": content.get("source", ""),
-                    "external_id": content.get("external_id", ""),
-                    "page": str(content.get("page", "")),
-                    "page_content": content.get("page_content", ""),
-                    "workspace_id": content.get("brain_id", ""),
-                    "reference": src.get("reference", ""),
-                },
-            },
-        })
-
-    for src in getattr(toolkit, "sources_image", []):
-        obj = src.get("object", {})
-        content = obj.get("content", {})
-        components.append({
-            "type": "citation",
-            "data": {
-                "parent_id": "",
-                "image_source": {
-                    "type": "image",
-                    "path": content.get("path", ""),
-                    "page": str(content.get("page", "")),
-                    "file_name": content.get("file_name", ""),
-                    "external_id": content.get("external_id", ""),
-                    "workspace_id": content.get("brain_id", ""),
-                    "height": str(content.get("height", "")),
-                    "width": str(content.get("width", "")),
-                    "reference": src.get("reference", ""),
-                },
-            },
-        })
-
-    return components
-
-
 def _create_search_tools(
     tool_configs: list,
     doc_tree: list,

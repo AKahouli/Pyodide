@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, FileText, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
-import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, ValidatedTaskReplay } from '../types';
+import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay } from '../types';
 import type { MessageComponent } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
@@ -18,9 +18,12 @@ import { downloadStepResultHtml, downloadStepResultPdf } from '../utils/renderSt
 interface Props {
   step: TaskResult | null;
   execution?: PlaybookExecution | null;
+  pageMode?: PlaybookPageMode;
+  onBackToRunMode?: () => void;
   onRequestValidateReplay?: (taskId: string) => void;
   onRequestRunEvaluation?: (taskId: string) => void;
   onRequestGrabOutputFormat?: (taskId: string) => void;
+  onOpenOutputFormatEditor?: (taskId: string) => void;
   onStepReplayModeChange?: (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => void;
   isRunningEvaluation?: boolean;
   activeTab?: string;
@@ -61,11 +64,14 @@ function formatPromptStage(stage: string | undefined): string {
     .join(' ');
 }
 
-function getExecutionModeLabel(mode?: string): string {
-  if (mode === 'replay_strict') return 'Replay (Strict)';
-  if (mode === 'replay_flex') return 'Replay (Flex)';
-  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
-  return 'Live';
+function getExecutionModeLabel(
+  mode: string | undefined,
+  t: (key: 'execution.mode.live' | 'execution.mode.replayStrict' | 'execution.mode.replayFlex' | 'execution.mode.replayAdaptive') => string,
+): string {
+  if (mode === 'replay_strict') return t('execution.mode.replayStrict');
+  if (mode === 'replay_flex') return t('execution.mode.replayFlex');
+  if (mode === 'replay_adaptive') return t('execution.mode.replayAdaptive');
+  return t('execution.mode.live');
 }
 
 function stableValue(value: unknown): unknown {
@@ -90,9 +96,12 @@ function areArgsEqual(a: Record<string, unknown> | undefined, b: Record<string, 
 export function ExecutionStepDetail({
   step,
   execution = null,
+  pageMode = 'run',
+  onBackToRunMode,
   onRequestValidateReplay,
   onRequestRunEvaluation,
   onRequestGrabOutputFormat,
+  onOpenOutputFormatEditor,
   onStepReplayModeChange,
   isRunningEvaluation = false,
   activeTab = 'results',
@@ -154,6 +163,18 @@ export function ExecutionStepDetail({
   ]);
 
   const isBaselineExecution = !!(execution?.id && baselineReplay?.referenceExecutionId && execution.id === baselineReplay.referenceExecutionId);
+  const replayBadgeVersion = currentTask?.activeReplayVersion ?? replaySource?.validationVersion ?? baselineReplay?.validationVersion ?? null;
+  const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline || replayBadgeVersion);
+  const isReplayBadgeBusy = Boolean(currentTask?.isSavingReplayBaseline);
+  const showOutputFormatBadge = Boolean(
+    currentTask?.hasOutputFormatTemplate
+    || currentTask?.isCapturingOutputFormat
+    || currentTask?.activeOutputFormatTemplateVersion,
+  );
+  const isOutputFormatBusy = Boolean(currentTask?.isCapturingOutputFormat || currentTask?.activeOutputFormatStatus === 'pending');
+  const outputFormatBadgeTone = currentTask?.activeOutputFormatStatus === 'failed'
+    ? 'border-red-500/30 bg-red-50 text-red-700'
+    : 'border-sky-500/30 bg-sky-100 text-sky-700';
 
   const canDownload = step ? step.status === 'completed' || step.status === 'failed' || step.status === 'skipped' || step.status === 'interrupted' : false;
 
@@ -189,55 +210,44 @@ export function ExecutionStepDetail({
 
   return (
     <div className="flex-1 overflow-y-auto p-6">
-      {/* Header */}
       <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
           <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
-          {isBaselineExecution && (
-            <span className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-              Baseline
+          {showReplayBadge && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+              {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+              {replayBadgeVersion
+                ? t('detail.badges.replayBaseline', { version: replayBadgeVersion })
+                : t('detail.badges.baseline')}
             </span>
           )}
-          {baselineReplay?.preserveOutputFormat && (
-            <span className="rounded-full border border-sky-500/30 bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
-              Format preserved
-            </span>
+          {showOutputFormatBadge && (
+            <button
+              type="button"
+              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors hover:opacity-90 ${outputFormatBadgeTone}`}
+              onClick={() => onOpenOutputFormatEditor?.(step.taskId)}
+            >
+              {isOutputFormatBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+              {currentTask?.activeOutputFormatTemplateVersion
+                ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
+                : t('detail.badges.outputFormat')}
+            </button>
           )}
           {step.isStale && (
             <span
               className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
               title={step.staleReason || 'Invalidated by an upstream rerun'}
             >
-              Stale
-            </span>
-          )}
-          {currentTask?.hasOutputFormatTemplate && currentTask.activeOutputFormatStatus === 'pending' && (
-            <span className="rounded-full border border-sky-500/30 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
-              Template pending
-            </span>
-          )}
-          {currentTask?.activeOutputFormatStatus === 'failed' && (
-            <span className="rounded-full border border-red-500/30 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-              Template failed
-            </span>
-          )}
-          {baselineReplay?.preserveOutputFormat && baselineReplay.formatGuideStatus === 'pending' && (
-            <span className="rounded-full border border-sky-500/30 bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700">
-              Guide pending
-            </span>
-          )}
-          {baselineReplay?.formatGuideStatus === 'failed' && (
-            <span className="rounded-full border border-red-500/30 bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700">
-              Guide failed
+              {t('detail.badges.stale')}
             </span>
           )}
           {(execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') && (
             <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {getExecutionModeLabel(execution?.executionMode)}
+              {getExecutionModeLabel(execution?.executionMode, t)}
             </span>
           )}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground whitespace-nowrap">Step mode:</span>
+          <div className="ml-auto flex items-center gap-1.5">
+            <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
             <Select
               value={currentTask?.stepReplayMode ?? 'live'}
               onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
@@ -247,103 +257,106 @@ export function ExecutionStepDetail({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="live">Live</SelectItem>
-                <SelectItem value="replay_strict">Replay (Strict)</SelectItem>
-                <SelectItem value="replay_flex">Replay (Flex)</SelectItem>
-                <SelectItem value="replay_adaptive">Replay (Adaptive)</SelectItem>
+                <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
+                <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
+                <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
+                <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
               </SelectContent>
             </Select>
             {!currentTask?.hasValidatedReplay && (
-              <span className="text-[10px] text-muted-foreground" title="Save a replay baseline to enable replay modes">
-                (no baseline)
+              <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
+                {t('detail.noBaseline')}
               </span>
             )}
           </div>
-          {execution && step.status === 'completed' && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRequestValidateReplay?.(step.taskId)}
-            >
-              Save Replay Baseline
-            </Button>
-          )}
-          {execution && step.status === 'completed' && !!step.output && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onRequestGrabOutputFormat?.(step.taskId)}
-            >
-              Grab this output format
-            </Button>
-          )}
-          {execution && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 text-destructive"
-              title="Delete execution"
-              onClick={() => void deleteExecution(execution.playbookId, execution.id)}
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-          )}
-          {canDownload && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" title="Download result">
-                  <Download className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={handleDownloadHtml}>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="h-8 w-8" title={t('detail.actions')}>
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {execution && step.status === 'completed' && (
+                <DropdownMenuItem onClick={() => onRequestValidateReplay?.(step.taskId)}>
                   <FileText className="mr-2 h-4 w-4" />
-                  Download HTML
+                  {t('detail.actions.saveReplay')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleDownloadPdf}>
-                  <Download className="mr-2 h-4 w-4" />
-                  Download PDF
+              )}
+              {execution && (
+                <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  {t('detail.actions.runEvaluation')}
                 </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+              )}
+              {execution && step.status === 'completed' && !!step.output && (
+                <DropdownMenuItem onClick={() => onRequestGrabOutputFormat?.(step.taskId)}>
+                  <FileText className="mr-2 h-4 w-4" />
+                  {t('detail.actions.grabFormat')}
+                </DropdownMenuItem>
+              )}
+              {canDownload && (
+                <>
+                  <DropdownMenuItem onClick={handleDownloadHtml}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('detail.actions.downloadHtml')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleDownloadPdf}>
+                    <Download className="mr-2 h-4 w-4" />
+                    {t('detail.actions.downloadPdf')}
+                  </DropdownMenuItem>
+                </>
+              )}
+              {execution && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => void deleteExecution(execution.playbookId, execution.id)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    {t('detail.actions.deleteExecution')}
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-          {step.agentName && <span>{t('execution.agent')}: {step.agentName}</span>}
-          <span>{t('execution.started')}: {formatTime(step.startedAt)}</span>
+        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+          {step.agentName && <span>{t('detail.metadata.agent')}: {step.agentName}</span>}
+          <span>{t('detail.metadata.started')}: {formatTime(step.startedAt)}</span>
           {step.completedAt && (
-            <span>{t('execution.finished')}: {formatTime(step.completedAt)}</span>
+            <span>{t('detail.metadata.completed')}: {formatTime(step.completedAt)}</span>
           )}
-          <span>{t('execution.duration')}: {formatDuration(step.durationMs)}</span>
+          <span>{t('detail.metadata.duration')}: {formatDuration(step.durationMs)}</span>
         </div>
       </div>
 
       {step.isStale && (
         <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          This result is stale because an upstream step was rerun. Run this step again or use "Resume From This Step" to recompute downstream steps.
+          {t('detail.staleMessage')}
         </div>
       )}
 
       <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
         <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="results">Step Results</TabsTrigger>
-          <TabsTrigger value="evaluation">Evaluation</TabsTrigger>
-          <TabsTrigger value="tool-trace">Tool Trace</TabsTrigger>
-          <TabsTrigger value="replay-diff">Replay Args Diff</TabsTrigger>
-          <TabsTrigger value="llm-prompts">LLM Prompts</TabsTrigger>
+          <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
+          <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+          <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
+          <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
+          <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="results" className="space-y-4">
           {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
             <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-              <div className="font-medium">Replay Provenance</div>
+              <div className="font-medium">{t('detail.provenance.title')}</div>
               <div className="mt-2 space-y-1 text-muted-foreground">
-                <div>Mode: {getExecutionModeLabel(execution?.executionMode)}</div>
+                <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode, t)}</div>
                 {replaySource && (
-                  <div>Validated baseline: v{replaySource.validationVersion}</div>
+                  <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                 )}
                 {baselineReplay?.preserveOutputFormat && (
-                  <div>Output format preservation: enabled</div>
+                  <div>{t('detail.provenance.outputFormat')}</div>
                 )}
               </div>
             </div>
@@ -390,19 +403,19 @@ export function ExecutionStepDetail({
             {(execution || evaluationHistory.length > 0) && (
               <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
                 <div className="text-sm text-muted-foreground">
-                  Run the selected step again and refresh its baseline evaluation.
+                  {t('detail.evaluation.description')}
                 </div>
                 {evaluationHistory.length > 0 && (
                   <div className="min-w-[260px] space-y-1 justify-self-end">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Evaluation Run</div>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.historyLabel')}</div>
                     <Select value={selectedEvaluation?.id || ''} onValueChange={setSelectedEvaluationId}>
                       <SelectTrigger className="h-9">
-                        <SelectValue placeholder="Select evaluation" />
+                        <SelectValue placeholder={t('detail.evaluation.selectPlaceholder')} />
                       </SelectTrigger>
                       <SelectContent>
                         {evaluationHistory.map((entry) => (
                           <SelectItem key={entry.id} value={entry.id}>
-                            {new Date(entry.createdAt).toLocaleString()} | Attempt {entry.attemptNumber ?? '-'} | {formatPercent(entry.semanticMatch.matchScore)}
+                            {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.semanticMatch.matchScore)}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -417,7 +430,7 @@ export function ExecutionStepDetail({
                     disabled={isRunningEvaluation}
                     className="justify-self-end"
                   >
-                    {isRunningEvaluation ? 'Running...' : 'Run Evaluation'}
+                    {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
                   </Button>
                 )}
               </div>
@@ -426,15 +439,15 @@ export function ExecutionStepDetail({
             {evaluationHistory.length > 0 && (
               <div className={`${execution ? 'mt-4 border-t pt-4' : ''}`}>
                 <div className="text-sm text-muted-foreground">
-                  Historical evaluations are saved per step attempt. Use the selector above to inspect older runs.
+                  {t('detail.evaluation.historyHint')}
                 </div>
                 {selectedEvaluation && (
                   <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                    <span>Recorded: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
-                    <span>Attempt: {selectedEvaluation.attemptNumber ?? '-'}</span>
-                    <span>Trigger: {selectedEvaluation.trigger}</span>
+                    <span>{t('detail.evaluation.recorded')}: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
+                    <span>{t('detail.evaluation.attempt')}: {selectedEvaluation.attemptNumber ?? '-'}</span>
+                    <span>{t('detail.evaluation.trigger')}: {selectedEvaluation.trigger}</span>
                     {selectedEvaluation.baselineValidationVersion !== null && (
-                      <span>Baseline: v{selectedEvaluation.baselineValidationVersion}</span>
+                      <span>{t('detail.provenance.baseline')}: v{selectedEvaluation.baselineValidationVersion}</span>
                     )}
                   </div>
                 )}
@@ -444,48 +457,48 @@ export function ExecutionStepDetail({
             <div className={`${execution || evaluationHistory.length > 0 ? 'mt-4 border-t pt-4' : ''}`}>
               {isEvaluationPending && (
                 <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
-                  <div className="font-medium text-primary">Evaluation in progress</div>
+                  <div className="font-medium text-primary">{t('detail.evaluation.inProgress')}</div>
                   <div className="mt-1 text-muted-foreground">
-                    The step is rerunning now. New evaluation results will appear here as soon as the run completes.
+                    {t('detail.evaluation.runningMessage')}
                   </div>
                 </div>
               )}
               {semanticMatchToDisplay ? (
                 <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                   <div className="flex items-center justify-between gap-3">
-                    <div className="font-medium">Semantic Match</div>
+                    <div className="font-medium">{t('detail.evaluation.semanticMatch')}</div>
                     <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                      Match {formatPercent(semanticMatchToDisplay.matchScore)}
+                      {t('detail.evaluation.matchBadge', { score: formatPercent(semanticMatchToDisplay.matchScore) })}
                     </span>
                   </div>
                   <div className="mt-3 grid gap-3 md:grid-cols-4">
                     <div className="rounded bg-background p-3">
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Overall</div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.matchScore)}</div>
                     </div>
                     <div className="rounded bg-background p-3">
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Embedding Similarity</div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.semanticSimilarityScore)}</div>
                     </div>
                     <div className="rounded bg-background p-3">
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Evidence Consistency</div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.evidenceConsistencyScore)}</div>
                     </div>
                     <div className="rounded bg-background p-3">
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Judge Score</div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.judgeScore)}</div>
                     </div>
                   </div>
                   {semanticMatchToDisplay.reason && (
                     <div className="mt-3 rounded bg-background p-3">
-                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Reason</div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
                       <div className="mt-1 text-sm whitespace-pre-wrap">{semanticMatchToDisplay.reason}</div>
                     </div>
                   )}
                   {(semanticMatchToDisplay.missingPoints?.length || semanticMatchToDisplay.changedPoints?.length) ? (
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <div className="rounded bg-background p-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Missing Points</div>
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.missingPoints')}</div>
                         {semanticMatchToDisplay.missingPoints?.length ? (
                           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
                             {semanticMatchToDisplay.missingPoints.map((item, index) => (
@@ -493,11 +506,11 @@ export function ExecutionStepDetail({
                             ))}
                           </ul>
                         ) : (
-                          <div className="mt-1 text-sm text-muted-foreground">None</div>
+                          <div className="mt-1 text-sm text-muted-foreground">{t('detail.evaluation.none')}</div>
                         )}
                       </div>
                       <div className="rounded bg-background p-3">
-                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Changed Points</div>
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.changedPoints')}</div>
                         {semanticMatchToDisplay.changedPoints?.length ? (
                           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
                             {semanticMatchToDisplay.changedPoints.map((item, index) => (
@@ -505,20 +518,22 @@ export function ExecutionStepDetail({
                             ))}
                           </ul>
                         ) : (
-                          <div className="mt-1 text-sm text-muted-foreground">None</div>
+                          <div className="mt-1 text-sm text-muted-foreground">{t('detail.evaluation.none')}</div>
                         )}
                       </div>
                     </div>
                   ) : null}
                   <div className="mt-3 text-xs text-muted-foreground">
-                    {semanticMatchToDisplay.judgeUsed ? `Judge model: ${semanticMatchToDisplay.model || '-'}` : 'Embedding-only fallback used'}
+                    {semanticMatchToDisplay.judgeUsed
+                      ? t('detail.evaluation.judgeModel', { model: semanticMatchToDisplay.model || '-' })
+                      : t('detail.evaluation.embeddingFallback')}
                   </div>
                 </div>
               ) : (
                 <div className="rounded-lg border bg-muted/10 p-4 text-sm text-muted-foreground">
                   {isEvaluationPending
-                    ? 'Waiting for evaluation results...'
-                    : 'No evaluation available for this step.'}
+                    ? t('detail.evaluation.waiting')
+                    : t('detail.evaluation.empty')}
                 </div>
               )}
             </div>
@@ -536,13 +551,13 @@ export function ExecutionStepDetail({
                   </div>
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
-                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Args</div>
+                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.args')}</div>
                       <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                         {formatToolArgs(item.args)}
                       </pre>
                     </div>
                     <div>
-                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Output Summary</div>
+                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.outputSummary')}</div>
                       <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                         {item.outputSummary || '-'}
                       </pre>
@@ -553,7 +568,7 @@ export function ExecutionStepDetail({
             </div>
           ) : (
             <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              No tool trace available for this step.
+              {t('detail.toolTrace.empty')}
             </div>
           )}
 
@@ -572,10 +587,10 @@ export function ExecutionStepDetail({
                     ? 'bg-green-100 text-green-700'
                     : 'bg-red-100 text-red-700';
                 const statusLabel = !actualItem
-                  ? 'Missing in actual replay'
+                  ? t('detail.replayDiff.missing')
                   : argsMatch && toolMatch
-                    ? 'Matches baseline'
-                    : 'Differs from baseline';
+                    ? t('detail.replayDiff.matches')
+                    : t('detail.replayDiff.differs');
 
                 return (
                   <div key={`replay-diff-${baselineItem.callIndex}-${baselineItem.toolName}`} className="rounded-lg border bg-muted/20 p-4">
@@ -588,13 +603,13 @@ export function ExecutionStepDetail({
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Validated baseline args</div>
+                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineArgs')}</div>
                         <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                           {formatToolArgs(baselineItem.args)}
                         </pre>
                       </div>
                       <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Actual replay-run args</div>
+                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualArgs')}</div>
                         <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                           {formatToolArgs(actualItem?.args)}
                         </pre>
@@ -602,13 +617,13 @@ export function ExecutionStepDetail({
                     </div>
                     <div className="mt-3 grid gap-3 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Validated baseline result</div>
+                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineResult')}</div>
                         <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                           {baselineItem.outputSummary || '-'}
                         </pre>
                       </div>
                       <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Actual replay-run result</div>
+                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualResult')}</div>
                         <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                           {actualItem?.outputSummary || '-'}
                         </pre>
@@ -620,13 +635,13 @@ export function ExecutionStepDetail({
 
               {(step.toolTrace || []).some((actualItem) => !baselineReplay.toolCalls.find((baselineItem) => baselineItem.callIndex === actualItem.callIndex)) && (
                 <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 text-sm text-amber-800">
-                  Some actual replay tool calls do not exist in the validated baseline.
+                  {t('detail.replayDiff.extraCalls')}
                 </div>
               )}
             </div>
           ) : (
             <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              No replay baseline available for diff.
+              {t('detail.replayDiff.empty')}
             </div>
           )}
         </TabsContent>
@@ -647,7 +662,7 @@ export function ExecutionStepDetail({
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="pb-4 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Prompt sent to the LLM</div>
+                    <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.prompts.promptLabel')}</div>
                     <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
                       {item.prompt || '-'}
                     </pre>
@@ -657,7 +672,7 @@ export function ExecutionStepDetail({
             </div>
           ) : (
             <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              No LLM prompt trace available for this step.
+              {t('detail.prompts.empty')}
             </div>
           )}
         </TabsContent>

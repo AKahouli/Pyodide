@@ -73,6 +73,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [formatGuideDraft, setFormatGuideDraft] = useState('');
   const [preserveFormatDraft, setPreserveFormatDraft] = useState(false);
   const [savingFormatGuide, setSavingFormatGuide] = useState(false);
+  const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
 
   useEffect(() => {
     if (task) {
@@ -87,8 +88,51 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       setNotifyEmails(task.notifyEmails ?? []);
       setEmailInput('');
       setEmailError('');
+      setHasInitializedDraft(false);
     }
   }, [task]);
+
+  useEffect(() => {
+    if (!open || !task || !hasInitializedDraft) return;
+    const timeoutId = window.setTimeout(() => {
+      onSave(task.id, {
+        title,
+        description,
+        assignedAgentId,
+        interruptBefore,
+        interruptAfter,
+        allowClarification,
+        enabled,
+        notifyOnComplete,
+        notifyEmails: notifyOnComplete ? notifyEmails : [],
+      });
+    }, 350);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    allowClarification,
+    assignedAgentId,
+    description,
+    enabled,
+    hasInitializedDraft,
+    interruptAfter,
+    interruptBefore,
+    notifyEmails,
+    notifyOnComplete,
+    onSave,
+    open,
+    task,
+    title,
+  ]);
+
+  useEffect(() => {
+    if (!open || !task) return;
+    const timeoutId = window.setTimeout(() => {
+      setHasInitializedDraft(true);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [open, task]);
 
   useEffect(() => {
     let cancelled = false;
@@ -178,22 +222,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const handleEmailBlur = useCallback(() => {
     if (emailInput.trim()) addEmail(emailInput);
   }, [emailInput, addEmail]);
-
-  const handleSave = () => {
-    if (!task) return;
-    onSave(task.id, {
-      title,
-      description,
-      assignedAgentId,
-      interruptBefore,
-      interruptAfter,
-      allowClarification,
-      enabled,
-      notifyOnComplete,
-      notifyEmails: notifyOnComplete ? notifyEmails : [],
-    });
-    onOpenChange(false);
-  };
 
   if (!task) return null;
 
@@ -516,15 +544,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           </div>
         </div>
 
-        <div className="flex justify-end gap-2 pt-4">
-          <button
-            className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:pointer-events-none"
-            onClick={handleSave}
-            disabled={!assignedAgentId}
-          >
-            {t('nodeEditor.save')}
-          </button>
-        </div>
       </SheetContent>
 
       <Dialog open={!!editingReplay} onOpenChange={(open) => {

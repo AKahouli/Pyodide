@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsBoolean, IsOptional } from 'class-validator';
+import { IsString, IsNotEmpty, IsBoolean, IsOptional, IsIn } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ResumePlaybookDto {
@@ -12,16 +12,28 @@ export class ResumePlaybookDto {
   @IsNotEmpty()
   taskId!: string;
 
-  @ApiProperty({ description: 'Whether the human approved the step' })
-  @IsBoolean()
-  approved!: boolean;
+  @ApiPropertyOptional({ description: 'Conversational HITL action', enum: ['reply', 'approve', 'reject', 'skip'] })
+  @IsString()
+  @IsOptional()
+  @IsIn(['reply', 'approve', 'reject', 'skip'])
+  action?: 'reply' | 'approve' | 'reject' | 'skip';
 
-  @ApiPropertyOptional({ description: 'Reason for rejection' })
+  @ApiPropertyOptional({ description: 'Conversational HITL reply message' })
+  @IsString()
+  @IsOptional()
+  message?: string;
+
+  @ApiPropertyOptional({ description: 'Legacy approval flag for binary interrupts' })
+  @IsBoolean()
+  @IsOptional()
+  approved?: boolean;
+
+  @ApiPropertyOptional({ description: 'Legacy reason for rejection' })
   @IsString()
   @IsOptional()
   reason?: string;
 
-  @ApiPropertyOptional({ description: 'Clarification or review feedback' })
+  @ApiPropertyOptional({ description: 'Legacy clarification or review feedback' })
   @IsString()
   @IsOptional()
   feedback?: string;

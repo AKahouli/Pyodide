@@ -1367,6 +1367,8 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
 
         try:
             human_response = {
+                "action": request.human_response.action,
+                "message": request.human_response.message,
                 "approved": request.human_response.approved,
                 "reason": request.human_response.reason,
                 "feedback": request.human_response.feedback,
@@ -1480,6 +1482,8 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
             if "step_update" in item:
                 chunk = _build_step_update_chunk(item["step_update"])
                 chunk.thread_id = thread_id
+                if item["step_update"].get("interrupt"):
+                    logger.debug("[servicer] yielding SUSPENDED chunk via gRPC", task=item["step_update"].get("task_id"), interrupt_type=item["step_update"].get("interrupt", {}).get("type"))
                 yield chunk
             else:
                 logger.warning("[_stream_playbook_queue] Unknown queue item", item=item)
@@ -1542,6 +1546,8 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
 
         try:
             human_response = {
+                "action": request.human_response.action,
+                "message": request.human_response.message,
                 "approved": request.human_response.approved,
                 "reason": request.human_response.reason,
                 "feedback": request.human_response.feedback,
@@ -1921,6 +1927,7 @@ def _build_step_update_chunk(update: Dict[str, Any]) -> chatbot_pb2.PlaybookStre
 
     interrupt_data = update.get("interrupt")
     if interrupt_data:
+        logger.debug("[servicer] _build_step_update_chunk SUSPENDED", task=interrupt_data.get("task_id"), interrupt_type=interrupt_data.get("type"))
         step_kwargs["interrupt"] = chatbot_pb2.InterruptPayload(
             type=interrupt_data.get("type", ""),
             task_id=interrupt_data.get("task_id", ""),
@@ -1929,6 +1936,10 @@ def _build_step_update_chunk(update: Dict[str, Any]) -> chatbot_pb2.PlaybookStre
             thread_id=interrupt_data.get("thread_id", ""),
             task_description=interrupt_data.get("task_description", ""),
             result=interrupt_data.get("result", ""),
+            interrupt_id=interrupt_data.get("interrupt_id", ""),
+            round=int(interrupt_data.get("round", 0) or 0),
+            conversation_json=interrupt_data.get("conversation_json", ""),
+            resumable_actions=[str(action) for action in (interrupt_data.get("resumable_actions", []) or [])],
         )
 
     return chatbot_pb2.PlaybookStreamChunk(
@@ -1958,6 +1969,10 @@ def _build_step_response(result: Dict[str, Any]) -> chatbot_pb2.StepResponse:
                 thread_id=interrupt_data.get("thread_id", ""),
                 task_description=interrupt_data.get("task_description", ""),
                 result=interrupt_data.get("result", ""),
+                interrupt_id=interrupt_data.get("interrupt_id", ""),
+                round=int(interrupt_data.get("round", 0) or 0),
+                conversation_json=interrupt_data.get("conversation_json", ""),
+                resumable_actions=[str(action) for action in (interrupt_data.get("resumable_actions", []) or [])],
             )
         )
 
