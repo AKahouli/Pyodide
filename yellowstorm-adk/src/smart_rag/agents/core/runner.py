@@ -173,7 +173,6 @@ class AgentRunner:
         Returns:
             Tuple containing final result, list of MCP tools used, and execution summary (for langfuse tracing).
         """
-        buf = ""
         recorder = TraceRecorder(agent_name=agent_name, agent_type=agent_type)
         accumulated_text = ""
         # Citation buffering using MessageTransformer
@@ -417,19 +416,6 @@ class AgentRunner:
                                 content_type="chunk"
                             )
                             await q.put(output)
-
-                        citation_buffer = ""
-
-                    # Flush any remaining buffered content before final response
-                    while buf and agent_type != "reporter":
-                        output = self.streaming_formatter.format_streaming_event(
-                            agent_id=agent_id,
-                            agent_name=agent_name, agent_type=agent_type,
-                            #cleaned_text is not defined here
-                            chunk=cleaned_text, message_id=session_id,
-                            content_type="chunk"
-                        )
-                        await q.put(output)
 
                     final_result = await self._handle_final_response(
                         event, agent_name, toolkit, task_order, q, session_id
