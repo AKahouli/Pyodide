@@ -13,6 +13,7 @@ import { AgentService } from '../../agent/agent.service';
 import { ModelsService } from '../../models/models.service';
 import { UsageService } from '../../usage/usage.service';
 import { EmailService } from '../../email/email.service';
+import { UserService } from '../../user/user.service';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
@@ -185,6 +186,7 @@ describe('PlaybookExecutionService', () => {
   let mockModelsService: any;
   let mockUsageService: any;
   let mockEmailService: any;
+  let mockUserService: any;
   let mockReplayService: any;
   let mockOutputFormatService: any;
   let mockSemanticEnrichmentService: any;
@@ -194,6 +196,7 @@ describe('PlaybookExecutionService', () => {
   const defaultConfig: Record<string, any> = {
     'playbook.maxComponentsPerTask': 200,
     'playbook.maxConcurrentSteps': 5,
+    'app.frontendUrl': 'http://localhost:5173',
   };
 
   beforeEach(async () => {
@@ -259,6 +262,10 @@ describe('PlaybookExecutionService', () => {
       send: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockUserService = {
+      findById: jest.fn().mockResolvedValue({ email: 'user@test.com' }),
+    };
+
     mockReplayService = {
       getActiveReplays: jest.fn().mockResolvedValue(new Map()),
     };
@@ -303,6 +310,7 @@ describe('PlaybookExecutionService', () => {
         { provide: ModelsService, useValue: mockModelsService },
         { provide: UsageService, useValue: mockUsageService },
         { provide: EmailService, useValue: mockEmailService },
+        { provide: UserService, useValue: mockUserService },
         { provide: PlaybookReplayService, useValue: mockReplayService },
         { provide: PlaybookOutputFormatService, useValue: mockOutputFormatService },
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
@@ -329,6 +337,10 @@ describe('PlaybookExecutionService', () => {
 
     it('should read maxConcurrentSteps from config', () => {
       expect(mockConfigService.get).toHaveBeenCalledWith('playbook.maxConcurrentSteps');
+    });
+
+    it('should read frontendUrl from config', () => {
+      expect(mockConfigService.get).toHaveBeenCalledWith('app.frontendUrl', 'http://localhost:5173');
     });
   });
 

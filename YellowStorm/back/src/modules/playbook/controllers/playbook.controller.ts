@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { PlaybookService } from '../services/playbook.service';
 import { PlaybookExecutionService } from '../services/playbook-execution.service';
@@ -101,18 +101,27 @@ export class PlaybookController {
 
   @Get(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get embedded execution schedule for a playbook (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Current schedule payload or null when unset' })
   async getSchedule(@Param('id') id: string) {
     return this.playbookService.getSchedule(id);
   }
 
   @Put(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create or replace execution schedule (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with updated executionSchedule' })
   async upsertSchedule(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
     return this.playbookService.upsertSchedule(id, dto);
   }
 
   @Delete(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Remove execution schedule from playbook (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with executionSchedule cleared' })
   async clearSchedule(@Param('id') id: string) {
     return this.playbookService.clearSchedule(id);
   }

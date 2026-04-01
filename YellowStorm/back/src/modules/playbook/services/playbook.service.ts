@@ -234,6 +234,9 @@ export class PlaybookService {
               lastExecutionAt: 1,
               createdAt: 1,
               updatedAt: 1,
+              scheduleEnabled: {
+                $eq: [{ $ifNull: ['$executionSchedule.enabled', false] }, true],
+              },
             },
           },
         ],
@@ -609,6 +612,7 @@ export class PlaybookService {
       description: playbook.description || '',
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
+      scheduleEnabled: Boolean(playbook.scheduleEnabled),
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,

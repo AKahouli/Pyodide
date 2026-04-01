@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
@@ -8,16 +9,22 @@ import {
   PlaybookExecutionDocument,
   ExecutionStatus,
 } from '../schemas/playbook-execution.schema';
+import type { PlaybookScheduleConcurrencyPolicy } from '../config/playbook.config';
 import { PlaybookExecutionService } from './playbook-execution.service';
 import { PlaybookGrpcService } from './playbook-grpc.service';
 import { LoggerService } from '../../logger';
 import { isExecutionScheduleDueThisMinute } from '../utils/playbook-schedule.util';
 
 /**
- * Periodically runs playbooks whose embedded `executionSchedule` is due.
+ * Periodically runs playbooks whose embedded `executionSchedule` is due (once per minute).
  *
- * **Concurrency policy (product default): skip** — if a playbook already has an execution
- * in `RUNNING` or `INTERRUPTED`, the scheduled tick is skipped and logged (no queue, no second run).
+ * **Concurrency when a playbook already has RUNNING / INTERRUPTED execution** — controlled by
+ * `playbook.scheduleConcurrencyPolicy` (`PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY`):
+ * - **skip** (default): do not start another run; info log.
+ * - **report**: same as skip for execution; **warn** log so missed ticks stand out in monitoring.
+ * - **queue**: start the scheduled run anyway (parallel executions; only if workflows tolerate overlap).
+ *
+ * gRPC must be available or the whole tick is skipped (no partial runs without the workflow engine).
  */
 @Injectable()
 export class PlaybookScheduleRunnerService {
@@ -27,9 +34,17 @@ export class PlaybookScheduleRunnerService {
     private readonly executionModel: Model<PlaybookExecutionDocument>,
     private readonly executionService: PlaybookExecutionService,
     private readonly grpcService: PlaybookGrpcService,
+    private readonly configService: ConfigService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('PlaybookScheduleRunner');
+  }
+
+  private get concurrencyPolicy(): PlaybookScheduleConcurrencyPolicy {
+    return this.configService.get<PlaybookScheduleConcurrencyPolicy>(
+      'playbook.scheduleConcurrencyPolicy',
+      'skip',
+    );
   }
 
   @Cron(CronExpression.EVERY_MINUTE)
@@ -68,12 +83,28 @@ export class PlaybookScheduleRunnerService {
           .lean()
           .exec();
 
-        if (active) {
-          this.logger.log('Scheduled run skipped: playbook already has active execution', {
+        const policy = this.concurrencyPolicy;
+        if (active && policy !== 'queue') {
+          const activeExecutionId = (active._id as Types.ObjectId).toString();
+          if (policy === 'report') {
+            this.logger.warn('Scheduled run missed: playbook already has active execution (policy=report)', {
+              playbookId,
+              activeExecutionId,
+            });
+          } else {
+            this.logger.log('Scheduled run skipped: playbook already has active execution (policy=skip)', {
+              playbookId,
+              activeExecutionId,
+            });
+          }
+          continue;
+        }
+
+        if (active && policy === 'queue') {
+          this.logger.warn('Scheduled run starting while playbook has active execution (policy=queue)', {
             playbookId,
             activeExecutionId: (active._id as Types.ObjectId).toString(),
           });
-          continue;
         }
 
         await this.executionService.executePlaybook(userId, playbookId, {}, '', {

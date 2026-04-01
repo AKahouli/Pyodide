@@ -23,6 +23,8 @@ describe('PlaybookController', () => {
       | 'revertToSnapshot'
       | 'cloneForUser'
       | 'getSchedule'
+      | 'upsertSchedule'
+      | 'clearSchedule'
     >
   >;
   let executionService: jest.Mocked<
@@ -56,6 +58,8 @@ describe('PlaybookController', () => {
       revertToSnapshot: jest.fn().mockResolvedValue({ id: playbookId }),
       cloneForUser: jest.fn().mockResolvedValue({ id: 'cloned-789' }),
       getSchedule: jest.fn().mockResolvedValue(null),
+      upsertSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
+      clearSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
     };
 
     executionService = {
@@ -239,6 +243,36 @@ describe('PlaybookController', () => {
 
       expect(playbookService.getSchedule).toHaveBeenCalledWith(playbookId);
       expect(result).toBe(schedule);
+    });
+  });
+
+  describe('upsertSchedule', () => {
+    it('should delegate to playbookService.upsertSchedule', async () => {
+      const dto = {
+        enabled: true,
+        timezone: 'Europe/Paris',
+        type: 'daily',
+        daily: { timesLocal: ['09:00'] },
+      } as any;
+      const response = { id: playbookId, executionSchedule: dto };
+      playbookService.upsertSchedule.mockResolvedValue(response as any);
+
+      const result = await controller.upsertSchedule(playbookId, dto);
+
+      expect(playbookService.upsertSchedule).toHaveBeenCalledWith(playbookId, dto);
+      expect(result).toBe(response);
+    });
+  });
+
+  describe('clearSchedule', () => {
+    it('should delegate to playbookService.clearSchedule', async () => {
+      const response = { id: playbookId, executionSchedule: null };
+      playbookService.clearSchedule.mockResolvedValue(response as any);
+
+      const result = await controller.clearSchedule(playbookId);
+
+      expect(playbookService.clearSchedule).toHaveBeenCalledWith(playbookId);
+      expect(result).toBe(response);
     });
   });
 

@@ -370,6 +370,7 @@ describe('PlaybookService', () => {
       description: 'desc',
       taskCount: 2,
       isFavorite: false,
+      scheduleEnabled: false,
       lastExecutionAt: null,
       createdAt: now,
       updatedAt: now,
@@ -385,6 +386,7 @@ describe('PlaybookService', () => {
       expect(playbookModel.aggregate).toHaveBeenCalled();
       expect(result.playbooks).toHaveLength(1);
       expect(result.playbooks[0].id).toBe(MOCK_PLAYBOOK_ID);
+      expect(result.playbooks[0].scheduleEnabled).toBe(false);
       expect(result.pagination).toEqual({
         page: 1,
         limit: 20,
@@ -1437,6 +1439,7 @@ describe('PlaybookService', () => {
         description: 'desc',
         taskCount: 3,
         isFavorite: true,
+        scheduleEnabled: true,
         lastExecutionAt: now,
         createdAt: now,
         updatedAt: now,
@@ -1452,6 +1455,7 @@ describe('PlaybookService', () => {
       expect(s.name).toBe('Summary PB');
       expect(s.taskCount).toBe(3);
       expect(s.isFavorite).toBe(true);
+      expect(s.scheduleEnabled).toBe(true);
     });
 
     it('should handle execution summary mapping with null dates', async () => {

@@ -104,6 +104,8 @@ export interface PlaybookSummaryResponse {
   description: string;
   taskCount: number;
   isFavorite: boolean;
+  /** True when embedded `executionSchedule` exists and is enabled (scheduled runs). */
+  scheduleEnabled: boolean;
   lastExecutionAt: string | null;
   createdAt: string;
   updatedAt: string;
