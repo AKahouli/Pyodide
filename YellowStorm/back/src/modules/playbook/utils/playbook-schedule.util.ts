@@ -191,3 +191,9 @@ export function isExecutionScheduleDueThisMinute(
       return false;
   }
 }
+
+/**
+ * Alias for {@link isExecutionScheduleDueThisMinute} — product / plan name for “should this playbook run now?”.
+ * Pure evaluation (no I/O); safe to unit test without Nest.
+ */
+export const shouldRunScheduledExecution = isExecutionScheduleDueThisMinute;
