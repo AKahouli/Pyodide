@@ -54,6 +54,8 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
+import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
+import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
 import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -174,6 +176,7 @@ function PlaybookCanvasInner() {
   const [outputFormatDraft, setOutputFormatDraft] = useState('');
   const [outputFormatLoading, setOutputFormatLoading] = useState(false);
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
+  const [scheduleSheetOpen, setScheduleSheetOpen] = useState(false);
 
   useEffect(() => {
     if (id && !isGeneratingRoute) {
@@ -722,6 +725,7 @@ function PlaybookCanvasInner() {
               {playbook.name}
             </h1>
           )}
+          <PlaybookScheduleBadge schedule={playbook.executionSchedule} />
           {isLiveExecution && (
             <span className="flex items-center gap-1 text-xs text-primary font-medium shrink-0">
               <Loader2 className="h-3 w-3 animate-spin" />
@@ -786,9 +790,19 @@ function PlaybookCanvasInner() {
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
+            onSchedule={() => setScheduleSheetOpen(true)}
           />
         </div>
       </div>
+
+      {id && (
+        <PlaybookScheduleSheet
+          open={scheduleSheetOpen}
+          onOpenChange={setScheduleSheetOpen}
+          playbookId={id}
+          schedule={playbook.executionSchedule}
+        />
+      )}
 
       {/* Main content area with optional workspace explorer */}
       <div className="flex flex-1 overflow-hidden">
