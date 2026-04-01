@@ -11,6 +11,7 @@ The playbook module provides a visual workflow builder where users create, edit,
 - [Module Configuration](#module-configuration)
 - [Controllers](#controllers)
 - [Services](#services)
+  - [Execution schedule mapper](#execution-schedule-mapper)
 - [Schemas](#schemas)
   - [Execution schedule (embedded)](#execution-schedule-embedded)
 - [Interfaces (API responses)](#interfaces-api-responses)
@@ -138,7 +139,8 @@ playbook/
 │   ├── playbook-grpc.service.ts         # gRPC client lifecycle, stream management, channel state
 │   └── playbook-stream-gateway.service.ts # SSE connection management + heartbeat
 ├── utils/
-│   └── execution.utils.ts              # Topological sort, concurrency limiter, component mapping
+│   ├── execution.utils.ts              # Topological sort, concurrency limiter, component mapping
+│   └── execution-schedule.mapper.ts    # Mongo executionSchedule → API ExecutionScheduleData (pure)
 ├── guards/
 │   ├── playbook-owner.guard.ts          # Ownership verification
 │   └── playbook-stream-auth.guard.ts    # SSE JWT authentication (query param + session validation)
@@ -255,8 +257,7 @@ CRUD operations, execution history, and design messages with optimized projectio
 | `revertToSnapshot(playbookId, messageId, userId)` | Revert playbook to a previous design message snapshot, creates revert record |
 
 **Response mappers:**
-- `mapToResponse()` — Full playbook DTO (includes `executionSchedule` when present)
-- `mapExecutionScheduleToData()` — Maps Mongo `executionSchedule` subdoc to API `ExecutionScheduleData`
+- `mapToResponse()` — Full playbook DTO (includes `executionSchedule` when present; schedule payload via [`mapExecutionScheduleToData()` from `utils/execution-schedule.mapper.ts`](#execution-schedule-mapper))
 - `mapToSummaryResponse()` — Lightweight summary DTO for list views
 - `mapExecutionToResponse()` — Full execution DTO with taskResults, components, and `executionTrigger`
 - `mapExecutionToSummaryResponse()` — Lightweight execution summary DTO (includes `executionTrigger`)
@@ -356,6 +357,16 @@ Pure utility functions extracted for testability:
 | `mergeWithExistingHumanFeedback(existing, new)` | Prepends answered humanFeedback components before new components |
 
 **Constants:** `MAX_COMPONENT_DATA_BYTES_DEFAULT` (500KB), `MAX_COMPONENTS_PER_TASK_DEFAULT` (200), `MAX_CONCURRENT_STEPS_DEFAULT` (5)
+
+### Execution schedule mapper
+
+File: [`utils/execution-schedule.mapper.ts`](utils/execution-schedule.mapper.ts). Pure functions (no Nest DI) so mapping stays testable and separate from `PlaybookService`:
+
+| Export | Description |
+|--------|-------------|
+| `mapExecutionScheduleToData(sched)` | Converts a persisted `executionSchedule` subdocument (Mongoose or lean) into [`ExecutionScheduleData`](interfaces/playbook.interface.ts). Validates `type` against known schedule modes, normalises `lastScheduledRunAt` to ISO (invalid dates → `null`), maps nested `daily` / `weekly` / `monthly` / `advanced` payloads, and tolerates partial or legacy shapes without throwing. |
+
+`PlaybookService.mapToResponse()` imports and calls `mapExecutionScheduleToData(playbook.executionSchedule)`.
 
 ### PlaybookStreamGatewayService
 
@@ -561,7 +572,7 @@ Only the payload matching `type` is typically populated; others remain `null`.
 | `PlaybookExecutionResponse` | Includes `executionTrigger: 'manual' \| 'scheduled'` |
 | `PlaybookExecutionSummaryResponse` | Includes `executionTrigger: 'manual' \| 'scheduled'` |
 
-`PlaybookService.mapToResponse()` and `mapExecutionScheduleToData()` serialize Mongo subdocuments and dates to these DTOs.
+[`mapExecutionScheduleToData()`](utils/execution-schedule.mapper.ts) (used by `PlaybookService.mapToResponse()`) serialises Mongo `executionSchedule` subdocuments and dates to these DTOs.
 
 ---
 
