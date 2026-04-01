@@ -127,7 +127,9 @@ playbook/
 │   ├── PlaybookNodeEditor.tsx            # Side sheet for editing node properties
 │   ├── PlaybookToolbar.tsx               # Canvas toolbar (designer, add step, auto layout, schedule, history, save, run)
 │   ├── schedule/                         # Execution schedule sheet, badge, time helpers
-│   │   ├── timeInput.ts                 # `timeLocalFromInput`: `<input type="time">` → `HH:mm` for API
+│   │   ├── PlaybookScheduleSheet.tsx    # Shadcn Sheet: draft schedule, save / clear, all modes
+│   │   ├── PlaybookScheduleBadge.tsx    # Secondary badge + `summarizeExecutionSchedule` (list/canvas)
+│   │   └── timeInput.ts                 # `timeLocalFromInput`: `<input type="time">` → `HH:mm` for API
 │   ├── PlaybookWorkspaceSelect.tsx       # Multi-select workspace picker
 │   ├── PlaybookGeneratingOverlay.tsx     # Animated overlay during AI generation/design
 │   ├── PlaybookDesignerPanel.tsx         # AI Designer chat panel (right sidebar)
@@ -498,6 +500,28 @@ Side sheet (`Sheet` from shadcn) for editing node properties:
 | `CreatePlaybookDialog` | Two tabs: Manual (name + description) and Auto Builder (name + prompt + workspace) |
 | `PlaybookCard` | Card component for list view (name, description, step count, schedule badge when `scheduleEnabled`, favorite star, selectable checkbox) |
 | `PlaybookButton` | Sidebar navigation button with BETA badge |
+| `PlaybookScheduleSheet` | Side sheet to create/edit/clear execution schedule (see [Schedule UI](#schedule-ui) below) |
+| `PlaybookScheduleBadge` | Compact `CalendarClock` + truncated summary when schedule is enabled (`summarizeExecutionSchedule`) |
+
+### Schedule UI
+
+Path: `components/schedule/`. These components implement the **execution schedule** UX (aligned with `ExecutionScheduleData` / `UpsertPlaybookScheduleData` in [`types.ts`](types.ts)).
+
+#### `PlaybookScheduleSheet.tsx`
+
+- **Props**: `open`, `onOpenChange`, `playbookId`, `schedule` (`ExecutionScheduleData | null` from the loaded playbook).
+- **Store**: `upsertPlaybookSchedule`, `clearPlaybookSchedule`, `scheduleSaving` (disables actions while a request is in flight; success/error toasts live in the store).
+- **Draft lifecycle**: When the sheet opens, the draft is initialized from `schedule` via `fromExecutionSchedule` (or defaults to daily `09:00`). Switching **Active / Inactive** uses a segmented control; inactive sends `{ enabled: false }` on save.
+- **Modes** (`ExecutionScheduleType`): **daily** (multiple `HH:mm` times), **weekly** (weekday + time per slot), **monthly** (day-of-month + time), **advanced** (variant: weekdays / weekend / every N days + time). Changing mode resets the other payload branches and seeds sensible defaults (e.g. weekly slot Monday `09:00`).
+- **Timezone**: There is no separate timezone picker in the UI. On save, `buildPayload()` merges `timezone: getDefaultScheduleTimezone()` from [`constants/schedule.constants.ts`](constants/schedule.constants.ts) — the browser’s IANA zone from `Intl.DateTimeFormat().resolvedOptions().timeZone`, with **`UTC`** fallback if `Intl` does not return a zone.
+- **Validation**: Before `upsertPlaybookSchedule`, the draft is validated with `validateUpsertSchedulePayload` from [`utils/scheduleValidation.ts`](utils/scheduleValidation.ts); errors use i18n keys under `schedule.validation.*` (toast).
+- **Time inputs**: Native `<input type="time">` values are normalized with `timeLocalFromInput` from [`timeInput.ts`](components/schedule/timeInput.ts) so payloads stay `HH:mm`.
+- **Clear schedule**: “Remove” calls `clearPlaybookSchedule` after a confirm dialog (`schedule.confirmClear`); closes the sheet on success.
+
+#### `PlaybookScheduleBadge.tsx`
+
+- **Props**: `schedule` (`ExecutionScheduleData | null | undefined`), optional `className`.
+- **Render**: Returns `null` unless `schedule.enabled` and `schedule.type` are set. Otherwise shows a **secondary** `Badge` with `CalendarClock` and the string from [`summarizeExecutionSchedule`](utils/scheduleDisplay.ts) (truncated with `title` for full text). Used where a short schedule hint is needed (e.g. list cards when `scheduleEnabled` is true).
 
 ### Status Badge Icons
 
