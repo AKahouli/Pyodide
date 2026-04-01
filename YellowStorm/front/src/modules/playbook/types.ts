@@ -66,6 +66,49 @@ export interface PlaybookEdge {
   targetId: string;
 }
 
+export type ExecutionScheduleType = 'daily' | 'weekly' | 'monthly' | 'advanced';
+
+export interface DailySchedulePayloadData {
+  timesLocal: string[];
+}
+
+export interface WeeklySlotData {
+  weekday: number;
+  timeLocal: string;
+}
+
+export interface WeeklySchedulePayloadData {
+  slots: WeeklySlotData[];
+}
+
+export interface MonthlySlotData {
+  dayOfMonth: number;
+  timeLocal: string;
+}
+
+export interface MonthlySchedulePayloadData {
+  slots: MonthlySlotData[];
+}
+
+export type AdvancedScheduleVariant = 'weekdays' | 'weekend' | 'every_n_days';
+
+export interface AdvancedSchedulePayloadData {
+  variant: AdvancedScheduleVariant;
+  intervalDays: number | null;
+  timeLocal: string | null;
+}
+
+export interface ExecutionScheduleData {
+  enabled: boolean;
+  timezone: string;
+  type?: ExecutionScheduleType;
+  lastScheduledRunAt: string | null;
+  daily: DailySchedulePayloadData | null;
+  weekly: WeeklySchedulePayloadData | null;
+  monthly: MonthlySchedulePayloadData | null;
+  advanced: AdvancedSchedulePayloadData | null;
+}
+
 export interface PlaybookSummary {
   id: string;
   name: string;
@@ -100,6 +143,7 @@ export interface Playbook {
   createdBy: string;
   isFavorite: boolean;
   isActive: boolean;
+  executionSchedule: ExecutionScheduleData | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -178,6 +222,7 @@ export interface PlaybookExecution {
   currentAttemptNumber?: number;
   status: ExecutionStatus;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  executionTrigger?: 'manual' | 'scheduled';
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults: TaskResult[];
   attemptHistory?: Array<{
@@ -211,6 +256,7 @@ export interface PlaybookExecutionSummary {
   executionNumber: number;
   currentAttemptNumber?: number;
   status: ExecutionStatus;
+  executionTrigger?: 'manual' | 'scheduled';
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;

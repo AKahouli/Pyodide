@@ -15,6 +15,7 @@ The playbook module provides a visual workflow builder for creating, editing, ex
 - [Hooks](#hooks)
 - [API Layer](#api-layer)
 - [Types](#types)
+  - [Execution schedule & triggers](#execution-schedule--triggers)
 - [Key Features](#key-features)
 - [Performance](#performance)
 - [Data Flow](#data-flow)
@@ -49,6 +50,8 @@ The playbook module is a self-contained feature module that handles:
 - **Bulk Delete**: Select and delete multiple playbooks at once
 - **Token Usage**: Per-execution and aggregate token tracking with usage indicator
 - **Beta Disclaimer**: First-visit modal with dismissible beta notice
+- **Execution schedule (types)**: `Playbook` includes `executionSchedule` (`ExecutionScheduleData | null`) aligned with the backend embedded document (daily / weekly / monthly / advanced payloads). Used once schedule UI and APIs are wired.
+- **Execution trigger**: `PlaybookExecution` and `PlaybookExecutionSummary` include optional `executionTrigger` (`manual` | `scheduled`). Client-initiated runs and SSE optimistic objects use `manual`; `scheduled` is set when the backend creates an execution from the cron runner.
 
 ---
 
@@ -233,13 +236,13 @@ interface PlaybookState {
 
 - `fetchPlaybooks(query?)` — Passes `{ page: 1, limit: 20, ...query }`, stores `playbooksPagination` and `playbooksQuery`
 - `fetchMorePlaybooks()` — Checks `page < totalPages`, appends next page to existing list
-- `onExecutionStart(data)` — Creates both a full `PlaybookExecution` (for `currentExecution` + `executionCache`) and a `PlaybookExecutionSummary` (for `executionHistory`), caps history at 50
+- `onExecutionStart(data)` — Creates both a full `PlaybookExecution` (for `currentExecution` + `executionCache`) and a `PlaybookExecutionSummary` (for `executionHistory`), caps history at 50; both use `executionTrigger: 'manual'` (SSE does not distinguish scheduled runs)
 - `fetchExecutions(playbookId)` — Pre-fetches latest execution details, caps history
 - `fetchExecution(playbookId, execId)` — Smart merge: keeps newer SSE status over stale API response
 - `deletePlaybook(id)` — Optimistic delete: removes from list immediately, restores on API failure
 - `toggleFavorite(id)` — Optimistic toggle, re-fetches list to reflect sort order
 - `resumeExecution(id, data)` — Optimistically marks humanFeedback component as answered
-- `executePlaybook(id)` — Adds `playbookId` to `executingPlaybookIds`, removed on completion
+- `executePlaybook(id)` — Adds `playbookId` to `executingPlaybookIds`, removed on completion; optimistic `PlaybookExecution` uses `executionTrigger: 'manual'` until `fetchExecution` refreshes from the API
 - `executionCache` — LRU with max 20 entries, evicts oldest by `updatedAt`
 - `viewExecutionInPanel(executionId)` — Loads execution from cache (or fetches from API) and opens the split-view panel
 - `setExecutionPanelOpen(open)` — Toggles the execution panel visibility
@@ -602,21 +605,33 @@ playbooks: {
 
 ```typescript
 PlaybookSummary          // id, name, description, taskCount, isFavorite, lastExecutionAt, createdAt, updatedAt
-Playbook                 // id, name, description, tasks[], edges[], workspaces[], createdBy, isFavorite, isActive, timestamps
+Playbook                 // id, name, description, tasks[], edges[], workspaces[], createdBy, isFavorite, isActive,
+                         //   executionSchedule (ExecutionScheduleData | null), createdAt, updatedAt
 PlaybookTask             // id, title, description, assignedAgentId, position, interrupt settings,
                          //   clarificationPrompt, maxClarifications, inputKeys[], outputKey
 PlaybookEdge             // id, sourceId, targetId
-PlaybookExecution        // Full: id, playbookId, executedBy, executionNumber, status, taskResults[], threadId,
-                         //       interruptPayload, playbookSnapshot, singleStepTaskId,
-                         //       totalInputTokens, totalOutputTokens, totalTokens, timestamps
-PlaybookExecutionSummary // List: id, playbookId, executedBy, executionNumber, status, error, durationMs,
-                         //       singleStepTaskId, timestamps (no taskResults/playbookSnapshot)
+PlaybookExecution        // Full: id, playbookId, executedBy, executionNumber, status, executionTrigger?,
+                         //   taskResults[], threadId, interruptPayload, playbookSnapshot, singleStepTaskId,
+                         //   totalInputTokens, totalOutputTokens, totalTokens, timestamps
+PlaybookExecutionSummary // List: id, playbookId, executedBy, executionNumber, status, executionTrigger?,
+                         //   error, durationMs, singleStepTaskId, timestamps (no taskResults/playbookSnapshot)
 TaskResult               // taskId, nodeTitle, agentName, order, status, output, error, durationMs,
                          //   startedAt, completedAt, components[],
                          //   inputTokens, outputTokens, totalTokens, modelName
 PlaybookComponent        // MessageComponent | { type: 'humanFeedback'; data: Record<string, unknown> }
 CloneShareResult         // succeeded: { email, playbookId }[], failed: { email, reason }[]
 ```
+
+### Execution schedule & triggers
+
+Defined in [`types.ts`](types.ts) to match backend [`interfaces/playbook.interface.ts`](../../../../back/src/modules/playbook/interfaces/playbook.interface.ts) / Mongo schemas:
+
+| Type | Role |
+|------|------|
+| `ExecutionScheduleType` | `'daily' \| 'weekly' \| 'monthly' \| 'advanced'` |
+| `ExecutionScheduleData` | `enabled`, `timezone`, optional `type`, `lastScheduledRunAt`, nested `daily` / `weekly` / `monthly` / `advanced` payloads |
+| `DailySchedulePayloadData`, `WeeklySlotData`, `WeeklySchedulePayloadData`, `MonthlySlotData`, `MonthlySchedulePayloadData`, `AdvancedSchedulePayloadData`, `AdvancedScheduleVariant` | Nested schedule shapes |
+| `executionTrigger` on `PlaybookExecution` / `PlaybookExecutionSummary` | `'manual'` \| `'scheduled'`; optional on the client for backward compatibility with older API responses |
 
 ### Enums
 
@@ -981,7 +996,7 @@ Unit tests are colocated in the module as `*.test.ts` and `*.test.tsx` — **20 
 | **Services** | `playbookStreamService.test.tsx` | 3 |
 | **Utils** | `auto-layout.test.ts` | 2 |
 
-Shared test builders live in `src/modules/playbook/test-utils.ts` (`makePlaybook`, `makeExecution`, `makeExecutionSummary`, `makeTask`, `makeEdge`).
+Shared test builders live in `src/modules/playbook/test-utils.ts` (`makePlaybook`, `makeExecution`, `makeExecutionSummary`, `makeTask`, `makeEdge`). `makePlaybook` sets `executionSchedule: null`; `makeExecution` / `makeExecutionSummary` set `executionTrigger: 'manual'` by default.
 
 ### Running Tests
 
