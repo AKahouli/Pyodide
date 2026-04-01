@@ -16,6 +16,7 @@ The playbook module provides a visual workflow builder for creating, editing, ex
 - [API Layer](#api-layer)
 - [Types](#types)
   - [Execution schedule & triggers](#execution-schedule--triggers)
+  - [Backend: schedule runner (reference)](#backend-schedule-runner-reference)
 - [Key Features](#key-features)
 - [Performance](#performance)
 - [Data Flow](#data-flow)
@@ -51,7 +52,7 @@ The playbook module is a self-contained feature module that handles:
 - **Token Usage**: Per-execution and aggregate token tracking with usage indicator
 - **Beta Disclaimer**: First-visit modal with dismissible beta notice
 - **Execution schedule (types)**: `Playbook` includes `executionSchedule` (`ExecutionScheduleData | null`) aligned with the backend embedded document (daily / weekly / monthly / advanced payloads). Used once schedule UI and APIs are wired.
-- **Execution trigger**: `PlaybookExecution` and `PlaybookExecutionSummary` include optional `executionTrigger` (`manual` | `scheduled`). Client-initiated runs and SSE optimistic objects use `manual`; `scheduled` is set when the backend creates an execution from the cron runner.
+- **Execution trigger**: `PlaybookExecution` and `PlaybookExecutionSummary` include optional `executionTrigger` (`manual` | `scheduled`). Client-initiated runs and SSE optimistic objects use `manual`; `scheduled` is set when the backend [`PlaybookScheduleRunnerService`](../../../../back/src/modules/playbook/services/playbook-schedule-runner.service.ts) starts a run (see [Backend: schedule runner](#backend-schedule-runner-reference)).
 
 ---
 
@@ -77,9 +78,9 @@ The playbook module is a self-contained feature module that handles:
 |         v                   v                                               |
 |  +--------------------------------------------------------------+          |
 |  |              Backend (NestJS)                                 |          |
-|  |  - REST API for CRUD + execution                             |          |
+|  |  - REST API for CRUD + execution + schedule                  |          |
 |  |  - SSE endpoint for real-time updates                        |          |
-|  |  - gRPC orchestration of AI agents                           |          |
+|  |  - gRPC orchestration of AI agents; cron runner for due schedules |   |
 |  +--------------------------------------------------------------+          |
 |                                                                             |
 +-----------------------------------------------------------------------------+
@@ -632,6 +633,17 @@ Defined in [`types.ts`](types.ts) to match backend [`interfaces/playbook.interfa
 | `ExecutionScheduleData` | `enabled`, `timezone`, optional `type`, `lastScheduledRunAt`, nested `daily` / `weekly` / `monthly` / `advanced` payloads |
 | `DailySchedulePayloadData`, `WeeklySlotData`, `WeeklySchedulePayloadData`, `MonthlySlotData`, `MonthlySchedulePayloadData`, `AdvancedSchedulePayloadData`, `AdvancedScheduleVariant` | Nested schedule shapes |
 | `executionTrigger` on `PlaybookExecution` / `PlaybookExecutionSummary` | `'manual'` \| `'scheduled'`; optional on the client for backward compatibility with older API responses |
+
+### Backend: schedule runner (reference)
+
+NestJS pieces that drive automatic runs (no frontend code in this repo path; linked for contract alignment):
+
+| Piece | Role |
+|-------|------|
+| [`playbook.module.ts`](../../../../back/src/modules/playbook/playbook.module.ts) | Registers [`PlaybookScheduleRunnerService`](../../../../back/src/modules/playbook/services/playbook-schedule-runner.service.ts) as a provider. Cron scheduling uses the app-wide [`ScheduleModule.forRoot()`](../../../../back/src/app.module.ts) (see backend `app.module.ts`). |
+| [`playbook.config.ts`](../../../../back/src/modules/playbook/config/playbook.config.ts) | gRPC URLs, timeouts, SSE and execution limits (same namespace as other playbook settings). |
+| [`playbook-schedule-runner.service.ts`](../../../../back/src/modules/playbook/services/playbook-schedule-runner.service.ts) | `@Cron(CronExpression.EVERY_MINUTE)`: loads active playbooks with `executionSchedule.enabled`, evaluates due times via [`isExecutionScheduleDueThisMinute`](../../../../back/src/modules/playbook/utils/playbook-schedule.util.ts), skips if gRPC is unavailable or if an execution is already `RUNNING` / `INTERRUPTED` for that playbook (**skip** policy), then calls `executePlaybook(..., { executionTrigger: 'scheduled' })` as the playbook owner and updates `executionSchedule.lastScheduledRunAt`. |
+| [`playbook-schedule.util.ts`](../../../../back/src/modules/playbook/utils/playbook-schedule.util.ts) | Pure helpers: `isExecutionScheduleDueThisMinute(schedule, now)` for daily / weekly / monthly / advanced modes; `zonedYmd` / `daysBetweenYmd` for `every_n_days`; same-zoned-minute dedupe using `lastScheduledRunAt` to avoid double-firing in one minute. |
 
 ### Enums
 

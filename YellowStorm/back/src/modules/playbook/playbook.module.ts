@@ -38,6 +38,7 @@ import { PlaybookOutputFormatService } from './services/playbook-output-format.s
 import { PlaybookEvaluationService } from './services/playbook-evaluation.service';
 import { PlaybookSemanticEnrichmentService } from './services/playbook-semantic-enrichment.service';
 import { PlaybookStreamGatewayService } from './services/playbook-stream-gateway.service';
+import { PlaybookScheduleRunnerService } from './services/playbook-schedule-runner.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -90,6 +91,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookEvaluationService,
     PlaybookSemanticEnrichmentService,
     PlaybookStreamGatewayService,
+    PlaybookScheduleRunnerService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],
