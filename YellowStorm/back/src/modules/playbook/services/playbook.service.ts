@@ -20,6 +20,7 @@ import {
   PaginatedExecutions,
   PlaybookDesignMessageResponse,
 } from '../interfaces/playbook.interface';
+import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
 import {
   PlaybookDesignMessage,
   PlaybookDesignMessageDocument,
@@ -618,6 +619,7 @@ export class PlaybookService {
       createdBy: playbook.createdBy.toString(),
       isFavorite: playbook.isFavorite || false,
       isActive: playbook.isActive,
+      executionSchedule: mapExecutionScheduleToData(playbook.executionSchedule),
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
     };
@@ -631,6 +633,7 @@ export class PlaybookService {
       executionNumber: execution.executionNumber,
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
+      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
       error: execution.error,
       durationMs: execution.durationMs,
       startedAt: execution.startedAt?.toISOString?.() || execution.startedAt,
@@ -650,6 +653,7 @@ export class PlaybookService {
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
       executionMode: execution.executionMode || 'live',
+      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
       replaySourceByTask: execution.replaySourceByTask || null,
       taskResults: (execution.taskResults || []).map((tr: any) => ({
         taskId: tr.taskId,

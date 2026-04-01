@@ -13,6 +13,7 @@ The playbook module provides a visual workflow builder where users create, edit,
 - [Services](#services)
 - [Schemas](#schemas)
   - [Execution schedule (embedded)](#execution-schedule-embedded)
+- [Interfaces (API responses)](#interfaces-api-responses)
 - [gRPC Integration](#grpc-integration)
 - [SSE Streaming](#sse-streaming)
 - [Execution Engine](#execution-engine)
@@ -44,6 +45,8 @@ The playbook module provides:
 - **Token Tracking**: Per-task and per-execution input/output/total token counts with model name
 - **Concurrency Control**: Per-level step parallelism with configurable limits
 - **Document Size Guards**: Component array caps and data truncation to prevent MongoDB 16MB limit
+- **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for future automatic runs; API types live in [`interfaces/playbook.interface.ts`](interfaces/playbook.interface.ts) (`ExecutionScheduleData`, nested payload types).
+- **Execution trigger**: Each `PlaybookExecution` stores `executionTrigger`: `manual` (default) for user-initiated runs, or `scheduled` when started by the schedule runner. Exposed on full and summary execution responses.
 
 ---
 
@@ -542,6 +545,23 @@ Only the payload matching `type` is typically populated; others remain `null`.
 | `edges[]` | Object[] | Snapshot of all edges at that point |
 
 **Index:** `{ playbookId: 1, createdAt: -1 }`
+
+---
+
+## Interfaces (API responses)
+
+[`interfaces/playbook.interface.ts`](interfaces/playbook.interface.ts) mirrors persisted fields for REST responses:
+
+| Type | Purpose |
+|------|---------|
+| `ExecutionScheduleType` | `'daily' \| 'weekly' \| 'monthly' \| 'advanced'` |
+| `ExecutionScheduleData` | `enabled`, `timezone`, optional `type`, `lastScheduledRunAt` (ISO string), and one of `daily` / `weekly` / `monthly` / `advanced` payload objects (or `null` per field) |
+| `DailySchedulePayloadData`, `WeeklySlotData`, `WeeklySchedulePayloadData`, `MonthlySlotData`, `MonthlySchedulePayloadData`, `AdvancedSchedulePayloadData`, `AdvancedScheduleVariant` | Shape of nested schedule payloads (aligned with [`execution-schedule.schema.ts`](schemas/execution-schedule.schema.ts)) |
+| `PlaybookResponse` | Includes `executionSchedule: ExecutionScheduleData \| null` |
+| `PlaybookExecutionResponse` | Includes `executionTrigger: 'manual' \| 'scheduled'` |
+| `PlaybookExecutionSummaryResponse` | Includes `executionTrigger: 'manual' \| 'scheduled'` |
+
+`PlaybookService.mapToResponse()` and `mapExecutionScheduleToData()` serialize Mongo subdocuments and dates to these DTOs.
 
 ---
 

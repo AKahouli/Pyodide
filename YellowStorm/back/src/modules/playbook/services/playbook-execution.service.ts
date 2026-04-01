@@ -669,6 +669,7 @@ export class PlaybookExecutionService {
     playbookId: string,
     dto: ExecutePlaybookDto,
     userEmail: string = '',
+    options?: { executionTrigger?: 'manual' | 'scheduled' },
   ): Promise<{ executionId: string }> {
     const mode = dto.singleStepTaskId ? 'single-step' : 'full-workflow';
     const globalExecutionMode = dto.executionMode || 'live';
@@ -833,6 +834,7 @@ export class PlaybookExecutionService {
       currentAttemptNumber: 1,
       status: ExecutionStatus.RUNNING,
       executionMode: globalExecutionMode,
+      executionTrigger: options?.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
       runEvaluation: dto.runEvaluation === true,
       replaySourceByTask: hasReplaySteps
         ? this.buildReplaySourceMap(activeReplayMap)

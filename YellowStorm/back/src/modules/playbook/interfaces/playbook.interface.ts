@@ -52,6 +52,52 @@ export interface PlaybookEdgeData {
   targetId: string;
 }
 
+export type ExecutionScheduleType = 'daily' | 'weekly' | 'monthly' | 'advanced';
+
+export interface DailySchedulePayloadData {
+  timesLocal: string[];
+}
+
+export interface WeeklySlotData {
+  /** 0 = dimanche … 6 = samedi */
+  weekday: number;
+  timeLocal: string;
+}
+
+export interface WeeklySchedulePayloadData {
+  slots: WeeklySlotData[];
+}
+
+export interface MonthlySlotData {
+  /** 1–31, ou -1 pour le dernier jour du mois */
+  dayOfMonth: number;
+  timeLocal: string;
+}
+
+export interface MonthlySchedulePayloadData {
+  slots: MonthlySlotData[];
+}
+
+export type AdvancedScheduleVariant = 'weekdays' | 'weekend' | 'every_n_days';
+
+export interface AdvancedSchedulePayloadData {
+  variant: AdvancedScheduleVariant;
+  intervalDays: number | null;
+  timeLocal: string | null;
+}
+
+export interface ExecutionScheduleData {
+  enabled: boolean;
+  timezone: string;
+  /** Présent lorsque la planification est configurée (surtout si enabled). */
+  type?: ExecutionScheduleType;
+  lastScheduledRunAt: string | null;
+  daily: DailySchedulePayloadData | null;
+  weekly: WeeklySchedulePayloadData | null;
+  monthly: MonthlySchedulePayloadData | null;
+  advanced: AdvancedSchedulePayloadData | null;
+}
+
 export interface PlaybookSummaryResponse {
   id: string;
   name: string;
@@ -83,6 +129,7 @@ export interface PlaybookResponse {
   createdBy: string;
   isFavorite: boolean;
   isActive: boolean;
+  executionSchedule: ExecutionScheduleData | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -105,6 +152,7 @@ export interface PlaybookExecutionResponse {
   currentAttemptNumber: number;
   status: string;
   executionMode: string;
+  executionTrigger: 'manual' | 'scheduled';
   replaySourceByTask: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults: TaskResultData[];
   threadId: string | null;
@@ -200,6 +248,7 @@ export interface PlaybookExecutionSummaryResponse {
   executionNumber: number;
   currentAttemptNumber: number;
   status: string;
+  executionTrigger: 'manual' | 'scheduled';
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
