@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Patch,
   Delete,
   Body,
@@ -34,6 +35,7 @@ import { StopPlaybookDto } from '../dto/stop-playbook.dto';
 import { SkipPlaybookStepDto } from '../dto/skip-playbook-step.dto';
 import { CloneSharePlaybookDto } from '../dto/clone-share-playbook.dto';
 import { BulkDeletePlaybooksDto } from '../dto/bulk-delete-playbooks.dto';
+import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
@@ -95,6 +97,18 @@ export class PlaybookController {
     @CurrentUser() user: { _id: string },
   ) {
     return this.executionService.findActiveExecutionsByUser(user._id.toString());
+  }
+
+  @Put(':id/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  async upsertSchedule(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
+    return this.playbookService.upsertSchedule(id, dto);
+  }
+
+  @Delete(':id/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  async clearSchedule(@Param('id') id: string) {
+    return this.playbookService.clearSchedule(id);
   }
 
   @Get(':id')

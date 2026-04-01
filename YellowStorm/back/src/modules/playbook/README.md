@@ -12,6 +12,7 @@ The playbook module provides a visual workflow builder where users create, edit,
 - [Controllers](#controllers)
 - [Services](#services)
   - [Execution schedule mapper](#execution-schedule-mapper)
+  - [Execution schedule upsert builder](#execution-schedule-upsert-builder)
 - [Schemas](#schemas)
   - [Execution schedule (embedded)](#execution-schedule-embedded)
 - [Interfaces (API responses)](#interfaces-api-responses)
@@ -46,7 +47,7 @@ The playbook module provides:
 - **Token Tracking**: Per-task and per-execution input/output/total token counts with model name
 - **Concurrency Control**: Per-level step parallelism with configurable limits
 - **Document Size Guards**: Component array caps and data truncation to prevent MongoDB 16MB limit
-- **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for future automatic runs; API types live in [`interfaces/playbook.interface.ts`](interfaces/playbook.interface.ts) (`ExecutionScheduleData`, nested payload types).
+- **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for automatic runs. Clients set or clear it via `PUT` / `DELETE` `/playbooks/:id/schedule` ([`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts), [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder)). Read responses use [`ExecutionScheduleData`](interfaces/playbook.interface.ts) from [`mapExecutionScheduleToData`](#execution-schedule-mapper).
 - **Execution trigger**: Each `PlaybookExecution` stores `executionTrigger`: `manual` (default) for user-initiated runs, or `scheduled` when started by the schedule runner. Exposed on full and summary execution responses.
 
 ---
@@ -123,16 +124,17 @@ playbook/
 │   ├── stop-playbook.dto.ts             # Stop execution (executionId)
 │   ├── bulk-delete-playbooks.dto.ts     # Bulk delete (ids array, 1-50)
 │   ├── clone-share-playbook.dto.ts      # Share by email (emails array, 1-20)
+│   ├── upsert-playbook-schedule.dto.ts  # PUT /playbooks/:id/schedule (enabled, timezone, type, mode payloads)
 │   └── execution-query.dto.ts           # Execution history pagination
 ├── interfaces/
 │   ├── playbook.interface.ts            # Response types (full + summary + design message)
 │   └── playbook-stream.interface.ts     # SSE event type
 ├── controllers/
 │   ├── playbook-stream.controller.ts    # SSE endpoint (listed first for route priority)
-│   ├── playbook.controller.ts           # CRUD + execute + resume + design + share
+│   ├── playbook.controller.ts           # CRUD + schedule upsert/clear + execute + resume + design + share
 │   └── playbook-execution.controller.ts # Execution history endpoints
 ├── services/
-│   ├── playbook.service.ts              # CRUD, response mapping, execution summaries, design messages
+│   ├── playbook.service.ts              # CRUD, schedule upsert/clear, response mapping, execution summaries, design messages
 │   ├── playbook-execution.service.ts    # Execution orchestration, step buffering, token tracking
 │   ├── playbook-context.service.ts      # Workspace context resolution + agent brain contexts
 │   ├── playbook-design.service.ts       # AI generation (GeneratePlaybook) + AI designer (DesignPlaybook)
@@ -140,7 +142,8 @@ playbook/
 │   └── playbook-stream-gateway.service.ts # SSE connection management + heartbeat
 ├── utils/
 │   ├── execution.utils.ts              # Topological sort, concurrency limiter, component mapping
-│   └── execution-schedule.mapper.ts    # Mongo executionSchedule → API ExecutionScheduleData (pure)
+│   ├── execution-schedule.mapper.ts    # Mongo executionSchedule → API ExecutionScheduleData (pure)
+│   └── execution-schedule-upsert.builder.ts # UpsertPlaybookScheduleDto → Mongo subdocument (pure)
 ├── guards/
 │   ├── playbook-owner.guard.ts          # Ownership verification
 │   └── playbook-stream-auth.guard.ts    # SSE JWT authentication (query param + session validation)
@@ -206,6 +209,8 @@ export default registerAs('playbook', () => ({
 | `GET` | `/playbooks` | JWT | List user's playbooks (paginated summaries) |
 | `POST` | `/playbooks/generate` | JWT + UsageLimit | Generate a playbook from a text prompt via AI |
 | `POST` | `/playbooks/bulk-delete` | JWT | Bulk delete multiple playbooks |
+| `PUT` | `/playbooks/:id/schedule` | Owner | Upsert embedded `executionSchedule` (body: [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts)) |
+| `DELETE` | `/playbooks/:id/schedule` | Owner | Clear `executionSchedule` (`null`) |
 | `GET` | `/playbooks/:id` | Owner | Get playbook by ID (full tasks/edges) |
 | `PATCH` | `/playbooks/:id` | Owner | Update playbook (autosave target) |
 | `DELETE` | `/playbooks/:id` | Owner | Soft delete (sets `isActive: false`) |
@@ -255,6 +260,8 @@ CRUD operations, execution history, and design messages with optimized projectio
 | `getNextExecutionNumber(playbookId)` | Sequential numbering |
 | `getDesignMessages(playbookId)` | Get design message history for a playbook |
 | `revertToSnapshot(playbookId, messageId, userId)` | Revert playbook to a previous design message snapshot, creates revert record |
+| `upsertSchedule(playbookId, dto)` | Loads `executionSchedule.lastScheduledRunAt`, builds subdoc via [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder) (preserves last run when re-enabling), `$set`s `executionSchedule`, returns full playbook |
+| `clearSchedule(playbookId)` | `$set` `executionSchedule: null`, returns full playbook |
 
 **Response mappers:**
 - `mapToResponse()` — Full playbook DTO (includes `executionSchedule` when present; schedule payload via [`mapExecutionScheduleToData()` from `utils/execution-schedule.mapper.ts`](#execution-schedule-mapper))
@@ -368,6 +375,14 @@ File: [`utils/execution-schedule.mapper.ts`](utils/execution-schedule.mapper.ts)
 
 `PlaybookService.mapToResponse()` imports and calls `mapExecutionScheduleToData(playbook.executionSchedule)`.
 
+### Execution schedule upsert builder
+
+File: [`utils/execution-schedule-upsert.builder.ts`](utils/execution-schedule-upsert.builder.ts). Pure mapping from validated HTTP input to the Mongo subdocument shape (no Nest DI). `PlaybookService.upsertSchedule()` passes `preserveLastRunAt` when re-enabling so `lastScheduledRunAt` is not reset on every save.
+
+| Export | Description |
+|--------|-------------|
+| `buildExecutionScheduleDocument(dto, preserveLastRunAt)` | When `enabled=false`, returns a disabled schedule with `lastScheduledRunAt: null` and null mode payloads. When `enabled=true`, requires `type` and nested payload matching `daily` \| `weekly` \| `monthly` \| `advanced`; throws [`BadRequestException`](../../exceptions/exceptions/http.exceptions.ts) for missing type or unknown mode. |
+
 ### PlaybookStreamGatewayService
 
 SSE connection management (mirrors conversation module pattern):
@@ -427,7 +442,7 @@ SSE connection management (mirrors conversation module pattern):
 
 ### Execution schedule (embedded)
 
-Defined in [`schemas/execution-schedule.schema.ts`](schemas/execution-schedule.schema.ts) and embedded on the Playbook document as `executionSchedule`. It stores **when** a playbook should run automatically (timezone, mode, and mode-specific payloads). API persistence and validation are handled by dedicated DTOs when those endpoints exist; the schema is the **MongoDB shape**.
+Defined in [`schemas/execution-schedule.schema.ts`](schemas/execution-schedule.schema.ts) and embedded on the Playbook document as `executionSchedule`. It stores **when** a playbook should run automatically (timezone, mode, and mode-specific payloads). REST writes use [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts) and [`buildExecutionScheduleDocument`](utils/execution-schedule-upsert.builder.ts); the schema is the **MongoDB shape**.
 
 **`ExecutionSchedule` subdocument**
 
@@ -572,7 +587,7 @@ Only the payload matching `type` is typically populated; others remain `null`.
 | `PlaybookExecutionResponse` | Includes `executionTrigger: 'manual' \| 'scheduled'` |
 | `PlaybookExecutionSummaryResponse` | Includes `executionTrigger: 'manual' \| 'scheduled'` |
 
-[`mapExecutionScheduleToData()`](utils/execution-schedule.mapper.ts) (used by `PlaybookService.mapToResponse()`) serialises Mongo `executionSchedule` subdocuments and dates to these DTOs.
+[`mapExecutionScheduleToData()`](utils/execution-schedule.mapper.ts) (used by `PlaybookService.mapToResponse()`) serialises Mongo `executionSchedule` subdocuments and dates to these DTOs. [`buildExecutionScheduleDocument()`](utils/execution-schedule-upsert.builder.ts) maps validated [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts) input to the same Mongo shape for `PUT /playbooks/:id/schedule`.
 
 ---
 
@@ -796,6 +811,7 @@ Composite decorator combining `SetMetadata` and `UseGuards(PlaybookStreamAuthGua
 | `StopPlaybookDto` | `executionId` (required) | Stop a running execution |
 | `BulkDeletePlaybooksDto` | `ids` (MongoId[], 1-50) | Bulk delete |
 | `CloneSharePlaybookDto` | `emails` (email[], 1-20) | Share by email |
+| `UpsertPlaybookScheduleDto` | `enabled`; when `true`: `timezone`, `type` (`daily` \| `weekly` \| `monthly` \| `advanced`), and nested payload (`daily`/`weekly`/`monthly`/`advanced` via `@ValidateIf`); `TIME_LOCAL_REGEX` HH:mm; monthly `dayOfMonth` 1–31 or -1 | Upsert playbook execution schedule |
 | `ExecutionQueryDto` | `page`, `limit` (1-100) | Execution history pagination |
 
 ---
@@ -814,6 +830,8 @@ PATCH  /api/v1/playbooks/:id                          -> Update playbook (autosa
 DELETE /api/v1/playbooks/:id                          -> Soft delete playbook
 POST   /api/v1/playbooks/:id/favorite                 -> Toggle favorite status
 POST   /api/v1/playbooks/:id/clone-share              -> Share playbook by email (clones for recipients)
+PUT    /api/v1/playbooks/:id/schedule                 -> Upsert execution schedule (body: UpsertPlaybookScheduleDto)
+DELETE /api/v1/playbooks/:id/schedule                 -> Clear execution schedule
 ```
 
 ### Execution

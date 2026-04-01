@@ -9,6 +9,7 @@ import {
 } from '../schemas/playbook-execution.schema';
 import { CreatePlaybookDto } from '../dto/create-playbook.dto';
 import { UpdatePlaybookDto } from '../dto/update-playbook.dto';
+import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
 import { PlaybookQueryDto } from '../dto/playbook-query.dto';
 import { ExecutionQueryDto } from '../dto/execution-query.dto';
 import {
@@ -21,6 +22,7 @@ import {
   PlaybookDesignMessageResponse,
 } from '../interfaces/playbook.interface';
 import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
+import { buildExecutionScheduleDocument } from '../utils/execution-schedule-upsert.builder';
 import {
   PlaybookDesignMessage,
   PlaybookDesignMessageDocument,
@@ -269,6 +271,44 @@ export class PlaybookService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
     }
 
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async upsertSchedule(playbookId: string, dto: UpsertPlaybookScheduleDto): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+    const prev = existing.executionSchedule as { lastScheduledRunAt?: Date } | null | undefined;
+    const preserveLast =
+      dto.enabled && prev?.lastScheduledRunAt ? new Date(prev.lastScheduledRunAt) : null;
+
+    const executionSchedule = buildExecutionScheduleDocument(dto, preserveLast);
+
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook schedule upserted', { playbookId, enabled: dto.enabled, type: dto.type });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async clearSchedule(playbookId: string): Promise<PlaybookResponse> {
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule: null } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook schedule cleared', { playbookId });
     return await this.mapToResponse(playbook as any);
   }
 
