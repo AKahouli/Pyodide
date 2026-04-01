@@ -24,6 +24,7 @@ import { ModelsService } from '../../models/models.service';
 import { UsageService } from '../../usage/usage.service';
 import { UsageType } from '../../usage/schemas/usage.schema';
 import { EmailService } from '../../email/email.service';
+import { UserService } from '../../user/user.service';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
@@ -44,6 +45,7 @@ const SKIP_STEP_REASON = '__SKIP_STEP__';
 export class PlaybookExecutionService {
   private readonly maxComponentsPerTask: number;
   private readonly maxConcurrentSteps: number;
+  private readonly frontendBaseUrl: string;
   private readonly activeStepBuffers = new Map<string, Map<string, BufferedStepResult>>();
 
   constructor(
@@ -59,6 +61,7 @@ export class PlaybookExecutionService {
     private readonly modelsService: ModelsService,
     private readonly usageService: UsageService,
     private readonly emailService: EmailService,
+    private readonly userService: UserService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly semanticEnrichmentService: PlaybookSemanticEnrichmentService,
@@ -66,6 +69,10 @@ export class PlaybookExecutionService {
     this.logger.setContext('PlaybookExecutionService');
     this.maxComponentsPerTask = this.configService.get<number>('playbook.maxComponentsPerTask') || MAX_COMPONENTS_PER_TASK_DEFAULT;
     this.maxConcurrentSteps = this.configService.get<number>('playbook.maxConcurrentSteps') || MAX_CONCURRENT_STEPS_DEFAULT;
+    this.frontendBaseUrl = (this.configService.get<string>('app.frontendUrl', 'http://localhost:5173') || '').replace(
+      /\/$/,
+      '',
+    );
   }
 
   private normalizeStructLike(value: any): any {
@@ -1081,7 +1088,7 @@ export class PlaybookExecutionService {
     for (const t of playbook.tasks) taskMap.set(t.id, t);
 
     const call = this.grpcService.runPlaybookWorkflow(request);
-    return this.consumePlaybookStream(userId, executionId, call, startedAt, undefined, undefined, taskMap, playbookName);
+    return this.consumePlaybookStream(userId, executionId, call, startedAt, undefined, undefined, taskMap, playbookName, playbookId);
   }
 
   /**
@@ -1098,6 +1105,7 @@ export class PlaybookExecutionService {
     taskMap: Map<string, any> = new Map(),
     playbookName: string = '',
     evalEnabled: boolean = false,
+    playbookId: string = '',
   ): void {
     const { task_id: taskId, status, result, interrupt } = update;
 
@@ -1155,7 +1163,13 @@ export class PlaybookExecutionService {
           this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'completed' });
           this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
           const completedTask = taskMap.get(taskId);
-        if (completedTask) this.sendStepNotificationEmail(completedTask, 'completed', playbookName, { output });
+        if (completedTask) {
+          this.sendStepNotificationEmail(completedTask, 'completed', playbookName, {
+            output,
+            playbookId,
+            executionId,
+          });
+        }
         break;
       }
 
@@ -1196,7 +1210,13 @@ export class PlaybookExecutionService {
         });
         this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'failed', error });
         const failedTask = taskMap.get(taskId);
-        if (failedTask) this.sendStepNotificationEmail(failedTask, 'failed', playbookName, { error });
+        if (failedTask) {
+          this.sendStepNotificationEmail(failedTask, 'failed', playbookName, {
+            error,
+            playbookId,
+            executionId,
+          });
+        }
         break;
       }
 
@@ -1319,6 +1339,7 @@ export class PlaybookExecutionService {
     interrupts: Array<{ interrupt: any; threadId: string }>,
     taskMap: Map<string, any> = new Map(),
     playbookName: string = '',
+    playbookId: string = '',
   ): Promise<void> {
     const threadId = interrupts[0]?.threadId || '';
 
@@ -1357,7 +1378,11 @@ export class PlaybookExecutionService {
 
       const interruptTask = taskMap.get(interruptTaskId);
       if (interruptTask) {
-        this.sendStepNotificationEmail(interruptTask, 'interrupted', playbookName, { output: interrupt?.message || 'Awaiting human input' });
+        this.sendStepNotificationEmail(interruptTask, 'interrupted', playbookName, {
+          output: interrupt?.message || 'Awaiting human input',
+          playbookId,
+          executionId,
+        });
       }
     }
 
@@ -1435,6 +1460,7 @@ export class PlaybookExecutionService {
     resumedInterruptIdentity?: { interruptId?: string; type?: string; round?: number },
     taskMap: Map<string, any> = new Map(),
     playbookName: string = '',
+    playbookId: string = '',
   ): Promise<void> {
     const stepBuffer = new Map<string, BufferedStepResult>();
     this.activeStepBuffers.set(executionId, stepBuffer);
@@ -1471,7 +1497,7 @@ export class PlaybookExecutionService {
         if (chunk.thread_id) streamThreadId = chunk.thread_id;
 
         if (chunk.step_update) {
-          this.handleStepUpdate(userId, executionId, chunk.step_update, stepBuffer, taskMap, playbookName, evalEnabled);
+          this.handleStepUpdate(userId, executionId, chunk.step_update, stepBuffer, taskMap, playbookName, evalEnabled, playbookId);
           if (chunk.step_update.status === 'suspended' && chunk.step_update.interrupt) {
             const interruptTaskId = chunk.step_update.interrupt.task_id || chunk.step_update.task_id;
             const sameTask = resumedTaskId && interruptTaskId === resumedTaskId;
@@ -1551,7 +1577,7 @@ export class PlaybookExecutionService {
           }
 
           if (suspendedInterrupts.length > 0) {
-            await this.handleStreamInterrupts(userId, executionId, suspendedInterrupts, taskMap, playbookName);
+            await this.handleStreamInterrupts(userId, executionId, suspendedInterrupts, taskMap, playbookName, playbookId);
           } else {
             const freshExecCheck = await this.executionModel.findById(executionId)
               .select('taskResults').lean().exec();
@@ -1958,7 +1984,11 @@ export class PlaybookExecutionService {
           });
           this.logger.log('Step completed', { executionId, taskId, componentCount: components.length, durationMs });
           this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', runEvaluation);
-          this.sendStepNotificationEmail(task, 'completed', playbookName, { output });
+          this.sendStepNotificationEmail(task, 'completed', playbookName, {
+            output,
+            playbookId,
+            executionId,
+          });
         return { outcome: 'completed' };
       } else if (response.status === 'skipped') {
         const usage = response.result?.usage;
@@ -2041,7 +2071,11 @@ export class PlaybookExecutionService {
           staleReason: null,
           invalidatedByTaskId: null,
         });
-        this.sendStepNotificationEmail(task, 'interrupted', playbookName, { output: interrupt?.message || 'Awaiting human input' });
+        this.sendStepNotificationEmail(task, 'interrupted', playbookName, {
+          output: interrupt?.message || 'Awaiting human input',
+          playbookId,
+          executionId,
+        });
         return { outcome: 'interrupted', response };
       } else {
         const error = response.result?.error || response.error || 'Step failed';
@@ -2096,7 +2130,11 @@ export class PlaybookExecutionService {
           data: { executionId, taskId, status: 'failed', error, toolTrace: failedToolTrace, llmPromptTrace: failedLlmPromptTrace, semanticMatch, durationMs, ...usageFields },
         });
         this.logger.log('SSE playbook_step_complete sent', { executionId, taskId, status: 'failed' });
-        this.sendStepNotificationEmail(task, 'failed', playbookName, { error });
+        this.sendStepNotificationEmail(task, 'failed', playbookName, {
+          error,
+          playbookId,
+          executionId,
+        });
         return { outcome: 'failed', error };
       }
     } catch (err) {
@@ -2126,9 +2164,73 @@ export class PlaybookExecutionService {
         data: { executionId, taskId, status: 'failed', error, durationMs },
       });
       this.logger.log('SSE playbook_step_complete sent (error)', { executionId, taskId, status: 'failed' });
-      this.sendStepNotificationEmail(task, 'failed', playbookName, { error });
+      this.sendStepNotificationEmail(task, 'failed', playbookName, {
+        error,
+        playbookId,
+        executionId,
+      });
       return { outcome: 'failed', error };
     }
+  }
+
+  private buildExecutionDetailUrl(playbookId: string, executionId: string): string {
+    return `${this.frontendBaseUrl}/playbooks/${playbookId}/executions/${executionId}`;
+  }
+
+  /**
+   * Short line for emails: run number, per-step status counts, duration (when scheduled run ends).
+   * Only standard playbook step statuses contribute to the counts; unrecognized values are omitted.
+   */
+  private formatExecutionSummaryForEmail(doc: {
+    executionNumber?: number;
+    taskResults?: Array<{ status?: string }>;
+    startedAt?: Date;
+    completedAt?: Date | null;
+  }): string | null {
+    const segments: string[] = [];
+
+    const runNum = doc.executionNumber;
+    if (runNum != null && Number.isFinite(Number(runNum))) {
+      segments.push(`Run #${runNum}`);
+    }
+
+    const tasks = doc.taskResults ?? [];
+    if (tasks.length > 0) {
+      const byStatus = new Map<string, number>();
+      for (const t of tasks) {
+        const key = String(t.status ?? '').toLowerCase();
+        if (!key) continue;
+        byStatus.set(key, (byStatus.get(key) ?? 0) + 1);
+      }
+
+      const stepParts = (
+        [
+          [StepStatus.COMPLETED, 'completed'],
+          [StepStatus.FAILED, 'failed'],
+          [StepStatus.SKIPPED, 'skipped'],
+          [StepStatus.RUNNING, 'running'],
+          [StepStatus.PENDING, 'pending'],
+        ] as const
+      )
+        .map(([status, label]) => {
+          const n = byStatus.get(status) ?? 0;
+          return n ? `${n} ${label}` : null;
+        })
+        .filter((s): s is string => s != null);
+
+      if (stepParts.length) {
+        segments.push(`Steps: ${stepParts.join(', ')}`);
+      }
+    }
+
+    if (doc.startedAt && doc.completedAt) {
+      const ms = new Date(doc.completedAt).getTime() - new Date(doc.startedAt).getTime();
+      if (Number.isFinite(ms) && ms >= 0) {
+        segments.push(`Duration: ${Math.round(ms / 1000)}s`);
+      }
+    }
+
+    return segments.length ? segments.join(' · ') : null;
   }
 
   /**
@@ -2139,7 +2241,15 @@ export class PlaybookExecutionService {
     task: { id: string; title: string; notifyOnComplete?: boolean; notifyEmails?: string[] },
     status: string,
     playbookName: string,
-    opts: { output?: string; error?: string } = {},
+    opts: {
+      output?: string;
+      error?: string;
+      /** When set with executionId, adds an optional link to the execution detail page in the app. */
+      playbookId?: string;
+      executionId?: string;
+      /** Optional one-line summary shown above the link (e.g. scheduled-run summary). */
+      executionSummary?: string;
+    } = {},
   ): void {
     if (!task.notifyOnComplete || !task.notifyEmails?.length) return;
     if (!this.emailService.isAvailable()) return;
@@ -2169,6 +2279,21 @@ export class PlaybookExecutionService {
 </td></tr>`
       : '';
 
+    const detailUrl =
+      opts.playbookId && opts.executionId
+        ? this.buildExecutionDetailUrl(opts.playbookId, opts.executionId)
+        : null;
+    const summaryHtml = opts.executionSummary
+      ? `<p style="margin:0 0 8px;font-size:12px;color:#6b7280;"><strong>Execution summary</strong><br/>${esc(opts.executionSummary)}</p>`
+      : '';
+    const detailLinkHtml = detailUrl
+      ? `<p style="margin:0;font-size:13px;"><a href="${esc(detailUrl)}">View execution details</a></p>`
+      : '';
+    const executionBlock =
+      summaryHtml || detailLinkHtml
+        ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">${summaryHtml}${detailLinkHtml}</div>`
+        : '';
+
     const html = `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
 <h2 style="margin:0 0 16px;">Step Notification</h2>
 <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;">
@@ -2178,15 +2303,123 @@ export class PlaybookExecutionService {
 ${errorRow}
 ${outputRow}
 </table>
+${executionBlock}
 <p style="margin-top:16px;font-size:12px;color:#9ca3af;">Sent by YelloStorm Playbook</p>
 </div>`;
 
     const textOutput = outputPreview ? `\n\nResult:\n${outputPreview}${truncated ? '\nÃ¢â‚¬Â¦ truncated' : ''}` : '';
-    const text = `Step "${task.title}" in playbook "${playbookName}" finished with status: ${statusLabel}${opts.error ? `\nError: ${opts.error}` : ''}${textOutput}`;
+    const textSummary = opts.executionSummary ? `\n\nExecution summary:\n${opts.executionSummary}` : '';
+    const textDetail = detailUrl ? `\n\nExecution details: ${detailUrl}` : '';
+    const text = `Step "${task.title}" in playbook "${playbookName}" finished with status: ${statusLabel}${opts.error ? `\nError: ${opts.error}` : ''}${textOutput}${textSummary}${textDetail}`;
 
     this.emailService.send({ to: task.notifyEmails, subject, html, text }).catch((err) => {
       this.logger.warn('Failed to send step notification email', { taskId: task.id, error: (err as Error).message });
     });
+  }
+
+  /**
+   * Email the playbook owner when a **scheduled** run reaches a terminal state (success or failure).
+   * Fire-and-forget; failures are logged only and never block persistence or SSE.
+   */
+  private notifyScheduledRunFinished(
+    userId: string,
+    executionId: string,
+    outcome: 'completed' | 'failed',
+    error?: string | null,
+  ): void {
+    void this.notifyScheduledRunFinishedAsync(userId, executionId, outcome, error);
+  }
+
+  private async notifyScheduledRunFinishedAsync(
+    userId: string,
+    executionId: string,
+    outcome: 'completed' | 'failed',
+    error?: string | null,
+  ): Promise<void> {
+    try {
+      const doc = await this.executionModel
+        .findById(executionId)
+        .select(
+          'executionTrigger playbookId playbookSnapshot executionNumber taskResults.status startedAt completedAt',
+        )
+        .lean()
+        .exec();
+      if (!doc || doc.executionTrigger !== 'scheduled') {
+        return;
+      }
+      if (!this.emailService.isAvailable()) {
+        return;
+      }
+
+      const snapshot = doc.playbookSnapshot as { name?: string } | null | undefined;
+      let playbookName = snapshot?.name;
+      if (!playbookName && doc.playbookId) {
+        const pb = await this.playbookService.findRawById(doc.playbookId.toString());
+        playbookName = (pb as { name?: string } | null)?.name;
+      }
+      playbookName = playbookName || 'Playbook';
+
+      const user = await this.userService.findById(userId);
+      const to = user?.email;
+      if (!to) {
+        return;
+      }
+
+      const playbookIdStr = doc.playbookId?.toString() || '';
+      const detailUrl = playbookIdStr
+        ? this.buildExecutionDetailUrl(playbookIdStr, executionId)
+        : '';
+
+      const summaryLine = this.formatExecutionSummaryForEmail({
+        executionNumber: doc.executionNumber,
+        taskResults: doc.taskResults as Array<{ status?: string }> | undefined,
+        startedAt: doc.startedAt as Date | undefined,
+        completedAt: doc.completedAt as Date | null | undefined,
+      });
+
+      const statusLabel = outcome === 'completed' ? 'Completed' : 'Failed';
+      const esc = (s: string) =>
+        s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const subject = `[YelloStorm] Scheduled playbook "${playbookName}" — ${statusLabel}`;
+
+      const errorBlock =
+        outcome === 'failed' && error
+          ? `<tr><td colspan="2" style="padding:8px 16px;color:#ef4444;"><strong>Error:</strong> ${esc(error)}</td></tr>`
+          : '';
+
+      const html = `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
+<h2 style="margin:0 0 16px;">Scheduled run finished</h2>
+<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;">
+<tr><td style="padding:8px 16px;color:#6b7280;">Playbook</td><td style="padding:8px 16px;font-weight:600;">${esc(playbookName)}</td></tr>
+<tr><td style="padding:8px 16px;color:#6b7280;">Status</td><td style="padding:8px 16px;font-weight:600;">${esc(statusLabel)}</td></tr>
+${errorBlock}
+</table>
+${
+  summaryLine
+    ? `<p style="margin-top:14px;font-size:13px;color:#4b5563;line-height:1.5;"><strong>Summary</strong><br/>${esc(
+        summaryLine,
+      )}</p>`
+    : ''
+}
+${
+  detailUrl
+    ? `<p style="margin-top:12px;"><a href="${esc(detailUrl)}">View execution details</a></p>`
+    : ''
+}
+<p style="margin-top:16px;font-size:12px;color:#9ca3af;">Sent by YelloStorm Playbook</p>
+</div>`;
+
+      const text = `Scheduled playbook "${playbookName}" finished: ${statusLabel}${
+        error ? `\nError: ${error}` : ''
+      }${summaryLine ? `\n\nSummary: ${summaryLine}` : ''}${detailUrl ? `\n\nDetails: ${detailUrl}` : ''}`;
+
+      await this.emailService.send({ to: [to], subject, html, text });
+    } catch (err) {
+      this.logger.warn('Failed to send scheduled execution notification email', {
+        executionId,
+        error: (err as Error).message,
+      });
+    }
   }
 
   /**
@@ -2292,6 +2525,7 @@ ${outputRow}
       data: { executionId, status: ExecutionStatus.FAILED, error, durationMs, skippedTaskIds },
     });
     this.logger.log('SSE playbook_execution_complete sent (FAILED)', { executionId, userId });
+    this.notifyScheduledRunFinished(userId, executionId, 'failed', error);
   }
 
   /**
@@ -2319,6 +2553,7 @@ ${outputRow}
       data: { executionId, status: ExecutionStatus.COMPLETED, durationMs },
     });
     this.logger.log('SSE playbook_execution_complete sent (COMPLETED)', { executionId, userId, durationMs });
+    this.notifyScheduledRunFinished(userId, executionId, 'completed');
   }
 
   /**
@@ -2854,7 +3089,7 @@ ${outputRow}
           await this.handleStreamInterrupts(userId, executionId, [{
             interrupt,
             threadId: response.thread_id || execution.threadId!,
-          }], unaryTaskMap, '');
+          }], unaryTaskMap, '', playbookId);
         } else {
           this.logger.error(`${rpcName} failed with non-completed, non-interrupted status`, {
             executionId,
@@ -2911,6 +3146,7 @@ ${outputRow}
       resumedInterruptIdentity,
       resumeTaskMap,
       '',
+      playbookId,
     ).catch((err) => {
       this.logger.error('Resume stream failed', { executionId, error: (err as Error).message });
     });

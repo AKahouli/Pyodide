@@ -1,4 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { PlaybookScheduleRunnerService } from './playbook-schedule-runner.service';
@@ -46,6 +47,7 @@ describe('PlaybookScheduleRunnerService', () => {
   };
   let mockExecutionService: { executePlaybook: jest.Mock };
   let mockGrpcService: { isAvailable: boolean };
+  let mockConfigService: { get: jest.Mock };
   let mockLogger: {
     setContext: jest.Mock;
     log: jest.Mock;
@@ -91,6 +93,15 @@ describe('PlaybookScheduleRunnerService', () => {
 
     mockGrpcService = { isAvailable: true };
 
+    mockConfigService = {
+      get: jest.fn((key: string, defaultValue?: unknown) => {
+        if (key === 'playbook.scheduleConcurrencyPolicy') {
+          return 'skip';
+        }
+        return defaultValue;
+      }),
+    };
+
     mockLogger = {
       setContext: jest.fn(),
       log: jest.fn(),
@@ -105,6 +116,7 @@ describe('PlaybookScheduleRunnerService', () => {
         { provide: getModelToken(PlaybookExecution.name), useValue: mockExecutionModel },
         { provide: PlaybookExecutionService, useValue: mockExecutionService },
         { provide: PlaybookGrpcService, useValue: mockGrpcService },
+        { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLogger },
       ],
     }).compile();
@@ -164,7 +176,7 @@ describe('PlaybookScheduleRunnerService', () => {
 
       expect(mockExecutionService.executePlaybook).not.toHaveBeenCalled();
       expect(mockLogger.log).toHaveBeenCalledWith(
-        'Scheduled run skipped: playbook already has active execution',
+        'Scheduled run skipped: playbook already has active execution (policy=skip)',
         expect.objectContaining({
           playbookId: playbookId.toString(),
           activeExecutionId: activeExecId.toString(),
@@ -192,6 +204,73 @@ describe('PlaybookScheduleRunnerService', () => {
         }),
       );
       expect(mockExecutionService.executePlaybook).not.toHaveBeenCalled();
+    });
+
+    it('should warn (report policy) when active execution exists', async () => {
+      mockConfigService.get.mockImplementation((key: string, defaultValue?: unknown) => {
+        if (key === 'playbook.scheduleConcurrencyPolicy') {
+          return 'report';
+        }
+        return defaultValue;
+      });
+      mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc]));
+      mockedIsDue.mockReturnValue(true);
+      const activeExecId = new Types.ObjectId();
+      mockExecutionModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({ _id: activeExecId }),
+          }),
+        }),
+      });
+
+      await service.runDueSchedules();
+
+      expect(mockExecutionService.executePlaybook).not.toHaveBeenCalled();
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Scheduled run missed: playbook already has active execution (policy=report)',
+        expect.objectContaining({
+          playbookId: playbookId.toString(),
+          activeExecutionId: activeExecId.toString(),
+        }),
+      );
+    });
+
+    it('should run executePlaybook with queue policy when active execution exists', async () => {
+      mockConfigService.get.mockImplementation((key: string, defaultValue?: unknown) => {
+        if (key === 'playbook.scheduleConcurrencyPolicy') {
+          return 'queue';
+        }
+        return defaultValue;
+      });
+      mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc]));
+      mockedIsDue.mockReturnValue(true);
+      const activeExecId = new Types.ObjectId();
+      mockExecutionModel.findOne.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({ _id: activeExecId }),
+          }),
+        }),
+      });
+
+      await service.runDueSchedules();
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        'Scheduled run starting while playbook has active execution (policy=queue)',
+        expect.objectContaining({
+          playbookId: playbookId.toString(),
+          activeExecutionId: activeExecId.toString(),
+        }),
+      );
+      expect(mockExecutionService.executePlaybook).toHaveBeenCalledWith(
+        userId.toString(),
+        playbookId.toString(),
+        {},
+        '',
+        { executionTrigger: 'scheduled' },
+      );
+      expect(mockPlaybookModel.updateOne).toHaveBeenCalled();
     });
 
     it('should run executePlaybook with scheduled trigger and update lastScheduledRunAt when due and idle', async () => {
