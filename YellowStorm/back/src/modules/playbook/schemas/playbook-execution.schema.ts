@@ -193,6 +193,9 @@ export class PlaybookExecution extends Document {
   @Prop({ type: String, default: 'live' })
   executionMode!: string;
 
+  @Prop({ type: String, enum: ['manual', 'scheduled'], default: 'manual' })
+  executionTrigger!: 'manual' | 'scheduled';
+
   @Prop({ type: Boolean, default: false })
   runEvaluation!: boolean;
 

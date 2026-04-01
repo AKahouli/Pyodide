@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import {
+  ExecutionSchedule,
+  ExecutionScheduleSchema,
+} from './execution-schedule.schema';
 
 export type PlaybookDocument = HydratedDocument<Playbook>;
 
@@ -121,6 +125,9 @@ export class Playbook extends Document {
 
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
+
+  @Prop({ type: ExecutionScheduleSchema, default: null })
+  executionSchedule!: ExecutionSchedule | null;
 
   createdAt!: Date;
   updatedAt!: Date;

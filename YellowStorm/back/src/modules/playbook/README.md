@@ -12,6 +12,7 @@ The playbook module provides a visual workflow builder where users create, edit,
 - [Controllers](#controllers)
 - [Services](#services)
 - [Schemas](#schemas)
+  - [Execution schedule (embedded)](#execution-schedule-embedded)
 - [gRPC Integration](#grpc-integration)
 - [SSE Streaming](#sse-streaming)
 - [Execution Engine](#execution-engine)
@@ -103,8 +104,9 @@ playbook/
 ├── config/
 │   └── playbook.config.ts               # Module configuration (gRPC, SSE, limits)
 ├── schemas/
-│   ├── playbook.schema.ts               # Playbook model (tasks, edges, workspaces, favorites)
-│   ├── playbook-execution.schema.ts     # Execution model (task results, components, tokens)
+│   ├── playbook.schema.ts               # Playbook model (tasks, edges, workspaces, favorites, executionSchedule)
+│   ├── execution-schedule.schema.ts     # Embedded schedule (daily/weekly/monthly/advanced payloads)
+│   ├── playbook-execution.schema.ts     # Execution model (task results, components, tokens, executionTrigger)
 │   └── playbook-design-message.schema.ts # Design message model (snapshots, revert chain)
 ├── dto/
 │   ├── create-playbook.dto.ts           # Create playbook (name, description, workspaces)
@@ -250,10 +252,11 @@ CRUD operations, execution history, and design messages with optimized projectio
 | `revertToSnapshot(playbookId, messageId, userId)` | Revert playbook to a previous design message snapshot, creates revert record |
 
 **Response mappers:**
-- `mapToResponse()` — Full playbook DTO
+- `mapToResponse()` — Full playbook DTO (includes `executionSchedule` when present)
+- `mapExecutionScheduleToData()` — Maps Mongo `executionSchedule` subdoc to API `ExecutionScheduleData`
 - `mapToSummaryResponse()` — Lightweight summary DTO for list views
-- `mapExecutionToResponse()` — Full execution DTO with taskResults and components
-- `mapExecutionToSummaryResponse()` — Lightweight execution summary DTO
+- `mapExecutionToResponse()` — Full execution DTO with taskResults, components, and `executionTrigger`
+- `mapExecutionToSummaryResponse()` — Lightweight execution summary DTO (includes `executionTrigger`)
 - `mapDesignMessageToResponse()` — Design message DTO
 
 ### PlaybookExecutionService
@@ -262,7 +265,7 @@ Core orchestration engine with in-memory step caching, concurrency control, and 
 
 | Method | Visibility | Description |
 |--------|------------|-------------|
-| `executePlaybook(userId, playbookId, dto, userEmail)` | Public | Entry point: loads playbook, resolves agents, creates execution, starts fire-and-forget loop |
+| `executePlaybook(userId, playbookId, dto, userEmail, options?)` | Public | Entry point: loads playbook, resolves agents, creates execution (with optional `executionTrigger: 'manual' \| 'scheduled'`), starts fire-and-forget loop |
 | `resumeExecution(userId, playbookId, dto, userEmail)` | Public | Resumes interrupted execution with human response via gRPC |
 | `stopExecution(userId, playbookId, executionId, userEmail)` | Public | Cancels a running/interrupted execution, marks remaining tasks as skipped |
 | `findActiveExecutionsByUser(userId)` | Public | Returns active executions, merging in-memory step buffers for fresh catch-up reads |
@@ -378,6 +381,7 @@ SSE connection management (mirrors conversation module pattern):
 | `createdBy` | ObjectId | Ref to User, indexed |
 | `isFavorite` | Boolean | Favorite flag (default: false) |
 | `isActive` | Boolean | Soft delete flag (default: true) |
+| `executionSchedule` | Embedded \| null | Optional **single** schedule configuration per playbook (see [Execution schedule](#execution-schedule-embedded)); default `null` when not configured |
 | `createdAt/updatedAt` | Date | Auto-managed timestamps |
 
 **PlaybookTask subdoc:**
@@ -407,6 +411,65 @@ SSE connection management (mirrors conversation module pattern):
 
 **Indexes:** `(createdBy, updatedAt)`, `(createdBy, isActive, updatedAt)`
 
+### Execution schedule (embedded)
+
+Defined in [`schemas/execution-schedule.schema.ts`](schemas/execution-schedule.schema.ts) and embedded on the Playbook document as `executionSchedule`. It stores **when** a playbook should run automatically (timezone, mode, and mode-specific payloads). API persistence and validation are handled by dedicated DTOs when those endpoints exist; the schema is the **MongoDB shape**.
+
+**`ExecutionSchedule` subdocument**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `enabled` | Boolean | Whether automatic runs are active (default: false) |
+| `timezone` | String | IANA timezone for interpreting local times (default: `UTC`) |
+| `type` | Enum | `daily \| weekly \| monthly \| advanced` — which payload block applies |
+| `lastScheduledRunAt` | Date \| null | Last time a scheduled run was triggered (cron / dedupe); default `null` |
+| `daily` | Embedded \| null | [`DailySchedulePayload`](#dailyschedulepayload) |
+| `weekly` | Embedded \| null | [`WeeklySchedulePayload`](#weeklyschedulepayload) |
+| `monthly` | Embedded \| null | [`MonthlySchedulePayload`](#monthlyschedulepayload) |
+| `advanced` | Embedded \| null | [`AdvancedSchedulePayload`](#advancedschedulepayload) |
+
+Only the payload matching `type` is typically populated; others remain `null`.
+
+**`DailySchedulePayload`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `timesLocal` | String[] | One or more `HH:mm` (24h) values in the playbook’s `timezone` |
+
+**`WeeklySchedulePayload`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slots` | `WeeklySlot[]` | One or more weekday + time pairs |
+
+**`WeeklySlot`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `weekday` | Number | `0` = Sunday … `6` = Saturday |
+| `timeLocal` | String | `HH:mm` for that weekday |
+
+**`MonthlySchedulePayload`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slots` | `MonthlySlot[]` | One or more day-of-month + time pairs |
+
+**`MonthlySlot`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dayOfMonth` | Number | Day of month `1`–`31`, or `-1` for **last day of month** |
+| `timeLocal` | String | `HH:mm` for that day |
+
+**`AdvancedSchedulePayload`**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `variant` | Enum | `weekdays` (Mon–Fri), `weekend` (Sat–Sun), `every_n_days` (calendar interval) |
+| `intervalDays` | Number \| null | Used when `variant === 'every_n_days'` (e.g. every 3 days) |
+| `timeLocal` | String \| null | Optional anchor time for the advanced mode |
+
 ### PlaybookExecution (`playbook_executions` collection)
 
 | Field | Type | Description |
@@ -414,6 +477,7 @@ SSE connection management (mirrors conversation module pattern):
 | `playbookId` | ObjectId | Ref to Playbook, indexed |
 | `executedBy` | ObjectId | Ref to User, indexed |
 | `executionNumber` | Number | Sequential per playbook |
+| `currentAttemptNumber` | Number | Current attempt (default: 1) |
 | `status` | Enum | `pending \| running \| completed \| failed \| interrupted \| cancelled` |
 | `taskResults[]` | Embedded | Array of `TaskResult` subdocs |
 | `threadId` | String | LangGraph thread ID (for resume) |
@@ -422,10 +486,15 @@ SSE connection management (mirrors conversation module pattern):
 | `durationMs` | Number | Total execution time |
 | `startedAt/completedAt` | Date | Execution timestamps |
 | `singleStepTaskId` | String | If set, only this step runs |
+| `executionMode` | String | Global mode (e.g. `live`, replay modes; default: `live`) |
+| `executionTrigger` | Enum | `manual` — user/API started run; `scheduled` — started by the schedule runner (default: `manual`) |
+| `runEvaluation` | Boolean | Whether evaluation runs (default: false) |
+| `replaySourceByTask` | Object \| null | Replay id + validation version per task when using replay |
 | `playbookSnapshot` | Mixed | Frozen copy of tasks/edges at execution time |
 | `totalInputTokens` | Number | Aggregate input tokens (default: 0) |
 | `totalOutputTokens` | Number | Aggregate output tokens (default: 0) |
 | `totalTokens` | Number | Aggregate total tokens (default: 0) |
+| `attemptHistory` | Object[] | Audit trail of attempts (initial, resume, rerun, etc.) |
 
 **TaskResult subdoc:**
 
