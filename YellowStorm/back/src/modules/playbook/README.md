@@ -9,6 +9,7 @@ The playbook module provides a visual workflow builder where users create, edit,
 - [Tech Stack](#tech-stack)
 - [Directory Structure](#directory-structure)
 - [Module Configuration](#module-configuration)
+- [Execution schedule (backend reference)](#execution-schedule-backend-reference)
 - [Controllers](#controllers)
 - [Services](#services)
   - [Playbook schedule runner](#playbook-schedule-runner)
@@ -50,7 +51,7 @@ The playbook module provides:
 - **Concurrency Control**: Per-level step parallelism with configurable limits
 - **Document Size Guards**: Component array caps and data truncation to prevent MongoDB 16MB limit
 - **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for automatic runs. Clients read it via `GET` `/playbooks/:id/schedule` ([`getSchedule`](#services)), set or clear via `PUT` / `DELETE` ([`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts), [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder)). Full playbook responses still map schedule with [`mapExecutionScheduleToData`](#execution-schedule-mapper).
-- **Scheduled runs (cron)**: [`PlaybookScheduleRunnerService`](#playbook-schedule-runner) evaluates due schedules **once per minute**, starts `executePlaybook` with `executionTrigger: 'scheduled'` when [`isExecutionScheduleDueThisMinute`](#schedule-due-evaluation-pure-utils) matches, then updates `executionSchedule.lastScheduledRunAt`. If gRPC is unavailable, the tick is skipped. When a playbook already has **RUNNING** or **INTERRUPTED** work, behavior is governed by [`playbook.scheduleConcurrencyPolicy`](#module-configuration) (`PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY`: `skip` \| `report` \| `queue`).
+- **Scheduled runs (cron)**: [`PlaybookScheduleRunnerService`](#playbook-schedule-runner) evaluates due schedules **once per minute**, starts `executePlaybook` with `executionTrigger: 'scheduled'` when [`isExecutionScheduleDueThisMinute`](#schedule-due-evaluation-pure-utils) matches, then updates `executionSchedule.lastScheduledRunAt`. If gRPC is unavailable, the tick is skipped. When a playbook already has **RUNNING** or **INTERRUPTED** work, behavior is governed by [`playbook.scheduleConcurrencyPolicy`](#module-configuration) (`PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY`: `skip` \| `report` \| `queue`). **Full narrative:** [Execution schedule (backend reference)](#execution-schedule-backend-reference).
 - **List summaries**: Paginated playbook list items include **`scheduleEnabled`** — `true` when `executionSchedule.enabled` is true (see [`PlaybookSummaryResponse`](#interfaces-api-responses)).
 - **Execution trigger**: Each `PlaybookExecution` stores `executionTrigger`: `manual` (default) for user-initiated runs, or `scheduled` when started by the schedule runner. Exposed on full and summary execution responses.
 
@@ -102,6 +103,7 @@ The playbook module provides:
 | **Protocol Buffers** | gRPC message definitions (shared `chatbot.proto`) |
 | **class-validator** | DTO validation with nested object support and array size limits |
 | **Swagger/OpenAPI** | API documentation |
+| **@nestjs/schedule** | Cron (`@Cron`) for the [`PlaybookScheduleRunnerService`](#playbook-schedule-runner); `ScheduleModule.forRoot()` in [`app.module.ts`](../../app.module.ts) |
 
 ---
 
@@ -212,6 +214,112 @@ export default registerAs('playbook', () => ({
 
 ---
 
+## Execution schedule (backend reference)
+
+Single place for **automatic** playbook runs: one embedded `executionSchedule` on [`Playbook`](#playbook-playbooks-collection), REST endpoints under [`PlaybookController`](#playbookcontroller-playbooks), a **minute** cron in [`PlaybookScheduleRunnerService`](#playbook-schedule-runner), and pure evaluation in [`playbook-schedule.util.ts`](#schedule-due-evaluation-pure-utils).
+
+### End-to-end flow
+
+1. **Configure** — Owner calls `PUT /playbooks/:id/schedule` with [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts). [`PlaybookService.upsertSchedule()`](#playbookservice) persists via [`buildExecutionScheduleDocument()`](#execution-schedule-upsert-builder). Optional `GET` / `DELETE` read or clear the schedule.
+2. **Expose** — `GET /playbooks/:id` and list responses include `executionSchedule` or `scheduleEnabled` via [`mapExecutionScheduleToData()`](#execution-schedule-mapper).
+3. **Tick** — Every minute, `runDueSchedules()` scans enabled playbooks (`isActive`, `executionSchedule.enabled`), skips if **gRPC unavailable**, then runs [`isExecutionScheduleDueThisMinute()`](#schedule-due-evaluation-pure-utils) for each.
+4. **Overlap** — If an execution is **RUNNING** or **INTERRUPTED** for that playbook, [`playbook.scheduleConcurrencyPolicy`](#module-configuration) decides whether to skip, warn-only, or still start (`queue`).
+5. **Run** — [`executePlaybook(..., { executionTrigger: 'scheduled' })`](#playbookexecutionservice) creates a [`PlaybookExecution`](#playbookexecution-playbook_executions-collection) with `executionTrigger: 'scheduled'`.
+6. **Bookkeeping** — `lastScheduledRunAt` is updated **after** `executePlaybook` **returns** (same tick `now`). `executePlaybook` resolves once the execution document exists and the workflow loop has been **started** (it does **not** await completion). If `executePlaybook` **throws** before returning (e.g. gRPC unavailable, playbook not found, active execution conflict), the runner logs a warning and **does not** update `lastScheduledRunAt`.
+7. **Notify** — On terminal **completed** or **failed**, [`notifyScheduledRunFinished`](#playbookexecutionservice) sends an optional email to the playbook owner when `executionTrigger === 'scheduled'` (email service available, user has email), including a summary line and link built with [`buildExecutionDetailUrl()`](#playbookexecutionservice) (`app.frontendUrl`).
+
+### REST API (schedule)
+
+| Method | Path | Guard | Request body | Response |
+|--------|------|-------|--------------|----------|
+| `GET` | `/playbooks/:id/schedule` | [`PlaybookOwnerGuard`](guards/playbook-owner.guard.ts) | — | [`ExecutionScheduleData`](interfaces/playbook.interface.ts) \| `null` (mapped; `null` if no schedule or invalid) |
+| `PUT` | `/playbooks/:id/schedule` | Owner | [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts) | Full [`PlaybookResponse`](interfaces/playbook.interface.ts) (includes `executionSchedule`) |
+| `DELETE` | `/playbooks/:id/schedule` | Owner | — | Full `PlaybookResponse` with `executionSchedule: null` |
+
+Swagger: [`playbook.controller.ts`](controllers/playbook.controller.ts) (`getSchedule`, `upsertSchedule`, `clearSchedule`).
+
+### Request validation (`UpsertPlaybookScheduleDto`)
+
+| Rule | Details |
+|------|---------|
+| `enabled` | Required boolean. |
+| `enabled === true` | `timezone` (non-empty string, max 64), `type` ∈ `daily` \| `weekly` \| `monthly` \| `advanced`, and exactly one nested payload matching `type` (`daily` / `weekly` / `monthly` / `advanced` DTOs). |
+| `enabled === false` | Nested payload not required; [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder) clears mode payloads and sets `lastScheduledRunAt: null`. |
+| Times | All local times use `TIME_LOCAL_REGEX`: **HH:mm** 24h. |
+| Weekly | `weekday` 0–6 (0 = Sunday). |
+| Monthly | `dayOfMonth` 1–31 or **-1** (last day of month). |
+| Advanced `every_n_days` | `intervalDays` required, integer **1–366**. `timeLocal` optional in DTO but **must** match a tick minute for [`isExecutionScheduleDueThisMinute`](#schedule-due-evaluation-pure-utils) to fire for weekday/weekend/every_n_days (see below). |
+
+### Persistence and upsert semantics
+
+- **Disabled** (`enabled: false`): `lastScheduledRunAt` is forced to **`null`**; `daily` / `weekly` / `monthly` / `advanced` subdocs are **`null`** in Mongo.
+- **Enabled**: `buildExecutionScheduleDocument` sets only the payload for the selected `type`; others are `null`.
+- **Preserve last run**: On upsert, if `enabled` is true and the playbook already had `executionSchedule.lastScheduledRunAt`, that timestamp is passed as `preserveLastRunAt` so saving settings again **does not reset** dedupe state (`PlaybookService.upsertSchedule`).
+
+### Due evaluation (`isExecutionScheduleDueThisMinute`)
+
+Implementation: [`utils/playbook-schedule.util.ts`](utils/playbook-schedule.util.ts). Exported alias: **`shouldRunScheduledExecution`** (same function).
+
+| Behavior | Detail |
+|----------|--------|
+| **Granularity** | Cron runs **once per minute**; the function answers “should we start a run **in this** UTC instant’s clock minute in the schedule **timezone**?” |
+| **Timezone** | `timezone` string; empty/whitespace falls back to **`UTC`**. Uses `Intl` for zoned calendar parts and `YYYY-MM-DD` helpers. |
+| **Same-minute dedupe** | If `lastScheduledRunAt` is set and falls in the **same zoned minute** as `now`, returns **`false`** (prevents double-firing in one minute). |
+| **daily** | Any `daily.timesLocal` matches current zoned hour:minute. |
+| **weekly** | Slot `weekday` matches zoned weekday **and** `timeLocal` matches. |
+| **monthly** | For each slot, `dayOfMonth` matches zoned day or **-1** matches last day of month; **and** `timeLocal` matches. |
+| **advanced — weekdays** | `timeLocal` matches current minute **and** zoned weekday is Mon–Fri. |
+| **advanced — weekend** | Same, Sat–Sun. |
+| **advanced — every_n_days** | `timeLocal` matches; **if** `lastScheduledRunAt` is **absent**, returns **`true`** (first run); **else** requires `daysBetweenYmd(last, now) >= max(1, intervalDays)`. |
+
+Invalid or missing `type` / enabled → **`false`**.
+
+### Runner behavior (summary)
+
+| Step | Action |
+|------|--------|
+| 1 | `EVERY_MINUTE` cron; exit early if `!grpcService.isAvailable`. |
+| 2 | Cursor: `isActive: true`, `executionSchedule.enabled: true`. |
+| 3 | For each doc, `isExecutionScheduleDueThisMinute(schedule, now)`; continue if false. |
+| 4 | `findOne` active execution `RUNNING` \| `INTERRUPTED`; apply policy (`skip` / `report` / `queue`). |
+| 5 | `executePlaybook(userId, playbookId, {}, '', { executionTrigger: 'scheduled' })` |
+| 6 | After `executePlaybook` returns, `$set` `executionSchedule.lastScheduledRunAt` to the tick `now` (marks the minute as consumed; run may still be **in progress** in the background). |
+
+**`createdBy`** is the user id passed to `executePlaybook` (playbook owner).
+
+### Config (schedule only)
+
+| Key | Source |
+|-----|--------|
+| `playbook.scheduleConcurrencyPolicy` | `PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY` → `skip` \| `report` \| `queue` ([`playbook.config.ts`](config/playbook.config.ts)) |
+
+Email deep links use **`app.frontendUrl`** (not under `playbook.*`); see [`PlaybookExecutionService`](#playbookexecutionservice).
+
+### Manual vs `scheduled` `executionTrigger`
+
+| Caller | `executionTrigger` | Notes |
+|--------|---------------------|--------|
+| `POST /playbooks/:id/execute` ([`playbook.controller.ts`](controllers/playbook.controller.ts) `execute`) | **`manual`** | Always set explicitly; public API must not impersonate scheduled runs. |
+| [`PlaybookScheduleRunnerService`](#playbook-schedule-runner) | **`scheduled`** | Internal only; passes empty `userEmail` to [`executePlaybook`](services/playbook-execution.service.ts). |
+
+[`executePlaybook`](services/playbook-execution.service.ts) also rejects starting work if the playbook already has **RUNNING** / **INTERRUPTED** execution (in addition to the runner’s policy check).
+
+### API types and list summaries
+
+- [`ExecutionScheduleData`](interfaces/playbook.interface.ts) — `lastScheduledRunAt` as **ISO string** or `null`.
+- [`PlaybookSummaryResponse.scheduleEnabled`](interfaces/playbook.interface.ts) — `true` iff `executionSchedule.enabled === true` (see [`findAllByUser`](#playbookservice) aggregation).
+
+### Tests (schedule)
+
+| File | Focus |
+|------|--------|
+| [`utils/playbook-schedule.util.spec.ts`](utils/playbook-schedule.util.spec.ts) | Due evaluation, timezones, modes |
+| [`services/playbook-schedule-runner.service.spec.ts`](services/playbook-schedule-runner.service.spec.ts) | Runner + policy + gRPC gate |
+| [`services/playbook.service.spec.ts`](services/playbook.service.spec.ts) | Schedule upsert/get/clear (when covered) |
+| [`controllers/playbook.controller.spec.ts`](controllers/playbook.controller.spec.ts) | HTTP routes |
+
+---
+
 ## Controllers
 
 ### PlaybookController (`/playbooks`)
@@ -313,7 +421,8 @@ Core orchestration engine with in-memory step caching, concurrency control, and 
 | `markExecutionCancelled(...)` | Private | Sets execution CANCELLED with duration, marks remaining tasks as SKIPPED |
 | `sendStepNotificationEmail(...)` | Private | Fire-and-forget email notification on step completion/failure/interrupt; optional `executionSummary` line (e.g. run number, step counts, duration) and optional link to execution detail |
 | `formatExecutionSummaryForEmail(...)` | Private | Builds the one-line summary string for `executionSummary` |
-| `buildFrontendExecutionDetailUrl(...)` | Private | Deep link `${frontendBaseUrl}/playbooks/:playbookId/executions/:executionId` |
+| `buildExecutionDetailUrl(...)` | Private | Deep link `${frontendBaseUrl}/playbooks/:playbookId/executions/:executionId` |
+| `notifyScheduledRunFinished` / `notifyScheduledRunFinishedAsync` | Private | After a **scheduled** run ends **completed** or **failed**, sends owner email (if email service + user email) with subject and summary from `formatExecutionSummaryForEmail` |
 
 **Constructor config:** reads `app.frontendUrl` (default `http://localhost:5173`) into **`frontendBaseUrl`** (trailing slash stripped) for email links. This uses the app-level frontend URL, not `playbook.*` config.
 
@@ -328,6 +437,8 @@ Core orchestration engine with in-memory step caching, concurrency control, and 
 
 File: [`services/playbook-schedule-runner.service.ts`](services/playbook-schedule-runner.service.ts). Runs on **`@Cron(CronExpression.EVERY_MINUTE)`** when the app process is up.
 
+See **[Execution schedule (backend reference)](#execution-schedule-backend-reference)** for the full flow, REST surface, due algorithm, and tests.
+
 | Concern | Behavior |
 |---------|----------|
 | **Selection** | Active playbooks with `executionSchedule.enabled === true` (lean cursor, `_id`, `createdBy`, `executionSchedule`) |
@@ -335,7 +446,7 @@ File: [`services/playbook-schedule-runner.service.ts`](services/playbook-schedul
 | **gRPC gate** | If `PlaybookGrpcService.isAvailable` is false, logs at debug and returns (no runs) |
 | **Overlap** | If an execution exists with status **RUNNING** or **INTERRUPTED**, applies [`playbook.scheduleConcurrencyPolicy`](#module-configuration): `skip` / `report` (skip start; differ by log level) or `queue` (warn, then start anyway) |
 | **Start** | `executePlaybook(userId, playbookId, {}, '', { executionTrigger: 'scheduled' })` |
-| **Persistence** | On success path, `$set` `executionSchedule.lastScheduledRunAt` to the tick time |
+| **Persistence** | After `executePlaybook` returns, `$set` `executionSchedule.lastScheduledRunAt` to the tick time (start acknowledged, not run finished) |
 | **Errors** | Per-playbook `catch`: warn with message, continue cursor |
 
 ### PlaybookContextService
@@ -422,8 +533,12 @@ File: [`utils/playbook-schedule.util.ts`](utils/playbook-schedule.util.ts). Used
 
 | Export | Role |
 |--------|------|
-| `isExecutionScheduleDueThisMinute(schedule, now)` | Returns whether the embedded schedule fires for the given instant |
-| Helpers (`zonedYmd`, `daysBetweenYmd`, etc.) | Support daily / weekly / monthly / advanced evaluation |
+| `isExecutionScheduleDueThisMinute(schedule, now?)` | Returns whether the embedded schedule fires for the given instant (default `now = new Date()`) |
+| `shouldRunScheduledExecution` | **Alias** for `isExecutionScheduleDueThisMinute` |
+| `ScheduleEvalInput` | Type for lean Mongo / DTO-shaped input |
+| `zonedYmd`, `daysBetweenYmd` | Gregorian helpers for `every_n_days` |
+
+Per-mode rules and edge cases: **[Execution schedule (backend reference) — Due evaluation](#due-evaluation-isexecutionscheduleduethisminute)**.
 
 Unit tests: [`utils/playbook-schedule.util.spec.ts`](utils/playbook-schedule.util.spec.ts).
 
@@ -540,8 +655,8 @@ Only the payload matching `type` is typically populated; others remain `null`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `variant` | Enum | `weekdays` (Mon–Fri), `weekend` (Sat–Sun), `every_n_days` (calendar interval) |
-| `intervalDays` | Number \| null | Used when `variant === 'every_n_days'` (e.g. every 3 days) |
-| `timeLocal` | String \| null | Optional anchor time for the advanced mode |
+| `intervalDays` | Number \| null | Used when `variant === 'every_n_days'` (e.g. every 3 days); DTO requires **1–366** when that variant is selected |
+| `timeLocal` | String \| null | **HH:mm** in the playbook timezone; the [due evaluator](#schedule-due-evaluation-pure-utils) requires a **parsable** time that matches the current zoned minute for all advanced variants (otherwise the tick does not fire) |
 
 ### PlaybookExecution (`playbook_executions` collection)
 
