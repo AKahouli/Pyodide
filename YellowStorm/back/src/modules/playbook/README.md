@@ -421,7 +421,7 @@ Core orchestration engine with in-memory step caching, concurrency control, and 
 | `markExecutionCancelled(...)` | Private | Sets execution CANCELLED with duration, marks remaining tasks as SKIPPED |
 | `sendStepNotificationEmail(...)` | Private | Fire-and-forget email notification on step completion/failure/interrupt; optional `executionSummary` line (e.g. run number, step counts, duration) and optional link to execution detail |
 | `formatExecutionSummaryForEmail(...)` | Private | Builds the one-line summary string for `executionSummary` |
-| `buildExecutionDetailUrl(...)` | Private | Deep link `${frontendBaseUrl}/playbooks/:playbookId/executions/:executionId` |
+| `buildExecutionDetailUrl(...)` | Private | Deep link `${frontendBaseUrl}/#/playbooks/:playbookId/executions/:executionId` (hash router) |
 | `notifyScheduledRunFinished` / `notifyScheduledRunFinishedAsync` | Private | After a **scheduled** run ends **completed** or **failed**, sends owner email (if email service + user email) with subject and summary from `formatExecutionSummaryForEmail` |
 
 **Constructor config:** reads `app.frontendUrl` (default `http://localhost:5173`) into **`frontendBaseUrl`** (trailing slash stripped) for email links. This uses the app-level frontend URL, not `playbook.*` config.

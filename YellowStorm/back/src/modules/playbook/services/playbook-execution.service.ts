@@ -2174,7 +2174,7 @@ export class PlaybookExecutionService {
   }
 
   private buildExecutionDetailUrl(playbookId: string, executionId: string): string {
-    return `${this.frontendBaseUrl}/playbooks/${playbookId}/executions/${executionId}`;
+    return `${this.frontendBaseUrl}/#/playbooks/${playbookId}/executions/${executionId}`;
   }
 
   /**
