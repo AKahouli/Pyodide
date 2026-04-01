@@ -22,6 +22,7 @@ describe('PlaybookController', () => {
       | 'getDesignMessages'
       | 'revertToSnapshot'
       | 'cloneForUser'
+      | 'getSchedule'
     >
   >;
   let executionService: jest.Mocked<
@@ -54,6 +55,7 @@ describe('PlaybookController', () => {
       getDesignMessages: jest.fn().mockResolvedValue([]),
       revertToSnapshot: jest.fn().mockResolvedValue({ id: playbookId }),
       cloneForUser: jest.fn().mockResolvedValue({ id: 'cloned-789' }),
+      getSchedule: jest.fn().mockResolvedValue(null),
     };
 
     executionService = {
@@ -223,7 +225,20 @@ describe('PlaybookController', () => {
         playbookId,
         dto,
         'test@example.com',
+        { executionTrigger: 'manual' },
       );
+    });
+  });
+
+  describe('getSchedule', () => {
+    it('should delegate to playbookService.getSchedule', async () => {
+      const schedule = { enabled: false, timezone: 'UTC' } as any;
+      playbookService.getSchedule.mockResolvedValue(schedule);
+
+      const result = await controller.getSchedule(playbookId);
+
+      expect(playbookService.getSchedule).toHaveBeenCalledWith(playbookId);
+      expect(result).toBe(schedule);
     });
   });
 

@@ -99,6 +99,12 @@ export class PlaybookController {
     return this.executionService.findActiveExecutionsByUser(user._id.toString());
   }
 
+  @Get(':id/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  async getSchedule(@Param('id') id: string) {
+    return this.playbookService.getSchedule(id);
+  }
+
   @Put(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
   async upsertSchedule(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
@@ -171,7 +177,9 @@ export class PlaybookController {
     @Param('id') id: string,
     @Body() dto: ExecutePlaybookDto,
   ) {
-    return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email);
+    return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email, {
+      executionTrigger: 'manual',
+    });
   }
 
   @Post(':id/tasks/:taskId/validate-replay')

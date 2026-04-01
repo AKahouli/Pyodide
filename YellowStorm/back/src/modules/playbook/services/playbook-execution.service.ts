@@ -664,6 +664,11 @@ export class PlaybookExecutionService {
   }
 
 
+  /**
+   * Creates a `PlaybookExecution` and starts the run loop. Use `options.executionTrigger === 'scheduled'`
+   * only from trusted internal callers (e.g. schedule runner). User-facing `POST /playbooks/:id/execute` must
+   * pass `manual` via the controller.
+   */
   async executePlaybook(
     userId: string,
     playbookId: string,
@@ -671,6 +676,8 @@ export class PlaybookExecutionService {
     userEmail: string = '',
     options?: { executionTrigger?: 'manual' | 'scheduled' },
   ): Promise<{ executionId: string }> {
+    const executionTrigger: 'manual' | 'scheduled' =
+      options?.executionTrigger === 'scheduled' ? 'scheduled' : 'manual';
     const mode = dto.singleStepTaskId ? 'single-step' : 'full-workflow';
     const globalExecutionMode = dto.executionMode || 'live';
     this.logger.log('executePlaybook called', {
@@ -834,7 +841,7 @@ export class PlaybookExecutionService {
       currentAttemptNumber: 1,
       status: ExecutionStatus.RUNNING,
       executionMode: globalExecutionMode,
-      executionTrigger: options?.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      executionTrigger,
       runEvaluation: dto.runEvaluation === true,
       replaySourceByTask: hasReplaySteps
         ? this.buildReplaySourceMap(activeReplayMap)
@@ -882,6 +889,7 @@ export class PlaybookExecutionService {
         executionNumber,
         status: ExecutionStatus.RUNNING,
         executionMode: globalExecutionMode,
+        executionTrigger,
         replaySourceByTask: hasReplaySteps
           ? this.buildReplaySourceMap(activeReplayMap)
           : null,

@@ -20,6 +20,7 @@ import {
   PlaybookExecutionSummaryResponse,
   PaginatedExecutions,
   PlaybookDesignMessageResponse,
+  ExecutionScheduleData,
 } from '../interfaces/playbook.interface';
 import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
 import { buildExecutionScheduleDocument } from '../utils/execution-schedule-upsert.builder';
@@ -274,6 +275,18 @@ export class PlaybookService {
     return await this.mapToResponse(playbook as any);
   }
 
+  /**
+   * Returns the mapped execution schedule for API consumers (at most one embedded `executionSchedule` per playbook).
+   */
+  async getSchedule(playbookId: string): Promise<ExecutionScheduleData | null> {
+    const playbook = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+    return mapExecutionScheduleToData(playbook.executionSchedule);
+  }
+
+  /** Persists the single embedded schedule for this playbook (replaces any previous configuration). */
   async upsertSchedule(playbookId: string, dto: UpsertPlaybookScheduleDto): Promise<PlaybookResponse> {
     const existing = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
     if (!existing) {

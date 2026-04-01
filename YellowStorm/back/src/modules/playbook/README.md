@@ -47,7 +47,7 @@ The playbook module provides:
 - **Token Tracking**: Per-task and per-execution input/output/total token counts with model name
 - **Concurrency Control**: Per-level step parallelism with configurable limits
 - **Document Size Guards**: Component array caps and data truncation to prevent MongoDB 16MB limit
-- **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for automatic runs. Clients set or clear it via `PUT` / `DELETE` `/playbooks/:id/schedule` ([`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts), [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder)). Read responses use [`ExecutionScheduleData`](interfaces/playbook.interface.ts) from [`mapExecutionScheduleToData`](#execution-schedule-mapper).
+- **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for automatic runs. Clients read it via `GET` `/playbooks/:id/schedule` ([`getSchedule`](#services)), set or clear via `PUT` / `DELETE` ([`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts), [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder)). Full playbook responses still map schedule with [`mapExecutionScheduleToData`](#execution-schedule-mapper).
 - **Execution trigger**: Each `PlaybookExecution` stores `executionTrigger`: `manual` (default) for user-initiated runs, or `scheduled` when started by the schedule runner. Exposed on full and summary execution responses.
 
 ---
@@ -209,6 +209,7 @@ export default registerAs('playbook', () => ({
 | `GET` | `/playbooks` | JWT | List user's playbooks (paginated summaries) |
 | `POST` | `/playbooks/generate` | JWT + UsageLimit | Generate a playbook from a text prompt via AI |
 | `POST` | `/playbooks/bulk-delete` | JWT | Bulk delete multiple playbooks |
+| `GET` | `/playbooks/:id/schedule` | Owner | Read schedule only ([`ExecutionScheduleData`](interfaces/playbook.interface.ts) \| `null`) |
 | `PUT` | `/playbooks/:id/schedule` | Owner | Upsert embedded `executionSchedule` (body: [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts)) |
 | `DELETE` | `/playbooks/:id/schedule` | Owner | Clear `executionSchedule` (`null`) |
 | `GET` | `/playbooks/:id` | Owner | Get playbook by ID (full tasks/edges) |
@@ -260,6 +261,7 @@ CRUD operations, execution history, and design messages with optimized projectio
 | `getNextExecutionNumber(playbookId)` | Sequential numbering |
 | `getDesignMessages(playbookId)` | Get design message history for a playbook |
 | `revertToSnapshot(playbookId, messageId, userId)` | Revert playbook to a previous design message snapshot, creates revert record |
+| `getSchedule(playbookId)` | Returns [`ExecutionScheduleData`](interfaces/playbook.interface.ts) \| `null` (single embedded schedule per playbook) |
 | `upsertSchedule(playbookId, dto)` | Loads `executionSchedule.lastScheduledRunAt`, builds subdoc via [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder) (preserves last run when re-enabling), `$set`s `executionSchedule`, returns full playbook |
 | `clearSchedule(playbookId)` | `$set` `executionSchedule: null`, returns full playbook |
 
@@ -657,7 +659,7 @@ SSE uses query-parameter authentication since `EventSource` doesn't support cust
 |-------|---------|------|
 | `playbook_connected` | `{ connectionId }` | Client connects |
 | `playbook_heartbeat` | `{ timestamp }` | Every `sseHeartbeatMs` |
-| `playbook_execution_start` | `{ executionId, playbookId, executionNumber, status, taskResults }` | Execution begins |
+| `playbook_execution_start` | `{ executionId, playbookId, executionNumber, status, executionMode, executionTrigger, taskResults, ... }` | Execution begins |
 | `playbook_step_start` | `{ executionId, taskId, status: 'running' }` | Step begins |
 | `playbook_step_complete` | `{ executionId, taskId, status, output?, error?, durationMs?, components?, inputTokens?, outputTokens?, totalTokens?, modelName? }` | Step finishes |
 | `playbook_execution_complete` | `{ executionId, status, durationMs, skippedTaskIds?, totalInputTokens?, totalOutputTokens?, totalTokens? }` | All steps done |
@@ -830,6 +832,7 @@ PATCH  /api/v1/playbooks/:id                          -> Update playbook (autosa
 DELETE /api/v1/playbooks/:id                          -> Soft delete playbook
 POST   /api/v1/playbooks/:id/favorite                 -> Toggle favorite status
 POST   /api/v1/playbooks/:id/clone-share              -> Share playbook by email (clones for recipients)
+GET    /api/v1/playbooks/:id/schedule                 -> Get execution schedule (ExecutionScheduleData | null)
 PUT    /api/v1/playbooks/:id/schedule                 -> Upsert execution schedule (body: UpsertPlaybookScheduleDto)
 DELETE /api/v1/playbooks/:id/schedule                 -> Clear execution schedule
 ```
