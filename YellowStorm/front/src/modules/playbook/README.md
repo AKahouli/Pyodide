@@ -127,6 +127,7 @@ playbook/
 │   ├── PlaybookNodeEditor.tsx            # Side sheet for editing node properties
 │   ├── PlaybookToolbar.tsx               # Canvas toolbar (designer, add step, auto layout, schedule, history, save, run)
 │   ├── schedule/                         # Execution schedule sheet, badge, time helpers
+│   │   ├── timeInput.ts                 # `timeLocalFromInput`: `<input type="time">` → `HH:mm` for API
 │   ├── PlaybookWorkspaceSelect.tsx       # Multi-select workspace picker
 │   ├── PlaybookGeneratingOverlay.tsx     # Animated overlay during AI generation/design
 │   ├── PlaybookDesignerPanel.tsx         # AI Designer chat panel (right sidebar)
@@ -572,11 +573,13 @@ Smart component array merging for SSE step_complete updates:
 - Replaces non-humanFeedback components with incoming data
 - Used by `onStepComplete` store handler to prevent losing interrupt state during live updates
 
-### Schedule helpers (`utils/formatPlaybookDateTime.ts`, `scheduleDisplay.ts`, `scheduleValidation.ts`)
+### Schedule helpers (`constants/schedule.constants.ts`, `utils/scheduleValidation.ts`, `utils/scheduleDisplay.ts`, `components/schedule/timeInput.ts`)
 
+- **schedule.constants** — Caps and limits shared by validation and the schedule UI
 - **formatPlaybookDateTime** — Consistent timezone-aware strings for the schedule sheet and badges
 - **scheduleDisplay** — Short summaries for toolbar/badge copy (e.g. “Daily at 9:00”)
-- **scheduleValidation** — Client-side checks before calling `upsertPlaybookSchedule` (limits from `constants/schedule.constants.ts`)
+- **scheduleValidation** — Client-side checks before calling `upsertPlaybookSchedule` (`scheduleValidation.test.ts` covers disabled payload, timezone requirement, valid daily)
+- **timeInput** — `timeLocalFromInput` normalizes `<input type="time">` values to `HH:mm` for the API
 
 ---
 
