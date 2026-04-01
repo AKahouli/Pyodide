@@ -137,7 +137,7 @@ describe('playbook store', () => {
     const cloned = makePlaybook({ id: 'p2', name: 'Playbook (copy)' });
     apiMock.clonePlaybook.mockResolvedValueOnce(cloned);
     usePlaybookStore.setState({
-      playbooks: [{ id: 'p1', name: 'Existing', description: '', taskCount: 1, isFavorite: false, lastExecutionAt: null, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z' }],
+      playbooks: [{ id: 'p1', name: 'Existing', description: '', taskCount: 1, isFavorite: false, scheduleEnabled: false, lastExecutionAt: null, createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:00.000Z' }],
     });
 
     const result = await usePlaybookStore.getState().clonePlaybook('p1');
@@ -169,6 +169,7 @@ describe('playbook store', () => {
         description: initialPlaybook.description,
         taskCount: initialPlaybook.tasks.length,
         isFavorite: initialPlaybook.isFavorite,
+        scheduleEnabled: false,
         lastExecutionAt: null,
         createdAt: initialPlaybook.createdAt,
         updatedAt: initialPlaybook.updatedAt,
@@ -249,6 +250,7 @@ describe('playbook store', () => {
         description: 'Description',
         taskCount: 1,
         isFavorite: false,
+        scheduleEnabled: false,
         lastExecutionAt: null,
         createdAt: '2025-01-01T00:00:00.000Z',
         updatedAt: '2025-01-01T00:00:00.000Z',

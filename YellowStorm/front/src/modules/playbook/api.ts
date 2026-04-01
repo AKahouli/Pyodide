@@ -10,6 +10,7 @@ import type {
   PlaybookQueryParams,
   PlaybookExecution,
   PlaybookExecutionSummary,
+  ExecutionScheduleData,
   DesignMessage,
   CreatePlaybookData,
   GeneratePlaybookData,
@@ -19,6 +20,7 @@ import type {
   ResumePlaybookData,
   RerunStepData,
   CloneShareResult,
+  UpsertPlaybookScheduleData,
   ValidateTaskReplayData,
   ValidatedTaskReplay,
   UpdateTaskReplayFormatData,
@@ -349,6 +351,31 @@ export async function bulkDeletePlaybooks(ids: string[]): Promise<{ deleted: num
 export async function getActiveExecutions(): Promise<PlaybookExecution[]> {
   const response = await apiClient.get<ApiResponse<PlaybookExecution[]>>(
     API_ENDPOINTS.playbooks.activeExecutions,
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookSchedule(playbookId: string): Promise<ExecutionScheduleData | null> {
+  const response = await apiClient.get<ApiResponse<ExecutionScheduleData | null>>(
+    API_ENDPOINTS.playbooks.schedule(playbookId),
+  );
+  return response.data.data;
+}
+
+export async function upsertPlaybookSchedule(
+  playbookId: string,
+  data: UpsertPlaybookScheduleData,
+): Promise<Playbook> {
+  const response = await apiClient.put<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.schedule(playbookId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function clearPlaybookSchedule(playbookId: string): Promise<Playbook> {
+  const response = await apiClient.delete<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.schedule(playbookId),
   );
   return response.data.data;
 }

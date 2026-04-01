@@ -216,6 +216,7 @@ export const API_ENDPOINTS = {
     favorite: (id: string) => `/playbooks/${id}/favorite`,
     bulkDelete: '/playbooks/bulk-delete',
     activeExecutions: '/playbooks/active-executions',
+    schedule: (id: string) => `/playbooks/${id}/schedule`,
   },
   adminModels: {
     list: '/admin/models',

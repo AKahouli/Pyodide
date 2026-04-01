@@ -32,11 +32,12 @@ import type {
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
   PlaybookUndoSnapshot,
+  UpsertPlaybookScheduleData,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
 import { mergeComponents } from './utils/merge-components';
-import { handleApiError } from '@/lib/api-error';
+import { handleApiError, parseApiError } from '@/lib/api-error';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 
 function tPlaybook(key: string, fallback: string, options?: Record<string, unknown>) {
@@ -112,6 +113,8 @@ const initialState: PlaybookState = {
   undoStack: [],
   redoStack: [],
   canvasSyncVersion: 0,
+  scheduleSaving: false,
+  scheduleError: null,
 };
 
 // ===== Stable empty references =====
@@ -360,6 +363,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           description: playbook.description,
           taskCount: playbook.tasks.length,
           isFavorite: playbook.isFavorite,
+          scheduleEnabled: playbook.executionSchedule?.enabled === true,
           lastExecutionAt: null,
           createdAt: playbook.createdAt,
           updatedAt: playbook.updatedAt,
@@ -405,6 +409,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             description: playbook.description,
             taskCount: playbook.tasks.length,
             isFavorite: existing?.isFavorite ?? false,
+            scheduleEnabled: playbook.executionSchedule?.enabled === true,
             lastExecutionAt: existing?.lastExecutionAt ?? null,
             createdAt: playbook.createdAt,
             updatedAt: playbook.updatedAt,
@@ -458,12 +463,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       clonePlaybook: async (id) => {
         const cloned = await api.clonePlaybook(id);
-        const summary = {
+        const summary: PlaybookSummary = {
           id: cloned.id,
           name: cloned.name,
           description: cloned.description,
           taskCount: cloned.tasks.length,
           isFavorite: cloned.isFavorite,
+          scheduleEnabled: cloned.executionSchedule?.enabled === true,
           lastExecutionAt: null,
           createdAt: cloned.createdAt,
           updatedAt: cloned.updatedAt,
@@ -475,6 +481,51 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
         toast.success(tPlaybook('store.toasts.cloned', 'Playbook cloned'));
         return cloned;
+      },
+
+      upsertPlaybookSchedule: async (playbookId: string, data: UpsertPlaybookScheduleData) => {
+        set({ scheduleSaving: true, scheduleError: null });
+        try {
+          const pb = await api.upsertPlaybookSchedule(playbookId, data);
+          const scheduleEnabled = pb.executionSchedule?.enabled === true;
+          set((state) => ({
+            scheduleSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.map((p) =>
+              p.id === playbookId ? { ...p, scheduleEnabled } : p,
+            ),
+          }));
+          toast.success(tPlaybook('store.toasts.scheduleSaved', 'Schedule saved'));
+        } catch (err) {
+          set({ scheduleSaving: false, scheduleError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      clearPlaybookSchedule: async (playbookId: string) => {
+        set({ scheduleSaving: true, scheduleError: null });
+        try {
+          const pb = await api.clearPlaybookSchedule(playbookId);
+          set((state) => ({
+            scheduleSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.map((p) =>
+              p.id === playbookId ? { ...p, scheduleEnabled: false } : p,
+            ),
+          }));
+          toast.success(tPlaybook('store.toasts.scheduleCleared', 'Schedule removed'));
+        } catch (err) {
+          set({ scheduleSaving: false, scheduleError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
       },
 
       toggleFavorite: async (id) => {

@@ -12,11 +12,15 @@ import {
   getPlaybooks,
   toggleFavorite,
   updatePlaybook,
+  getPlaybookSchedule,
+  upsertPlaybookSchedule,
+  clearPlaybookSchedule,
 } from './api';
 
 const apiClientMock = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  put: vi.fn(),
   patch: vi.fn(),
   delete: vi.fn(),
 }));
@@ -65,6 +69,30 @@ describe('playbook api', () => {
     apiClientMock.get.mockResolvedValueOnce({ data: { data: { id: 'e1' } } });
     await getExecution('p1', 'e1');
     expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.execution('p1', 'e1'));
+  });
+
+  it('gets, upserts, and clears playbook schedule', async () => {
+    apiClientMock.get.mockResolvedValueOnce({ data: { data: { enabled: true, timezone: 'UTC', type: 'daily' } } });
+    await getPlaybookSchedule('p1');
+    expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'));
+
+    apiClientMock.put.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
+    await upsertPlaybookSchedule('p1', {
+      enabled: true,
+      timezone: 'UTC',
+      type: 'daily',
+      daily: { timesLocal: ['09:00'] },
+    });
+    expect(apiClientMock.put).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'), {
+      enabled: true,
+      timezone: 'UTC',
+      type: 'daily',
+      daily: { timesLocal: ['09:00'] },
+    });
+
+    apiClientMock.delete.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
+    await clearPlaybookSchedule('p1');
+    expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'));
   });
 
   it('toggles favorite, bulk deletes, clones, and clone-shares', async () => {

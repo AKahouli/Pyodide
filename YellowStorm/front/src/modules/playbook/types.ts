@@ -109,12 +109,25 @@ export interface ExecutionScheduleData {
   advanced: AdvancedSchedulePayloadData | null;
 }
 
+/** Body for PUT /playbooks/:id/schedule (aligns with backend UpsertPlaybookScheduleDto). */
+export interface UpsertPlaybookScheduleData {
+  enabled: boolean;
+  timezone?: string;
+  type?: ExecutionScheduleType;
+  daily?: DailySchedulePayloadData;
+  weekly?: WeeklySchedulePayloadData;
+  monthly?: MonthlySchedulePayloadData;
+  advanced?: AdvancedSchedulePayloadData;
+}
+
 export interface PlaybookSummary {
   id: string;
   name: string;
   description: string;
   taskCount: number;
   isFavorite: boolean;
+  /** True when the playbook has an enabled execution schedule (list API). */
+  scheduleEnabled: boolean;
   lastExecutionAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -584,6 +597,9 @@ export interface PlaybookState {
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
   canvasSyncVersion: number;
+  /** Saving schedule (PUT/DELETE /playbooks/:id/schedule) */
+  scheduleSaving: boolean;
+  scheduleError: string | null;
 }
 
 export interface PlaybookActions {
@@ -599,6 +615,8 @@ export interface PlaybookActions {
   clonePlaybook: (id: string) => Promise<Playbook>;
   toggleFavorite: (id: string) => Promise<void>;
   bulkDeletePlaybooks: (ids: string[]) => Promise<void>;
+  upsertPlaybookSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
+  clearPlaybookSchedule: (playbookId: string) => Promise<void>;
 
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;
