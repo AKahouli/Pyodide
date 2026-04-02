@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-04-02 11:00] — Make playbook agent assignment mapping defensive
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Replaced the direct `new Types.ObjectId(node.assigned_agent_id)` conversion in `PlaybookDesignService.mapGrpcResponseToTasksAndEdges()` with a guarded helper that returns `null` for missing, empty, or invalid identifiers.
+- **Why:** The gRPC runtime can emit non-Mongo agent identifiers, and the previous mapping crashed playbook generation with a `BSONError` instead of continuing with an unassigned task.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-design.service.ts`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_11-00-20.md`
+
 ## [2026-04-02 09:37] — Center playbook node side connectors
 
 - **Feature:** `playbook`
