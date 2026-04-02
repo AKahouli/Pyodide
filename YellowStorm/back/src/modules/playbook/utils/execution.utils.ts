@@ -62,6 +62,16 @@ export interface BufferedStepResult {
       judgeUsed: boolean;
     };
   }>;
+  artifacts?: Array<{
+    portId: string;
+    artifactKind: string;
+    content?: string;
+    url?: string;
+    filename?: string;
+    mimeType?: string;
+    size?: number;
+    metadata?: Record<string, unknown>;
+  }>;
 }
 
 // ===== Utility Functions =====
@@ -207,4 +217,68 @@ export function topologicalSortByLevel(tasks: any[], edges: any[]): any[][] {
   }
 
   return levels;
+}
+
+export interface TaskArtifactEntry {
+  portId: string;
+  artifactKind: string;
+  content?: string;
+  url?: string;
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export function extractArtifactsFromResult(
+  task: any,
+  grpcComponents: any[],
+): TaskArtifactEntry[] {
+  const artifacts: TaskArtifactEntry[] = [];
+  if (!task) return artifacts;
+  const outputPorts = task.outputPorts || [];
+
+  for (const comp of grpcComponents) {
+    const { type, data } = extractComponentData(comp);
+
+    if (type === 'artifact') {
+      const port = outputPorts.find((p: any) => p.artifactKind === 'document') || { id: 'default' };
+      artifacts.push({
+        portId: (port as any).id || 'default',
+        artifactKind: 'document',
+        url: (data as any)?.file_path,
+        filename: (data as any)?.filename,
+        mimeType: (data as any)?.mime_type,
+      });
+    } else if (type === 'text') {
+      const port = outputPorts.find((p: any) => p.artifactKind === 'text');
+      if (port) {
+        artifacts.push({
+          portId: (port as any).id || 'default',
+          artifactKind: 'text',
+          content: (data as any)?.content,
+        });
+      }
+    } else if (type === 'code') {
+      const port = outputPorts.find((p: any) => p.artifactKind === 'code');
+      if (port) {
+        artifacts.push({
+          portId: (port as any).id || 'default',
+          artifactKind: 'code',
+          content: (data as any)?.code,
+        });
+      }
+    }
+  }
+
+  const textOutput = extractTextFromComponents(grpcComponents);
+  if (textOutput && !artifacts.some((a) => a.artifactKind === 'text')) {
+    artifacts.push({
+      portId: outputPorts[0]?.id || 'default',
+      artifactKind: 'text',
+      content: textOutput,
+    });
+  }
+
+  return artifacts;
 }

@@ -7,13 +7,13 @@ export type NodeProps = ComponentProps<typeof Card> & {
   handles: {
     target: boolean;
     source: boolean;
-  };
+  } | false;
 };
 
 export const Node = ({ handles, className, ...props }: NodeProps) => (
   <Card className={cn('node-container relative size-full h-auto w-sm gap-0 rounded-md p-0 overflow-hidden', className)} {...props}>
-    {handles.target && <Handle position={Position.Left} type='target' />}
-    {handles.source && <Handle position={Position.Right} type='source' />}
+    {handles && handles.target && <Handle position={Position.Left} type='target' />}
+    {handles && handles.source && <Handle position={Position.Right} type='source' />}
     {props.children}
   </Card>
 );

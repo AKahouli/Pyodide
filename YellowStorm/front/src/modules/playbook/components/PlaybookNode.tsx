@@ -1,5 +1,5 @@
-import { createContext, useContext, useState } from 'react';
-import { type NodeProps } from '@xyflow/react';
+import { createContext, useContext, useMemo, useState } from 'react';
+import { type NodeProps, Handle, Position } from '@xyflow/react';
 import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,11 +19,15 @@ import {
 } from '@/components/ai-elements/node';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
+import { PortLabel } from './PortLabel';
+import { ArtifactBadge } from './ArtifactBadge';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
-import type { PlaybookNodeData, StepStatus, InputFile } from '../types';
+import { PORT_COLORS } from '../utils/port-colors';
+import { migrateTask } from '../utils/migrate-ports';
+import type { PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort } from '../types';
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
@@ -198,6 +202,40 @@ function NodeMetaBadge({
   );
 }
 
+function getInputPortTop(idx: number, total: number): string {
+  if (total <= 1) return '50%';
+  const step = 100 / (total + 1);
+  return `${step * (idx + 1)}%`;
+}
+
+function getOutputPortTop(idx: number, total: number): string {
+  if (total <= 1) return '50%';
+  const step = 100 / (total + 1);
+  return `${step * (idx + 1)}%`;
+}
+
+function getInputPortStyle(port: TaskInputPort, idx: number, total: number): React.CSSProperties {
+  const colors = PORT_COLORS[port.artifactKind];
+  return {
+    top: getInputPortTop(idx, total),
+    width: 12,
+    height: 12,
+    background: colors?.dot || 'var(--muted)',
+    border: '2px solid var(--background)',
+  };
+}
+
+function getOutputPortStyle(port: TaskOutputPort, idx: number, total: number): React.CSSProperties {
+  const colors = PORT_COLORS[port.artifactKind];
+  return {
+    top: getOutputPortTop(idx, total),
+    width: 12,
+    height: 12,
+    background: colors?.dot || 'var(--muted)',
+    border: '2px solid var(--background)',
+  };
+}
+
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData;
   const actions = useContext(NodeContextMenuContext);
@@ -210,11 +248,20 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
 
   const [isDragOver, setIsDragOver] = useState(false);
+  const [hoveredHandleId, setHoveredHandleId] = useState<string | null>(null);
+
+  const migratedTask = useMemo(() => migrateTask(data), [data]);
+  const inputPorts = migratedTask.inputPorts ?? [];
+  const outputPorts = migratedTask.outputPorts ?? [];
+  const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
 
   const inputFiles = currentTask?.inputFiles ?? data.inputFiles ?? [];
   const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
   const isConfigured = !!data.assignedAgentId;
   const status = data.stepStatus as StepStatus | undefined;
+  const stepArtifacts = usePlaybookStore((s) =>
+    s.currentExecution?.taskResults.find((tr) => tr.taskId === id)?.artifacts,
+  );
   const semanticMatch = data.stepSemanticMatch;
   const ringClass = status ? STATUS_RING[status] : '';
   const headerBgClass = status ? STATUS_HEADER_BG[status] : '';
@@ -265,7 +312,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     <ContextMenu>
       <ContextMenuTrigger>
         <Node
-          handles={{ target: true, source: true }}
+          handles={false}
           className={cn(
             'group transition-all duration-300',
             ringClass,
@@ -277,6 +324,43 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
+          {/* Input ports — left side */}
+          {inputPorts.map((port, idx) => (
+            <div key={port.id} className="relative">
+              <Handle
+                id={`in-${port.id}`}
+                type="target"
+                position={Position.Left}
+                style={getInputPortStyle(port, idx, inputPorts.length)}
+                onMouseEnter={() => setHoveredHandleId(`in-${port.id}`)}
+                onMouseLeave={() => setHoveredHandleId(null)}
+              />
+              {hoveredHandleId === `in-${port.id}` && (
+                <PortLabel name={port.name} kind={port.artifactKind} position="left" />
+              )}
+              {port.required && hasMultiplePorts && (
+                <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
+              )}
+            </div>
+          ))}
+
+          {/* Output ports — right side */}
+          {outputPorts.map((port, idx) => (
+            <div key={port.id} className="relative">
+              <Handle
+                id={`out-${port.id}`}
+                type="source"
+                position={Position.Right}
+                style={getOutputPortStyle(port, idx, outputPorts.length)}
+                onMouseEnter={() => setHoveredHandleId(`out-${port.id}`)}
+                onMouseLeave={() => setHoveredHandleId(null)}
+              />
+              {hoveredHandleId === `out-${port.id}` && (
+                <PortLabel name={port.name} kind={port.artifactKind} position="right" />
+              )}
+            </div>
+          ))}
+
           <NodeHeader className={cn('transition-colors duration-300', headerBgClass)}>
             <div className="flex items-center justify-between w-full gap-2">
               <div className="flex items-center gap-2 min-w-0">
@@ -339,6 +423,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   />
                 )}
               </div>
+            )}
+
+            {stepArtifacts && stepArtifacts.length > 0 && (
+              <ArtifactBadge artifacts={stepArtifacts} />
             )}
 
             <div className="flex items-center justify-between gap-2 pt-1">

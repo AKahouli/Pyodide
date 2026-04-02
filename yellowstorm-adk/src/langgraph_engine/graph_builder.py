@@ -47,45 +47,80 @@ class DynamicGraphBuilder:
         task_id: str,
         task_config: TaskConfig,
         state: ExecutionState,
-    ) -> str:
+    ) -> tuple[str, list]:
         """Build context string from dependency results using structured routing.
 
-        Uses ``input_keys`` and ``output_key`` from task configs when available
-        for typed I/O routing.  Falls back to edge-based dependency context
-        when keys are not configured.
+        Uses typed port resolution (new path) when input_ports and
+        artifacts_by_port are available.  Falls back to legacy input_keys /
+        edge-walking for playbooks without ports.
+
+        Returns:
+            Tuple of (prompt_text, workspace_artifacts) where workspace_artifacts
+            is a list of heavy artifacts (document, image, etc.) that should be
+            injected into workspace_context for agent tool access.
         """
-        parts: List[str] = []
-        seen_sources = set()
+        prompt_parts: List[str] = []
+        workspace_artifacts: list = []
+        seen_source_ids: set[str] = set()
 
+        # 1. Typed port resolution (new path)
+        input_ports = {p["id"]: p for p in task_config.get("input_ports") or []}
+        artifacts_by_port = state.get("artifacts_by_port") or {}
+
+        if input_ports and artifacts_by_port:
+            for edge in state.get("edges") or []:
+                if edge.get("target_id") != task_id:
+                    continue
+
+                source_port_id = edge.get("source_output_port_id", "default")
+                target_port_id = edge.get("target_input_port_id", "default")
+                artifact_key = f"{edge['source_id']}:{source_port_id}"
+
+                artifact = artifacts_by_port.get(artifact_key)
+                if not artifact:
+                    continue
+
+                target_port = input_ports.get(target_port_id, {})
+                label = target_port.get("name", target_port_id)
+                seen_source_ids.add(edge["source_id"])
+
+                artifact_kind = artifact.get("artifact_kind", "text")
+                if artifact_kind in ("text", "code"):
+                    prompt_parts.append(f"Input '{label}':\n{artifact.get('content', '')}")
+                else:
+                    workspace_artifacts.append(artifact)
+
+        # 2. Legacy fallback — input_keys
         input_keys = task_config.get("input_keys") or []
-
         if input_keys and state.get("task_outputs"):
             for key in input_keys:
                 value = state["task_outputs"].get(key)
                 if value is not None:
-                    parts.append(f"Input '{key}':\n{value}")
-                    seen_sources.add(key)
+                    prompt_parts.append(f"Input '{key}':\n{value}")
 
-        for edge in state["edges"]:
-            if edge["target_id"] != task_id:
-                continue
-            source_id = edge["source_id"]
-            if source_id in seen_sources:
-                continue
-            if source_id not in state["results"]:
-                continue
+        # 3. Legacy fallback — walk edges for raw output
+        if not prompt_parts and not seen_source_ids:
+            for edge in state.get("edges") or []:
+                if edge["target_id"] != task_id:
+                    continue
+                source_id = edge["source_id"]
+                if source_id in seen_source_ids:
+                    continue
+                if source_id not in state["results"]:
+                    continue
 
-            source_task = next(
-                (t for t in state["tasks"] if t.get("id") == source_id),
-                None,
-            )
-            if not source_task:
-                continue
+                source_task = next(
+                    (t for t in state["tasks"] if t.get("id") == source_id),
+                    None,
+                )
+                if not source_task:
+                    continue
 
-            output = state["results"][source_id].get("output", "")
-            parts.append(f"\n\nPrevious task '{source_task['title']}' result:\n{output}")
+                output = state["results"][source_id].get("output", "")
+                if output:
+                    prompt_parts.append(f"\n\nPrevious task '{source_task['title']}' result:\n{output}")
 
-        return "".join(parts)
+        return "\n\n".join(prompt_parts), workspace_artifacts
 
     def _create_task_node(
         self,
@@ -334,7 +369,7 @@ class DynamicGraphBuilder:
                         }
 
                 # === STEP 3: Build context from dependency results ===
-                context = self._build_structured_context(task_id, task_config, state)
+                context, workspace_artifacts = self._build_structured_context(task_id, task_config, state)
 
                 def _build_user_prompt(current_task_for_execution: Dict[str, Any]) -> str:
                     prompt = (
@@ -371,7 +406,31 @@ class DynamicGraphBuilder:
 
                 workspace_filenames = []
                 seen_workspace_files = set()
-                for workspace in state.get("workspace_context") or []:
+
+                effective_workspace_context = list(state.get("workspace_context") or [])
+                if workspace_artifacts:
+                    artifact_workspace = {
+                        "workspace_id": "playbook_artifacts",
+                        "documents": [
+                            {
+                                "_id": a.get("url", ""),
+                                "filename": a.get("filename", "artifact"),
+                                "filepath": a.get("url", ""),
+                                "in_memory": False,
+                                "language": "fr",
+                                "indexing_token": 1200,
+                                "workspace_id": "playbook_artifacts",
+                            }
+                            for a in workspace_artifacts
+                        ],
+                    }
+                    effective_workspace_context.append(artifact_workspace)
+                    logger.info(
+                        f"[{task_id}] Injected workspace artifacts",
+                        artifact_count=len(workspace_artifacts),
+                    )
+
+                for workspace in effective_workspace_context:
                     for doc in workspace.get("documents", []):
                         filename = str(doc.get("filename", "")).strip()
                         if filename and filename not in seen_workspace_files:
@@ -724,6 +783,15 @@ class DynamicGraphBuilder:
                 }
                 if output_key and output_text:
                     state_update["task_outputs"] = {output_key: output_text}
+
+                raw_artifacts = task_result.get("artifacts") or []
+                if raw_artifacts:
+                    port_artifacts: Dict[str, Dict[str, Any]] = {}
+                    for art in raw_artifacts:
+                        port_id = art.get("port_id", "default")
+                        art_key = f"{task_id}:{port_id}"
+                        port_artifacts[art_key] = art
+                    state_update["artifacts_by_port"] = port_artifacts
 
                 return state_update
 

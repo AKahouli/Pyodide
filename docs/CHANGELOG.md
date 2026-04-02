@@ -1,5 +1,64 @@
 # Changelog
 
+## [2026-04-01 17:00] — Fix autosave stripping port fields from playbook response
+
+- **Feature:** `task-toolbar`
+- **Type:** `fix`
+- **Changed:** Added `enabled`, `taskType`, `inputPorts`, `outputPorts`, `stepReplayMode` to `mapToResponse()` task mapping in `playbook.service.ts`. Added `sourceOutputPortId`, `targetInputPortId` to edge mapping in the same method. Added corresponding fields to `PlaybookTaskData` and `PlaybookEdgeData` interfaces in `playbook.interface.ts`. The data was already being saved to MongoDB correctly via `$set`, but the API response used an explicit field map that omitted the Week 1-4 port/type fields, causing the frontend's `currentPlaybook` to lose ports on every save cycle.
+- **Why:** After autosave, `currentPlaybook` was replaced with the server response which lacked `inputPorts`, `outputPorts`, `taskType` on tasks and `sourceOutputPortId`, `targetInputPortId` on edges — making port settings appear to not persist.
+- **Impact:** `playbook.service.ts` (mapToResponse), `playbook.interface.ts` (PlaybookTaskData, PlaybookEdgeData)
+- **Doc:** n/a
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Added `artifacts` field to `PlaybookStepCompleteEvent` SSE type and propagated through the `onStepComplete` handler into execution cache task results. Created `ArtifactBadge` component: color-coded badge row showing artifact kinds with icons (matching port color palette), tooltip with kind counts, overflow +N indicator. Rendered `ArtifactBadge` on `PlaybookNode` below existing replay/format badges, reading from `currentExecution.taskResults`. Created `ArtifactListItem` in `ExecutionStepDetail`: icon + filename + kind badge + size + truncated content preview for text/code artifacts + download button (Blob URL for inline content, new tab for URL artifacts). Added artifact section in the results tab after the output/running indicator. Added i18n keys `artifacts.title`, `artifacts.sectionTitle`, `artifacts.noArtifacts` in en/fr. Exported `ArtifactBadge` from module index. Marked feature status as stable.
+- **Why:** Users can now see at a glance what artifacts a completed step produced (on the node badge) and inspect/download them in the step detail panel, completing the visual artifact lifecycle.
+- **Impact:** `types.ts`, `store.ts`, `ArtifactBadge.tsx` (new), `PlaybookNode.tsx`, `ExecutionStepDetail.tsx`, `index.ts`, `en.json`, `fr.json`
+- **Doc:** created `/docs/task-toolbar/README_2026-04-01_16-45-00.md`
+
+## [2026-04-01 15:30] — ADK artifact routing: port-aware context resolution and artifact storage (Week 5)
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Rewrote `_build_structured_context()` in `graph_builder.py` to return `tuple[str, list]` — typed port resolution walks edges to look up `artifacts_by_port["{source_id}:{port_id}"]`, routes text/code artifacts into prompt parts, and collects heavy artifacts (document, image) into a `workspace_artifacts` list. Workspace artifacts are merged into `effective_workspace_context` before passing to `create_langchain_tools()`. Added artifact storage after task completion: `task_result["artifacts"]` indexed by `"{task_id}:{port_id}"` into `state_update["artifacts_by_port"]`, merged via `merge_artifacts` reducer. Legacy fallback preserved for playbooks without ports.
+- **Why:** ADK now routes artifacts end-to-end by typed port — upstream task outputs are stored in state, resolved for downstream context building, and heavy artifacts are injected into workspace for agent tool access.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`
+- **Doc:** created `/docs/task-toolbar/README_2026-04-01_15-30-00.md`
+
+## [2026-04-01 11:30] — Backend artifact routing and dual-path context resolution (Week 4)
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Added `TaskInputPortSchema` and `TaskOutputPortSchema` Mongoose sub-documents. Extended `PlaybookTask` with `taskType` (enum), `inputPorts`, `outputPorts`. Extended `PlaybookEdge` with `sourceOutputPortId`, `targetInputPortId` (default 'default'). Added `artifacts` field to `TaskResult`. Extended backend `chatbot.proto` with `TaskInputPort`, `TaskOutputPort`, `TaskArtifact` messages and fields 14-16 on `PlaybookTaskConfig`, 3-4 on `PlaybookEdgeConfig`, 11 on `PlaybookTaskResult`. Updated `runFullWorkflow()` and `executeStep()` gRPC request builders to pass port metadata and edge port IDs. Created `extractArtifactsFromResult()` utility matching gRPC components to task output ports by artifactKind. Extended `BufferedStepResult` with `artifacts` field; updated `handleStepUpdate()`, `flushStepBuffer()`, and `updateTaskResult()` to persist artifacts. Rewrote `gatherContext()` with dual-path: typed port resolution (primary) using port-to-port edge labels, with legacy `inputKeys`/edge-walking fallback.
+- **Why:** Backend now passes port metadata to the ADK and extracts/typed artifacts from step results, enabling the ADK to route artifacts by port in Week 5.
+- **Impact:** `playbook.schema.ts`, `playbook-execution.schema.ts`, `chatbot.proto` (backend), `execution.utils.ts`, `playbook-execution.service.ts`
+- **Doc:** created `/docs/task-toolbar/README_2026-04-01_11-30-00.md`
+
+## [2026-04-01 11:02] — Template registry, toolbar dropdown, and port editor (Week 3)
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Created `task-template-registry.ts` with 5 hardcoded TaskTemplate definitions (Summarizer, DocxGen, SlideGen, CodeGen, Analyzer) each with proper typed input/output ports. Replaced single "Add Step" button in toolbar with split button: left side creates blank step, right chevron opens dropdown with all templates. Added port management UI to PlaybookNodeEditor: input ports section (color dot, editable name, ArtifactKind select, required toggle, delete) and output ports section (same minus required). Wired `onAddStepFromTemplate` in PlaybookCanvasPage to create pre-configured nodes from templates with correct taskType and ports. Updated tests for new toolbar props.
+- **Why:** Users can now quickly add pre-configured task nodes from templates and manage ports directly in the node editor, completing the template-driven toolbar experience.
+- **Impact:** `task-template-registry.ts` (new), `PlaybookToolbar.tsx`, `PlaybookNodeEditor.tsx`, `PlaybookCanvasPage.tsx`, `PlaybookToolbar.test.tsx`
+- **Doc:** created `/docs/task-toolbar/README_2026-04-01_11-02-00.md`
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Updated `node.tsx` to accept `handles={false}` for custom handle rendering. Added `Edge.AnimatedWarning` variant for type-mismatched connections. Rewrote `PlaybookNode.tsx` to render dynamic `<Handle>` components per port with color-coded positions (7 ArtifactKind colors), hover labels showing port name + icon, required-port red indicator. Updated `usePlaybookCanvas.ts` with port-aware edge converters (sourceHandle/targetHandle mapping to port IDs), type compatibility checking on `onConnect`, and duplicate port-to-port connection prevention. Registered warning edge type in `PlaybookCanvasPage.tsx`. Added default text ports to new blank steps. Created `PortLabel.tsx` and `port-colors.ts` utility.
+- **Why:** Canvas now visually represents the typed port model from Week 1, enabling users to see and connect specific input/output ports on nodes.
+- **Impact:** `node.tsx`, `edge.tsx`, `PlaybookNode.tsx`, `PortLabel.tsx` (new), `port-colors.ts` (new), `usePlaybookCanvas.ts`, `PlaybookCanvasPage.tsx`
+- **Doc:** updated `/docs/task-toolbar/README_2026-04-01_09-50-00.md`
+
+## [2026-04-01 09:36] — Typed port & artifact data model (Week 1 foundation)
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Added `ArtifactKind`, `TaskInputPort`, `TaskOutputPort`, `TaskArtifact`, `TaskTemplate` types to frontend. Extended `PlaybookTask` with `taskType`, `inputPorts`, `outputPorts`. Extended `PlaybookEdge` with `sourceOutputPortId`, `targetInputPortId`. Extended `TaskResult` with `artifacts`. Added proto messages `TaskOutputPort`, `TaskInputPort`, `TaskArtifact` and extended `PlaybookTaskConfig`, `PlaybookEdgeConfig`, `PlaybookTaskResult`. Added `artifacts_by_port` with `merge_artifacts` reducer to ADK `ExecutionState`. Created lazy migration utilities for backward compatibility. Added i18n keys for templates, ports, and artifact kinds in en/fr. Created store barrel re-export.
+- **Why:** Foundation for template-driven toolbar and typed artifact routing between playbook tasks (Weeks 2-6 of TASK_TOOLBAR_IMPLEMENTATION_PLAN).
+- **Impact:** `types.ts`, `chatbot.proto`, `state.py`, `migrate-ports.ts` (new), `store/index.ts` (new), `en.json`, `fr.json`, `index.ts`
+- **Doc:** created `/docs/task-toolbar/README_2026-04-01_09-36-39.md`
+
 ## [2026-03-30 03:58] — Add reducers for status and error fields in ExecutionState
 
 - **Feature:** `playbook`

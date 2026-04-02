@@ -10,6 +10,7 @@ import {
   IsBoolean,
   IsMongoId,
   IsIn,
+  IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
@@ -57,6 +58,40 @@ export class InputFileDto {
   @ValidateNested()
   @Type(() => InputFileMetadataDto)
   metadata?: InputFileMetadataDto;
+}
+
+export class TaskInputPortDto {
+  @IsString()
+  id!: string;
+
+  @IsString()
+  name!: string;
+
+  @IsEnum(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'])
+  artifactKind!: string;
+
+  @IsOptional()
+  @IsBoolean()
+  required?: boolean;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
+}
+
+export class TaskOutputPortDto {
+  @IsString()
+  id!: string;
+
+  @IsString()
+  name!: string;
+
+  @IsEnum(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'])
+  artifactKind!: string;
+
+  @IsOptional()
+  @IsString()
+  description?: string;
 }
 
 export class UpdatePlaybookTaskDto {
@@ -143,6 +178,24 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested({ each: true })
   @Type(() => InputFileDto)
   inputFiles?: InputFileDto[];
+
+  @IsOptional()
+  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'])
+  taskType?: string;
+
+  @ApiPropertyOptional({ type: [TaskInputPortDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TaskInputPortDto)
+  inputPorts?: TaskInputPortDto[];
+
+  @ApiPropertyOptional({ type: [TaskOutputPortDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TaskOutputPortDto)
+  outputPorts?: TaskOutputPortDto[];
 }
 
 export class UpdatePlaybookEdgeDto {
@@ -154,6 +207,14 @@ export class UpdatePlaybookEdgeDto {
 
   @IsString()
   targetId!: string;
+
+  @IsOptional()
+  @IsString()
+  sourceOutputPortId?: string;
+
+  @IsOptional()
+  @IsString()
+  targetInputPortId?: string;
 }
 
 export class UpdatePlaybookDto {

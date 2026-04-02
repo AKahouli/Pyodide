@@ -28,6 +28,9 @@ export interface PlaybookTaskData {
   inputKeys: string[];
   outputKey: string;
   enabled?: boolean;
+  taskType?: string | null;
+  inputPorts?: Array<{ id: string; name: string; artifactKind: string; required: boolean; description?: string }>;
+  outputPorts?: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
   notifyOnComplete: boolean;
   notifyEmails: string[];
   hasValidatedReplay?: boolean;
@@ -44,12 +47,15 @@ export interface PlaybookTaskData {
   activeOutputFormatStatus?: 'pending' | 'ready' | 'failed' | null;
   activeOutputFormatError?: string | null;
   inputFiles?: InputFileData[];
+  stepReplayMode?: string;
 }
 
 export interface PlaybookEdgeData {
   id: string;
   sourceId: string;
   targetId: string;
+  sourceOutputPortId?: string;
+  targetInputPortId?: string;
 }
 
 export interface PlaybookSummaryResponse {

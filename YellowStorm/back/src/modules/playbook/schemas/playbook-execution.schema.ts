@@ -145,6 +145,18 @@ export class TaskResult {
 
   @Prop({ type: String, default: null })
   invalidatedByTaskId!: string | null;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  artifacts!: Array<{
+    portId: string;
+    artifactKind: string;
+    content?: string;
+    url?: string;
+    filename?: string;
+    mimeType?: string;
+    size?: number;
+    metadata?: Record<string, unknown>;
+  }>;
 }
 
 export const TaskResultSchema = SchemaFactory.createForClass(TaskResult);

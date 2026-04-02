@@ -33,6 +33,7 @@ import {
   pLimit,
   topologicalSortByLevel,
   mergeWithExistingHumanFeedback,
+  extractArtifactsFromResult,
   MAX_COMPONENTS_PER_TASK_DEFAULT,
   MAX_CONCURRENT_STEPS_DEFAULT,
 } from '../utils/execution.utils';
@@ -1008,12 +1009,28 @@ export class PlaybookExecutionService {
           input_keys: t.inputKeys || [],
           output_key: t.outputKey || '',
           input_files: taskInputFileIdsMap.get(t.id) || [],
+          input_ports: (t.inputPorts || []).map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            artifact_kind: p.artifactKind,
+            required: p.required || false,
+            description: p.description || '',
+          })),
+          output_ports: (t.outputPorts || []).map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            artifact_kind: p.artifactKind,
+            description: p.description || '',
+          })),
+          task_type: t.taskType || 'generic',
         };
       }),
       agents: [],
       edges: enabledEdges.map((e: any) => ({
         source_id: e.sourceId || e.source_id,
         target_id: e.targetId || e.target_id,
+        source_output_port_id: e.sourceOutputPortId || 'default',
+        target_input_port_id: e.targetInputPortId || 'default',
       })),
       workspace_context: workspaceContexts,
       execution_mode: 'live',
@@ -1116,6 +1133,8 @@ export class PlaybookExecutionService {
         const output = extractTextFromComponents(grpcComps);
         const durationMs = parseInt(result?.duration_ms || '0', 10);
         const existing = stepBuffer.get(taskId);
+        const completedTask = taskMap.get(taskId);
+        const artifacts = extractArtifactsFromResult(completedTask, grpcComps);
 
         const usage = result?.usage;
         const usageFields = usage ? {
@@ -1136,15 +1155,15 @@ export class PlaybookExecutionService {
           durationMs,
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
+          artifacts,
           ...usageFields,
         });
           this.streamGateway.sendToUser(userId, {
             type: 'playbook_step_complete',
-            data: { executionId, taskId, status: 'completed', output, components, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
+            data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
           });
           this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'completed' });
           this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
-          const completedTask = taskMap.get(taskId);
         if (completedTask) this.sendStepNotificationEmail(completedTask, 'completed', playbookName, { output });
         break;
       }
@@ -1158,6 +1177,8 @@ export class PlaybookExecutionService {
         const error = result?.error || 'Step failed';
         const durationMs = parseInt(result?.duration_ms || '0', 10);
         const existing = stepBuffer.get(taskId);
+        const failedTask = taskMap.get(taskId);
+        const artifacts = extractArtifactsFromResult(failedTask, grpcComps);
 
         const usage = result?.usage;
         const usageFields = usage ? {
@@ -1182,10 +1203,9 @@ export class PlaybookExecutionService {
         });
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_step_complete',
-          data: { executionId, taskId, status: 'failed', error, components, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
+          data: { executionId, taskId, status: 'failed', error, artifacts, components, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
         });
         this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'failed', error });
-        const failedTask = taskMap.get(taskId);
         if (failedTask) this.sendStepNotificationEmail(failedTask, 'failed', playbookName, { error });
         break;
       }
@@ -1198,6 +1218,8 @@ export class PlaybookExecutionService {
         const semanticMatch = this.mapGrpcSemanticMatch(result?.semantic_match);
         const durationMs = parseInt(result?.duration_ms || '0', 10);
         const existing = stepBuffer.get(taskId);
+        const skippedTask = taskMap.get(taskId);
+        const artifacts = extractArtifactsFromResult(skippedTask, grpcComps);
 
         const usage = result?.usage;
         const usageFields = usage ? {
@@ -1222,7 +1244,7 @@ export class PlaybookExecutionService {
         });
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_step_complete',
-          data: { executionId, taskId, status: 'skipped', output: '', components, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
+          data: { executionId, taskId, status: 'skipped', output: '', artifacts, components, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
         });
         this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'skipped' });
         break;
@@ -1287,6 +1309,7 @@ export class PlaybookExecutionService {
       if (buffered.semanticMatch !== undefined) fields.semanticMatch = buffered.semanticMatch;
       if (buffered.toolTrace !== undefined) fields.toolTrace = buffered.toolTrace;
       if ((buffered as any).llmPromptTrace !== undefined) fields.llmPromptTrace = (buffered as any).llmPromptTrace;
+      if ((buffered as any).artifacts !== undefined) fields.artifacts = (buffered as any).artifacts;
       // Only write components when the buffer actually has them, and merge
       // with existing humanFeedback components so answered HF is preserved
       if (buffered.components !== undefined) {
@@ -1461,7 +1484,11 @@ export class PlaybookExecutionService {
         if (chunk.thread_id) streamThreadId = chunk.thread_id;
 
         if (chunk.step_update) {
-          this.handleStepUpdate(userId, executionId, chunk.step_update, stepBuffer, taskMap, playbookName, evalEnabled);
+          try {
+            this.handleStepUpdate(userId, executionId, chunk.step_update, stepBuffer, taskMap, playbookName, evalEnabled);
+          } catch (err) {
+            this.logger.error('handleStepUpdate threw', { executionId, taskId: chunk.step_update.task_id, error: (err as Error).message, stack: (err as Error).stack });
+          }
           if (chunk.step_update.status === 'suspended' && chunk.step_update.interrupt) {
             const interruptTaskId = chunk.step_update.interrupt.task_id || chunk.step_update.task_id;
             const sameTask = resumedTaskId && interruptTaskId === resumedTaskId;
@@ -1526,15 +1553,17 @@ export class PlaybookExecutionService {
                   taskId: resumedTaskId,
                   status: trAny.status || 'completed',
                   output: trAny.output || null,
+                  error: trAny.error || null,
                   components: trAny.components || [],
                   toolTrace: trAny.toolTrace || [],
                   llmPromptTrace: trAny.llmPromptTrace || [],
                   durationMs: trAny.durationMs || null,
-                  inputTokens: trAny.inputTokens ?? null,
-                  outputTokens: trAny.outputTokens ?? null,
-                  totalTokens: trAny.totalTokens ?? null,
-                  modelName: trAny.modelName ?? null,
                   semanticMatch: trAny.semanticMatch ?? null,
+                  artifacts: trAny.artifacts ?? undefined,
+                  ...(trAny.inputTokens != null ? { inputTokens: trAny.inputTokens } : {}),
+                  ...(trAny.outputTokens != null ? { outputTokens: trAny.outputTokens } : {}),
+                  ...(trAny.totalTokens != null ? { totalTokens: trAny.totalTokens } : {}),
+                  ...(trAny.modelName != null ? { modelName: trAny.modelName } : {}),
                 },
               });
             }
@@ -1833,6 +1862,20 @@ export class PlaybookExecutionService {
         input_keys: task.inputKeys || [],
         output_key: task.outputKey || '',
         input_files: inputFileIds,
+        input_ports: (task.inputPorts || []).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          artifact_kind: p.artifactKind,
+          required: p.required || false,
+          description: p.description || '',
+        })),
+        output_ports: (task.outputPorts || []).map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          artifact_kind: p.artifactKind,
+          description: p.description || '',
+        })),
+        task_type: task.taskType || 'generic',
       },
       context_from_dependencies: contextFromDependencies,
       workspace_context: taskWorkspaceContexts,
@@ -1894,6 +1937,7 @@ export class PlaybookExecutionService {
         const llmPromptTrace = this.mapGrpcLlmPromptTrace(response.result?.llm_prompt_trace || []);
         const semanticMatch = this.mapGrpcSemanticMatch(response.result?.semantic_match);
         const output = extractTextFromComponents(grpcComps);
+        const artifacts = extractArtifactsFromResult(task, grpcComps);
 
         const usage = response.result?.usage;
         const usageFields = usage ? {
@@ -1915,6 +1959,7 @@ export class PlaybookExecutionService {
           isStale: false,
           staleReason: null,
           invalidatedByTaskId: null,
+          artifacts,
           ...usageFields,
         });
 
@@ -1944,7 +1989,7 @@ export class PlaybookExecutionService {
 
           this.streamGateway.sendToUser(userId, {
             type: 'playbook_step_complete',
-            data: { executionId, taskId, status: 'completed', output, components, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
+            data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
           });
           this.logger.log('Step completed', { executionId, taskId, componentCount: components.length, durationMs });
           this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', runEvaluation);
@@ -2207,6 +2252,7 @@ ${outputRow}
 
   /**
    * Build context string from taskOutputs and incoming edges.
+   * Dual-path: typed port resolution (new) with legacy fallback.
    */
   private gatherContext(
     task: any,
@@ -2214,6 +2260,29 @@ ${outputRow}
     snapshot: any,
   ): string {
     const contextParts: string[] = [];
+    const coveredSourceIds = new Set<string>();
+
+    if (task.inputPorts && task.inputPorts.length > 0 && snapshot?.edges) {
+      const inputPortsById = new Map<string, any>();
+      for (const port of task.inputPorts) {
+        inputPortsById.set(port.id, port);
+      }
+
+      for (const edge of snapshot.edges) {
+        if (edge.targetId !== task.id) continue;
+
+        const sourcePortId = edge.sourceOutputPortId || 'default';
+        const targetPortId = edge.targetInputPortId || 'default';
+        const parentOutput = taskOutputs.get(`${edge.sourceId}:${sourcePortId}`) || taskOutputs.get(edge.sourceId);
+
+        if (parentOutput) {
+          const targetPort = inputPortsById.get(targetPortId);
+          const label = targetPort?.name || sourcePortId;
+          contextParts.push(`[${label}]:\n${parentOutput}`);
+          coveredSourceIds.add(edge.sourceId);
+        }
+      }
+    }
 
     if (task.inputKeys && task.inputKeys.length > 0) {
       for (const key of task.inputKeys) {
@@ -2224,7 +2293,7 @@ ${outputRow}
 
     if (snapshot?.edges) {
       for (const edge of snapshot.edges) {
-        if (edge.targetId === task.id) {
+        if (edge.targetId === task.id && !coveredSourceIds.has(edge.sourceId)) {
           const parentOutput = taskOutputs.get(edge.sourceId);
           if (parentOutput && !contextParts.some((p) => p.includes(parentOutput))) {
             contextParts.push(parentOutput);

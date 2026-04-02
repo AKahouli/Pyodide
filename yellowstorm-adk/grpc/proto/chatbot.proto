@@ -337,11 +337,41 @@ message PlaybookTaskConfig {
     repeated string input_keys = 11;
     string output_key = 12;
     repeated string input_files = 13;  // List of document external_ids to restrict search to
+    repeated TaskInputPort input_ports = 14;
+    repeated TaskOutputPort output_ports = 15;
+    string task_type = 16;
+}
+
+message TaskOutputPort {
+    string id = 1;
+    string name = 2;
+    string artifact_kind = 3;
+    string description = 4;
+}
+
+message TaskInputPort {
+    string id = 1;
+    string name = 2;
+    string artifact_kind = 3;
+    bool required = 4;
+    string description = 5;
+}
+
+message TaskArtifact {
+    string port_id = 1;
+    string artifact_kind = 2;
+    string content = 3;
+    string url = 4;
+    string filename = 5;
+    string mime_type = 6;
+    int64 size = 7;
 }
 
 message PlaybookEdgeConfig {
     string source_id = 1;
     string target_id = 2;
+    string source_output_port_id = 3;
+    string target_input_port_id = 4;
 }
 
 message PlaybookNodeConfig {
@@ -491,6 +521,7 @@ message PlaybookTaskResult {
     repeated ToolTraceItem tool_trace = 8;
     SemanticMatch semantic_match = 9;
     repeated LLMPromptTraceItem llm_prompt_trace = 10;
+    repeated TaskArtifact artifacts = 11;
 }
 
 message InterruptPayload {

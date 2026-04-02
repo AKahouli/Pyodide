@@ -54,7 +54,7 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 
@@ -278,7 +278,10 @@ function PlaybookCanvasInner() {
   }, [execution?.status, isGenerating, isDesigning, refreshUsage]);
 
   const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode }), []);
-  const edgeTypes = useMemo(() => ({ animated: AiEdge.Animated }), []);
+  const edgeTypes = useMemo(() => ({
+    animated: AiEdge.Animated,
+    'animated-warning': AiEdge.AnimatedWarning,
+  }), []);
   const executionForCanvas =
     currentExecution?.playbookId === id
       ? currentExecution
@@ -362,9 +365,54 @@ function PlaybookCanvasInner() {
       notifyOnComplete: false,
       notifyEmails: [],
       inputFiles: [],
+      taskType: 'generic',
+      inputPorts: [
+        { id: 'default', name: 'Input', artifactKind: 'text', required: false },
+      ],
+      outputPorts: [
+        { id: 'default', name: 'Output', artifactKind: 'text' },
+      ],
     };
     addNode(newTask);
   }, [addNode, playbook?.tasks.length, reactFlow]);
+
+  const handleAddStepFromTemplate = useCallback(
+    (template: TaskTemplate) => {
+      const taskId = crypto.randomUUID();
+      const existingCount = playbook?.tasks.length || 0;
+
+      const canvasEl = document.querySelector('.react-flow');
+      const w = canvasEl?.clientWidth ?? 800;
+      const h = canvasEl?.clientHeight ?? 600;
+      const center = reactFlow.screenToFlowPosition({ x: w / 2, y: h / 2 });
+
+      const newTask: PlaybookTask = {
+        id: taskId,
+        title: `${template.title} ${existingCount + 1}`,
+        description: template.description,
+        assignedAgentId: null,
+        executionOrder: existingCount,
+        positionX: center.x,
+        positionY: center.y,
+        interruptBefore: false,
+        interruptAfter: false,
+        allowClarification: false,
+        clarificationPrompt: '',
+        maxClarifications: 3,
+        inputKeys: [],
+        outputKey: '',
+        enabled: true,
+        notifyOnComplete: false,
+        notifyEmails: [],
+        inputFiles: [],
+        taskType: template.type,
+        inputPorts: template.inputPorts.map((p) => ({ ...p })),
+        outputPorts: template.outputPorts.map((p) => ({ ...p })),
+      };
+      addNode(newTask);
+    },
+    [addNode, playbook?.tasks.length, reactFlow],
+  );
 
   const handleEditNode = useCallback(
     (nodeId: string) => {
@@ -770,6 +818,7 @@ function PlaybookCanvasInner() {
             hasExecutionContext={Boolean(currentExecution || execution)}
             hasPendingInterrupt={Boolean(currentExecution?.interruptPayload)}
             onAddStep={handleAddStep}
+            onAddStepFromTemplate={handleAddStepFromTemplate}
             onAutoLayout={handleAutoLayout}
             onRun={handleRun}
             onSave={saveNow}

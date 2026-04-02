@@ -20,6 +20,43 @@ export class InputFileItem {
 
 export const InputFileItemSchema = SchemaFactory.createForClass(InputFileItem);
 
+@Schema({ _id: false, strict: false })
+export class TaskInputPortSchema {
+  @Prop({ type: String, required: true })
+  id!: string;
+
+  @Prop({ type: String, required: true })
+  name!: string;
+
+  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'], required: true })
+  artifactKind!: string;
+
+  @Prop({ type: Boolean, default: false })
+  required!: boolean;
+
+  @Prop({ type: String })
+  description?: string;
+}
+
+export const TaskInputPortSchemaDefinition = SchemaFactory.createForClass(TaskInputPortSchema);
+
+@Schema({ _id: false, strict: false })
+export class TaskOutputPortSchema {
+  @Prop({ type: String, required: true })
+  id!: string;
+
+  @Prop({ type: String, required: true })
+  name!: string;
+
+  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'], required: true })
+  artifactKind!: string;
+
+  @Prop({ type: String })
+  description?: string;
+}
+
+export const TaskOutputPortSchemaDefinition = SchemaFactory.createForClass(TaskOutputPortSchema);
+
 @Schema({ _id: false })
 export class PlaybookTask {
   @Prop({ type: String, required: true })
@@ -78,6 +115,15 @@ export class PlaybookTask {
 
   @Prop({ type: [InputFileItemSchema], default: [], _id: false })
   inputFiles!: InputFileItem[];
+
+  @Prop({ type: String, enum: ['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'], default: 'generic' })
+  taskType!: string;
+
+  @Prop({ type: [TaskInputPortSchemaDefinition], default: [], _id: false })
+  inputPorts!: TaskInputPortSchema[];
+
+  @Prop({ type: [TaskOutputPortSchemaDefinition], default: [], _id: false })
+  outputPorts!: TaskOutputPortSchema[];
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);
@@ -92,6 +138,12 @@ export class PlaybookEdge {
 
   @Prop({ type: String, required: true })
   targetId!: string;
+
+  @Prop({ type: String, default: 'default' })
+  sourceOutputPortId!: string;
+
+  @Prop({ type: String, default: 'default' })
+  targetInputPortId!: string;
 }
 
 export const PlaybookEdgeSchema = SchemaFactory.createForClass(PlaybookEdge);

@@ -315,5 +315,50 @@
   "status.failed": "Échoué",
   "status.skipped": "Ignoré",
   "status.interrupted": "Interrompu",
-  "status.cancelled": "Annulé"
+  "status.cancelled": "Annul\u00e9",
+
+  "toolbar.addBlankStep": "\u00c9tape vide",
+  "toolbar.fromTemplate": "Depuis un mod\u00e8le",
+  "toolbar.browseTemplates": "Parcourir tous les mod\u00e8les...",
+
+  "templates.title": "Mod\u00e8les de t\u00e2che",
+  "templates.search": "Rechercher des mod\u00e8les...",
+  "templates.categories.content": "Contenu",
+  "templates.categories.generation": "G\u00e9n\u00e9ration",
+  "templates.categories.analysis": "Analyse",
+  "templates.categories.code": "Code",
+  "templates.noResults": "Aucun mod\u00e8le trouv\u00e9.",
+
+  "ports.inputPorts": "Ports d\u2019entr\u00e9e",
+  "ports.outputPorts": "Ports de sortie",
+  "ports.addInput": "Ajouter un port d\u2019entr\u00e9e",
+  "ports.addOutput": "Ajouter un port de sortie",
+  "ports.removePort": "Supprimer le port",
+  "ports.portName": "Nom du port",
+  "ports.artifactKind": "Type d\u2019artefact",
+  "ports.required": "Requis",
+  "ports.optional": "Optionnel",
+  "ports.typeMismatch": "Incompatibilit\u00e9 de type sur cette connexion",
+
+  "artifacts.download": "T\u00e9l\u00e9charger",
+  "artifacts.preview": "Aper\u00e7u",
+  "artifacts.generatedBy": "G\u00e9n\u00e9r\u00e9 par",
+  "artifacts.title": "Artefacts g\u00e9n\u00e9r\u00e9s",
+  "artifacts.sectionTitle": "Artefacts",
+  "artifacts.noArtifacts": "Aucun artefact g\u00e9n\u00e9r\u00e9",
+
+  "artifactKind.text": "Texte",
+  "artifactKind.document": "Document",
+  "artifactKind.code": "Code",
+  "artifactKind.image": "Image",
+  "artifactKind.data": "Donn\u00e9es",
+  "artifactKind.slide_deck": "Pr\u00e9sentation",
+  "artifactKind.dashboard": "Tableau de bord",
+
+  "taskType.generic": "G\u00e9n\u00e9rique",
+  "taskType.summarizer": "R\u00e9sumeur",
+  "taskType.docxgen": "G\u00e9n\u00e9rateur de documents",
+  "taskType.slidegen": "G\u00e9n\u00e9rateur de pr\u00e9sentations",
+  "taskType.codegen": "G\u00e9n\u00e9rateur de code",
+  "taskType.analyzer": "Analyseur de donn\u00e9es"
 }

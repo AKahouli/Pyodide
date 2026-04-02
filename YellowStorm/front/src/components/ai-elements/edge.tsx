@@ -106,7 +106,43 @@ const Animated = ({ id, source, target, markerEnd, style }: EdgeProps) => {
   );
 };
 
+const AnimatedWarning = ({ id, source, target, markerEnd, style }: EdgeProps) => {
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+
+  if (!(sourceNode && targetNode)) {
+    return null;
+  }
+
+  const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode);
+
+  const [edgePath] = getBezierPath({
+    sourceX: sx,
+    sourceY: sy,
+    sourcePosition: sourcePos,
+    targetX: tx,
+    targetY: ty,
+    targetPosition: targetPos,
+  });
+
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        markerEnd={markerEnd}
+        path={edgePath}
+        style={{
+          ...style,
+          strokeDasharray: '6 4',
+          stroke: 'var(--color-yellow-500)',
+        }}
+      />
+    </>
+  );
+};
+
 export const Edge = {
   Temporary,
   Animated,
+  AnimatedWarning,
 };

@@ -1245,6 +1245,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             totalTokens: data.totalTokens ?? null,
             modelName: data.modelName ?? null,
             semanticMatch: data.semanticMatch ?? null,
+            artifacts: data.artifacts ?? undefined,
             isStale: false,
             staleReason: null,
             invalidatedByTaskId: null,

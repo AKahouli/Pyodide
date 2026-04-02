@@ -46,11 +46,16 @@ class TaskConfig(TypedDict):
     input_keys: Optional[List[str]]
     output_key: Optional[str]
     input_files: Optional[List[str]]
+    task_type: Optional[str]
+    input_ports: Optional[List[Dict[str, Any]]]
+    output_ports: Optional[List[Dict[str, Any]]]
 
 
 class EdgeConfig(TypedDict):
     source_id: str
     target_id: str
+    source_output_port_id: Optional[str]
+    target_input_port_id: Optional[str]
 
 
 class StepUpdate(TypedDict, total=False):
@@ -109,6 +114,16 @@ def merge_task_outputs(left: Dict[str, str], right: Dict[str, str]) -> Dict[str,
     return {**left, **right}
 
 
+def merge_artifacts(
+    left: Dict[str, Dict[str, Any]], right: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    if not left:
+        return right
+    if not right:
+        return left
+    return {**left, **right}
+
+
 def merge_status(left: str, right: str) -> str:
     higher_severity_wins = (_STATUS_SEVERITY.get(left, 99)
                             <= _STATUS_SEVERITY.get(right, 99))
@@ -141,3 +156,4 @@ class ExecutionState(TypedDict):
     validated_replays_by_task: Optional[Dict[str, Any]]
     step_execution_modes: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
+    artifacts_by_port: Annotated[Dict[str, Dict[str, Any]], merge_artifacts]

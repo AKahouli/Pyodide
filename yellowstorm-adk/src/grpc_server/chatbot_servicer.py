@@ -1631,6 +1631,15 @@ def _proto_task_to_dict(proto_task) -> dict:
         "input_keys": list(proto_task.input_keys) if proto_task.input_keys else None,
         "output_key": proto_task.output_key or None,
         "input_files": list(proto_task.input_files) if proto_task.input_files else None,
+        "task_type": proto_task.task_type or None,
+        "input_ports": [
+            {"id": p.id, "name": p.name, "artifact_kind": p.artifact_kind, "required": p.required, "description": p.description or None}
+            for p in proto_task.input_ports
+        ] if proto_task.input_ports else [],
+        "output_ports": [
+            {"id": p.id, "name": p.name, "artifact_kind": p.artifact_kind, "description": p.description or None}
+            for p in proto_task.output_ports
+        ] if proto_task.output_ports else [],
     }
     return result
 
@@ -1685,6 +1694,8 @@ def _proto_edge_to_dict(proto_edge) -> dict:
     return {
         "source_id": proto_edge.source_id,
         "target_id": proto_edge.target_id,
+        "source_output_port_id": proto_edge.source_output_port_id or "default",
+        "target_input_port_id": proto_edge.target_input_port_id or "default",
     }
 
 

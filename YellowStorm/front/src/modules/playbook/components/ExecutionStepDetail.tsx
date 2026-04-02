@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
+import { ArtifactBadge } from './ArtifactBadge';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -9,7 +10,77 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
-import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay } from '../types';
+import { cn } from '@/lib/utils';
+import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact } from '../types';
+import { PORT_COLORS } from '../utils/port-colors';
+
+function ArtifactListItem({
+  artifact,
+}: {
+  artifact: TaskArtifact;
+}) {
+  const { t } = useModuleTranslation('playbook');
+  const colors = PORT_COLORS[artifact.artifactKind];
+  const Icon = colors?.icon || FileText;
+
+  const handleDownload = () => {
+    if (!artifact.url && !artifact.content) return;
+    if (artifact.content) {
+      const blob = new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = artifact.filename || `artifact-${artifact.portId}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else if (artifact.url) {
+      const a = document.createElement('a');
+      a.href = artifact.url;
+      a.download = artifact.filename || `artifact-${artifact.portId}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.click();
+    }
+  };
+
+  const hasDownload = !!(artifact.url || artifact.content);
+  const kindLabel = t(`artifactKind.${artifact.artifactKind}`);
+
+  return (
+    <div className="flex items-center gap-3 rounded-lg border bg-muted/20 p-3 text-sm">
+      <div className={cn('flex h-8 w-8 shrink-0 items-center justify-center rounded-md', colors?.bg || 'bg-muted')}>
+        <Icon className={cn('h-4 w-4', colors?.dot.replace('bg-', 'text-') || 'text-muted-foreground')} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-medium truncate">{artifact.filename || artifact.portId}</span>
+          <span className="shrink-0 rounded-full border border-muted-foreground/20 bg-muted/50 px-1.5 py-0 text-[10px] text-muted-foreground">
+            {kindLabel}
+          </span>
+        </div>
+        {artifact.size != null && (
+          <span className="text-xs text-muted-foreground">{(artifact.size / 1024).toFixed(1)} KB</span>
+        )}
+        {artifact.content && !artifact.url && (
+          <p className="mt-1 max-h-20 overflow-y-auto rounded bg-muted/50 p-2 font-mono text-xs text-muted-foreground whitespace-pre-wrap break-words">
+            {artifact.content.length > 500 ? artifact.content.slice(0, 500) + '...' : artifact.content}
+          </p>
+        )}
+      </div>
+      {hasDownload && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="shrink-0 h-7 px-2 text-xs"
+          onClick={handleDownload}
+        >
+          <Download className="mr-1 h-3 w-3" />
+          {t('artifacts.download' as any)}
+        </Button>
+      )}
+    </div>
+  );
+}
 import type { MessageComponent } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
@@ -394,6 +465,17 @@ export function ExecutionStepDetail({
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
               {t('execution.running')}
+            </div>
+          )}
+
+          {step.artifacts && step.artifacts.length > 0 && (
+            <div className="space-y-2">
+              <h3 className="text-sm font-medium">{t('artifacts.sectionTitle' as any)}</h3>
+              <div className="grid gap-2">
+                {step.artifacts.map((artifact, idx) => (
+                  <ArtifactListItem key={`${artifact.portId}-${idx}`} artifact={artifact} />
+                ))}
+              </div>
             </div>
           )}
         </TabsContent>

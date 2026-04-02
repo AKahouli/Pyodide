@@ -7,6 +7,51 @@ import type { MessageComponent } from '@/modules/conversation/types';
 /** Playbook components extend conversation components with humanFeedback */
 export type PlaybookComponent = MessageComponent | { type: 'humanFeedback'; data: Record<string, unknown> };
 
+// ===== Typed Port & Artifact Model =====
+
+export type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'slide_deck' | 'dashboard';
+
+export interface TaskOutputPort {
+  id: string;
+  name: string;
+  artifactKind: ArtifactKind;
+  description?: string;
+}
+
+export interface TaskInputPort {
+  id: string;
+  name: string;
+  artifactKind: ArtifactKind;
+  required: boolean;
+  description?: string;
+}
+
+export interface TaskArtifact {
+  portId: string;
+  artifactKind: ArtifactKind;
+  content?: string;
+  url?: string;
+  filename?: string;
+  mimeType?: string;
+  size?: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TaskTemplate {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  icon: string;
+  color: string;
+  category: 'content' | 'generation' | 'analysis' | 'code';
+  inputPorts: TaskInputPort[];
+  outputPorts: TaskOutputPort[];
+  promptTemplate: string;
+  recommendedAgentTypeSlug: string | null;
+  requiredToolNames: string[];
+}
+
 // ===== Domain Entities =====
 
 export interface InputFile {
@@ -58,12 +103,17 @@ export interface PlaybookTask {
   isCapturingOutputFormat?: boolean;
   stepReplayMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   inputFiles: InputFile[];
+  taskType?: string;
+  inputPorts?: TaskInputPort[];
+  outputPorts?: TaskOutputPort[];
 }
 
 export interface PlaybookEdge {
   id: string;
   sourceId: string;
+  sourceOutputPortId?: string;
   targetId: string;
+  targetInputPortId?: string;
 }
 
 export interface PlaybookSummary {
@@ -168,6 +218,7 @@ export interface TaskResult {
   isStale?: boolean;
   staleReason?: string | null;
   invalidatedByTaskId?: string | null;
+  artifacts?: TaskArtifact[];
 }
 
 export interface PlaybookExecution {
@@ -356,6 +407,7 @@ export interface PlaybookStepCompleteEvent {
   totalTokens?: number;
   modelName?: string;
   semanticMatch?: SemanticMatchResult | null;
+  artifacts?: TaskArtifact[];
 }
 
 export interface PlaybookStepEvaluationUpdatedEvent {

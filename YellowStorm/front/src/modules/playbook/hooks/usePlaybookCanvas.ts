@@ -17,7 +17,8 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
-import type { PlaybookTask, PlaybookEdge, PlaybookNodeData } from '../types';
+import { migrateEdge } from '../utils/migrate-ports';
+import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
 export function tasksToNodes(tasks: PlaybookTask[]): Node[] {
   return tasks.map((task) => ({
@@ -45,16 +46,28 @@ function playbookEdgesToFlowEdges(edges: PlaybookEdge[]): Edge[] {
     id: edge.id,
     source: edge.sourceId,
     target: edge.targetId,
+    sourceHandle: edge.sourceOutputPortId ? `out-${edge.sourceOutputPortId}` : undefined,
+    targetHandle: edge.targetInputPortId ? `in-${edge.targetInputPortId}` : undefined,
     type: 'animated',
+    data: {
+      sourceOutputPortId: edge.sourceOutputPortId || 'default',
+      targetInputPortId: edge.targetInputPortId || 'default',
+      isTypeMatch: undefined,
+    },
   }));
 }
 
 function flowEdgesToPlaybookEdges(edges: Edge[]): PlaybookEdge[] {
-  return edges.map((edge) => ({
-    id: edge.id,
-    sourceId: edge.source,
-    targetId: edge.target,
-  }));
+  return edges.map((edge) => {
+    const data = (edge.data || {}) as Record<string, unknown>;
+    return migrateEdge({
+      id: edge.id,
+      sourceId: edge.source,
+      targetId: edge.target,
+      sourceOutputPortId: data.sourceOutputPortId as string | undefined,
+      targetInputPortId: data.targetInputPortId as string | undefined,
+    });
+  });
 }
 
 /** Returns true if adding an edge from source→target would create a cycle. */
@@ -204,10 +217,36 @@ export function usePlaybookCanvas() {
           return eds;
         }
 
+        const sourceOutputPortId = connection.sourceHandle?.replace('out-', '') ?? 'default';
+        const targetInputPortId = connection.targetHandle?.replace('in-', '') ?? 'default';
+
+        const exists = eds.some((e) => {
+          const eData = (e.data || {}) as Record<string, unknown>;
+          return (
+            e.source === connection.source &&
+            e.target === connection.target &&
+            (eData.sourceOutputPortId as string) === sourceOutputPortId &&
+            (eData.targetInputPortId as string) === targetInputPortId
+          );
+        });
+        if (exists) return eds;
+
+        const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
+        const targetNode = nodesRef.current.find((n) => n.id === connection.target);
+        const sourceData = sourceNode?.data as PlaybookNodeData | undefined;
+        const targetData = targetNode?.data as PlaybookNodeData | undefined;
+        const sourcePort = sourceData?.outputPorts?.find((p) => p.id === sourceOutputPortId);
+        const targetPort = targetData?.inputPorts?.find((p) => p.id === targetInputPortId);
+        const isTypeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
+
         const newEdge: Edge = {
-          ...connection,
-          id: `e-${connection.source}-${connection.target}`,
-          type: 'animated',
+          id: `e-${connection.source}-${sourceOutputPortId}-${connection.target}-${targetInputPortId}`,
+          source: connection.source,
+          target: connection.target,
+          sourceHandle: connection.sourceHandle,
+          targetHandle: connection.targetHandle,
+          type: isTypeMatch !== false ? 'animated' : 'animated-warning',
+          data: { sourceOutputPortId, targetInputPortId, isTypeMatch },
         };
         const updated = addEdge(newEdge, eds) as Edge[];
         captureSnapshot();
