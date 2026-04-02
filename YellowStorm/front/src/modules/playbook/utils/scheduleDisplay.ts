@@ -4,8 +4,19 @@ const WEEKDAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const HM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+const PREVIEW_MAX_ITERATIONS = 60;
+
+const PREVIEW_FORMAT_OPTIONS: Intl.DateTimeFormatOptions = {
+  weekday: 'short',
+  day: 'numeric',
+  month: 'long',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+};
+
 /**
- * Next upcoming calendar occurrence of “day N at HH:mm” in the browser’s local timezone,
+ * Next upcoming calendar occurrence of "day N at HH:mm" in the browser's local timezone,
  * formatted with weekday + day + **month name** + time (helps monthly schedule UX).
  */
 export function formatNextMonthlyOccurrencePreview(
@@ -30,21 +41,16 @@ export function formatNextMonthlyOccurrencePreview(
   const now = new Date();
   const bufferMs = 30_000;
 
+  const fmt = new Intl.DateTimeFormat(locale, PREVIEW_FORMAT_OPTIONS);
+
   if (dayOfMonth === 0) {
-    for (let k = 0; k < 400; k++) {
+    for (let k = 0; k < PREVIEW_MAX_ITERATIONS; k++) {
       const d = new Date(now);
       d.setDate(d.getDate() + k);
       if (monthOfYear != null && d.getMonth() + 1 !== monthOfYear) continue;
       const cand = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute, 0, 0);
       if (cand.getTime() >= now.getTime() - bufferMs) {
-        return new Intl.DateTimeFormat(locale, {
-          weekday: 'short',
-          day: 'numeric',
-          month: 'long',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-        }).format(cand);
+        return fmt.format(cand);
       }
     }
     return '';
@@ -59,14 +65,7 @@ export function formatNextMonthlyOccurrencePreview(
     const dom = dayOfMonth === -1 ? lastDay : Math.min(Math.max(1, dayOfMonth), lastDay);
     const cand = new Date(y, mo, dom, hour, minute, 0, 0);
     if (cand.getTime() >= now.getTime() - bufferMs) {
-      return new Intl.DateTimeFormat(locale, {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'long',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).format(cand);
+      return fmt.format(cand);
     }
   }
   return '';

@@ -410,6 +410,7 @@
   "schedule.save": "Save",
   "schedule.saving": "Saving…",
   "schedule.confirmClear": "Remove schedule for this playbook?",
+  "schedule.confirmClearDesc": "This will stop all automatic executions for this playbook. You can always re-enable it later.",
   "schedule.validation.timezone": "Timezone is required",
   "schedule.validation.type": "Schedule type is required",
   "schedule.validation.times": "Add at least one time",

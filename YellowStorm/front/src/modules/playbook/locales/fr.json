@@ -410,6 +410,7 @@
   "schedule.save": "Enregistrer",
   "schedule.saving": "Enregistrement…",
   "schedule.confirmClear": "Supprimer la planification de ce playbook ?",
+  "schedule.confirmClearDesc": "Cela arrêtera toutes les exécutions automatiques de ce playbook. Vous pourrez toujours le réactiver plus tard.",
   "schedule.validation.timezone": "Le fuseau horaire est requis",
   "schedule.validation.type": "Le type de planification est requis",
   "schedule.validation.times": "Ajoutez au moins une heure",
