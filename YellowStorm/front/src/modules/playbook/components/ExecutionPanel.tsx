@@ -116,6 +116,8 @@ function PanelHeaderActions({
   historyPickerLabel,
   currentExecutionId,
   baselineExecutionId,
+  onDeleteCurrentExecution,
+  canDeleteCurrentExecution,
   onDeleteAll,
   canDeleteAll,
 }: {
@@ -123,6 +125,8 @@ function PanelHeaderActions({
   historyPickerLabel: string;
   currentExecutionId?: string;
   baselineExecutionId?: string | null;
+  onDeleteCurrentExecution?: () => void;
+  canDeleteCurrentExecution?: boolean;
   onDeleteAll?: () => void;
   canDeleteAll?: boolean;
 }) {
@@ -157,6 +161,18 @@ function PanelHeaderActions({
           <span className="hidden sm:inline">Delete All</span>
         </Button>
       )}
+      {canDeleteCurrentExecution && onDeleteCurrentExecution && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs px-2 text-destructive"
+          onClick={onDeleteCurrentExecution}
+          title={t('execution.deleteSelected')}
+        >
+          <Trash2 className="h-3 w-3 mr-1" />
+          <span className="hidden sm:inline">{t('execution.delete')}</span>
+        </Button>
+      )}
       <ExecutionHistoryPicker
         currentExecutionId={currentExecutionId}
         label={historyPickerLabel}
@@ -185,6 +201,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const deleteAllExecutions = usePlaybookStore((s) => s.deleteAllExecutions);
+  const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
   const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
@@ -194,6 +211,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
+  const [deleteExecutionDialogOpen, setDeleteExecutionDialogOpen] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState('results');
 
   // Auto-load the latest execution when panel opens with no execution loaded
@@ -301,6 +319,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   );
 
   const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
+  const canDeleteCurrentExecution = Boolean(execution && execution.status !== 'running' && execution.status !== 'interrupted');
 
   const selectedResult = execution?.taskResults.find(
     (tr) => tr.taskId === selectedStepId,
@@ -378,13 +397,15 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium">{t('execution.title')}</span>
           </div>
-          <PanelHeaderActions
-            compareUrl={compareUrl}
-            historyPickerLabel={t('execution.selectRun')}
-            baselineExecutionId={baselineExecutionId}
-            onDeleteAll={() => setDeleteAllDialogOpen(true)}
-            canDeleteAll={canDeleteAll}
-          />
+        <PanelHeaderActions
+          compareUrl={compareUrl}
+          historyPickerLabel={t('execution.workflowExecutions')}
+          baselineExecutionId={baselineExecutionId}
+          onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
+          canDeleteCurrentExecution={canDeleteCurrentExecution}
+          onDeleteAll={() => setDeleteAllDialogOpen(true)}
+          canDeleteAll={canDeleteAll}
+        />
         </div>
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
           {history.length > 0
@@ -435,6 +456,8 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
           historyPickerLabel={`#${execution.executionNumber}`}
           currentExecutionId={execution.id}
           baselineExecutionId={baselineExecutionId}
+          onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
+          canDeleteCurrentExecution={canDeleteCurrentExecution}
           onDeleteAll={() => setDeleteAllDialogOpen(true)}
           canDeleteAll={canDeleteAll}
         />
@@ -486,6 +509,36 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
               onClick={() => void handleDeleteAllExecutions()}
             >
               Delete All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteExecutionDialogOpen} onOpenChange={setDeleteExecutionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete execution</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Delete the selected workflow execution from this playbook. This action cannot be undone.
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteExecutionDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (execution) {
+                  void deleteExecution(execution.playbookId, execution.id);
+                }
+                setDeleteExecutionDialogOpen(false);
+              }}
+            >
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

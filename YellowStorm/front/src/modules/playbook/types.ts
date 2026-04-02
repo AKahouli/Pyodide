@@ -194,6 +194,25 @@ export interface StepEvaluationHistoryEntry {
   semanticMatch: SemanticMatchResult;
 }
 
+export interface StepExecutionHistoryEntry {
+  id: string;
+  attemptNumber: number | null;
+  status: StepStatus;
+  output: string | null;
+  error: string | null;
+  durationMs: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  modelName?: string | null;
+  artifacts?: TaskArtifact[];
+}
+
 export interface TaskResult {
   taskId: string;
   nodeTitle: string;
@@ -214,6 +233,7 @@ export interface TaskResult {
   modelName?: string | null;
   semanticMatch?: SemanticMatchResult | null;
   evaluationHistory?: StepEvaluationHistoryEntry[];
+  stepExecutions?: StepExecutionHistoryEntry[];
   attemptNumber?: number | null;
   isStale?: boolean;
   staleReason?: string | null;
@@ -627,6 +647,7 @@ export interface PlaybookActions {
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
   stopExecution: (playbookId: string, executionId: string) => Promise<void>;
   deleteExecution: (playbookId: string, executionId: string) => Promise<void>;
+  deleteStepExecution: (playbookId: string, executionId: string, taskId: string, stepExecutionId: string) => Promise<void>;
   deleteAllExecutions: (playbookId: string) => Promise<void>;
   validateTaskReplay: (
     playbookId: string,

@@ -330,6 +330,17 @@ export async function deleteExecution(
   await apiClient.delete(API_ENDPOINTS.playbooks.deleteExecution(playbookId, executionId));
 }
 
+export async function deleteStepExecution(
+  playbookId: string,
+  executionId: string,
+  taskId: string,
+  stepExecutionId: string,
+): Promise<void> {
+  await apiClient.delete(
+    API_ENDPOINTS.playbooks.deleteStepExecution(playbookId, executionId, taskId, stepExecutionId),
+  );
+}
+
 export async function deleteAllExecutions(
   playbookId: string,
 ): Promise<{ deleted: number; kept: number }> {

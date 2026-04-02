@@ -270,6 +270,7 @@ function buildResumeFromStepTaskResults(taskResults: PlaybookExecution['taskResu
       completedAt: null,
       semanticMatch: null,
       evaluationHistory: taskResult.evaluationHistory || [],
+      stepExecutions: taskResult.stepExecutions || [],
     };
   });
 }
@@ -297,6 +298,7 @@ function buildExecutionTaskResultsFromTasks(
     invalidatedByTaskId: null,
     semanticMatch: null,
     evaluationHistory: [],
+    stepExecutions: [],
   }));
 }
 
@@ -662,6 +664,37 @@ export const usePlaybookStore = create<PlaybookStore>()(
               currentExecution,
               selectedStepId: state.currentExecution?.id === executionId ? null : state.selectedStepId,
               executionPanelOpen: executionHistory.length > 0 ? state.executionPanelOpen : false,
+            };
+          });
+          toast.success(tPlaybook('store.toasts.deleted', 'Execution deleted'));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteStepExecution: async (playbookId, executionId, taskId, stepExecutionId) => {
+        try {
+          await api.deleteStepExecution(playbookId, executionId, taskId, stepExecutionId);
+          set((state) => {
+            const currentExecution = state.executionCache[executionId];
+            if (!currentExecution) return state;
+
+            const taskResults = currentExecution.taskResults.map((taskResult) =>
+              taskResult.taskId === taskId
+                ? {
+                    ...taskResult,
+                    stepExecutions: (taskResult.stepExecutions || []).filter((entry) => entry.id !== stepExecutionId),
+                  }
+                : taskResult,
+            );
+
+            const updatedExecution = { ...currentExecution, taskResults, updatedAt: new Date().toISOString() };
+            const executionCache = { ...state.executionCache, [executionId]: updatedExecution };
+
+            return {
+              executionCache,
+              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
             };
           });
           toast.success(tPlaybook('store.toasts.deleted', 'Execution deleted'));
@@ -1259,6 +1292,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   ...update,
                   components: merged,
                   evaluationHistory: tr.evaluationHistory || [],
+                  stepExecutions: tr.stepExecutions || [],
                 };
               })
             : [
@@ -1271,6 +1305,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   startedAt: null,
                   components: data.components || undefined,
                   evaluationHistory: [],
+                  stepExecutions: [],
                   ...update,
                 },
               ];
