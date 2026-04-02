@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { toast } from 'sonner';
-import { CalendarCheck2, CalendarOff } from 'lucide-react';
+import { CalendarCheck2, CalendarOff, RotateCcw, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   Sheet,
@@ -25,11 +25,15 @@ import type {
   ExecutionScheduleData,
   ExecutionScheduleType,
   UpsertPlaybookScheduleData,
-  AdvancedScheduleVariant,
 } from '../../types';
 import { validateUpsertSchedulePayload } from '../../utils/scheduleValidation';
+import { formatNextMonthlyOccurrencePreview } from '../../utils/scheduleDisplay';
 import { getDefaultScheduleTimezone } from '../../constants/schedule.constants';
+import { clampMonthlyDay, maxDayForMonthlySlot } from '../../utils/monthlyCalendar';
 import { timeLocalFromInput } from './timeInput';
+
+/** Mon–Fri (1–5) for business-day UI strips */
+const WEEKDAY_BUSINESS_INDICES = [1, 2, 3, 4, 5] as const;
 
 function defaultSchedule(): UpsertPlaybookScheduleData {
   return {
@@ -54,13 +58,26 @@ function fromExecutionSchedule(s: ExecutionScheduleData | null): UpsertPlaybookS
     base.weekly = { slots: s.weekly.slots.map((x) => ({ ...x })) };
   }
   if (s.type === 'monthly' && s.monthly) {
-    base.monthly = { slots: s.monthly.slots.map((x) => ({ ...x })) };
+    const y = new Date().getFullYear();
+    base.monthly = {
+      slots: s.monthly.slots.map((x) => ({
+        monthOfYear: x.monthOfYear ?? null,
+        dayOfMonth: clampMonthlyDay(x.dayOfMonth, x.monthOfYear ?? null, y),
+        timeLocal: x.timeLocal,
+      })),
+    };
   }
   if (s.type === 'advanced' && s.advanced) {
+    const adv = s.advanced;
+    // UI no longer offers every_n_days; map legacy payloads to weekdays
+    const variant =
+      adv.variant === 'every_n_days' ? 'weekdays' : adv.variant;
     base.advanced = {
-      variant: s.advanced.variant,
-      intervalDays: s.advanced.intervalDays ?? null,
-      timeLocal: s.advanced.timeLocal ?? null,
+      variant,
+      intervalDays: null,
+      timeLocal: adv.timeLocal ?? null,
+      monthOfYear: adv.monthOfYear ?? null,
+      weekOfMonth: adv.weekOfMonth ?? null,
     };
   }
   return base;
@@ -74,7 +91,7 @@ interface Props {
 }
 
 export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule }: Props) {
-  const { t } = useModuleTranslation('playbook');
+  const { t, language } = useModuleTranslation('playbook');
   const upsertPlaybookSchedule = usePlaybookStore((s) => s.upsertPlaybookSchedule);
   const clearPlaybookSchedule = usePlaybookStore((s) => s.clearPlaybookSchedule);
   const scheduleSaving = usePlaybookStore((s) => s.scheduleSaving);
@@ -103,13 +120,15 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
         next.weekly = d.weekly ?? { slots: [{ weekday: 1, timeLocal: '09:00' }] };
       }
       if (type === 'monthly') {
-        next.monthly = d.monthly ?? { slots: [{ dayOfMonth: 1, timeLocal: '09:00' }] };
+        next.monthly = d.monthly ?? { slots: [{ monthOfYear: 1, dayOfMonth: 1, timeLocal: '09:00' }] };
       }
       if (type === 'advanced') {
         next.advanced = d.advanced ?? {
           variant: 'weekdays',
           intervalDays: null,
           timeLocal: '09:00',
+          monthOfYear: null,
+          weekOfMonth: null,
         };
       }
       return next;
@@ -120,9 +139,34 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
     if (!draft.enabled) {
       return { enabled: false };
     }
+    const tz = getDefaultScheduleTimezone();
+    const y = new Date().getFullYear();
+    if (draft.type === 'monthly' && draft.monthly?.slots?.length) {
+      return {
+        ...draft,
+        timezone: tz,
+        monthly: {
+          slots: draft.monthly.slots.map((s) => ({
+            ...s,
+            dayOfMonth: clampMonthlyDay(s.dayOfMonth, s.monthOfYear, y),
+          })),
+        },
+      };
+    }
+    if (draft.type === 'advanced' && draft.advanced?.variant === 'every_n_days') {
+      return {
+        ...draft,
+        timezone: tz,
+        advanced: {
+          ...draft.advanced,
+          variant: 'weekdays',
+          intervalDays: null,
+        },
+      };
+    }
     return {
       ...draft,
-      timezone: getDefaultScheduleTimezone(),
+      timezone: tz,
     };
   }, [draft]);
 
@@ -242,38 +286,66 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
               </div>
 
               {draft.type === 'daily' && (
-                <div className="space-y-2">
-                  <Label>{t('schedule.times')}</Label>
-                  {(draft.daily?.timesLocal ?? ['09:00']).map((time, i) => (
-                    <div key={i} className="flex gap-2 items-center">
-                      <Input
-                        type="time"
-                        step={60}
-                        className="w-[min(100%,9rem)] bg-background"
-                        value={timeLocalFromInput(time) || '09:00'}
-                        onChange={(e) => {
-                          const times = [...(draft.daily?.timesLocal ?? [])];
-                          times[i] = timeLocalFromInput(e.target.value) || '09:00';
-                          setDraft((d) => ({ ...d, daily: { timesLocal: times } }));
-                        }}
-                      />
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          const times = [...(draft.daily?.timesLocal ?? [])].filter((_, j) => j !== i);
-                          setDraft((d) => ({ ...d, daily: { timesLocal: times.length ? times : ['09:00'] } }));
-                        }}
-                      >
-                        −
-                      </Button>
+                <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3 shadow-sm">
+                  <div>
+                    <div className="text-xs font-medium text-foreground">
+                      {t('schedule.dailyCardTitle' as ModuleTranslationKey<'playbook'>)}
                     </div>
-                  ))}
+                    <p className="text-xs text-muted-foreground leading-relaxed mt-1.5">
+                      {t('schedule.dailyHint' as ModuleTranslationKey<'playbook'>)}
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    {(draft.daily?.timesLocal ?? ['09:00']).map((time, i) => {
+                      const timesCount = (draft.daily?.timesLocal ?? ['09:00']).length;
+                      const canRemoveTime = timesCount > 1;
+                      return (
+                      <div
+                        key={i}
+                        className="flex flex-col gap-2 rounded-md border border-border/80 bg-background/60 p-3 sm:flex-row sm:items-end sm:justify-between sm:gap-3"
+                      >
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <Label className="text-xs" htmlFor={`daily-time-${i}`}>
+                            {t('schedule.dailyTimeLabel' as ModuleTranslationKey<'playbook'>, { n: i + 1 })}
+                          </Label>
+                          <Input
+                            id={`daily-time-${i}`}
+                            type="time"
+                            step={60}
+                            className="bg-background w-full min-h-10 sm:max-w-[12rem]"
+                            value={timeLocalFromInput(time) || '09:00'}
+                            onChange={(e) => {
+                              const times = [...(draft.daily?.timesLocal ?? [])];
+                              times[i] = timeLocalFromInput(e.target.value) || '09:00';
+                              setDraft((d) => ({ ...d, daily: { timesLocal: times } }));
+                            }}
+                          />
+                        </div>
+                        {canRemoveTime ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0 gap-1.5 h-9 px-2.5 sm:self-end"
+                            aria-label={t('schedule.removeTimeAria' as ModuleTranslationKey<'playbook'>)}
+                            onClick={() => {
+                              const times = [...(draft.daily?.timesLocal ?? [])].filter((_, j) => j !== i);
+                              setDraft((d) => ({ ...d, daily: { timesLocal: times.length ? times : ['09:00'] } }));
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                            <span>{t('schedule.removeTime' as ModuleTranslationKey<'playbook'>)}</span>
+                          </Button>
+                        ) : null}
+                      </div>
+                    );
+                    })}
+                  </div>
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
+                    className="w-full sm:w-auto"
                     onClick={() =>
                       setDraft((d) => ({
                         ...d,
@@ -287,65 +359,101 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
               )}
 
               {draft.type === 'weekly' && (
-                <div className="space-y-2">
-                  {(draft.weekly?.slots ?? []).map((slot, i) => (
-                    <div key={i} className="flex flex-wrap gap-2 items-end">
-                      <div className="w-32">
-                        <Label className="text-xs">{t('schedule.weekday')}</Label>
-                        <Select
-                          value={String(slot.weekday)}
-                          onValueChange={(v) => {
-                            const slots = [...(draft.weekly?.slots ?? [])];
-                            slots[i] = { ...slots[i], weekday: Number(v) };
-                            setDraft((d) => ({ ...d, weekly: { slots } }));
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {[0, 1, 2, 3, 4, 5, 6].map((wd) => (
-                              <SelectItem key={wd} value={String(wd)}>
-                                {t(`schedule.weekdays.${wd}` as ModuleTranslationKey<'playbook'>)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="flex-1 min-w-[100px]">
-                        <Label className="text-xs">{t('schedule.time')}</Label>
-                        <Input
-                          type="time"
-                          step={60}
-                          className="bg-background"
-                          value={timeLocalFromInput(slot.timeLocal) || '09:00'}
-                          onChange={(e) => {
-                            const slots = [...(draft.weekly?.slots ?? [])];
-                            slots[i] = { ...slots[i], timeLocal: timeLocalFromInput(e.target.value) || '09:00' };
-                            setDraft((d) => ({ ...d, weekly: { slots } }));
-                          }}
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => {
-                          const slots = [...(draft.weekly?.slots ?? [])].filter((_, j) => j !== i);
-                          setDraft((d) => ({
-                            ...d,
-                            weekly: { slots: slots.length ? slots : [{ weekday: 1, timeLocal: '09:00' }] },
-                          }));
-                        }}
+                <div className="space-y-3">
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {t('schedule.weeklyExplainer' as ModuleTranslationKey<'playbook'>)}
+                  </p>
+                  {(draft.weekly?.slots ?? []).map((slot, i) => {
+                    const weeklySlotsCount = (draft.weekly?.slots ?? []).length;
+                    const canRemoveWeeklySlot = weeklySlotsCount > 1;
+                    return (
+                    <div
+                      key={i}
+                      className="rounded-lg border border-border bg-muted/30 p-3 space-y-3 shadow-sm"
+                    >
+                      <div
+                        className={cn(
+                          'flex items-center gap-2',
+                          canRemoveWeeklySlot ? 'justify-between' : 'justify-start',
+                        )}
                       >
-                        −
-                      </Button>
+                        <span className="text-xs font-medium text-foreground">
+                          {t('schedule.weeklySlotLabel' as ModuleTranslationKey<'playbook'>, { n: i + 1 })}
+                        </span>
+                        {canRemoveWeeklySlot ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0 gap-1.5 h-9 px-2.5"
+                            aria-label={t('schedule.removeWeeklySlotAria' as ModuleTranslationKey<'playbook'>)}
+                            onClick={() => {
+                              const slots = [...(draft.weekly?.slots ?? [])].filter((_, j) => j !== i);
+                              setDraft((d) => ({
+                                ...d,
+                                weekly: { slots: slots.length ? slots : [{ weekday: 1, timeLocal: '09:00' }] },
+                              }));
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                            <span>{t('schedule.removeSlot')}</span>
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end">
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-xs" htmlFor={`weekly-wd-${i}`}>
+                            {t('schedule.weekday')}
+                          </Label>
+                          <Select
+                            value={String(slot.weekday)}
+                            onValueChange={(v) => {
+                              const slots = [...(draft.weekly?.slots ?? [])];
+                              slots[i] = { ...slots[i], weekday: Number(v) };
+                              setDraft((d) => ({ ...d, weekly: { slots } }));
+                            }}
+                          >
+                            <SelectTrigger id={`weekly-wd-${i}`} className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[0, 1, 2, 3, 4, 5, 6].map((wd) => (
+                                <SelectItem key={wd} value={String(wd)}>
+                                  {t(`schedule.weekdays.${wd}` as ModuleTranslationKey<'playbook'>)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-xs" htmlFor={`weekly-time-${i}`}>
+                            {t('schedule.time')}
+                          </Label>
+                          <Input
+                            id={`weekly-time-${i}`}
+                            type="time"
+                            step={60}
+                            className="bg-background w-full min-h-10"
+                            value={timeLocalFromInput(slot.timeLocal) || '09:00'}
+                            onChange={(e) => {
+                              const slots = [...(draft.weekly?.slots ?? [])];
+                              slots[i] = {
+                                ...slots[i],
+                                timeLocal: timeLocalFromInput(e.target.value) || '09:00',
+                              };
+                              setDraft((d) => ({ ...d, weekly: { slots } }));
+                            }}
+                          />
+                        </div>
+                      </div>
                     </div>
-                  ))}
+                  );
+                  })}
                   <Button
                     type="button"
                     variant="secondary"
                     size="sm"
+                    className="w-full sm:w-auto"
                     onClick={() =>
                       setDraft((d) => ({
                         ...d,
@@ -362,54 +470,154 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
 
               {draft.type === 'monthly' && (
                 <div className="space-y-2">
-                  {(draft.monthly?.slots ?? []).map((slot, i) => (
-                    <div key={i} className="flex flex-wrap gap-2 items-end">
-                      <div className="w-28">
-                        <Label className="text-xs">{t('schedule.dayOfMonth')}</Label>
-                        <Input
-                          type="number"
-                          min={-1}
-                          max={31}
-                          value={slot.dayOfMonth}
-                          onChange={(e) => {
-                            const slots = [...(draft.monthly?.slots ?? [])];
-                            slots[i] = { ...slots[i], dayOfMonth: Number(e.target.value) };
-                            setDraft((d) => ({ ...d, monthly: { slots } }));
-                          }}
-                        />
-                      </div>
-                      <div className="flex-1 min-w-[100px]">
-                        <Label className="text-xs">{t('schedule.time')}</Label>
-                        <Input
-                          type="time"
-                          step={60}
-                          className="bg-background"
-                          value={timeLocalFromInput(slot.timeLocal) || '09:00'}
-                          onChange={(e) => {
-                            const slots = [...(draft.monthly?.slots ?? [])];
-                            slots[i] = { ...slots[i], timeLocal: timeLocalFromInput(e.target.value) || '09:00' };
-                            setDraft((d) => ({ ...d, monthly: { slots } }));
-                          }}
-                        />
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        onClick={() => {
-                          const slots = [...(draft.monthly?.slots ?? [])].filter((_, j) => j !== i);
-                          setDraft((d) => ({
-                            ...d,
-                            monthly: {
-                              slots: slots.length ? slots : [{ dayOfMonth: 1, timeLocal: '09:00' }],
-                            },
-                          }));
-                        }}
+                  <p className="text-xs text-muted-foreground leading-relaxed">{t('schedule.monthlyRepeatExplainer')}</p>
+                  {(draft.monthly?.slots ?? []).map((slot, i) => {
+                    const monthlySlotsCount = (draft.monthly?.slots ?? []).length;
+                    const canRemoveMonthlySlot = monthlySlotsCount > 1;
+                    const year = new Date().getFullYear();
+                    const maxDay = maxDayForMonthlySlot(slot.monthOfYear, year);
+                    const dayClamped = clampMonthlyDay(slot.dayOfMonth, slot.monthOfYear, year);
+                    const preview = formatNextMonthlyOccurrencePreview(
+                      dayClamped,
+                      slot.timeLocal,
+                      language ?? 'en',
+                      slot.monthOfYear ?? null,
+                    );
+                    const daySelectValue =
+                      slot.dayOfMonth === -1
+                        ? '-1'
+                        : slot.dayOfMonth === 0
+                          ? '0'
+                          : String(dayClamped);
+
+                    return (
+                      <div
+                        key={i}
+                        className="rounded-lg border border-border bg-muted/30 p-3 space-y-3 shadow-sm"
                       >
-                        −
-                      </Button>
-                    </div>
-                  ))}
+                        <div
+                          className={cn(
+                            'flex items-center gap-2',
+                            canRemoveMonthlySlot ? 'justify-between' : 'justify-start',
+                          )}
+                        >
+                          <span className="text-xs font-medium text-foreground">
+                            {t('schedule.monthlySlotLabel', { n: i + 1 })}
+                          </span>
+                          {canRemoveMonthlySlot ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="shrink-0 gap-1.5 h-9 px-2.5"
+                              aria-label={t('schedule.removeSlotAria')}
+                              onClick={() => {
+                                const slots = [...(draft.monthly?.slots ?? [])].filter((_, j) => j !== i);
+                                setDraft((d) => ({
+                                  ...d,
+                                  monthly: {
+                                    slots: slots.length
+                                      ? slots
+                                      : [{ monthOfYear: 1, dayOfMonth: 1, timeLocal: '09:00' }],
+                                  },
+                                }));
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4 shrink-0" aria-hidden />
+                              <span>{t('schedule.removeSlot')}</span>
+                            </Button>
+                          ) : null}
+                        </div>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-end">
+                          <div className="min-w-0 space-y-1.5">
+                            <Label className="text-xs">{t('schedule.month')}</Label>
+                            <Select
+                              value={slot.monthOfYear == null ? 'all' : String(slot.monthOfYear)}
+                              onValueChange={(v) => {
+                                const slots = [...(draft.monthly?.slots ?? [])];
+                                const newMonth = v === 'all' ? null : Number(v);
+                                const y = new Date().getFullYear();
+                                const cur = slots[i];
+                                slots[i] = {
+                                  ...cur,
+                                  monthOfYear: newMonth,
+                                  dayOfMonth: clampMonthlyDay(cur.dayOfMonth, newMonth, y),
+                                };
+                                setDraft((d) => ({ ...d, monthly: { slots } }));
+                              }}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="all">{t('schedule.monthEvery')}</SelectItem>
+                                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                                  <SelectItem key={m} value={String(m)}>
+                                    {t(`schedule.months.${m}` as ModuleTranslationKey<'playbook'>)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="min-w-0 space-y-1.5">
+                            <Label className="text-xs">{t('schedule.dayOfMonth')}</Label>
+                            <Select
+                              key={`day-${i}-${slot.monthOfYear ?? 'all'}-${maxDay}`}
+                              value={daySelectValue}
+                              onValueChange={(v) => {
+                                const slots = [...(draft.monthly?.slots ?? [])];
+                                const y = new Date().getFullYear();
+                                const cur = slots[i];
+                                const next =
+                                  v === '-1'
+                                    ? -1
+                                    : v === '0'
+                                      ? 0
+                                      : clampMonthlyDay(Number(v), cur.monthOfYear, y);
+                                slots[i] = { ...slots[i], dayOfMonth: next };
+                                setDraft((d) => ({ ...d, monthly: { slots } }));
+                              }}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue placeholder={t('schedule.dayOfMonth')} />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[min(100vh-8rem,280px)]">
+                                <SelectItem value="-1">{t('schedule.dayLastOfMonth')}</SelectItem>
+                                <SelectItem value="0">{t('schedule.everyDayOfMonth')}</SelectItem>
+                                {Array.from({ length: maxDay }, (_, j) => j + 1).map((d) => (
+                                  <SelectItem key={d} value={String(d)}>
+                                    {d}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="min-w-0 space-y-1.5">
+                            <Label className="text-xs">{t('schedule.time')}</Label>
+                            <Input
+                              type="time"
+                              step={60}
+                              className="bg-background w-full min-h-10"
+                              value={timeLocalFromInput(slot.timeLocal) || '09:00'}
+                              onChange={(e) => {
+                                const slots = [...(draft.monthly?.slots ?? [])];
+                                slots[i] = {
+                                  ...slots[i],
+                                  timeLocal: timeLocalFromInput(e.target.value) || '09:00',
+                                };
+                                setDraft((d) => ({ ...d, monthly: { slots } }));
+                              }}
+                            />
+                          </div>
+                        </div>
+                        {preview ? (
+                          <p className="text-xs text-muted-foreground pl-0.5">
+                            {t('schedule.monthlyNextExample', { date: preview })}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                   <p className="text-xs text-muted-foreground">{t('schedule.monthlyHint')}</p>
                   <Button
                     type="button"
@@ -419,7 +627,10 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                       setDraft((d) => ({
                         ...d,
                         monthly: {
-                          slots: [...(d.monthly?.slots ?? []), { dayOfMonth: 1, timeLocal: '09:00' }],
+                          slots: [
+                            ...(d.monthly?.slots ?? []),
+                            { monthOfYear: 1, dayOfMonth: 1, timeLocal: '09:00' },
+                          ],
                         },
                       }))
                     }
@@ -434,15 +645,19 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                   <div className="space-y-2">
                     <Label>{t('schedule.advanced.variant')}</Label>
                     <Select
-                      value={draft.advanced.variant}
+                      value={
+                        draft.advanced.variant === 'every_n_days' ? 'weekdays' : draft.advanced.variant
+                      }
                       onValueChange={(v) => {
-                        const variant = v as AdvancedScheduleVariant;
+                        const variant = v as 'weekdays' | 'weekend';
                         setDraft((d) => ({
                           ...d,
                           advanced: {
                             variant,
-                            intervalDays: variant === 'every_n_days' ? d.advanced?.intervalDays ?? 1 : null,
+                            intervalDays: null,
                             timeLocal: d.advanced?.timeLocal ?? '09:00',
+                            monthOfYear: variant === 'weekend' ? d.advanced?.monthOfYear ?? null : null,
+                            weekOfMonth: variant === 'weekend' ? d.advanced?.weekOfMonth ?? null : null,
                           },
                         }));
                       }}
@@ -453,48 +668,172 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                       <SelectContent>
                         <SelectItem value="weekdays">{t('schedule.advanced.weekdays')}</SelectItem>
                         <SelectItem value="weekend">{t('schedule.advanced.weekend')}</SelectItem>
-                        <SelectItem value="every_n_days">{t('schedule.advanced.everyN')}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
-                  {draft.advanced.variant === 'every_n_days' && (
-                    <div className="space-y-2">
-                      <Label>{t('schedule.advanced.interval')}</Label>
-                      <Input
-                        type="number"
-                        min={1}
-                        max={366}
-                        value={draft.advanced.intervalDays ?? ''}
-                        onChange={(e) =>
-                          setDraft((d) => ({
-                            ...d,
-                            advanced: {
-                              ...d.advanced!,
-                              intervalDays: e.target.value ? Number(e.target.value) : null,
-                            },
-                          }))
-                        }
-                      />
+                  {draft.advanced.variant === 'weekend' ? (
+                    <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3 shadow-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-foreground">
+                          {t('schedule.advancedWeekendCardTitle')}
+                        </span>
+                        {(draft.advanced.monthOfYear != null ||
+                          draft.advanced.weekOfMonth != null) && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="shrink-0 h-9 gap-1.5 px-2.5"
+                            onClick={() =>
+                              setDraft((d) => ({
+                                ...d,
+                                advanced: {
+                                  ...d.advanced!,
+                                  monthOfYear: null,
+                                  weekOfMonth: null,
+                                },
+                              }))
+                            }
+                          >
+                            <RotateCcw className="h-4 w-4 shrink-0" aria-hidden />
+                            <span>{t('schedule.weekendClearFilters')}</span>
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {[0, 6]
+                          .map((wd) => t(`schedule.weekdays.${wd}` as ModuleTranslationKey<'playbook'>))
+                          .join(' · ')}
+                      </p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:items-end">
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-xs">{t('schedule.month')}</Label>
+                          <Select
+                            value={
+                              draft.advanced.monthOfYear == null ? 'all' : String(draft.advanced.monthOfYear)
+                            }
+                            onValueChange={(v) =>
+                              setDraft((d) => ({
+                                ...d,
+                                advanced: {
+                                  ...d.advanced!,
+                                  monthOfYear: v === 'all' ? null : Number(v),
+                                },
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">{t('schedule.monthEvery')}</SelectItem>
+                              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((m) => (
+                                <SelectItem key={m} value={String(m)}>
+                                  {t(`schedule.months.${m}` as ModuleTranslationKey<'playbook'>)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-xs">{t('schedule.advanced.weekInMonth')}</Label>
+                          <Select
+                            value={
+                              draft.advanced.weekOfMonth == null
+                                ? 'all'
+                                : String(draft.advanced.weekOfMonth)
+                            }
+                            onValueChange={(v) =>
+                              setDraft((d) => ({
+                                ...d,
+                                advanced: {
+                                  ...d.advanced!,
+                                  weekOfMonth: v === 'all' ? null : Number(v),
+                                },
+                              }))
+                            }
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="all">{t('schedule.weekEvery')}</SelectItem>
+                              {[1, 2, 3, 4, 5].map((w) => (
+                                <SelectItem key={w} value={String(w)}>
+                                  {t(`schedule.weekBand.${w}` as ModuleTranslationKey<'playbook'>)}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="min-w-0 space-y-1.5">
+                          <Label className="text-xs">{t('schedule.time')}</Label>
+                          <Input
+                            type="time"
+                            step={60}
+                            className="bg-background w-full min-h-10"
+                            value={timeLocalFromInput(draft.advanced.timeLocal ?? '') || '09:00'}
+                            onChange={(e) =>
+                              setDraft((d) => ({
+                                ...d,
+                                advanced: {
+                                  ...d.advanced!,
+                                  timeLocal: timeLocalFromInput(e.target.value) || '09:00',
+                                },
+                              }))
+                            }
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-border bg-muted/30 p-3 space-y-3 shadow-sm">
+                      <div className="text-xs font-medium text-foreground">
+                        {t('schedule.advancedWeekdaysCardTitle' as ModuleTranslationKey<'playbook'>)}
+                      </div>
+                      <div
+                        className="flex flex-wrap gap-2"
+                        role="list"
+                        aria-label={t('schedule.weekdaysBusinessAria' as ModuleTranslationKey<'playbook'>)}
+                      >
+                        {WEEKDAY_BUSINESS_INDICES.map((wd) => (
+                          <span
+                            key={wd}
+                            role="listitem"
+                            className={cn(
+                              'inline-flex min-h-9 min-w-[2.5rem] select-none items-center justify-center',
+                              'rounded-lg border border-primary/20 bg-primary/10 px-2.5 text-sm font-semibold',
+                              'text-primary shadow-sm ring-1 ring-primary/10',
+                              'tabular-nums',
+                            )}
+                          >
+                            {t(`schedule.weekdays.${wd}` as ModuleTranslationKey<'playbook'>)}
+                          </span>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {t('schedule.advancedWeekdaysHint' as ModuleTranslationKey<'playbook'>)}
+                      </p>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">{t('schedule.time')}</Label>
+                        <Input
+                          type="time"
+                          step={60}
+                          className="bg-background w-full max-w-full min-h-10 sm:max-w-[12rem]"
+                          value={timeLocalFromInput(draft.advanced.timeLocal ?? '') || '09:00'}
+                          onChange={(e) =>
+                            setDraft((d) => ({
+                              ...d,
+                              advanced: {
+                                ...d.advanced!,
+                                timeLocal: timeLocalFromInput(e.target.value) || '09:00',
+                              },
+                            }))
+                          }
+                        />
+                      </div>
                     </div>
                   )}
-                  <div className="space-y-2">
-                    <Label>{t('schedule.time')}</Label>
-                    <Input
-                      type="time"
-                      step={60}
-                      className="max-w-[9rem] bg-background"
-                      value={timeLocalFromInput(draft.advanced.timeLocal ?? '') || '09:00'}
-                      onChange={(e) =>
-                        setDraft((d) => ({
-                          ...d,
-                          advanced: {
-                            ...d.advanced!,
-                            timeLocal: timeLocalFromInput(e.target.value) || '09:00',
-                          },
-                        }))
-                      }
-                    />
-                  </div>
                 </div>
               )}
             </>
