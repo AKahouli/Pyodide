@@ -137,6 +137,7 @@ export const PlaybookSchema = SchemaFactory.createForClass(Playbook);
 
 PlaybookSchema.index({ createdBy: 1, updatedAt: -1 });
 PlaybookSchema.index({ createdBy: 1, isActive: 1, updatedAt: -1 });
+PlaybookSchema.index({ isActive: 1, 'executionSchedule.enabled': 1 });
 
 PlaybookSchema.set('toJSON', {
   virtuals: true,

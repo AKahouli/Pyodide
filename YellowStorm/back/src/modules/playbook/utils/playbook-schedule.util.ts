@@ -1,6 +1,5 @@
 import type { ExecutionScheduleType } from '../schemas/execution-schedule.schema';
 
-/** Lean / plain object shape from Mongo (or DTO) for evaluation. */
 export type ScheduleEvalInput = {
   enabled?: boolean;
   timezone?: string;
@@ -22,35 +21,70 @@ export type ScheduleEvalInput = {
 
 const HM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
+const WEEKDAY_MAP: Readonly<Record<string, number>> = {
+  Sun: 0,
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+};
+
+const zonedPartsCache = new Map<string, Intl.DateTimeFormat>();
+const ymdCache = new Map<string, Intl.DateTimeFormat>();
+
+function getZonedFormatter(timeZone: string): Intl.DateTimeFormat {
+  let fmt = zonedPartsCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      weekday: 'short',
+      day: 'numeric',
+      month: 'numeric',
+      year: 'numeric',
+    });
+    zonedPartsCache.set(timeZone, fmt);
+  }
+  return fmt;
+}
+
+function getYmdFormatter(timeZone: string): Intl.DateTimeFormat {
+  let fmt = ymdCache.get(timeZone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    ymdCache.set(timeZone, fmt);
+  }
+  return fmt;
+}
+
 function parseHm(s: string): { h: number; m: number } | null {
   const m = s.trim().match(HM);
   if (!m) return null;
   return { h: parseInt(m[1], 10), m: parseInt(m[2], 10) };
 }
 
-/** YYYY-MM-DD in IANA `timeZone`. */
 export function zonedYmd(date: Date, timeZone: string): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(date);
+  return getYmdFormatter(timeZone).format(date);
 }
 
-/** Calendar day difference (Gregorian) between two YYYY-MM-DD strings. */
 export function daysBetweenYmd(a: string, b: string): number {
-  const t1 = Date.UTC(
-    parseInt(a.slice(0, 4), 10),
-    parseInt(a.slice(5, 7), 10) - 1,
-    parseInt(a.slice(8, 10), 10),
-  );
-  const t2 = Date.UTC(
-    parseInt(b.slice(0, 4), 10),
-    parseInt(b.slice(5, 7), 10) - 1,
-    parseInt(b.slice(8, 10), 10),
-  );
-  return Math.round((t2 - t1) / 86400000);
+  const parseYmd = (s: string) => {
+    const y = parseInt(s.slice(0, 4), 10);
+    const m = parseInt(s.slice(5, 7), 10) - 1;
+    const d = parseInt(s.slice(8, 10), 10);
+    return Date.UTC(y, m, d);
+  };
+  const msPerDay = 86400000;
+  return Math.round((parseYmd(b) - parseYmd(a)) / msPerDay);
 }
 
 type ZonedParts = {
@@ -63,30 +97,12 @@ type ZonedParts = {
 };
 
 function getZonedParts(date: Date, timeZone: string): ZonedParts {
-  const dtf = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-    weekday: 'short',
-    day: 'numeric',
-    month: 'numeric',
-    year: 'numeric',
-  });
+  const dtf = getZonedFormatter(timeZone);
   const map: Record<string, string> = {};
   for (const p of dtf.formatToParts(date)) {
     if (p.type !== 'literal') map[p.type] = p.value;
   }
-  const wdMap: Record<string, number> = {
-    Sun: 0,
-    Mon: 1,
-    Tue: 2,
-    Wed: 3,
-    Thu: 4,
-    Fri: 5,
-    Sat: 6,
-  };
-  const weekday = wdMap[map.weekday ?? ''] ?? 0;
+  const weekday = WEEKDAY_MAP[map.weekday ?? ''] ?? 0;
   return {
     year: parseInt(map.year ?? '0', 10),
     month: parseInt(map.month ?? '0', 10),
@@ -179,7 +195,8 @@ export function isExecutionScheduleDueThisMinute(
     case 'advanced': {
       const adv = schedule.advanced;
       if (!adv?.variant) return false;
-      const hm = adv.timeLocal ? parseHm(adv.timeLocal) : null;
+      if (!adv.timeLocal) return false;
+      const hm = parseHm(adv.timeLocal);
       if (!hm || !timeMatchesNow(hm, parts)) return false;
 
       if (adv.variant === 'weekdays') {

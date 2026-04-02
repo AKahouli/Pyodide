@@ -315,8 +315,9 @@ export class PlaybookService {
   }
 
   async clearSchedule(playbookId: string): Promise<PlaybookResponse> {
+    const disabledSchedule = buildExecutionScheduleDocument({ enabled: false } as UpsertPlaybookScheduleDto, null);
     const playbook = await this.playbookModel
-      .findByIdAndUpdate(playbookId, { $set: { executionSchedule: null } }, { new: true })
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule: disabledSchedule } }, { new: true })
       .lean()
       .exec();
 

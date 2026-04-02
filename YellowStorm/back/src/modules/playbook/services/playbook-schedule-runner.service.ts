@@ -11,7 +11,7 @@ import {
 import { PlaybookExecutionService } from './playbook-execution.service';
 import { PlaybookGrpcService } from './playbook-grpc.service';
 import { LoggerService } from '../../logger';
-import { isExecutionScheduleDueThisMinute } from '../utils/playbook-schedule.util';
+import { isExecutionScheduleDueThisMinute, type ScheduleEvalInput } from '../utils/playbook-schedule.util';
 
 /**
  * Periodically runs playbooks whose embedded `executionSchedule` is due (once per minute).
@@ -49,41 +49,52 @@ export class PlaybookScheduleRunnerService {
       })
       .select('_id createdBy executionSchedule')
       .lean()
-      .cursor();
+      .cursor({ noCursorTimeout: true });
 
+    const due: Array<{ playbookId: string; userId: string; _id: Types.ObjectId; schedule: ScheduleEvalInput }> = [];
     for await (const doc of cursor) {
-      const schedule = doc.executionSchedule as Parameters<typeof isExecutionScheduleDueThisMinute>[0];
+      const schedule = doc.executionSchedule as ScheduleEvalInput;
       if (!isExecutionScheduleDueThisMinute(schedule, now)) {
         continue;
       }
+      due.push({
+        _id: doc._id as Types.ObjectId,
+        playbookId: (doc._id as Types.ObjectId).toString(),
+        userId: (doc.createdBy as Types.ObjectId).toString(),
+        schedule,
+      });
+    }
 
-      const playbookId = (doc._id as Types.ObjectId).toString();
-      const userId = (doc.createdBy as Types.ObjectId).toString();
+    if (due.length === 0) return;
+
+    const activeExecs = await this.executionModel
+      .find({
+        playbookId: { $in: due.map((d) => d._id) },
+        status: { $in: [ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+      })
+      .select('playbookId _id')
+      .lean()
+      .exec();
+
+    const activePlaybookIds = new Set(
+      activeExecs.map((e) => (e.playbookId as Types.ObjectId).toString()),
+    );
+
+    for (const { playbookId, userId, _id } of due) {
+      if (activePlaybookIds.has(playbookId)) {
+        this.logger.log('Scheduled run skipped: playbook already has active execution', {
+          playbookId,
+        });
+        continue;
+      }
 
       try {
-        const active = await this.executionModel
-          .findOne({
-            playbookId: new Types.ObjectId(playbookId),
-            status: { $in: [ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
-          })
-          .select('_id')
-          .lean()
-          .exec();
-
-        if (active) {
-          this.logger.log('Scheduled run skipped: playbook already has active execution', {
-            playbookId,
-            activeExecutionId: (active._id as Types.ObjectId).toString(),
-          });
-          continue;
-        }
-
         await this.executionService.executePlaybook(userId, playbookId, {}, '', {
           executionTrigger: 'scheduled',
         });
 
         await this.playbookModel.updateOne(
-          { _id: doc._id },
+          { _id },
           { $set: { 'executionSchedule.lastScheduledRunAt': now } },
         );
 

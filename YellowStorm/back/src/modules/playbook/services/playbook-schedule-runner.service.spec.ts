@@ -43,6 +43,7 @@ describe('PlaybookScheduleRunnerService', () => {
   };
   let mockExecutionModel: {
     findOne: jest.Mock;
+    find: jest.Mock;
   };
   let mockExecutionService: { executePlaybook: jest.Mock };
   let mockGrpcService: { isAvailable: boolean };
@@ -83,6 +84,7 @@ describe('PlaybookScheduleRunnerService', () => {
 
     mockExecutionModel = {
       findOne: jest.fn(),
+      find: jest.fn(),
     };
 
     mockExecutionService = {
@@ -152,10 +154,12 @@ describe('PlaybookScheduleRunnerService', () => {
       mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc]));
       mockedIsDue.mockReturnValue(true);
       const activeExecId = new Types.ObjectId();
-      mockExecutionModel.findOne.mockReturnValue({
+      mockExecutionModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ _id: activeExecId }),
+            exec: jest.fn().mockResolvedValue([
+              { playbookId, _id: activeExecId },
+            ]),
           }),
         }),
       });
@@ -167,7 +171,6 @@ describe('PlaybookScheduleRunnerService', () => {
         'Scheduled run skipped: playbook already has active execution',
         expect.objectContaining({
           playbookId: playbookId.toString(),
-          activeExecutionId: activeExecId.toString(),
         }),
       );
     });
@@ -175,19 +178,21 @@ describe('PlaybookScheduleRunnerService', () => {
     it('should skip when an INTERRUPTED execution exists', async () => {
       mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc]));
       mockedIsDue.mockReturnValue(true);
-      mockExecutionModel.findOne.mockReturnValue({
+      mockExecutionModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue({ _id: new Types.ObjectId() }),
+            exec: jest.fn().mockResolvedValue([
+              { playbookId, _id: new Types.ObjectId() },
+            ]),
           }),
         }),
       });
 
       await service.runDueSchedules();
 
-      expect(mockExecutionModel.findOne).toHaveBeenCalledWith(
+      expect(mockExecutionModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
-          playbookId: expect.any(Types.ObjectId),
+          playbookId: { $in: [playbookId] },
           status: { $in: [ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
         }),
       );
@@ -197,10 +202,10 @@ describe('PlaybookScheduleRunnerService', () => {
     it('should run executePlaybook with scheduled trigger and update lastScheduledRunAt when due and idle', async () => {
       mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc]));
       mockedIsDue.mockReturnValue(true);
-      mockExecutionModel.findOne.mockReturnValue({
+      mockExecutionModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue(null),
+            exec: jest.fn().mockResolvedValue([]),
           }),
         }),
       });
@@ -237,10 +242,10 @@ describe('PlaybookScheduleRunnerService', () => {
       };
       mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc, doc2]));
       mockedIsDue.mockReturnValue(true);
-      mockExecutionModel.findOne.mockReturnValue({
+      mockExecutionModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue(null),
+            exec: jest.fn().mockResolvedValue([]),
           }),
         }),
       });
@@ -254,10 +259,10 @@ describe('PlaybookScheduleRunnerService', () => {
     it('should log warn and continue when executePlaybook throws', async () => {
       mockPlaybookModel.find.mockReturnValue(createFindCursorChain([leanDoc]));
       mockedIsDue.mockReturnValue(true);
-      mockExecutionModel.findOne.mockReturnValue({
+      mockExecutionModel.find.mockReturnValue({
         select: jest.fn().mockReturnValue({
           lean: jest.fn().mockReturnValue({
-            exec: jest.fn().mockResolvedValue(null),
+            exec: jest.fn().mockResolvedValue([]),
           }),
         }),
       });
