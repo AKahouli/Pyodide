@@ -8,11 +8,15 @@ export type ScheduleEvalInput = {
   lastScheduledRunAt?: Date | null;
   daily?: { timesLocal?: string[] } | null;
   weekly?: { slots?: Array<{ weekday: number; timeLocal: string }> } | null;
-  monthly?: { slots?: Array<{ dayOfMonth: number; timeLocal: string }> } | null;
+  monthly?: {
+    slots?: Array<{ monthOfYear?: number | null; dayOfMonth: number; timeLocal: string }>;
+  } | null;
   advanced?: {
     variant: 'weekdays' | 'weekend' | 'every_n_days';
     intervalDays?: number | null;
     timeLocal?: string | null;
+    monthOfYear?: number | null;
+    weekOfMonth?: number | null;
   } | null;
 };
 
@@ -113,6 +117,11 @@ function daysInGregorianMonth(year: number, month1Based: number): number {
   return new Date(year, month1Based, 0).getDate();
 }
 
+/** 1–5: week bands within the month (days 1–7, 8–14, 15–21, 22–28, 29–31). */
+export function weekOfMonthFromCalendarDay(dayOfMonth: number): number {
+  return Math.min(5, Math.ceil(dayOfMonth / 7));
+}
+
 /**
  * Returns true if this schedule should trigger a run in the current clock minute
  * in the schedule timezone (cron runs once per minute).
@@ -153,8 +162,12 @@ export function isExecutionScheduleDueThisMinute(
       for (const slot of schedule.monthly?.slots ?? []) {
         const hm = parseHm(slot.timeLocal);
         if (!hm) continue;
+        const moy = slot.monthOfYear;
+        if (moy != null && moy !== parts.month) continue;
         let dayOk = false;
-        if (slot.dayOfMonth === -1) {
+        if (slot.dayOfMonth === 0) {
+          dayOk = true;
+        } else if (slot.dayOfMonth === -1) {
           dayOk = parts.day === dim;
         } else {
           dayOk = slot.dayOfMonth === parts.day;
@@ -173,7 +186,15 @@ export function isExecutionScheduleDueThisMinute(
         return parts.weekday >= 1 && parts.weekday <= 5;
       }
       if (adv.variant === 'weekend') {
-        return parts.weekday === 0 || parts.weekday === 6;
+        if (parts.weekday !== 0 && parts.weekday !== 6) return false;
+        const moy = adv.monthOfYear;
+        if (moy != null && moy !== parts.month) return false;
+        const wow = adv.weekOfMonth;
+        if (wow != null) {
+          const band = weekOfMonthFromCalendarDay(parts.day);
+          if (band !== wow) return false;
+        }
+        return true;
       }
       if (adv.variant === 'every_n_days') {
         const interval = Math.max(1, adv.intervalDays ?? 1);
