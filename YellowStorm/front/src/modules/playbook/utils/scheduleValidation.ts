@@ -8,11 +8,13 @@ export type UpsertScheduleValidationInput = {
   type?: 'daily' | 'weekly' | 'monthly' | 'advanced';
   daily?: { timesLocal: string[] };
   weekly?: { slots: { weekday: number; timeLocal: string }[] };
-  monthly?: { slots: { dayOfMonth: number; timeLocal: string }[] };
+  monthly?: { slots: { monthOfYear?: number | null; dayOfMonth: number; timeLocal: string }[] };
   advanced?: {
     variant: 'weekdays' | 'weekend' | 'every_n_days';
     intervalDays: number | null;
     timeLocal: string | null;
+    monthOfYear?: number | null;
+    weekOfMonth?: number | null;
   };
 };
 
@@ -51,7 +53,15 @@ export function validateUpsertSchedulePayload(d: UpsertScheduleValidationInput):
       const slots = d.monthly?.slots ?? [];
       if (slots.length < 1) return 'schedule.validation.slots';
       for (const s of slots) {
-        if (s.dayOfMonth !== -1 && (s.dayOfMonth < 1 || s.dayOfMonth > 31)) {
+        const moy = s.monthOfYear;
+        if (moy != null && (moy < 1 || moy > 12)) {
+          return 'schedule.validation.monthOfYear';
+        }
+        if (
+          s.dayOfMonth !== -1 &&
+          s.dayOfMonth !== 0 &&
+          (s.dayOfMonth < 1 || s.dayOfMonth > 31)
+        ) {
           return 'schedule.validation.dayOfMonth';
         }
         if (!TIME_RE.test(s.timeLocal)) return 'schedule.validation.timeFormat';
@@ -67,6 +77,12 @@ export function validateUpsertSchedulePayload(d: UpsertScheduleValidationInput):
         if (!adv.timeLocal || !TIME_RE.test(adv.timeLocal)) return 'schedule.validation.timeFormat';
       } else {
         if (!adv.timeLocal || !TIME_RE.test(adv.timeLocal)) return 'schedule.validation.timeFormat';
+        if (adv.variant === 'weekend') {
+          const moy = adv.monthOfYear;
+          if (moy != null && (moy < 1 || moy > 12)) return 'schedule.validation.monthOfYear';
+          const wow = adv.weekOfMonth;
+          if (wow != null && (wow < 1 || wow > 5)) return 'schedule.validation.weekOfMonth';
+        }
       }
       break;
     }
