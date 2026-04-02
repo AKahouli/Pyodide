@@ -51,7 +51,7 @@ The playbook module provides:
 - **Concurrency Control**: Per-level step parallelism with configurable limits
 - **Document Size Guards**: Component array caps and data truncation to prevent MongoDB 16MB limit
 - **Execution schedule (data model)**: Each playbook may store **one** embedded `executionSchedule` (see [Execution schedule](#execution-schedule-embedded)) for automatic runs. Clients read it via `GET` `/playbooks/:id/schedule` ([`getSchedule`](#services)), set or clear via `PUT` / `DELETE` ([`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts), [`buildExecutionScheduleDocument`](#execution-schedule-upsert-builder)). Full playbook responses still map schedule with [`mapExecutionScheduleToData`](#execution-schedule-mapper).
-- **Scheduled runs (cron)**: [`PlaybookScheduleRunnerService`](#playbook-schedule-runner) evaluates due schedules **once per minute**, starts `executePlaybook` with `executionTrigger: 'scheduled'` when [`isExecutionScheduleDueThisMinute`](#schedule-due-evaluation-pure-utils) matches, then updates `executionSchedule.lastScheduledRunAt`. If gRPC is unavailable, the tick is skipped. When a playbook already has **RUNNING** or **INTERRUPTED** work, behavior is governed by [`playbook.scheduleConcurrencyPolicy`](#module-configuration) (`PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY`: `skip` \| `report` \| `queue`). **Full narrative:** [Execution schedule (backend reference)](#execution-schedule-backend-reference).
+- **Scheduled runs (cron)**: [`PlaybookScheduleRunnerService`](#playbook-schedule-runner) evaluates due schedules **once per minute**, starts `executePlaybook` with `executionTrigger: 'scheduled'` when [`isExecutionScheduleDueThisMinute`](#schedule-due-evaluation-pure-utils) matches, then updates `executionSchedule.lastScheduledRunAt`. If gRPC is unavailable, the tick is skipped. When a playbook already has **RUNNING** or **INTERRUPTED** work, the scheduled tick is skipped (info log). **Full narrative:** [Execution schedule (backend reference)](#execution-schedule-backend-reference).
 - **List summaries**: Paginated playbook list items include **`scheduleEnabled`** — `true` when `executionSchedule.enabled` is true (see [`PlaybookSummaryResponse`](#interfaces-api-responses)).
 - **Execution trigger**: Each `PlaybookExecution` stores `executionTrigger`: `manual` (default) for user-initiated runs, or `scheduled` when started by the schedule runner. Exposed on full and summary execution responses.
 
@@ -181,10 +181,10 @@ export class AppModule {}
 
 ### Configuration Options
 
-[`config/playbook.config.ts`](config/playbook.config.ts) registers the `playbook` namespace and exports `PlaybookScheduleConcurrencyPolicy` (`'skip' | 'queue' | 'report'`).
+[`config/playbook.config.ts`](config/playbook.config.ts) registers the `playbook` namespace.
 
 ```typescript
-// config/playbook.config.ts (abridged; see repo for parseScheduleConcurrencyPolicy)
+// config/playbook.config.ts (abridged)
 export default registerAs('playbook', () => ({
   grpcUrl: process.env.CONVERSATION_GRPC_URL || 'localhost:50051',
   grpcTimeoutMs: parseInt(process.env.PLAYBOOK_GRPC_TIMEOUT_MS || '300000', 10),
@@ -194,7 +194,6 @@ export default registerAs('playbook', () => ({
   maxComponentsPerTask: parseInt(process.env.PLAYBOOK_MAX_COMPONENTS_PER_TASK || '200', 10),
   maxComponentDataBytes: parseInt(process.env.PLAYBOOK_MAX_COMPONENT_DATA_BYTES || '500000', 10),
   maxConcurrentSteps: parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_STEPS || '5', 10),
-  scheduleConcurrencyPolicy: parseScheduleConcurrencyPolicy(),
 }));
 ```
 
@@ -208,7 +207,6 @@ export default registerAs('playbook', () => ({
 | `PLAYBOOK_MAX_COMPONENTS_PER_TASK` | `200` | Max components stored per task result |
 | `PLAYBOOK_MAX_COMPONENT_DATA_BYTES` | `500000` | Max JSON size per component (500KB) |
 | `PLAYBOOK_MAX_CONCURRENT_STEPS` | `5` | Max parallel gRPC calls per topological level |
-| `PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY` | `skip` | When a scheduled tick fires but the playbook already has **RUNNING** or **INTERRUPTED** execution: **`skip`** — do not start another run (info log); **`report`** — same as skip, **warn** log for monitoring; **`queue`** — start the scheduled run anyway (parallel executions; use only if workflows tolerate overlap). Invalid values fall back to `skip`. |
 
 **Cron scheduling:** `@nestjs/schedule` is initialized in the root [`app.module.ts`](../../app.module.ts) via `ScheduleModule.forRoot()`. The playbook module only registers [`PlaybookScheduleRunnerService`](#playbook-schedule-runner) as a provider.
 
@@ -223,7 +221,7 @@ Single place for **automatic** playbook runs: one embedded `executionSchedule` o
 1. **Configure** — Owner calls `PUT /playbooks/:id/schedule` with [`UpsertPlaybookScheduleDto`](dto/upsert-playbook-schedule.dto.ts). [`PlaybookService.upsertSchedule()`](#playbookservice) persists via [`buildExecutionScheduleDocument()`](#execution-schedule-upsert-builder). Optional `GET` / `DELETE` read or clear the schedule.
 2. **Expose** — `GET /playbooks/:id` and list responses include `executionSchedule` or `scheduleEnabled` via [`mapExecutionScheduleToData()`](#execution-schedule-mapper).
 3. **Tick** — Every minute, `runDueSchedules()` scans enabled playbooks (`isActive`, `executionSchedule.enabled`), skips if **gRPC unavailable**, then runs [`isExecutionScheduleDueThisMinute()`](#schedule-due-evaluation-pure-utils) for each.
-4. **Overlap** — If an execution is **RUNNING** or **INTERRUPTED** for that playbook, [`playbook.scheduleConcurrencyPolicy`](#module-configuration) decides whether to skip, warn-only, or still start (`queue`).
+4. **Overlap** — If an execution is **RUNNING** or **INTERRUPTED** for that playbook, the scheduled run is skipped (info log).
 5. **Run** — [`executePlaybook(..., { executionTrigger: 'scheduled' })`](#playbookexecutionservice) creates a [`PlaybookExecution`](#playbookexecution-playbook_executions-collection) with `executionTrigger: 'scheduled'`.
 6. **Bookkeeping** — `lastScheduledRunAt` is updated **after** `executePlaybook` **returns** (same tick `now`). `executePlaybook` resolves once the execution document exists and the workflow loop has been **started** (it does **not** await completion). If `executePlaybook` **throws** before returning (e.g. gRPC unavailable, playbook not found, active execution conflict), the runner logs a warning and **does not** update `lastScheduledRunAt`.
 7. **Notify** — On terminal **completed** or **failed**, [`notifyScheduledRunFinished`](#playbookexecutionservice) sends an optional email to the playbook owner when `executionTrigger === 'scheduled'` (email service available, user has email), including a summary line and link built with [`buildExecutionDetailUrl()`](#playbookexecutionservice) (`app.frontendUrl`).
@@ -281,17 +279,13 @@ Invalid or missing `type` / enabled → **`false`**.
 | 1 | `EVERY_MINUTE` cron; exit early if `!grpcService.isAvailable`. |
 | 2 | Cursor: `isActive: true`, `executionSchedule.enabled: true`. |
 | 3 | For each doc, `isExecutionScheduleDueThisMinute(schedule, now)`; continue if false. |
-| 4 | `findOne` active execution `RUNNING` \| `INTERRUPTED`; apply policy (`skip` / `report` / `queue`). |
+| 4 | `findOne` active execution `RUNNING` \| `INTERRUPTED`; if found, skip (info log). |
 | 5 | `executePlaybook(userId, playbookId, {}, '', { executionTrigger: 'scheduled' })` |
 | 6 | After `executePlaybook` returns, `$set` `executionSchedule.lastScheduledRunAt` to the tick `now` (marks the minute as consumed; run may still be **in progress** in the background). |
 
 **`createdBy`** is the user id passed to `executePlaybook` (playbook owner).
 
-### Config (schedule only)
-
-| Key | Source |
-|-----|--------|
-| `playbook.scheduleConcurrencyPolicy` | `PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY` → `skip` \| `report` \| `queue` ([`playbook.config.ts`](config/playbook.config.ts)) |
+### Config (schedule-related)
 
 Email deep links use **`app.frontendUrl`** (not under `playbook.*`); see [`PlaybookExecutionService`](#playbookexecutionservice).
 
@@ -444,7 +438,7 @@ See **[Execution schedule (backend reference)](#execution-schedule-backend-refer
 | **Selection** | Active playbooks with `executionSchedule.enabled === true` (lean cursor, `_id`, `createdBy`, `executionSchedule`) |
 | **Due check** | Delegates to [`isExecutionScheduleDueThisMinute()`](#schedule-due-evaluation-pure-utils) for the current UTC `now` |
 | **gRPC gate** | If `PlaybookGrpcService.isAvailable` is false, logs at debug and returns (no runs) |
-| **Overlap** | If an execution exists with status **RUNNING** or **INTERRUPTED**, applies [`playbook.scheduleConcurrencyPolicy`](#module-configuration): `skip` / `report` (skip start; differ by log level) or `queue` (warn, then start anyway) |
+| **Overlap** | If an execution exists with status **RUNNING** or **INTERRUPTED**, the scheduled run is skipped (info log) |
 | **Start** | `executePlaybook(userId, playbookId, {}, '', { executionTrigger: 'scheduled' })` |
 | **Persistence** | After `executePlaybook` returns, `$set` `executionSchedule.lastScheduledRunAt` to the tick time (start acknowledged, not run finished) |
 | **Errors** | Per-playbook `catch`: warn with message, continue cursor |

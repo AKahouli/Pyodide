@@ -1,16 +1,5 @@
 import { registerAs } from '@nestjs/config';
 
-/** When a scheduled tick fires while a playbook already has an active execution (RUNNING / INTERRUPRED). */
-export type PlaybookScheduleConcurrencyPolicy = 'skip' | 'queue' | 'report';
-
-function parseScheduleConcurrencyPolicy(): PlaybookScheduleConcurrencyPolicy {
-  const raw = (process.env.PLAYBOOK_SCHEDULE_CONCURRENCY_POLICY || 'skip').toLowerCase();
-  if (raw === 'queue' || raw === 'report') {
-    return raw;
-  }
-  return 'skip';
-}
-
 export default registerAs('playbook', () => ({
   grpcUrl: process.env.CONVERSATION_GRPC_URL || 'localhost:50051',
   grpcTimeoutMs: parseInt(process.env.PLAYBOOK_GRPC_TIMEOUT_MS || '300000', 10),
@@ -20,10 +9,4 @@ export default registerAs('playbook', () => ({
   maxComponentsPerTask: parseInt(process.env.PLAYBOOK_MAX_COMPONENTS_PER_TASK || '200', 10),
   maxComponentDataBytes: parseInt(process.env.PLAYBOOK_MAX_COMPONENT_DATA_BYTES || '500000', 10),
   maxConcurrentSteps: parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_STEPS || '5', 10),
-  /**
-   * `skip` (default): do not start a second run; log at info.
-   * `report`: same as skip for execution, but log at **warn** so missed ticks are visible in monitoring.
-   * `queue`: start the scheduled run **even if** another execution is already active (parallel runs; use only if your workflows tolerate overlap).
-   */
-  scheduleConcurrencyPolicy: parseScheduleConcurrencyPolicy(),
 }));
