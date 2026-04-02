@@ -23,6 +23,8 @@ const apiMock = vi.hoisted(() => ({
   getDesignMessages: vi.fn(),
   designPlaybook: vi.fn(),
   revertToSnapshot: vi.fn(),
+  upsertPlaybookSchedule: vi.fn(),
+  clearPlaybookSchedule: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -33,11 +35,12 @@ const toastMock = vi.hoisted(() => ({
 
 const autoLayoutMock = vi.hoisted(() => vi.fn((tasks) => tasks));
 const handleApiErrorMock = vi.hoisted(() => vi.fn());
+const parseApiErrorMock = vi.hoisted(() => vi.fn(() => ({ message: 'parseApiError message' })));
 
 vi.mock('./api', () => apiMock);
 vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('./utils/auto-layout', () => ({ autoLayoutTasks: autoLayoutMock }));
-vi.mock('@/lib/api-error', () => ({ handleApiError: handleApiErrorMock }));
+vi.mock('@/lib/api-error', () => ({ handleApiError: handleApiErrorMock, parseApiError: parseApiErrorMock }));
 vi.mock('@/modules/localization/i18nInstance', () => ({
   i18nInstance: { isInitialized: false, t: (key: string) => key },
 }));
@@ -706,5 +709,111 @@ describe('playbook store', () => {
       startedAt: null,
       completedAt: null,
     });
+  });
+
+  // ===== Schedule =====
+
+  it('upsertPlaybookSchedule updates currentPlaybook and playbooks list', async () => {
+    const schedule = { enabled: true, timezone: 'UTC', type: 'daily' as const, daily: { timesLocal: ['09:00'] }, weekly: null, monthly: null, advanced: null, lastScheduledRunAt: null };
+    const playbook = makePlaybook({ id: 'p1', executionSchedule: schedule });
+
+    apiMock.upsertPlaybookSchedule.mockResolvedValueOnce(playbook);
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1', executionSchedule: null }),
+      playbooks: [
+        { id: 'p1', name: 'PB', description: '', taskCount: 1, isFavorite: false, scheduleEnabled: false, lastExecutionAt: null, createdAt: '2025-01-01', updatedAt: '2025-01-01' },
+        { id: 'p2', name: 'Other', description: '', taskCount: 1, isFavorite: false, scheduleEnabled: false, lastExecutionAt: null, createdAt: '2025-01-01', updatedAt: '2025-01-01' },
+      ],
+    });
+
+    await usePlaybookStore.getState().upsertPlaybookSchedule('p1', {
+      enabled: true,
+      timezone: 'UTC',
+      type: 'daily',
+      daily: { timesLocal: ['09:00'] },
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.scheduleSaving).toBe(false);
+    expect(state.currentPlaybook?.executionSchedule?.enabled).toBe(true);
+    expect(state.playbooks.find((p) => p.id === 'p1')?.scheduleEnabled).toBe(true);
+    expect(state.playbooks.find((p) => p.id === 'p2')?.scheduleEnabled).toBe(false);
+    expect(toastMock.success).toHaveBeenCalled();
+  });
+
+  it('upsertPlaybookSchedule does not remap playbooks when playbook not in list', async () => {
+    const schedule = { enabled: true, timezone: 'UTC', type: 'daily' as const, daily: { timesLocal: ['09:00'] }, weekly: null, monthly: null, advanced: null, lastScheduledRunAt: null };
+    const playbook = makePlaybook({ id: 'p1', executionSchedule: schedule });
+
+    apiMock.upsertPlaybookSchedule.mockResolvedValueOnce(playbook);
+    const originalPlaybooks = [{ id: 'p2', name: 'Other', description: '', taskCount: 1, isFavorite: false, scheduleEnabled: false, lastExecutionAt: null, createdAt: '2025-01-01', updatedAt: '2025-01-01' }];
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1', executionSchedule: null }),
+      playbooks: originalPlaybooks,
+    });
+
+    await usePlaybookStore.getState().upsertPlaybookSchedule('p1', {
+      enabled: true,
+      timezone: 'UTC',
+      type: 'daily',
+      daily: { timesLocal: ['09:00'] },
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.playbooks).toBe(originalPlaybooks);
+  });
+
+  it('upsertPlaybookSchedule sets scheduleError on failure', async () => {
+    apiMock.upsertPlaybookSchedule.mockRejectedValueOnce(new Error('server error'));
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      playbooks: [],
+    });
+
+    await expect(
+      usePlaybookStore.getState().upsertPlaybookSchedule('p1', { enabled: true, timezone: 'UTC', type: 'daily', daily: { timesLocal: ['09:00'] } }),
+    ).rejects.toThrow('server error');
+
+    const state = usePlaybookStore.getState();
+    expect(state.scheduleSaving).toBe(false);
+    expect(state.scheduleError).toBeTruthy();
+    expect(handleApiErrorMock).toHaveBeenCalled();
+  });
+
+  it('clearPlaybookSchedule clears schedule and sets scheduleEnabled to false', async () => {
+    const playbook = makePlaybook({ id: 'p1', executionSchedule: null });
+    apiMock.clearPlaybookSchedule.mockResolvedValueOnce(playbook);
+
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1', executionSchedule: { enabled: true, timezone: 'UTC', type: 'daily', daily: { timesLocal: ['09:00'] }, weekly: null, monthly: null, advanced: null, lastScheduledRunAt: null } }),
+      playbooks: [
+        { id: 'p1', name: 'PB', description: '', taskCount: 1, isFavorite: false, scheduleEnabled: true, lastExecutionAt: null, createdAt: '2025-01-01', updatedAt: '2025-01-01' },
+      ],
+    });
+
+    await usePlaybookStore.getState().clearPlaybookSchedule('p1');
+
+    const state = usePlaybookStore.getState();
+    expect(state.scheduleSaving).toBe(false);
+    expect(state.currentPlaybook?.executionSchedule).toBeNull();
+    expect(state.playbooks[0].scheduleEnabled).toBe(false);
+    expect(toastMock.success).toHaveBeenCalled();
+  });
+
+  it('clearPlaybookSchedule sets scheduleError on failure', async () => {
+    apiMock.clearPlaybookSchedule.mockRejectedValueOnce(new Error('server error'));
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      playbooks: [],
+    });
+
+    await expect(
+      usePlaybookStore.getState().clearPlaybookSchedule('p1'),
+    ).rejects.toThrow('server error');
+
+    const state = usePlaybookStore.getState();
+    expect(state.scheduleSaving).toBe(false);
+    expect(state.scheduleError).toBeTruthy();
+    expect(handleApiErrorMock).toHaveBeenCalled();
   });
 });

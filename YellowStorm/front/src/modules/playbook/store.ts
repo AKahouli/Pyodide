@@ -494,9 +494,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
               state.currentPlaybook?.id === playbookId
                 ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
                 : state.currentPlaybook,
-            playbooks: state.playbooks.map((p) =>
-              p.id === playbookId ? { ...p, scheduleEnabled } : p,
-            ),
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                  p.id === playbookId ? { ...p, scheduleEnabled } : p,
+                )
+              : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleSaved', 'Schedule saved'));
         } catch (err) {
@@ -516,9 +518,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
               state.currentPlaybook?.id === playbookId
                 ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
                 : state.currentPlaybook,
-            playbooks: state.playbooks.map((p) =>
-              p.id === playbookId ? { ...p, scheduleEnabled: false } : p,
-            ),
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                  p.id === playbookId ? { ...p, scheduleEnabled: false } : p,
+                )
+              : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleCleared', 'Schedule removed'));
         } catch (err) {

@@ -12,7 +12,6 @@ import {
   getPlaybooks,
   toggleFavorite,
   updatePlaybook,
-  getPlaybookSchedule,
   upsertPlaybookSchedule,
   clearPlaybookSchedule,
 } from './api';
@@ -71,11 +70,7 @@ describe('playbook api', () => {
     expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.execution('p1', 'e1'));
   });
 
-  it('gets, upserts, and clears playbook schedule', async () => {
-    apiClientMock.get.mockResolvedValueOnce({ data: { data: { enabled: true, timezone: 'UTC', type: 'daily' } } });
-    await getPlaybookSchedule('p1');
-    expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'));
-
+  it('upserts and clears playbook schedule', async () => {
     apiClientMock.put.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
     await upsertPlaybookSchedule('p1', {
       enabled: true,

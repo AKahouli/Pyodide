@@ -135,6 +135,8 @@ export interface PlaybookSummary {
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
   scheduleEnabled: boolean;
+  /** Full schedule data when included by the list API (optional, backend-dependent). */
+  executionSchedule?: ExecutionScheduleData | null;
   lastExecutionAt: string | null;
   createdAt: string;
   updatedAt: string;
