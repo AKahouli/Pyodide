@@ -1,5 +1,32 @@
 # Changelog
 
+## [2026-04-02 12:00] — Strip UI-only playbook task fields before PATCH
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Reworked `sanitizePlaybookUpdate()` to rebuild each task from a backend-safe allow-list and added a regression test so `isSavingReplayBaseline` and other client-only flags are excluded from the PATCH payload.
+- **Why:** The backend validation layer rejects unknown task properties, and autosave was sending replay UI state that should never have left the client.
+- **Impact:** `YellowStorm/front/src/modules/playbook/api.ts`, `YellowStorm/front/src/modules/playbook/api.test.ts`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_12-00-27.md`
+
+## [2026-04-02 11:57] — Clarify the execution polling guard
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Simplified the `PlaybookCanvasPage` polling guard so the selected execution is checked first and live polling only falls back to the latest execution when no explicit selection exists.
+- **Why:** The previous guard was correct but harder to read; the intent needed to be obvious because it controls whether the UI can snap back to a different execution.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_11-57-25.md`
+
+## [2026-04-02 11:56] — Keep manual execution selection from snapping back to latest live run
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated `PlaybookCanvasPage` so background polling only follows a live execution when no explicit execution is already selected. The canvas now keeps the user-chosen execution as the authoritative view.
+- **Why:** Selecting a specific execution could be overwritten by the page's latest-execution fallback, making the UI snap back to the most recent live run.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_11-56-46.md`
+
 ## [2026-04-02 11:00] — Make playbook agent assignment mapping defensive
 
 - **Feature:** `playbook`

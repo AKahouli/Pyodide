@@ -199,15 +199,14 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     if (!id || isGeneratingRoute) return;
 
-    const activeExecution =
-      (currentExecution?.playbookId === id &&
-        (currentExecution.status === 'running' || currentExecution.status === 'interrupted')
-        ? currentExecution
+    const selectedExecution = currentExecution?.playbookId === id ? currentExecution : null;
+    const activeExecution = selectedExecution
+      ? (selectedExecution.status === 'running' || selectedExecution.status === 'interrupted'
+        ? selectedExecution
         : null)
-      || (execution &&
-        (execution.status === 'running' || execution.status === 'interrupted')
+      : execution && (execution.status === 'running' || execution.status === 'interrupted')
         ? execution
-        : null);
+        : null;
 
     if (!activeExecution) return;
 
