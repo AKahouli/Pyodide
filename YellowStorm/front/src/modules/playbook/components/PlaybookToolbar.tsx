@@ -130,10 +130,12 @@ export function PlaybookToolbar({
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
         </Button>
       )}
-      <Button variant="outline" size="sm" onClick={onSchedule} className="px-2 sm:px-3">
-          <CalendarClock className="h-4 w-4 sm:mr-1" />
-          <span className="hidden sm:inline">{t('toolbar.schedule')}</span>
-      </Button>
+      {onSchedule && (
+        <Button variant="outline" size="sm" onClick={onSchedule} className="px-2 sm:px-3">
+            <CalendarClock className="h-4 w-4 sm:mr-1" />
+            <span className="hidden sm:inline">{t('toolbar.schedule')}</span>
+        </Button>
+      )}
       <Button
         variant={isDirty ? 'outline' : 'ghost'}
         size="sm"

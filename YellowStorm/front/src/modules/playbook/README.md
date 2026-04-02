@@ -51,7 +51,7 @@ The playbook module is a self-contained feature module that handles:
 - **Bulk Delete**: Select and delete multiple playbooks at once
 - **Token Usage**: Per-execution and aggregate token tracking with usage indicator
 - **Beta Disclaimer**: First-visit modal with dismissible beta notice
-- **Execution schedule**: `Playbook.executionSchedule` (`ExecutionScheduleData | null`) matches the backend embedded document (daily / weekly / monthly / advanced). The **list** exposes `PlaybookSummary.scheduleEnabled` (whether an enabled schedule exists). The **store** persists schedule changes via `upsertPlaybookSchedule` / `clearPlaybookSchedule` (`PUT` and `DELETE` on `/playbooks/:id/schedule`), with `scheduleSaving` / `scheduleError` for UI loading and errors. **UI** lives under `components/schedule/` (sheet, badge, validation helpers) and the canvas toolbar.
+- **Execution schedule**: `Playbook.executionSchedule` (`ExecutionScheduleData | null`) matches the backend embedded document (daily / weekly / monthly / advanced). The **list** exposes `PlaybookSummary.scheduleEnabled` (whether an enabled schedule exists) and optional `executionSchedule` for rich badge display in cards. The **store** persists schedule changes via `upsertPlaybookSchedule` / `clearPlaybookSchedule` (`PUT` and `DELETE` on `/playbooks/:id/schedule`), with `scheduleSaving` / `scheduleError` for UI loading and errors (convenience hooks in `useSchedule.ts`). **UI** lives under `components/schedule/` (extracted sub-components: sheet, badge, type selector, active toggle, daily/weekly/monthly/advanced editors, helpers).
 - **Execution trigger**: `PlaybookExecution` and `PlaybookExecutionSummary` include optional `executionTrigger` (`manual` | `scheduled`). Client-initiated runs and SSE optimistic objects use `manual`; `scheduled` is set when the backend [`PlaybookScheduleRunnerService`](../../../../back/src/modules/playbook/services/playbook-schedule-runner.service.ts) starts a run (see [Backend: schedule runner](#backend-schedule-runner-reference)).
 
 ---
@@ -126,9 +126,16 @@ playbook/
 │   ├── PlaybookNode.tsx                  # Custom ReactFlow node (context menu, status ring)
 │   ├── PlaybookNodeEditor.tsx            # Side sheet for editing node properties
 │   ├── PlaybookToolbar.tsx               # Canvas toolbar (designer, add step, auto layout, schedule, history, save, run)
-│   ├── schedule/                         # Execution schedule sheet, badge, time helpers
-│   │   ├── PlaybookScheduleSheet.tsx    # Shadcn Sheet: draft schedule, save / clear, all modes
+│   ├── schedule/                         # Execution schedule sheet, badge, editors, time helpers
+│   │   ├── PlaybookScheduleSheet.tsx    # Orchestration + state: opens sub-editors, save / clear (AlertDialog)
 │   │   ├── PlaybookScheduleBadge.tsx    # Secondary badge + `summarizeExecutionSchedule` (list/canvas)
+│   │   ├── ScheduleActiveToggle.tsx     # Active/Inactive segmented control for schedule draft
+│   │   ├── ScheduleTypeSelector.tsx     # Mode dropdown (daily/weekly/monthly/advanced) with aria-label
+│   │   ├── DailyScheduleEditor.tsx      # Daily form (add/remove HH:mm time inputs)
+│   │   ├── WeeklyScheduleEditor.tsx     # Weekly form (weekday + time per slot)
+│   │   ├── MonthlyScheduleEditor.tsx    # Monthly form (day/month + time + next-occurrence preview, useMemo)
+│   │   ├── AdvancedScheduleEditor.tsx   # Advanced form (variant selector + conditional editors)
+│   │   ├── helpers.ts                   # `fromExecutionSchedule` / `defaultSchedule` (unknown type fallback)
 │   │   └── timeInput.ts                 # `timeLocalFromInput`: `<input type="time">` → `HH:mm` for API
 │   ├── PlaybookWorkspaceSelect.tsx       # Multi-select workspace picker
 │   ├── PlaybookGeneratingOverlay.tsx     # Animated overlay during AI generation/design
@@ -149,7 +156,8 @@ playbook/
 │   └── InterruptDialog.tsx              # Approval/clarification modal
 ├── hooks/
 │   ├── useAutosave.ts                   # Debounced autosave (1s)
-│   └── usePlaybookCanvas.ts             # ReactFlow <-> Zustand store bridge
+│   ├── usePlaybookCanvas.ts             # ReactFlow <-> Zustand store bridge
+│   └── useSchedule.ts                   # Convenience selectors: useScheduleSaving(), useScheduleError()
 ├── constants/
 │   └── schedule.constants.ts            # Schedule UI limits (e.g. max times/slots)
 ├── utils/
@@ -263,7 +271,7 @@ interface PlaybookState {
 - `fetchExecutions(playbookId)` — Pre-fetches latest execution details, caps history
 - `fetchExecution(playbookId, execId)` — Smart merge: keeps newer SSE status over stale API response
 - `createPlaybook` / `clonePlaybook` / `updatePlaybook` — Derive `PlaybookSummary.scheduleEnabled` from `executionSchedule?.enabled === true` for list rows
-- `upsertPlaybookSchedule` / `clearPlaybookSchedule` — Update `currentPlaybook.executionSchedule` and `playbooks[].scheduleEnabled` on success; set `scheduleSaving` / `scheduleError`; toast on success/failure
+- `upsertPlaybookSchedule` / `clearPlaybookSchedule` — Update `currentPlaybook.executionSchedule` and `playbooks[].scheduleEnabled` on success (guarded: skips `playbooks.map()` when the target playbook is not in the list); set `scheduleSaving` / `scheduleError`; toast on success/failure
 - `deletePlaybook(id)` — Optimistic delete: removes from list immediately, restores on API failure
 - `toggleFavorite(id)` — Optimistic toggle, re-fetches list to reflect sort order
 - `resumeExecution(id, data)` — Optimistically marks humanFeedback component as answered
@@ -304,7 +312,9 @@ useExecutionPanelOpen()                   // boolean
 usePageMode()                             // PlaybookPageMode
 useWorkspaceExplorerOpen()                // boolean
 useCanUndo() / useCanRedo()               // boolean
-useHasActiveExecution(playbookId)         // boolean (checks executingPlaybookIds + history + currentExecution)
+ useHasActiveExecution(playbookId)         // boolean (checks executingPlaybookIds + history currentExecution)
+ useScheduleSaving()                       // boolean (schedule PUT/DELETE in flight)
+ useScheduleError()                        // string | null (last schedule API error)
 ```
 
 ---
@@ -484,7 +494,7 @@ Side sheet (`Sheet` from shadcn) for editing node properties:
 | Component | Description |
 |-----------|-------------|
 | `ExecutionPanel` | Inline execution panel for split view: compact header (status, duration, stop, history picker, compare, close), auto-loads latest execution, auto-follows running/interrupted steps, reuses `ExecutionStepList` + `ExecutionStepDetail` |
-| `PlaybookToolbar` | Canvas toolbar: Designer, Add Step, Auto Layout, Schedule (opens schedule sheet), Executions (toggle panel), Save (with status), Run (with loading) |
+| `PlaybookToolbar` | Canvas toolbar: Designer, Add Step, Auto Layout, Schedule (conditionally rendered when `onSchedule` is provided, opens schedule sheet), Executions (toggle panel), Save (with status), Run (with loading) |
 | `PlaybookWorkspaceSelect` | Multi-select workspace picker (fetches on mount/open) |
 | `PlaybookUsageIndicator` | Token usage display: total/limit bar (green->yellow->amber->rose), input/output breakdown tooltip |
 | `PlaybookStatusBadge` | Status icon + color for step/execution statuses (sm/md sizes) |
@@ -498,7 +508,7 @@ Side sheet (`Sheet` from shadcn) for editing node properties:
 | `HumanFeedbackInline` | Inline feedback: approval (approve/reject + reason), review (approve/reject + feedback), clarification (textarea). Shows answered state with persisted response. Collapsible task description and agent result sections |
 | `InterruptDialog` | Modal for approval/clarification/review responses |
 | `CreatePlaybookDialog` | Two tabs: Manual (name + description) and Auto Builder (name + prompt + workspace) |
-| `PlaybookCard` | Card component for list view (name, description, step count, schedule badge when `scheduleEnabled`, favorite star, selectable checkbox) |
+| `PlaybookCard` | Card component for list view (name, description, step count, `PlaybookScheduleBadge` when `scheduleEnabled` and `executionSchedule` is available, fallback `CalendarClock` icon otherwise, favorite star, selectable checkbox) |
 | `PlaybookButton` | Sidebar navigation button with BETA badge |
 | `PlaybookScheduleSheet` | Side sheet to create/edit/clear execution schedule (see [Schedule UI](#schedule-ui) below) |
 | `PlaybookScheduleBadge` | Compact `CalendarClock` + truncated summary when schedule is enabled (`summarizeExecutionSchedule`) |
@@ -511,17 +521,19 @@ Path: `components/schedule/`. These components implement the **execution schedul
 
 - **Props**: `open`, `onOpenChange`, `playbookId`, `schedule` (`ExecutionScheduleData | null` from the loaded playbook).
 - **Store**: `upsertPlaybookSchedule`, `clearPlaybookSchedule`, `scheduleSaving` (disables actions while a request is in flight; success/error toasts live in the store).
-- **Draft lifecycle**: When the sheet opens, the draft is initialized from `schedule` via `fromExecutionSchedule` (or defaults to daily `09:00`). Switching **Active / Inactive** uses a segmented control; inactive sends `{ enabled: false }` on save.
-- **Modes** (`ExecutionScheduleType`): **daily** (multiple `HH:mm` times), **weekly** (weekday + time per slot), **monthly** (day-of-month + time), **advanced** (variant: weekdays / weekend / every N days + time). Changing mode resets the other payload branches and seeds sensible defaults (e.g. weekly slot Monday `09:00`).
-- **Timezone**: There is no separate timezone picker in the UI. On save, `buildPayload()` merges `timezone: getDefaultScheduleTimezone()` from [`constants/schedule.constants.ts`](constants/schedule.constants.ts) — the browser’s IANA zone from `Intl.DateTimeFormat().resolvedOptions().timeZone`, with **`UTC`** fallback if `Intl` does not return a zone.
+- **Draft lifecycle**: When the sheet opens, the draft is initialized from `schedule` via `fromExecutionSchedule` (or defaults to daily `09:00`). `fromExecutionSchedule` gracefully falls back to daily defaults when the API returns an unknown schedule type. Switching **Active / Inactive** uses a segmented control; inactive sends `{ enabled: false }` on save.
+- **Modes** (`ExecutionScheduleType`): **daily** (multiple `HH:mm` times), **weekly** (weekday + time per slot), **monthly** (day-of-month + time), **advanced** (variant: weekdays / weekend / every N days + time). Each mode is rendered by a dedicated sub-component (`DailyScheduleEditor`, `WeeklyScheduleEditor`, `MonthlyScheduleEditor`, `AdvancedScheduleEditor`). Changing mode resets the other payload branches and seeds sensible defaults (e.g. weekly slot Monday `09:00`).
+- **Timezone**: There is no separate timezone picker in the UI. On save, `buildPayload()` merges `timezone: getDefaultScheduleTimezone()` from [`constants/schedule.constants.ts`](constants/schedule.constants.ts) — the browser's IANA zone from `Intl.DateTimeFormat().resolvedOptions().timeZone`, with **`UTC`** fallback if `Intl` does not return a zone.
 - **Validation**: Before `upsertPlaybookSchedule`, the draft is validated with `validateUpsertSchedulePayload` from [`utils/scheduleValidation.ts`](utils/scheduleValidation.ts); errors use i18n keys under `schedule.validation.*` (toast).
 - **Time inputs**: Native `<input type="time">` values are normalized with `timeLocalFromInput` from [`timeInput.ts`](components/schedule/timeInput.ts) so payloads stay `HH:mm`.
-- **Clear schedule**: “Remove” calls `clearPlaybookSchedule` after a confirm dialog (`schedule.confirmClear`); closes the sheet on success.
+- **Clear schedule**: "Remove" opens a shadcn `AlertDialog` (replaces legacy `window.confirm`) with `schedule.confirmClear` / `schedule.confirmClearDesc` copy; calls `clearPlaybookSchedule` on confirm; closes the sheet on success.
+- **Accessibility**: The schedule mode `<Select>` has an `aria-label` derived from `schedule.mode` i18n key.
+- **Monthly preview**: Next-occurrence preview in `MonthlyScheduleEditor` is wrapped in `useMemo` keyed on slot values, avoiding recalculation on every render.
 
 #### `PlaybookScheduleBadge.tsx`
 
 - **Props**: `schedule` (`ExecutionScheduleData | null | undefined`), optional `className`.
-- **Render**: Returns `null` unless `schedule.enabled` and `schedule.type` are set. Otherwise shows a **secondary** `Badge` with `CalendarClock` and the string from [`summarizeExecutionSchedule`](utils/scheduleDisplay.ts) (truncated with `title` for full text). Used where a short schedule hint is needed (e.g. list cards when `scheduleEnabled` is true).
+- **Render**: Returns `null` unless `schedule.enabled` and `schedule.type` are set. Otherwise shows a **secondary** `Badge` with `CalendarClock` and the string from [`summarizeExecutionSchedule`](utils/scheduleDisplay.ts) (truncated with `title` for full text). Used where a short schedule hint is needed — both in the canvas header and in `PlaybookCard` (when `executionSchedule` is included in the list response).
 
 ### Status Badge Icons
 
@@ -601,8 +613,8 @@ Smart component array merging for SSE step_complete updates:
 
 - **schedule.constants** — Caps and limits shared by validation and the schedule UI
 - **formatPlaybookDateTime** — Consistent timezone-aware strings for the schedule sheet and badges
-- **scheduleDisplay** — Short summaries for toolbar/badge copy (e.g. “Daily at 9:00”)
-- **scheduleValidation** — Client-side checks before calling `upsertPlaybookSchedule` (`scheduleValidation.test.ts` covers disabled payload, timezone requirement, valid daily)
+- **scheduleDisplay** — Short summaries for toolbar/badge copy (e.g. "Daily at 9:00"); `Intl.DateTimeFormat` cached before loops; monthly preview loop capped at 60 iterations
+- **scheduleValidation** — Client-side checks before calling `upsertPlaybookSchedule` (`scheduleValidation.test.ts` covers disabled payload, timezone requirement, valid/invalid daily/weekly/monthly/advanced, edge cases for time format, weekday range, day/month-of-month, interval days, week-of-month)
 - **timeInput** — `timeLocalFromInput` normalizes `<input type="time">` values to `HH:mm` for the API
 
 ---
@@ -633,7 +645,6 @@ Smart component array merging for SSE step_complete updates:
 | `deleteExecution(playbookId, execId)` | DELETE | `/playbooks/:id/executions/:execId` | `void` |
 | `deleteAllExecutions(playbookId)` | DELETE | `/playbooks/:id/executions` | `{ deleted, kept }` |
 | `getActiveExecutions()` | GET | `/playbooks/active-executions` | `PlaybookExecution[]` |
-| `getPlaybookSchedule(playbookId)` | GET | `/playbooks/:id/schedule` | `ExecutionScheduleData \| null` |
 | `upsertPlaybookSchedule(playbookId, data)` | PUT | `/playbooks/:id/schedule` | `Playbook` (updated `executionSchedule`) |
 | `clearPlaybookSchedule(playbookId)` | DELETE | `/playbooks/:id/schedule` | `Playbook` (cleared schedule) |
 | `clonePlaybook(id)` | POST | `/playbooks/:id/clone` | `Playbook` |
@@ -680,7 +691,7 @@ playbooks: {
 }
 ```
 
-Schedule runs use the same `schedule(id)` path: **GET** loads the embedded schedule document, **PUT** upserts (`UpsertPlaybookScheduleData`), **DELETE** clears it.
+Schedule runs use the same `schedule(id)` path: **PUT** upserts (`UpsertPlaybookScheduleData`), **DELETE** clears it. Schedule data is embedded in the `Playbook` entity (`playbook.executionSchedule`); a standalone GET endpoint existed but was removed as dead code.
 
 ---
 
@@ -689,7 +700,7 @@ Schedule runs use the same `schedule(id)` path: **GET** loads the embedded sched
 ### Core Entities
 
 ```typescript
-PlaybookSummary          // id, name, description, taskCount, isFavorite, scheduleEnabled (list API),
+PlaybookSummary          // id, name, description, taskCount, isFavorite, scheduleEnabled, executionSchedule? (optional, list API),
                          //   lastExecutionAt, createdAt, updatedAt
 Playbook                 // id, name, description, tasks[], edges[], workspaces[], createdBy, isFavorite, isActive,
                          //   executionSchedule (ExecutionScheduleData | null), createdAt, updatedAt
@@ -953,6 +964,13 @@ All playbook routes use `React.lazy()` + `<Suspense>` so the playbook module chu
 - Node positions only sync to store on drag end (`onNodeDragStop`), not during drag
 - Prevents constant store updates and autosave triggers while dragging
 
+### Schedule Performance
+
+- **`Intl.DateTimeFormat` cached outside loops** in `scheduleDisplay.ts` — a single formatter instance is created before the day-by-day loop, avoiding repeated instantiation (up to 60 iterations).
+- **Monthly preview capped at 60 days** — the `dayOfMonth === 0` ("every day") loop uses `PREVIEW_MAX_ITERATIONS = 60` instead of the original 400, since the preview is informational only.
+- **Monthly preview `useMemo`** — `formatNextMonthlyOccurrencePreview` in `MonthlyScheduleEditor` is wrapped in `useMemo` keyed on `dayClamped`, `slot.timeLocal`, `language`, and `slot.monthOfYear`, preventing recalculation on every render.
+- **Guarded `playbooks.map()` in schedule store actions** — `upsertPlaybookSchedule` and `clearPlaybookSchedule` check `state.playbooks.some((p) => p.id === playbookId)` before mapping, returning the original array reference when the target playbook is not in the list.
+
 ---
 
 ## Data Flow
@@ -1074,8 +1092,8 @@ Unit tests are colocated in the module as `*.test.ts` and `*.test.tsx` — **22 
 
 | Area | Test File | Tests |
 |------|-----------|-------|
-| **API** | `api.test.ts` | 6 (includes `getPlaybookSchedule` / `upsertPlaybookSchedule` / `clearPlaybookSchedule`) |
-| **Store** | `store.test.ts` | 23 (includes execution panel, optimistic runs, resume/rerun, `scheduleEnabled` on summaries) |
+| **API** | `api.test.ts` | 5 (includes `upsertPlaybookSchedule` / `clearPlaybookSchedule`) |
+| **Store** | `store.test.ts` | 28 (includes execution panel, optimistic runs, resume/rerun, schedule upsert/clear with error handling, `scheduleEnabled` on summaries) |
 | **Index** | `index.test.ts` | 1 |
 | **Components** | `PlaybookButton.test.tsx` | 1 |
 | | `PlaybookStatusBadge.test.tsx` | 2 |
@@ -1095,7 +1113,7 @@ Unit tests are colocated in the module as `*.test.ts` and `*.test.tsx` — **22 
 | **Services** | `playbookStreamService.test.tsx` | 3 |
 | **Utils** | `auto-layout.test.ts` | 2 |
 | | `formatPlaybookDateTime.test.ts` | 3 |
-| | `scheduleValidation.test.ts` | 3 |
+| | `scheduleValidation.test.ts` | 20 |
 
 Shared test builders live in `src/modules/playbook/test-utils.ts` (`makePlaybook`, `makeExecution`, `makeExecutionSummary`, `makeTask`, `makeEdge`). `makePlaybook` sets `executionSchedule: null`; `makeExecution` / `makeExecutionSummary` set `executionTrigger: 'manual'` by default. Playbook list fixtures include `scheduleEnabled: false` where a full `PlaybookSummary` is built inline.
 
