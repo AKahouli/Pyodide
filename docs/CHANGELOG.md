@@ -1,6 +1,58 @@
 # Changelog
 
-## [2026-04-02 07:24] — Refactor Auto Builder create dialog into prompt-first composer
+## [2026-04-02 09:37] — Center playbook node side connectors
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Updated playbook node handle styling so side connectors are vertically centered on their anchor position instead of sitting offset from the middle of the node edge.
+- **Why:** The connector dots looked visually misaligned compared with the desired centered canvas layout.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookNode.tsx`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_09-37-45.md`
+## [2026-04-02 09:37] — Align typed-port handles with the node midpoint
+
+- **Feature:** `task-toolbar`
+- **Type:** `refactor`
+- **Changed:** Kept the typed port model intact while adjusting dynamic handle rendering so each handle is centered around its computed vertical anchor, preserving multi-port spacing and handle ids.
+- **Why:** Handle placement belongs to the task-toolbar node system and needed a rendering-only fix without changing edge contracts.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookNode.tsx`
+- **Doc:** `created` `/docs/task-toolbar/README_2026-04-02_09-37-45.md`
+## [2026-04-02 09:26] â€” Clean the playbook Auto Builder modal chrome
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Flattened the Auto Builder visual hierarchy, reduced modal height again, softened the segmented control, and toned down section framing to make the create modal cleaner.
+- **Why:** The previous iteration was still visually busy around the tab strip and card surfaces.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/CreatePlaybookDialog.tsx`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_09-26-29.md`
+
+## [2026-04-02 09:20] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Make the playbook creation modal more minimal and compact
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Simplified the Auto Builder modal into a shorter, quieter layout: removed the left guidance column, reduced the shell height, tightened the prompt composer, limited quick starts to two entries, and kept naming/workspace fields in a compact secondary section.
+- **Why:** The prior redesign still felt too tall and visually busy for a prompt-first creation flow.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/CreatePlaybookDialog.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_09-20-56.md`
+
+## [2026-04-02 08:37] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Redesign the playbook creation modal around the prompt bar
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Reworked `CreatePlaybookDialog` into a more intentional modal shell with layered header/background/footer treatment, stronger tab styling, and a two-column Auto Builder composition. The prompt bar remains the primary action, while supporting guidance, quick starts, naming, and workspace context are organized into distinct sections. Added the supporting English and French copy for the redesigned layout.
+- **Why:** The earlier iterations fixed the default tab and shell sizing, but the modal still needed a more coherent UI/UX treatment while preserving the prompt-bar interaction model.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/CreatePlaybookDialog.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_08-37-16.md`
+
+## [2026-04-02 08:23] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Default Auto Builder tab and harmonize the create dialog shell
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Made Auto Builder the default tab when opening New Playbook, widened the modal shell, capped its height with scrolling, and replaced the dark prompt card with a light neutral prompt surface that matches the surrounding window palette.
+- **Why:** The previous iteration improved the Auto Builder layout but still opened on Manual and used a dark surface that did not match the target reference.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/CreatePlaybookDialog.tsx`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_08-23-48.md`
+
+## [2026-04-02 07:24] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Refactor Auto Builder create dialog into prompt-first composer
 
 - **Feature:** `playbook`
 - **Type:** `refactor`
@@ -9,12 +61,12 @@
 - **Impact:** `YellowStorm/front/src/modules/playbook/components/CreatePlaybookDialog.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
 - **Doc:** `created` `/docs/playbook/README_2026-04-02_07-24-46.md`
 
-## [2026-04-01 17:00] — Fix autosave stripping port fields from playbook response
+## [2026-04-01 17:00] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Fix autosave stripping port fields from playbook response
 
 - **Feature:** `task-toolbar`
 - **Type:** `fix`
 - **Changed:** Added `enabled`, `taskType`, `inputPorts`, `outputPorts`, `stepReplayMode` to `mapToResponse()` task mapping in `playbook.service.ts`. Added `sourceOutputPortId`, `targetInputPortId` to edge mapping in the same method. Added corresponding fields to `PlaybookTaskData` and `PlaybookEdgeData` interfaces in `playbook.interface.ts`. The data was already being saved to MongoDB correctly via `$set`, but the API response used an explicit field map that omitted the Week 1-4 port/type fields, causing the frontend's `currentPlaybook` to lose ports on every save cycle.
-- **Why:** After autosave, `currentPlaybook` was replaced with the server response which lacked `inputPorts`, `outputPorts`, `taskType` on tasks and `sourceOutputPortId`, `targetInputPortId` on edges — making port settings appear to not persist.
+- **Why:** After autosave, `currentPlaybook` was replaced with the server response which lacked `inputPorts`, `outputPorts`, `taskType` on tasks and `sourceOutputPortId`, `targetInputPortId` on edges ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â making port settings appear to not persist.
 - **Impact:** `playbook.service.ts` (mapToResponse), `playbook.interface.ts` (PlaybookTaskData, PlaybookEdgeData)
 - **Doc:** n/a
 
@@ -25,16 +77,16 @@
 - **Impact:** `types.ts`, `store.ts`, `ArtifactBadge.tsx` (new), `PlaybookNode.tsx`, `ExecutionStepDetail.tsx`, `index.ts`, `en.json`, `fr.json`
 - **Doc:** created `/docs/task-toolbar/README_2026-04-01_16-45-00.md`
 
-## [2026-04-01 15:30] — ADK artifact routing: port-aware context resolution and artifact storage (Week 5)
+## [2026-04-01 15:30] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â ADK artifact routing: port-aware context resolution and artifact storage (Week 5)
 
 - **Feature:** `task-toolbar`
 - **Type:** `feat`
-- **Changed:** Rewrote `_build_structured_context()` in `graph_builder.py` to return `tuple[str, list]` — typed port resolution walks edges to look up `artifacts_by_port["{source_id}:{port_id}"]`, routes text/code artifacts into prompt parts, and collects heavy artifacts (document, image) into a `workspace_artifacts` list. Workspace artifacts are merged into `effective_workspace_context` before passing to `create_langchain_tools()`. Added artifact storage after task completion: `task_result["artifacts"]` indexed by `"{task_id}:{port_id}"` into `state_update["artifacts_by_port"]`, merged via `merge_artifacts` reducer. Legacy fallback preserved for playbooks without ports.
-- **Why:** ADK now routes artifacts end-to-end by typed port — upstream task outputs are stored in state, resolved for downstream context building, and heavy artifacts are injected into workspace for agent tool access.
+- **Changed:** Rewrote `_build_structured_context()` in `graph_builder.py` to return `tuple[str, list]` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â typed port resolution walks edges to look up `artifacts_by_port["{source_id}:{port_id}"]`, routes text/code artifacts into prompt parts, and collects heavy artifacts (document, image) into a `workspace_artifacts` list. Workspace artifacts are merged into `effective_workspace_context` before passing to `create_langchain_tools()`. Added artifact storage after task completion: `task_result["artifacts"]` indexed by `"{task_id}:{port_id}"` into `state_update["artifacts_by_port"]`, merged via `merge_artifacts` reducer. Legacy fallback preserved for playbooks without ports.
+- **Why:** ADK now routes artifacts end-to-end by typed port ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â upstream task outputs are stored in state, resolved for downstream context building, and heavy artifacts are injected into workspace for agent tool access.
 - **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`
 - **Doc:** created `/docs/task-toolbar/README_2026-04-01_15-30-00.md`
 
-## [2026-04-01 11:30] — Backend artifact routing and dual-path context resolution (Week 4)
+## [2026-04-01 11:30] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Backend artifact routing and dual-path context resolution (Week 4)
 
 - **Feature:** `task-toolbar`
 - **Type:** `feat`
@@ -43,7 +95,7 @@
 - **Impact:** `playbook.schema.ts`, `playbook-execution.schema.ts`, `chatbot.proto` (backend), `execution.utils.ts`, `playbook-execution.service.ts`
 - **Doc:** created `/docs/task-toolbar/README_2026-04-01_11-30-00.md`
 
-## [2026-04-01 11:02] — Template registry, toolbar dropdown, and port editor (Week 3)
+## [2026-04-01 11:02] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Template registry, toolbar dropdown, and port editor (Week 3)
 
 - **Feature:** `task-toolbar`
 - **Type:** `feat`
@@ -59,7 +111,7 @@
 - **Impact:** `node.tsx`, `edge.tsx`, `PlaybookNode.tsx`, `PortLabel.tsx` (new), `port-colors.ts` (new), `usePlaybookCanvas.ts`, `PlaybookCanvasPage.tsx`
 - **Doc:** updated `/docs/task-toolbar/README_2026-04-01_09-50-00.md`
 
-## [2026-04-01 09:36] — Typed port & artifact data model (Week 1 foundation)
+## [2026-04-01 09:36] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Typed port & artifact data model (Week 1 foundation)
 
 - **Feature:** `task-toolbar`
 - **Type:** `feat`
@@ -68,16 +120,16 @@
 - **Impact:** `types.ts`, `chatbot.proto`, `state.py`, `migrate-ports.ts` (new), `store/index.ts` (new), `en.json`, `fr.json`, `index.ts`
 - **Doc:** created `/docs/task-toolbar/README_2026-04-01_09-36-39.md`
 
-## [2026-03-30 03:58] — Add reducers for status and error fields in ExecutionState
+## [2026-03-30 03:58] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Add reducers for status and error fields in ExecutionState
 
 - **Feature:** `playbook`
 - **Type:** `fix`
 - **Changed:** Added `merge_status` (severity-based: failed > suspended > in_progress > completed > skipped) and `merge_error` (first non-empty wins) reducers, annotated `status` and `error` fields as `Annotated` in `ExecutionState` TypedDict.
-- **Why:** Parallel branches in LangGraph both write `status` and `error` without reducers — the last writer silently wins, masking failures. A branch completing after a failing branch could overwrite `"failed"` with `"completed"`.
+- **Why:** Parallel branches in LangGraph both write `status` and `error` without reducers ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the last writer silently wins, masking failures. A branch completing after a failing branch could overwrite `"failed"` with `"completed"`.
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/state.py`
 - **Doc:** updated `/docs/playbook/README_2026-03-30_03-58-44.md`
 
-## [2026-03-30] — Rebind resumed workflow streams to the active queue
+## [2026-03-30] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Rebind resumed workflow streams to the active queue
 
 - **Feature:** `playbook`
 - **Type:** `fix`
@@ -86,7 +138,7 @@
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/workflow_service.py`
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-29] — Fix single-step HITL interrupt extraction
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Fix single-step HITL interrupt extraction
 
 - **Feature:** `playbook`
 - **Type:** `fix`
@@ -95,7 +147,7 @@
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/workflow_service.py`
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-29] — Fix lost resumed completions in ADK workflow stream
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Fix lost resumed completions in ADK workflow stream
 
 - **Feature:** `playbook`
 - **Type:** `fix`
@@ -104,7 +156,7 @@
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/workflow_service.py`, `Yellowstorm-adk/src/langgraph_engine/playbook_queue.py`
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-29] — Simplify copilot interrupt thread rendering
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Simplify copilot interrupt thread rendering
 
 - **Feature:** `playbook`
 - **Type:** `fix`
@@ -112,7 +164,7 @@
 - **Why:** Multi-turn HITL conversations were visually noisy because the same reply text could appear twice and agent output was wrapped in redundant chrome.
 - **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookDesignerPanel.tsx`
 - **Doc:** updated `/docs/playbook/README.md`
-## [2026-03-29] — Fix resumed clarification interrupts in backend stream
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Fix resumed clarification interrupts in backend stream
 
 - **Feature:** `playbook`
 - **Type:** `fix`
@@ -120,7 +172,7 @@
 - **Why:** Multi-turn clarification can legitimately interrupt the same node several times. The old task-id-only stale filter hid those new interrupts, so the frontend showed no follow-up response and the execution was later marked failed.
 - **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`
 - **Doc:** updated `/docs/playbook/README.md`
-## [2026-03-29] — Fix clarification interrupts for direct step runs
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Fix clarification interrupts for direct step runs
 
 - **Feature:** `playbook`
 - **Type:** `fix`
@@ -128,7 +180,7 @@
 - **Why:** A node with `Allow clarification` enabled could still finish normally even when the agent asked the user a question, which left the step marked completed with no Copilot interrupt.
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `Yellowstorm-adk/src/langgraph_engine/step_executor.py`
 - **Doc:** updated `/docs/playbook/README.md`
-## [2026-03-29] — Stream workflow HITL interrupts from LangGraph
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Stream workflow HITL interrupts from LangGraph
 
 - **Feature:** `playbook`
 - **Type:** `refactor`
@@ -136,7 +188,7 @@
 - **Why:** The conversational HITL loops were already in place at the node level, but the workflow transport still waited for `ainvoke(...)` and then inspected snapshots. Streaming aligns the runtime with LangGraph's recommended HITL pattern and surfaces interrupts as first-class events.
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/workflow_service.py`
 - **Doc:** updated `/docs/playbook/README.md`
-## [2026-03-29] — Add iterative review-after HITL loop
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Add iterative review-after HITL loop
 
 - **Feature:** `playbook`
 - **Type:** `feat`
@@ -145,7 +197,7 @@
 - **Impact:** `Yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `Yellowstorm-adk/src/langgraph_engine/step_executor.py`
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-29] — Add conversational HITL clarification contract
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Add conversational HITL clarification contract
 
 - **Feature:** `playbook`
 - **Type:** `feat`
@@ -154,7 +206,7 @@
 - **Impact:** `Yellowstorm-adk/grpc/proto/chatbot.proto`, `Yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `Yellowstorm-adk/src/langgraph_engine/workflow_service.py`, `Yellowstorm-adk/src/langgraph_engine/step_executor.py`, `Yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/playbook/dto/resume-playbook.dto.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookDesignerPanel.tsx`
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-29] — Reuse playbook designer as execution copilot for HITL
+## [2026-03-29] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Reuse playbook designer as execution copilot for HITL
 
 - **Feature:** `playbook`
 - **Type:** `feat`
@@ -163,7 +215,7 @@
 - **Impact:** `store.ts` (copilot mode + interrupt open behavior), `PlaybookDesignerPanel.tsx` (shared design/interrupt sidebar), `HumanFeedbackInline.tsx` (read-only redirect affordance), `PlaybookToolbar.tsx` and `PlaybookCanvasPage.tsx` (copilot toggle wiring), `en.json` / `fr.json` (new labels), tests updated for the new flow
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-28] — Add undo/redo to playbook canvas
+## [2026-03-28] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Add undo/redo to playbook canvas
 
 - **Feature:** `playbook`
 - **Type:** `feat`
@@ -172,11 +224,12 @@
 - **Impact:** `types.ts` (added `PlaybookUndoSnapshot`), `store.ts` (undo/redo actions + capture points), `usePlaybookCanvas.ts` (capture points + ReactFlow sync watcher), `PlaybookCanvasPage.tsx` (capture points + keyboard shortcuts), `PlaybookToolbar.tsx` (undo/redo buttons), `PlaybookToolbar.test.tsx` (updated props)
 - **Doc:** updated `/docs/playbook/README.md`
 
-## [2026-03-28] — Initialize playbook feature docs
+## [2026-03-28] ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Initialize playbook feature docs
 
 - **Feature:** `playbook`
 - **Type:** `docs`
 - **Changed:** Created initial `/docs` structure with `DOC_INDEX.md`, `CHANGELOG.md`, and `/docs/playbook/README.md`
 - **Why:** Establish documentation baseline for the Playbook feature across YellowStorm (frontend/backend) and Yellowstorm-adk (gRPC/LangGraph runtime)
-- **Impact:** New files — `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`, `docs/playbook/README.md`
+- **Impact:** New files ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`, `docs/playbook/README.md`
 - **Doc:** created `/docs/playbook/README.md`
+

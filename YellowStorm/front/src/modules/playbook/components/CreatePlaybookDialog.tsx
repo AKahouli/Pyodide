@@ -26,7 +26,7 @@ interface Props {
 }
 
 export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
-  const [tab, setTab] = useState<'manual' | 'auto'>('manual');
+  const [tab, setTab] = useState<'manual' | 'auto'>('auto');
 
   // Manual fields
   const [name, setName] = useState('');
@@ -122,162 +122,197 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
   const promptSuggestions = [
     t('create.promptSuggestionResearch'),
     t('create.promptSuggestionETL'),
-    t('create.promptSuggestionMicroservices'),
-    t('create.promptSuggestionAnsible'),
-    t('create.promptSuggestionDbt'),
   ];
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="overflow-hidden border-slate-200 bg-white sm:max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>{t('create.title')}</DialogTitle>
-        </DialogHeader>
+      <DialogContent className="max-h-[72vh] overflow-y-auto border-stone-200 bg-stone-50 p-0 shadow-[0_28px_90px_-44px_rgba(15,23,42,0.24)] sm:max-w-5xl">
+        <div className="relative overflow-hidden rounded-lg">
+          <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)] bg-[size:28px_28px]" />
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(255,255,255,0.95),_transparent_38%),radial-gradient(circle_at_bottom_right,_rgba(226,232,240,0.55),_transparent_42%)]" />
 
-        <Tabs value={tab} onValueChange={(v) => setTab(v as 'manual' | 'auto')}>
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="manual">{t('create.tabManual')}</TabsTrigger>
-            <TabsTrigger value="auto" className="gap-1.5">
-              <Wand2 className="h-3.5 w-3.5" />
-              {t('create.tabAutoBuilder')}
-            </TabsTrigger>
-          </TabsList>
+          <div className="relative border-b border-stone-200/70 px-6 pb-3 pt-5 backdrop-blur-sm">
+            <DialogHeader className="space-y-1.5">
+              <DialogTitle className="text-[32px] font-semibold tracking-tight text-slate-900">
+                {t('create.title')}
+              </DialogTitle>
+              <p className="max-w-3xl text-sm leading-5 text-slate-600">
+                {tab === 'auto' ? t('create.autoModalSubtitle') : t('create.manualModalSubtitle')}
+              </p>
+            </DialogHeader>
+          </div>
 
-          {/* Manual creation */}
-          <TabsContent value="manual" className="space-y-4 pt-2">
-            <div className="space-y-2">
-              <Label htmlFor="playbook-name">{t('create.nameLabel')}</Label>
-              <Input
-                id="playbook-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder={t('create.namePlaceholder')}
-                maxLength={100}
-                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="playbook-desc">{t('create.descriptionLabel')}</Label>
-              <Textarea
-                id="playbook-desc"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={t('create.descriptionPlaceholder')}
-                maxLength={2000}
-                rows={3}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>{t('workspace.label')}</Label>
-              <PlaybookWorkspaceSelect value={workspaces} onChange={setWorkspaces} />
-            </div>
-          </TabsContent>
+          <div className="relative px-6 pb-5 pt-3">
+            <Tabs value={tab} onValueChange={(v) => setTab(v as 'manual' | 'auto')}>
+              <TabsList className="grid h-11 w-full grid-cols-2 rounded-full border border-stone-200/80 bg-stone-100/90 p-1 shadow-none sm:max-w-[296px]">
+                <TabsTrigger value="manual" className="rounded-full py-1.5 text-sm text-slate-600 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm">
+                  {t('create.tabManual')}
+                </TabsTrigger>
+                <TabsTrigger value="auto" className="gap-1.5 rounded-full py-1.5 text-sm text-slate-600 data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm">
+                  <Wand2 className="h-3.5 w-3.5" />
+                  {t('create.tabAutoBuilder')}
+                </TabsTrigger>
+              </TabsList>
 
-          {/* Auto builder */}
-          <TabsContent value="auto" className="space-y-6 pt-4">
-            <div className="relative overflow-hidden rounded-3xl border border-slate-200 bg-slate-950 px-6 py-8 text-white shadow-[0_24px_80px_-40px_rgba(15,23,42,0.9)]">
-              <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(168,85,247,0.16),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(56,189,248,0.16),_transparent_30%)]" />
-              <div className="relative space-y-6">
-                <div className="space-y-2 text-center">
-                  <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium uppercase tracking-[0.2em] text-slate-300">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    {t('create.autoBuilderBadge')}
-                  </div>
-                  <h2 className="text-2xl font-semibold tracking-tight text-white">
-                    {t('create.autoHeroTitle')}
-                  </h2>
-                  <p className="mx-auto max-w-2xl text-sm text-slate-300">
-                    {t('create.autoHeroDescription')}
-                  </p>
-                </div>
-
-                <div className="rounded-[28px] border border-white/10 bg-black/30 p-3 shadow-inner shadow-black/20 backdrop-blur-sm">
-                  <div className="flex min-h-[180px] flex-col gap-3 rounded-[22px] border border-white/10 bg-slate-900/80 p-4">
-                    <Textarea
-                      id="auto-prompt"
-                      value={autoPrompt}
-                      onChange={(e) => setAutoPrompt(e.target.value)}
-                      placeholder={t('create.promptPlaceholder')}
-                      maxLength={5000}
-                      rows={5}
-                      className="min-h-[120px] resize-none border-0 bg-transparent px-0 py-0 text-base leading-7 text-white shadow-none placeholder:text-slate-400 focus-visible:ring-0"
-                      onKeyDown={(e) => {
-                        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isAutoValid) {
-                          e.preventDefault();
-                          handleGenerate();
-                        }
-                      }}
+              {/* Manual creation */}
+              <TabsContent value="manual" className="space-y-4 pt-5">
+                <div className="grid gap-4 rounded-3xl border border-stone-200 bg-white/85 p-5 shadow-sm md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="playbook-name">{t('create.nameLabel')}</Label>
+                    <Input
+                      id="playbook-name"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder={t('create.namePlaceholder')}
+                      maxLength={100}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                     />
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs text-slate-400">
-                        {t('create.autoPromptHint')}
-                      </span>
-                      <Button
-                        type="button"
-                        size="icon"
-                        className="h-11 w-11 rounded-full bg-violet-500 text-white shadow-lg shadow-violet-950/40 transition hover:bg-violet-400 disabled:bg-slate-700 disabled:text-slate-400"
-                        onClick={handleGenerate}
-                        disabled={!isAutoValid}
-                      >
-                        <ArrowUp className="h-4 w-4" />
-                      </Button>
-                    </div>
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label htmlFor="playbook-desc">{t('create.descriptionLabel')}</Label>
+                    <Textarea
+                      id="playbook-desc"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      placeholder={t('create.descriptionPlaceholder')}
+                      maxLength={2000}
+                      rows={4}
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2">
+                    <Label>{t('workspace.label')}</Label>
+                    <PlaybookWorkspaceSelect value={workspaces} onChange={setWorkspaces} />
                   </div>
                 </div>
-              </div>
-            </div>
+              </TabsContent>
 
-            <div className="flex flex-wrap gap-2">
-              {promptSuggestions.map((suggestion) => (
-                <button
-                  key={suggestion}
-                  type="button"
-                  className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700 transition hover:border-violet-300 hover:bg-violet-50 hover:text-violet-700"
-                  onClick={() => setAutoPrompt(suggestion)}
-                >
-                  {suggestion}
-                </button>
-              ))}
-            </div>
+              {/* Auto builder */}
+              <TabsContent value="auto" className="pt-3">
+                <div className="space-y-3">
+                  <section className="rounded-[28px] border border-stone-200 bg-white/92 p-4 shadow-sm">
+                    <div className="mb-3 flex items-start justify-between gap-4">
+                      <div className="space-y-1.5">
+                        <div className="inline-flex items-center gap-2 rounded-full border border-stone-200 bg-stone-100 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-slate-600">
+                          <Sparkles className="h-3.5 w-3.5" />
+                          {t('create.autoBuilderBadge')}
+                        </div>
+                        <div>
+                          <h2 className="text-[26px] font-semibold tracking-tight text-slate-900">
+                            {t('create.autoHeroTitle')}
+                          </h2>
+                          <p className="mt-1 text-sm leading-5 text-slate-600">
+                            {t('create.autoHeroDescription')}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="hidden rounded-full border border-stone-200 bg-stone-100 px-3 py-1 text-xs text-slate-500 sm:block">
+                        {t('create.autoPromptHint')}
+                      </div>
+                    </div>
 
-            <div className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-              <div className="space-y-2">
-                <Label htmlFor="auto-name">{t('create.autoNameLabel')}</Label>
-                <Input
-                  id="auto-name"
-                  value={autoName}
-                  onChange={(e) => setAutoName(e.target.value)}
-                  placeholder={deriveAutoName(autoPrompt) || t('create.autoNamePlaceholder')}
-                  maxLength={100}
-                />
-                <p className="text-xs text-slate-500">
-                  {t('create.autoNameHint')}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>{t('workspace.label')}</Label>
-                <PlaybookWorkspaceSelect value={autoWorkspaces} onChange={setAutoWorkspaces} />
-              </div>
-            </div>
-          </TabsContent>
-        </Tabs>
+                    <div className="rounded-[24px] border border-stone-200 bg-stone-50 p-3">
+                      <div className="flex min-h-[120px] flex-col gap-3 rounded-[20px] border border-stone-200/90 bg-white px-5 py-4">
+                        <div>
+                          <p className="text-sm font-medium text-slate-900">{t('create.promptLabel')}</p>
+                          <p className="text-xs text-slate-500">{t('create.autoPromptBarCaption')}</p>
+                        </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => handleClose(false)}>
-            {t('common.cancel')}
-          </Button>
-          {tab === 'manual' ? (
-            <Button onClick={handleCreate} disabled={!isManualValid || isCreating}>
-              {isCreating ? t('common.creating') : t('create.submit')}
-            </Button>
-          ) : null}
-          {tab === 'auto' ? (
-            <Button onClick={handleGenerate} disabled={!isAutoValid}>
-              <Wand2 className="h-4 w-4 mr-2" />
-              {t('create.generate')}
-            </Button>
-          ) : null}
-        </DialogFooter>
+                        <Textarea
+                          id="auto-prompt"
+                          value={autoPrompt}
+                          onChange={(e) => setAutoPrompt(e.target.value)}
+                          placeholder={t('create.promptPlaceholder')}
+                          maxLength={5000}
+                          rows={3}
+                          className="min-h-[72px] resize-none border-0 bg-transparent px-0 py-0 text-base leading-7 text-slate-900 shadow-none placeholder:text-slate-400 focus-visible:ring-0"
+                          onKeyDown={(e) => {
+                            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isAutoValid) {
+                              e.preventDefault();
+                              handleGenerate();
+                            }
+                          }}
+                        />
+
+                        <div className="flex items-center justify-between gap-3">
+                          <p className="text-xs leading-5 text-slate-500">
+                            {t('create.autoMinimalHint')}
+                          </p>
+                          <Button
+                            type="button"
+                            size="icon"
+                            className="h-11 w-11 rounded-full bg-slate-900 text-white shadow-sm transition hover:bg-slate-700 disabled:bg-slate-300 disabled:text-slate-500"
+                            onClick={handleGenerate}
+                            disabled={!isAutoValid}
+                          >
+                            <ArrowUp className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+                    <div className="rounded-3xl border border-stone-200 bg-white/88 p-4 shadow-sm">
+                      <div className="mb-3">
+                        <p className="text-sm font-medium text-slate-900">{t('create.autoSuggestionsTitle')}</p>
+                        <p className="text-xs text-slate-500">{t('create.autoSuggestionsBody')}</p>
+                      </div>
+                      <div className="grid gap-2">
+                        {promptSuggestions.map((suggestion) => (
+                          <button
+                            key={suggestion}
+                            type="button"
+                            className="rounded-2xl border border-stone-200 bg-stone-50 px-4 py-3 text-sm leading-6 text-slate-700 transition hover:border-stone-300 hover:bg-stone-100 hover:text-slate-900"
+                            onClick={() => setAutoPrompt(suggestion)}
+                          >
+                            {suggestion}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <section className="grid gap-3 rounded-3xl border border-stone-200 bg-white/88 p-4 shadow-sm">
+                      <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
+                        <div className="mb-3 space-y-1">
+                          <Label htmlFor="auto-name">{t('create.autoNameLabel')}</Label>
+                          <p className="text-xs text-slate-500">{t('create.autoNameHint')}</p>
+                        </div>
+                        <Input
+                          id="auto-name"
+                          value={autoName}
+                          onChange={(e) => setAutoName(e.target.value)}
+                          placeholder={deriveAutoName(autoPrompt) || t('create.autoNamePlaceholder')}
+                          maxLength={100}
+                        />
+                      </div>
+
+                      <div className="rounded-2xl border border-stone-200 bg-stone-50/70 p-4">
+                        <div className="mb-3 space-y-1">
+                          <Label>{t('workspace.label')}</Label>
+                          <p className="text-xs text-slate-500">{t('create.autoWorkspaceHint')}</p>
+                        </div>
+                        <PlaybookWorkspaceSelect value={autoWorkspaces} onChange={setAutoWorkspaces} />
+                      </div>
+                    </section>
+                  </section>
+                </div>
+              </TabsContent>
+            </Tabs>
+          </div>
+
+          <div className="relative border-t border-stone-200/70 bg-white/80 px-6 py-3 backdrop-blur-sm">
+            <DialogFooter>
+              <Button variant="outline" onClick={() => handleClose(false)}>
+                {t('common.cancel')}
+              </Button>
+              {tab === 'manual' ? (
+                <Button onClick={handleCreate} disabled={!isManualValid || isCreating}>
+                  {isCreating ? t('common.creating') : t('create.submit')}
+                </Button>
+              ) : null}
+            </DialogFooter>
+          </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

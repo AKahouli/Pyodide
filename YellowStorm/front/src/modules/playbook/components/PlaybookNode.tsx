@@ -222,6 +222,7 @@ function getInputPortStyle(port: TaskInputPort, idx: number, total: number): Rea
     height: 12,
     background: colors?.dot || 'var(--muted)',
     border: '2px solid var(--background)',
+    transform: 'translateY(-50%)',
   };
 }
 
@@ -233,6 +234,7 @@ function getOutputPortStyle(port: TaskOutputPort, idx: number, total: number): R
     height: 12,
     background: colors?.dot || 'var(--muted)',
     border: '2px solid var(--background)',
+    transform: 'translateY(-50%)',
   };
 }
 
