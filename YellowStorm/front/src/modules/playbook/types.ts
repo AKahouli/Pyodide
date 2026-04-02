@@ -116,12 +116,77 @@ export interface PlaybookEdge {
   targetInputPortId?: string;
 }
 
+export type ExecutionScheduleType = 'daily' | 'weekly' | 'monthly' | 'advanced';
+
+export interface DailySchedulePayloadData {
+  timesLocal: string[];
+}
+
+export interface WeeklySlotData {
+  weekday: number;
+  timeLocal: string;
+}
+
+export interface WeeklySchedulePayloadData {
+  slots: WeeklySlotData[];
+}
+
+export interface MonthlySlotData {
+  /** 1–12 = ce mois chaque année ; null/undefined = même jour chaque mois */
+  monthOfYear?: number | null;
+  /** 1–31, 0 = chaque jour du mois, -1 = dernier jour */
+  dayOfMonth: number;
+  timeLocal: string;
+}
+
+export interface MonthlySchedulePayloadData {
+  slots: MonthlySlotData[];
+}
+
+export type AdvancedScheduleVariant = 'weekdays' | 'weekend' | 'every_n_days';
+
+export interface AdvancedSchedulePayloadData {
+  variant: AdvancedScheduleVariant;
+  intervalDays: number | null;
+  timeLocal: string | null;
+  /** weekend only: 1–12, null = every month */
+  monthOfYear?: number | null;
+  /** weekend only: 1–5, null = every week */
+  weekOfMonth?: number | null;
+}
+
+export interface ExecutionScheduleData {
+  enabled: boolean;
+  timezone: string;
+  type?: ExecutionScheduleType;
+  lastScheduledRunAt: string | null;
+  daily: DailySchedulePayloadData | null;
+  weekly: WeeklySchedulePayloadData | null;
+  monthly: MonthlySchedulePayloadData | null;
+  advanced: AdvancedSchedulePayloadData | null;
+}
+
+/** Body for PUT /playbooks/:id/schedule (aligns with backend UpsertPlaybookScheduleDto). */
+export interface UpsertPlaybookScheduleData {
+  enabled: boolean;
+  timezone?: string;
+  type?: ExecutionScheduleType;
+  daily?: DailySchedulePayloadData;
+  weekly?: WeeklySchedulePayloadData;
+  monthly?: MonthlySchedulePayloadData;
+  advanced?: AdvancedSchedulePayloadData;
+}
+
 export interface PlaybookSummary {
   id: string;
   name: string;
   description: string;
   taskCount: number;
   isFavorite: boolean;
+  /** True when the playbook has an enabled execution schedule (list API). */
+  scheduleEnabled: boolean;
+  /** Full schedule data when included by the list API (optional, backend-dependent). */
+  executionSchedule?: ExecutionScheduleData | null;
   lastExecutionAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -150,6 +215,7 @@ export interface Playbook {
   createdBy: string;
   isFavorite: boolean;
   isActive: boolean;
+  executionSchedule: ExecutionScheduleData | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -229,6 +295,7 @@ export interface PlaybookExecution {
   currentAttemptNumber?: number;
   status: ExecutionStatus;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  executionTrigger?: 'manual' | 'scheduled';
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults: TaskResult[];
   attemptHistory?: Array<{
@@ -262,6 +329,7 @@ export interface PlaybookExecutionSummary {
   executionNumber: number;
   currentAttemptNumber?: number;
   status: ExecutionStatus;
+  executionTrigger?: 'manual' | 'scheduled';
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
@@ -590,6 +658,9 @@ export interface PlaybookState {
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
   canvasSyncVersion: number;
+  /** Saving schedule (PUT/DELETE /playbooks/:id/schedule) */
+  scheduleSaving: boolean;
+  scheduleError: string | null;
 }
 
 export interface PlaybookActions {
@@ -605,6 +676,8 @@ export interface PlaybookActions {
   clonePlaybook: (id: string) => Promise<Playbook>;
   toggleFavorite: (id: string) => Promise<void>;
   bulkDeletePlaybooks: (ids: string[]) => Promise<void>;
+  upsertPlaybookSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
+  clearPlaybookSchedule: (playbookId: string) => Promise<void>;
 
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;

@@ -49,6 +49,7 @@ export function makePlaybook(overrides: Partial<Playbook> = {}): Playbook {
     createdBy: 'user-1',
     isFavorite: false,
     isActive: true,
+    executionSchedule: null,
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
     ...overrides,
@@ -63,6 +64,7 @@ export function makeExecution(overrides: Partial<PlaybookExecution> = {}): Playb
     executionNumber: 1,
     currentAttemptNumber: 1,
     status: 'running',
+    executionTrigger: 'manual',
     taskResults: [
       {
         taskId: 'task-1',
@@ -104,6 +106,7 @@ export function makeExecutionSummary(
     executionNumber: 1,
     currentAttemptNumber: 1,
     status: 'running',
+    executionTrigger: 'manual',
     error: null,
     durationMs: null,
     startedAt: '2025-01-01T00:00:00.000Z',

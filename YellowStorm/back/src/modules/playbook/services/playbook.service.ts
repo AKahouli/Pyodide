@@ -9,6 +9,7 @@ import {
 } from '../schemas/playbook-execution.schema';
 import { CreatePlaybookDto } from '../dto/create-playbook.dto';
 import { UpdatePlaybookDto } from '../dto/update-playbook.dto';
+import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
 import { PlaybookQueryDto } from '../dto/playbook-query.dto';
 import { ExecutionQueryDto } from '../dto/execution-query.dto';
 import {
@@ -19,7 +20,10 @@ import {
   PlaybookExecutionSummaryResponse,
   PaginatedExecutions,
   PlaybookDesignMessageResponse,
+  ExecutionScheduleData,
 } from '../interfaces/playbook.interface';
+import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
+import { buildExecutionScheduleDocument } from '../utils/execution-schedule-upsert.builder';
 import {
   PlaybookDesignMessage,
   PlaybookDesignMessageDocument,
@@ -230,6 +234,9 @@ export class PlaybookService {
               lastExecutionAt: 1,
               createdAt: 1,
               updatedAt: 1,
+              scheduleEnabled: {
+                $eq: [{ $ifNull: ['$executionSchedule.enabled', false] }, true],
+              },
             },
           },
         ],
@@ -268,6 +275,57 @@ export class PlaybookService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
     }
 
+    return await this.mapToResponse(playbook as any);
+  }
+
+  /**
+   * Returns the mapped execution schedule for API consumers (at most one embedded `executionSchedule` per playbook).
+   */
+  async getSchedule(playbookId: string): Promise<ExecutionScheduleData | null> {
+    const playbook = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+    return mapExecutionScheduleToData(playbook.executionSchedule);
+  }
+
+  /** Persists the single embedded schedule for this playbook (replaces any previous configuration). */
+  async upsertSchedule(playbookId: string, dto: UpsertPlaybookScheduleDto): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+    const prev = existing.executionSchedule as { lastScheduledRunAt?: Date } | null | undefined;
+    const preserveLast =
+      dto.enabled && prev?.lastScheduledRunAt ? new Date(prev.lastScheduledRunAt) : null;
+
+    const executionSchedule = buildExecutionScheduleDocument(dto, preserveLast);
+
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook schedule upserted', { playbookId, enabled: dto.enabled, type: dto.type });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async clearSchedule(playbookId: string): Promise<PlaybookResponse> {
+    const disabledSchedule = buildExecutionScheduleDocument({ enabled: false } as UpsertPlaybookScheduleDto, null);
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule: disabledSchedule } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook schedule cleared', { playbookId });
     return await this.mapToResponse(playbook as any);
   }
 
@@ -555,6 +613,7 @@ export class PlaybookService {
       description: playbook.description || '',
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
+      scheduleEnabled: Boolean(playbook.scheduleEnabled),
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
@@ -624,6 +683,7 @@ export class PlaybookService {
       createdBy: playbook.createdBy.toString(),
       isFavorite: playbook.isFavorite || false,
       isActive: playbook.isActive,
+      executionSchedule: mapExecutionScheduleToData(playbook.executionSchedule),
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
     };
@@ -637,6 +697,7 @@ export class PlaybookService {
       executionNumber: execution.executionNumber,
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
+      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
       error: execution.error,
       durationMs: execution.durationMs,
       startedAt: execution.startedAt?.toISOString?.() || execution.startedAt,
@@ -656,6 +717,7 @@ export class PlaybookService {
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
       executionMode: execution.executionMode || 'live',
+      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
       replaySourceByTask: execution.replaySourceByTask || null,
       taskResults: (execution.taskResults || []).map((tr: any) => ({
         taskId: tr.taskId,

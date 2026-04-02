@@ -1,5 +1,9 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document, HydratedDocument, Types } from 'mongoose';
+import {
+  ExecutionSchedule,
+  ExecutionScheduleSchema,
+} from './execution-schedule.schema';
 
 export type PlaybookDocument = HydratedDocument<Playbook>;
 
@@ -174,6 +178,9 @@ export class Playbook extends Document {
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 
+  @Prop({ type: ExecutionScheduleSchema, default: null })
+  executionSchedule!: ExecutionSchedule | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }
@@ -182,6 +189,7 @@ export const PlaybookSchema = SchemaFactory.createForClass(Playbook);
 
 PlaybookSchema.index({ createdBy: 1, updatedAt: -1 });
 PlaybookSchema.index({ createdBy: 1, isActive: 1, updatedAt: -1 });
+PlaybookSchema.index({ isActive: 1, 'executionSchedule.enabled': 1 });
 
 PlaybookSchema.set('toJSON', {
   virtuals: true,

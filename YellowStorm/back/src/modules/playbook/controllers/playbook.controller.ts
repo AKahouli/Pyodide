@@ -2,6 +2,7 @@ import {
   Controller,
   Post,
   Get,
+  Put,
   Patch,
   Delete,
   Body,
@@ -9,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
 import { PlaybookService } from '../services/playbook.service';
 import { PlaybookExecutionService } from '../services/playbook-execution.service';
@@ -34,6 +35,7 @@ import { StopPlaybookDto } from '../dto/stop-playbook.dto';
 import { SkipPlaybookStepDto } from '../dto/skip-playbook-step.dto';
 import { CloneSharePlaybookDto } from '../dto/clone-share-playbook.dto';
 import { BulkDeletePlaybooksDto } from '../dto/bulk-delete-playbooks.dto';
+import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
@@ -97,6 +99,33 @@ export class PlaybookController {
     return this.executionService.findActiveExecutionsByUser(user._id.toString());
   }
 
+  @Get(':id/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get embedded execution schedule for a playbook (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Current schedule payload or null when unset' })
+  async getSchedule(@Param('id') id: string) {
+    return this.playbookService.getSchedule(id);
+  }
+
+  @Put(':id/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create or replace execution schedule (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with updated executionSchedule' })
+  async upsertSchedule(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
+    return this.playbookService.upsertSchedule(id, dto);
+  }
+
+  @Delete(':id/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Remove execution schedule from playbook (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with executionSchedule cleared' })
+  async clearSchedule(@Param('id') id: string) {
+    return this.playbookService.clearSchedule(id);
+  }
+
   @Get(':id')
   @UseGuards(PlaybookOwnerGuard)
   async findOne(@Param('id') id: string) {
@@ -157,7 +186,9 @@ export class PlaybookController {
     @Param('id') id: string,
     @Body() dto: ExecutePlaybookDto,
   ) {
-    return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email);
+    return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email, {
+      executionTrigger: 'manual',
+    });
   }
 
   @Post(':id/tasks/:taskId/validate-replay')

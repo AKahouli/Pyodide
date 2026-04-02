@@ -1,4 +1,4 @@
-import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown } from 'lucide-react';
+import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown,CalendarClock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -36,6 +36,8 @@ interface Props {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  /** Opens schedule dialog (design mode). */
+  onSchedule?: () => void;
 }
 
 export function PlaybookToolbar({
@@ -61,6 +63,7 @@ export function PlaybookToolbar({
   canRedo,
   onUndo,
   onRedo,
+  onSchedule,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showCopilotAction = pageMode === 'design' || hasPendingInterrupt || copilotOpen;
@@ -161,6 +164,12 @@ export function PlaybookToolbar({
         <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
           <History className="h-4 w-4 sm:mr-1" />
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
+        </Button>
+      )}
+      {onSchedule && (
+        <Button variant="outline" size="sm" onClick={onSchedule} className="px-2 sm:px-3">
+            <CalendarClock className="h-4 w-4 sm:mr-1" />
+            <span className="hidden sm:inline">{t('toolbar.schedule')}</span>
         </Button>
       )}
       <Button
