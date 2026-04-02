@@ -32,11 +32,14 @@ export class DayOfMonthScheduleConstraint implements ValidatorConstraintInterfac
     if (value === -1) {
       return true;
     }
+    if (value === 0) {
+      return true;
+    }
     return value >= 1 && value <= 31;
   }
 
   defaultMessage(): string {
-    return 'dayOfMonth must be between 1 and 31, or -1 for last day of month';
+    return 'dayOfMonth must be between 1 and 31, 0 for every day of the month, or -1 for last day of month';
   }
 }
 
@@ -72,7 +75,17 @@ export class WeeklyScheduleDto {
 }
 
 export class MonthlySlotDto {
-  @ApiProperty({ example: 15, description: '1–31, or -1 for last day of month' })
+  @ApiPropertyOptional({
+    example: 3,
+    description: '1–12: run only in this calendar month each year; omit for same day every month',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  monthOfYear?: number;
+
+  @ApiProperty({ example: 15, description: '1–31, 0 = every day of the month, or -1 for last day' })
   @IsInt()
   @Validate(DayOfMonthScheduleConstraint)
   dayOfMonth!: number;
@@ -109,6 +122,26 @@ export class AdvancedScheduleDto {
   @IsString()
   @Matches(TIME_LOCAL_REGEX, { message: 'timeLocal must be HH:mm' })
   timeLocal?: string | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'weekend only: 1–12, omit/null = every month',
+  })
+  @ValidateIf((o: AdvancedScheduleDto) => o.variant === 'weekend' && o.monthOfYear != null)
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  monthOfYear?: number | null;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description: 'weekend only: 1–5 (week bands by calendar day), omit/null = every week',
+  })
+  @ValidateIf((o: AdvancedScheduleDto) => o.variant === 'weekend' && o.weekOfMonth != null)
+  @IsInt()
+  @Min(1)
+  @Max(5)
+  weekOfMonth?: number | null;
 }
 
 export class UpsertPlaybookScheduleDto {

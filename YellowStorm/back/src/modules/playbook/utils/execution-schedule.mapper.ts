@@ -83,7 +83,10 @@ function mapMonthlySlots(raw: unknown): MonthlySchedulePayloadData['slots'] {
   }
   return raw.map((item) => {
     const slot = asRecord(item) ?? {};
+    const moy = slot.monthOfYear;
+    const moyN = moy === null || moy === undefined ? NaN : Number(moy);
     return {
+      monthOfYear: Number.isFinite(moyN) ? moyN : null,
       dayOfMonth: Number(slot.dayOfMonth),
       timeLocal: String(slot.timeLocal ?? ''),
     };
@@ -98,6 +101,12 @@ function mapMonthly(raw: unknown): MonthlySchedulePayloadData | null {
   return { slots: mapMonthlySlots(o.slots) };
 }
 
+function parseOptionalMonthWeek(v: unknown): number | null {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function mapAdvanced(raw: unknown): AdvancedSchedulePayloadData | null {
   const o = asRecord(raw);
   if (!o) {
@@ -109,6 +118,8 @@ function mapAdvanced(raw: unknown): AdvancedSchedulePayloadData | null {
     variant: parseAdvancedVariant(o.variant),
     intervalDays: interval === null || interval === undefined ? null : Number(interval),
     timeLocal: time === null || time === undefined ? null : String(time),
+    monthOfYear: parseOptionalMonthWeek(o.monthOfYear),
+    weekOfMonth: parseOptionalMonthWeek(o.weekOfMonth),
   };
 }
 

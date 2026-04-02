@@ -48,6 +48,7 @@ export function buildExecutionScheduleDocument(
       return enabledEnvelope(timezone, 'monthly', preserveLastRunAt, {
         monthly: {
           slots: dto.monthly!.slots.map((s) => ({
+            monthOfYear: s.monthOfYear ?? null,
             dayOfMonth: s.dayOfMonth,
             timeLocal: s.timeLocal,
           })),
@@ -55,11 +56,14 @@ export function buildExecutionScheduleDocument(
       });
     case 'advanced': {
       const adv = dto.advanced!;
+      const isWeekend = adv.variant === 'weekend';
       return enabledEnvelope(timezone, 'advanced', preserveLastRunAt, {
         advanced: {
           variant: adv.variant,
           intervalDays: adv.variant === 'every_n_days' ? adv.intervalDays ?? null : null,
           timeLocal: adv.timeLocal ?? null,
+          monthOfYear: isWeekend ? adv.monthOfYear ?? null : null,
+          weekOfMonth: isWeekend ? adv.weekOfMonth ?? null : null,
         },
       });
     }

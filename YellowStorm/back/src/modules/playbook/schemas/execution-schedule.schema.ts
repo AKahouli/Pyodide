@@ -34,7 +34,9 @@ export const WeeklySchedulePayloadSchema = SchemaFactory.createForClass(WeeklySc
 
 @Schema({ _id: false })
 export class MonthlySlot {
-  /** 1–31, ou -1 pour le dernier jour du mois */
+  @Prop({ type: Number, min: 1, max: 12, default: null })
+  monthOfYear!: number | null;
+  /** 1–31, 0 = chaque jour du mois, ou -1 pour le dernier jour du mois */
   @Prop({ type: Number, required: true })
   dayOfMonth!: number;
 
@@ -66,6 +68,11 @@ export class AdvancedSchedulePayload {
 
   @Prop({ type: String, default: null })
   timeLocal!: string | null;
+  @Prop({ type: Number, default: null })
+  monthOfYear!: number | null;
+
+  @Prop({ type: Number, default: null })
+  weekOfMonth!: number | null;
 }
 
 export const AdvancedSchedulePayloadSchema = SchemaFactory.createForClass(AdvancedSchedulePayload);

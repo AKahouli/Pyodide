@@ -69,7 +69,9 @@ export interface WeeklySchedulePayloadData {
 }
 
 export interface MonthlySlotData {
-  /** 1–31, ou -1 pour le dernier jour du mois */
+  /** 1–12 : uniquement ce mois chaque année ; absent / null : même jour chaque mois */
+  monthOfYear?: number | null;
+  /** 1–31, 0 = chaque jour du mois, ou -1 pour le dernier jour du mois */
   dayOfMonth: number;
   timeLocal: string;
 }
@@ -84,6 +86,10 @@ export interface AdvancedSchedulePayloadData {
   variant: AdvancedScheduleVariant;
   intervalDays: number | null;
   timeLocal: string | null;
+  /** weekend only: 1–12, null = every month */
+  monthOfYear?: number | null;
+  /** weekend only: 1–5 (calendar week bands), null = every week */
+  weekOfMonth?: number | null;
 }
 
 export interface ExecutionScheduleData {

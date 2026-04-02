@@ -113,6 +113,23 @@ describe('playbook-schedule.util', () => {
         expect(isExecutionScheduleDueThisMinute(s, new Date('2026-03-14T08:00:00.000Z'))).toBe(false);
       });
 
+      it('matches dayOfMonth 0 on every calendar day at time', () => {
+        const s: ScheduleEvalInput = {
+          enabled: true,
+          timezone: 'UTC',
+          type: 'monthly',
+          lastScheduledRunAt: null,
+          daily: null,
+          weekly: null,
+          monthly: {
+            slots: [{ dayOfMonth: 0, timeLocal: '14:00' }],
+          },
+          advanced: null,
+        };
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-02-03T14:00:00.000Z'))).toBe(true);
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-02-03T13:00:00.000Z'))).toBe(false);
+      });
+
       it('matches dayOfMonth -1 as last day of month', () => {
         const s: ScheduleEvalInput = {
           enabled: true,
@@ -129,6 +146,23 @@ describe('playbook-schedule.util', () => {
         // Jan 2026 has 31 days
         expect(isExecutionScheduleDueThisMinute(s, new Date('2026-01-31T10:00:00.000Z'))).toBe(true);
         expect(isExecutionScheduleDueThisMinute(s, new Date('2026-01-30T10:00:00.000Z'))).toBe(false);
+      });
+
+      it('when monthOfYear is set, only fires in that calendar month', () => {
+        const s: ScheduleEvalInput = {
+          enabled: true,
+          timezone: 'UTC',
+          type: 'monthly',
+          lastScheduledRunAt: null,
+          daily: null,
+          weekly: null,
+          monthly: {
+            slots: [{ monthOfYear: 3, dayOfMonth: 15, timeLocal: '08:00' }],
+          },
+          advanced: null,
+        };
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-03-15T08:00:00.000Z'))).toBe(true);
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-04-15T08:00:00.000Z'))).toBe(false);
       });
     });
 
@@ -165,11 +199,38 @@ describe('playbook-schedule.util', () => {
             variant: 'weekend',
             timeLocal: '12:00',
             intervalDays: null,
+            monthOfYear: null,
+            weekOfMonth: null,
           },
         };
         expect(isExecutionScheduleDueThisMinute(s, new Date('2026-01-04T12:00:00.000Z'))).toBe(true); // Sun
         expect(isExecutionScheduleDueThisMinute(s, new Date('2026-01-03T12:00:00.000Z'))).toBe(true); // Sat
         expect(isExecutionScheduleDueThisMinute(s, new Date('2026-01-05T12:00:00.000Z'))).toBe(false); // Mon
+      });
+
+      it('weekend: monthOfYear and weekOfMonth narrow Sat/Sun', () => {
+        const s: ScheduleEvalInput = {
+          enabled: true,
+          timezone: 'UTC',
+          type: 'advanced',
+          lastScheduledRunAt: null,
+          daily: null,
+          weekly: null,
+          monthly: null,
+          advanced: {
+            variant: 'weekend',
+            timeLocal: '12:00',
+            intervalDays: null,
+            monthOfYear: 3,
+            weekOfMonth: 2,
+          },
+        };
+        // 2026-03-08 is Sunday UTC, March day 8 => week band 2
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-03-08T12:00:00.000Z'))).toBe(true);
+        // Same time but March 1 (Sunday, day 1 => week 1)
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-03-01T12:00:00.000Z'))).toBe(false);
+        // April Sunday should not match month filter
+        expect(isExecutionScheduleDueThisMinute(s, new Date('2026-04-05T12:00:00.000Z'))).toBe(false);
       });
 
       it('every_n_days: first run when lastScheduledRunAt is null', () => {
