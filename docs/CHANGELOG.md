@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-04-02 07:24] — Refactor Auto Builder create dialog into prompt-first composer
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Reworked the frontend `CreatePlaybookDialog` Auto Builder tab into a prompt-bar style experience with a hero heading, dark prompt composer, inline generate button, example prompt chips, and a secondary details section for optional workflow naming plus workspace selection. Added fallback name derivation from the prompt so generation still submits a valid `name` when the explicit field is left blank. Added the supporting English and French locale keys.
+- **Why:** The previous Auto Builder tab still looked like a conventional modal form. This iteration aligns it with the desired prompt-first creation UX while keeping the existing generate flow intact.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/CreatePlaybookDialog.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+- **Doc:** `created` `/docs/playbook/README_2026-04-02_07-24-46.md`
+
 ## [2026-04-01 17:00] — Fix autosave stripping port fields from playbook response
 
 - **Feature:** `task-toolbar`
