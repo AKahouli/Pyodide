@@ -59,6 +59,8 @@ export interface InputFile {
   id: string;
   name: string;
   workspaceId?: string;
+  portId?: string;
+  artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
     documentId?: string;

@@ -1877,7 +1877,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const updatedTasks = currentPlaybook.tasks.map((task) => {
           if (task.id !== taskId) return task;
           const existing = task.inputFiles ?? [];
-          const exists = existing.some((f) => f.id === inputFile.id && f.type === inputFile.type);
+          const exists = existing.some((f) =>
+            f.id === inputFile.id &&
+            f.type === inputFile.type &&
+            (!inputFile.portId || f.portId === inputFile.portId),
+          );
           if (exists) return task;
           return { ...task, inputFiles: [...existing, inputFile] };
         });

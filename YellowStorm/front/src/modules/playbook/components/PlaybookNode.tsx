@@ -1,6 +1,6 @@
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useMemo, useState, useCallback } from 'react';
 import { type NodeProps, Handle, Position } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, X, Check } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -27,7 +27,11 @@ import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../utils/migrate-ports';
-import type { PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort } from '../types';
+import { detectPortHit } from '../utils/port-hit-detection';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort } from '../types';
+
+const XIcon = X;
+const CheckIcon = Check;
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
@@ -255,6 +259,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [hoveredHandleId, setHoveredHandleId] = useState<string | null>(null);
+  const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
+  const [dragPortCompatible, setDragPortCompatible] = useState<boolean | null>(null);
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
   const inputPorts = migratedTask.inputPorts ?? [];
@@ -262,6 +268,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
 
   const inputFiles = currentTask?.inputFiles ?? data.inputFiles ?? [];
+  const portFileMap = useMemo(() => {
+    const map: Record<string, InputFile> = {};
+    for (const f of inputFiles) {
+      if (f.portId) map[f.portId] = f;
+    }
+    return map;
+  }, [inputFiles]);
   const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
   const isConfigured = !!data.assignedAgentId;
   const status = data.stepStatus as StepStatus | undefined;
@@ -286,27 +299,82 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
 
+  const resolveDragPayload = useCallback((e: React.DragEvent): InputFile | null => {
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload && payload.type && payload.id && payload.name) return payload as InputFile;
+    } catch { /* noop */ }
+    return null;
+  }, []);
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
+
+    if (inputPorts.length <= 1) {
+      setDragOverPortId(null);
+      setDragPortCompatible(null);
+      return;
+    }
+
+    const nodeEl = e.currentTarget as HTMLDivElement;
+    const rect = nodeEl.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const nodeHeight = rect.height;
+    const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+
+    if (hit) {
+      setDragOverPortId(hit.port.id);
+      setDragPortCompatible(null);
+    } else {
+      setDragOverPortId(null);
+      setDragPortCompatible(null);
+    }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragOver(false);
+    const nodeEl = e.currentTarget as HTMLDivElement;
+    const rect = nodeEl.getBoundingClientRect();
+    const { clientX, clientY } = e;
+    if (
+      clientX < rect.left || clientX > rect.right ||
+      clientY < rect.top || clientY > rect.bottom
+    ) {
+      setIsDragOver(false);
+      setDragOverPortId(null);
+      setDragPortCompatible(null);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    try {
-      const payload = JSON.parse(e.dataTransfer.getData('application/json')) as InputFile;
-      if (payload && payload.type && payload.id && payload.name) {
-        addInputFileToTask(id, payload);
-      }
-    } catch {
-      // Invalid payload, ignore
+    setDragOverPortId(null);
+    setDragPortCompatible(null);
+
+    const payload = resolveDragPayload(e);
+    if (!payload) return;
+
+    if (inputPorts.length <= 1) {
+      const portId = inputPorts.length === 1 ? inputPorts[0].id : undefined;
+      addInputFileToTask(id, { ...payload, portId });
+      return;
+    }
+
+    const nodeEl = e.currentTarget as HTMLDivElement;
+    const rect = nodeEl.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const nodeHeight = rect.height;
+    const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+
+    if (hit) {
+      addInputFileToTask(id, { ...payload, portId: hit.port.id });
+    } else {
+      addInputFileToTask(id, payload);
     }
   };
 
@@ -324,31 +392,88 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             ringClass,
             selectedClass,
             disabledClass,
-            isDragOver && 'ring-2 ring-primary ring-inset bg-primary/5'
+            isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
+            isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
+            isDragOver && dragOverPortId && dragPortCompatible === false && 'ring-2 ring-red-400/50 ring-inset bg-red-50/20',
           )}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
           {/* Input ports — left side */}
-          {inputPorts.map((port, idx) => (
-            <div key={port.id} className="relative">
-              <Handle
-                id={`in-${port.id}`}
-                type="target"
-                position={Position.Left}
-                style={getInputPortStyle(port, idx, inputPorts.length)}
-                onMouseEnter={() => setHoveredHandleId(`in-${port.id}`)}
-                onMouseLeave={() => setHoveredHandleId(null)}
-              />
-              {hoveredHandleId === `in-${port.id}` && (
-                <PortLabel name={port.name} kind={port.artifactKind} position="left" />
-              )}
-              {port.required && hasMultiplePorts && (
-                <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
-              )}
-            </div>
-          ))}
+          {inputPorts.map((port, idx) => {
+            const isPortDragTarget = isDragOver && dragOverPortId === port.id;
+            const portColors = PORT_COLORS[port.artifactKind];
+            const boundFile = portFileMap[port.id];
+
+            return (
+              <div key={port.id} className="relative">
+                <Handle
+                  id={`in-${port.id}`}
+                  type="target"
+                  position={Position.Left}
+                  style={getInputPortStyle(port, idx, inputPorts.length)}
+                  onMouseEnter={() => setHoveredHandleId(`in-${port.id}`)}
+                  onMouseLeave={() => setHoveredHandleId(null)}
+                />
+                {boundFile && !isPortDragTarget && (
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-30 w-6 h-6 rounded-full pointer-events-none"
+                    style={{ background: portColors?.dot || 'var(--muted)', opacity: 0.2 }}
+                  />
+                )}
+                {isPortDragTarget && (
+                  <div
+                    className={cn(
+                      'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-40 w-7 h-7 rounded-full animate-pulse pointer-events-none',
+                      dragPortCompatible === true
+                        ? 'ring-2 ring-green-400/70 bg-green-400/10'
+                        : dragPortCompatible === false
+                          ? 'ring-2 ring-red-400/70 bg-red-400/10'
+                          : 'ring-2 ring-primary/50 bg-primary/10',
+                    )}
+                  />
+                )}
+                {(hoveredHandleId === `in-${port.id}` || isPortDragTarget) && (
+                  <PortLabel
+                    name={boundFile ? `${port.name}: ${boundFile.name}` : port.name}
+                    kind={port.artifactKind}
+                    position="left"
+                  />
+                )}
+                {boundFile && !isPortDragTarget && hoveredHandleId !== `in-${port.id}` && hasMultiplePorts && (
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 left-1 ml-1 z-30 max-w-[120px] flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap overflow-hidden pointer-events-none"
+                    style={{ backgroundColor: 'var(--background)' }}
+                  >
+                    <span className="truncate text-muted-foreground">{boundFile.name}</span>
+                  </div>
+                )}
+                {isPortDragTarget && dragPortCompatible === false && (
+                  <div
+                    className="absolute top-full -translate-y-1/2 left-1 ml-1 z-50 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap bg-red-100 text-red-700 pointer-events-none"
+                  >
+                    <XIcon className="h-2.5 w-2.5" />
+                    {port.artifactKind}
+                  </div>
+                )}
+                {isPortDragTarget && dragPortCompatible === true && (
+                  <div
+                    className={cn(
+                      'absolute top-full -translate-y-1/2 left-1 ml-1 z-50 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap pointer-events-none',
+                      portColors?.bg,
+                    )}
+                  >
+                    <CheckIcon className="h-2.5 w-2.5 text-green-600" />
+                    {port.name}
+                  </div>
+                )}
+                {port.required && hasMultiplePorts && (
+                  <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
+                )}
+              </div>
+            );
+          })}
 
           {/* Output ports — right side */}
           {outputPorts.map((port, idx) => (

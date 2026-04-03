@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## [2026-04-03 11:45] — Port-aware drag-and-drop from workspace explorer to node input ports
+
+- **Feature:** `task-toolbar`
+- **Type:** `feat`
+- **Changed:** Added coordinate-based port hit detection so users can drag documents onto specific input ports. The workspace explorer now infers `artifactKind` from file extensions/MIME types and includes it in the drag payload. `PlaybookNode` highlights the closest port during drag-over with green (compatible), red (mismatch), or neutral ring feedback. Dropped files are stored with `portId` binding. `InputFile` type extended with `portId` and `artifactKind`. The input-files popover shows bound count and per-file artifact kind dots.
+- **Why:** Users need to bind specific documents to specific typed ports rather than adding files generically to a node.
+- **Impact:** `types.ts`, `PlaybookNode.tsx`, `WorkspaceExplorerSidebar.tsx`, `InputFilesPopover.tsx`, `store.ts`, `infer-artifact-kind.ts` (new), `port-hit-detection.ts` (new)
+- **Doc:** `created` `/docs/task-toolbar/README_2026-04-03_11-45-00.md`
+
 ## [2026-04-02 13:10] — Persist step execution history for results-tab inspection
 
 - **Feature:** `playbook`
