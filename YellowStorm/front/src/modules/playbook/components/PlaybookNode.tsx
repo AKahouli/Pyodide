@@ -228,8 +228,8 @@ function getInputPortStyle(port: TaskInputPort, idx: number, total: number): Rea
     top: getInputPortTop(idx, total),
     width: 12,
     height: 12,
-    background: colors?.dot || 'var(--muted)',
-    border: '2px solid var(--background)',
+    background: colors?.raw || 'hsl(var(--muted))',
+    border: '2px solid hsl(var(--background))',
     transform: 'translateY(-50%)',
   };
 }
@@ -240,8 +240,8 @@ function getOutputPortStyle(port: TaskOutputPort, idx: number, total: number): R
     top: getOutputPortTop(idx, total),
     width: 12,
     height: 12,
-    background: colors?.dot || 'var(--muted)',
-    border: '2px solid var(--background)',
+    background: colors?.raw || 'hsl(var(--muted))',
+    border: '2px solid hsl(var(--background))',
     transform: 'translateY(-50%)',
   };
 }
@@ -419,7 +419,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 {boundFile && !isPortDragTarget && (
                   <div
                     className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-30 w-6 h-6 rounded-full pointer-events-none"
-                    style={{ background: portColors?.dot || 'var(--muted)', opacity: 0.2 }}
+                    style={{ background: portColors?.raw || 'hsl(var(--muted))', opacity: 0.2 }}
                   />
                 )}
                 {isPortDragTarget && (
