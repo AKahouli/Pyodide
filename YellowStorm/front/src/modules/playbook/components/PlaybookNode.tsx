@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback } from 'react';
 import { type NodeProps, Handle, Position } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, X, Check } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -29,9 +29,6 @@ import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../utils/migrate-ports';
 import { detectPortHit } from '../utils/port-hit-detection';
 import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort } from '../types';
-
-const XIcon = X;
-const CheckIcon = Check;
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
@@ -210,39 +207,19 @@ function NodeMetaBadge({
   );
 }
 
-function getInputPortTop(idx: number, total: number): string {
-  if (total <= 1) return '50%';
-  const step = 100 / (total + 1);
-  return `${step * (idx + 1)}%`;
-}
-
-function getOutputPortTop(idx: number, total: number): string {
-  if (total <= 1) return '50%';
-  const step = 100 / (total + 1);
-  return `${step * (idx + 1)}%`;
-}
-
-function getInputPortStyle(port: TaskInputPort, idx: number, total: number): React.CSSProperties {
+function getInputPortStyle(port: TaskInputPort): React.CSSProperties {
   const colors = PORT_COLORS[port.artifactKind];
   return {
-    top: getInputPortTop(idx, total),
-    width: 12,
-    height: 12,
     background: colors?.raw || 'hsl(var(--muted))',
     border: '2px solid hsl(var(--background))',
-    transform: 'translateY(-50%)',
   };
 }
 
-function getOutputPortStyle(port: TaskOutputPort, idx: number, total: number): React.CSSProperties {
+function getOutputPortStyle(port: TaskOutputPort): React.CSSProperties {
   const colors = PORT_COLORS[port.artifactKind];
   return {
-    top: getOutputPortTop(idx, total),
-    width: 12,
-    height: 12,
     background: colors?.raw || 'hsl(var(--muted))',
     border: '2px solid hsl(var(--background))',
-    transform: 'translateY(-50%)',
   };
 }
 
@@ -258,7 +235,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
 
   const [isDragOver, setIsDragOver] = useState(false);
-  const [hoveredHandleId, setHoveredHandleId] = useState<string | null>(null);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
   const [dragPortCompatible, setDragPortCompatible] = useState<boolean | null>(null);
 
@@ -401,31 +377,31 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           onDrop={handleDrop}
         >
           {/* Input ports — left side */}
+          <div className="absolute left-0 inset-y-0 flex flex-col justify-around items-center z-10 w-0">
           {inputPorts.map((port, idx) => {
             const isPortDragTarget = isDragOver && dragOverPortId === port.id;
             const portColors = PORT_COLORS[port.artifactKind];
             const boundFile = portFileMap[port.id];
 
             return (
-              <div key={port.id} className="relative">
+              <div key={port.id} className="relative flex items-center">
                 <Handle
                   id={`in-${port.id}`}
                   type="target"
                   position={Position.Left}
-                  style={getInputPortStyle(port, idx, inputPorts.length)}
-                  onMouseEnter={() => setHoveredHandleId(`in-${port.id}`)}
-                  onMouseLeave={() => setHoveredHandleId(null)}
+                  className="!w-3 !h-3"
+                  style={getInputPortStyle(port)}
                 />
                 {boundFile && !isPortDragTarget && (
                   <div
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-30 w-6 h-6 rounded-full pointer-events-none"
+                    className="absolute left-0 -translate-x-1/2 z-20 w-5 h-5 rounded-full pointer-events-none"
                     style={{ background: portColors?.raw || 'hsl(var(--muted))', opacity: 0.2 }}
                   />
                 )}
                 {isPortDragTarget && (
                   <div
                     className={cn(
-                      'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-40 w-7 h-7 rounded-full animate-pulse pointer-events-none',
+                      'absolute left-0 -translate-x-1/2 z-30 w-6 h-6 rounded-full animate-pulse pointer-events-none',
                       dragPortCompatible === true
                         ? 'ring-2 ring-green-400/70 bg-green-400/10'
                         : dragPortCompatible === false
@@ -434,63 +410,35 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     )}
                   />
                 )}
-                {(hoveredHandleId === `in-${port.id}` || isPortDragTarget) && (
-                  <PortLabel
-                    name={boundFile ? `${port.name}: ${boundFile.name}` : port.name}
-                    kind={port.artifactKind}
-                    position="left"
-                  />
-                )}
-                {boundFile && !isPortDragTarget && hoveredHandleId !== `in-${port.id}` && hasMultiplePorts && (
-                  <div
-                    className="absolute top-1/2 -translate-y-1/2 left-1 ml-1 z-30 max-w-[120px] flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap overflow-hidden pointer-events-none"
-                    style={{ backgroundColor: 'var(--background)' }}
-                  >
-                    <span className="truncate text-muted-foreground">{boundFile.name}</span>
-                  </div>
-                )}
-                {isPortDragTarget && dragPortCompatible === false && (
-                  <div
-                    className="absolute top-full -translate-y-1/2 left-1 ml-1 z-50 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap bg-red-100 text-red-700 pointer-events-none"
-                  >
-                    <XIcon className="h-2.5 w-2.5" />
-                    {port.artifactKind}
-                  </div>
-                )}
-                {isPortDragTarget && dragPortCompatible === true && (
-                  <div
-                    className={cn(
-                      'absolute top-full -translate-y-1/2 left-1 ml-1 z-50 flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-medium whitespace-nowrap pointer-events-none',
-                      portColors?.bg,
-                    )}
-                  >
-                    <CheckIcon className="h-2.5 w-2.5 text-green-600" />
-                    {port.name}
-                  </div>
-                )}
+                {/* Persistent label */}
+                <PortLabel
+                  name={boundFile ? `${port.name}: ${boundFile.name}` : port.name}
+                  kind={port.artifactKind}
+                  position="left"
+                />
                 {port.required && hasMultiplePorts && (
                   <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
                 )}
               </div>
             );
           })}
+          </div>
 
           {/* Output ports — right side */}
+          <div className="absolute right-0 inset-y-0 flex flex-col justify-around items-center z-10 w-0">
           {outputPorts.map((port, idx) => (
-            <div key={port.id} className="relative">
+            <div key={port.id} className="relative flex items-center">
               <Handle
                 id={`out-${port.id}`}
                 type="source"
                 position={Position.Right}
-                style={getOutputPortStyle(port, idx, outputPorts.length)}
-                onMouseEnter={() => setHoveredHandleId(`out-${port.id}`)}
-                onMouseLeave={() => setHoveredHandleId(null)}
+                className="!w-3 !h-3"
+                style={getOutputPortStyle(port)}
               />
-              {hoveredHandleId === `out-${port.id}` && (
-                <PortLabel name={port.name} kind={port.artifactKind} position="right" />
-              )}
+              <PortLabel name={port.name} kind={port.artifactKind} position="right" />
             </div>
           ))}
+          </div>
 
           <NodeHeader className={cn('transition-colors duration-300', headerBgClass)}>
             <div className="flex items-center justify-between w-full gap-2">
