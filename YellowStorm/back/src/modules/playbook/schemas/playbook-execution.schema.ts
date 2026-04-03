@@ -57,6 +57,77 @@ export class TaskEvaluationHistoryEntry {
 export const TaskEvaluationHistoryEntrySchema = SchemaFactory.createForClass(TaskEvaluationHistoryEntry);
 
 @Schema({ _id: false })
+export class TaskStepExecutionEntry {
+  @Prop({ type: String, required: true })
+  id!: string;
+
+  @Prop({ type: Number, default: null })
+  attemptNumber!: number | null;
+
+  @Prop({ type: String, required: true })
+  status!: string;
+
+  @Prop({ type: String, default: null })
+  output!: string | null;
+
+  @Prop({ type: String, default: null })
+  error!: string | null;
+
+  @Prop({ type: Number, default: null })
+  durationMs!: number | null;
+
+  @Prop({ type: Date, default: null })
+  startedAt!: Date | null;
+
+  @Prop({ type: Date, default: null })
+  completedAt!: Date | null;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  components!: Array<{ id: string; type: string; data: Record<string, unknown> }>;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  toolTrace!: Array<{
+    callIndex: number;
+    toolName: string;
+    args: Record<string, unknown>;
+    outputSummary: string | null;
+  }>;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  llmPromptTrace!: Array<{
+    stage: string;
+    model: string;
+    prompt: string;
+  }>;
+
+  @Prop({ type: Number, default: null })
+  inputTokens!: number | null;
+
+  @Prop({ type: Number, default: null })
+  outputTokens!: number | null;
+
+  @Prop({ type: Number, default: null })
+  totalTokens!: number | null;
+
+  @Prop({ type: String, default: null })
+  modelName!: string | null;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  artifacts!: Array<{
+    portId: string;
+    artifactKind: string;
+    content?: string;
+    url?: string;
+    filename?: string;
+    mimeType?: string;
+    size?: number;
+    metadata?: Record<string, unknown>;
+  }>;
+}
+
+export const TaskStepExecutionEntrySchema = SchemaFactory.createForClass(TaskStepExecutionEntry);
+
+@Schema({ _id: false })
 export class TaskResult {
   @Prop({ type: String, required: true })
   taskId!: string;
@@ -133,6 +204,9 @@ export class TaskResult {
 
   @Prop({ type: [TaskEvaluationHistoryEntrySchema], default: [] })
   evaluationHistory!: TaskEvaluationHistoryEntry[];
+
+  @Prop({ type: [TaskStepExecutionEntrySchema], default: [] })
+  stepExecutions!: TaskStepExecutionEntry[];
 
   @Prop({ type: Number, default: 1 })
   attemptNumber!: number;

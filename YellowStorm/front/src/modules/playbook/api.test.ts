@@ -59,6 +59,66 @@ describe('playbook api', () => {
     expect(playbook.id).toBe('p1');
   });
 
+  it('strips client-only task flags before updating a playbook', async () => {
+    const task = {
+      id: 'task-1',
+      title: 'Step 1',
+      description: 'desc',
+      assignedAgentId: 'agent-1',
+      executionOrder: 0,
+      positionX: 10,
+      positionY: 20,
+      interruptBefore: false,
+      interruptAfter: false,
+      allowClarification: true,
+      clarificationPrompt: 'ask',
+      maxClarifications: 3,
+      inputKeys: ['input'],
+      outputKey: 'output',
+      enabled: true,
+      notifyOnComplete: false,
+      notifyEmails: ['a@example.com'],
+      stepReplayMode: 'live',
+      inputFiles: [],
+      taskType: 'generic',
+      inputPorts: [],
+      outputPorts: [],
+      isSavingReplayBaseline: true,
+      hasValidatedReplay: true,
+      activeReplayId: 'replay-1',
+    } as any;
+
+    apiClientMock.patch.mockResolvedValueOnce({ data: { data: { id: 'p1' } } });
+    await updatePlaybook('p1', { tasks: [task] });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.byId('p1'), {
+      tasks: [{
+        id: 'task-1',
+        title: 'Step 1',
+        description: 'desc',
+        assignedAgentId: 'agent-1',
+        executionOrder: 0,
+        positionX: 10,
+        positionY: 20,
+        interruptBefore: false,
+        interruptAfter: false,
+        allowClarification: true,
+        clarificationPrompt: 'ask',
+        maxClarifications: 3,
+        inputKeys: ['input'],
+        outputKey: 'output',
+        enabled: true,
+        notifyOnComplete: false,
+        notifyEmails: ['a@example.com'],
+        stepReplayMode: 'live',
+        inputFiles: [],
+        taskType: 'generic',
+        inputPorts: [],
+        outputPorts: [],
+      }],
+    });
+  });
+
   it('executes and gets execution details', async () => {
     apiClientMock.post.mockResolvedValueOnce({ data: { data: { executionId: 'e1' } } });
     const started = await executePlaybook('p1', { query: 'test run' });

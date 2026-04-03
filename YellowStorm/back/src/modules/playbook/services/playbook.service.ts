@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Playbook, PlaybookDocument } from '../schemas/playbook.schema';
@@ -438,6 +438,55 @@ export class PlaybookService {
     this.logger.log('Playbook execution deleted', { playbookId, executionId });
   }
 
+  async deleteStepExecution(
+    playbookId: string,
+    executionId: string,
+    taskId: string,
+    stepExecutionId: string,
+  ): Promise<void> {
+    const execution = await this.executionModel
+      .findOne({
+        _id: new Types.ObjectId(executionId),
+        playbookId: new Types.ObjectId(playbookId),
+      })
+      .lean()
+      .exec();
+
+    if (!execution) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND);
+    }
+
+    const taskResult = (execution.taskResults || []).find((task: any) => task.taskId === taskId);
+    if (!taskResult) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND);
+    }
+
+    const stepExecutions = taskResult.stepExecutions || [];
+    const target = stepExecutions.find((entry: any) => entry.id === stepExecutionId);
+    if (!target) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND);
+    }
+
+    if ((taskResult.attemptNumber ?? null) === (target.attemptNumber ?? null)) {
+      throw new BadRequestException('Cannot delete the current step execution.');
+    }
+
+    await this.executionModel.updateOne(
+      {
+        _id: new Types.ObjectId(executionId),
+        playbookId: new Types.ObjectId(playbookId),
+        'taskResults.taskId': taskId,
+      },
+      {
+        $set: {
+          'taskResults.$.stepExecutions': stepExecutions.filter((entry: any) => entry.id !== stepExecutionId),
+        },
+      },
+    ).exec();
+
+    this.logger.log('Playbook step execution deleted', { playbookId, executionId, taskId, stepExecutionId });
+  }
+
   async deleteExecutions(
     playbookId: string,
   ): Promise<{ deleted: number; kept: number }> {
@@ -750,6 +799,24 @@ export class PlaybookService {
           baselineReplayId: entry.baselineReplayId ?? null,
           baselineValidationVersion: entry.baselineValidationVersion ?? null,
           semanticMatch: entry.semanticMatch,
+        })),
+        stepExecutions: (tr.stepExecutions || []).map((entry: any) => ({
+          id: entry.id,
+          attemptNumber: entry.attemptNumber ?? null,
+          status: entry.status,
+          output: entry.output ?? null,
+          error: entry.error ?? null,
+          durationMs: entry.durationMs ?? null,
+          startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
+          completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
+          components: entry.components || [],
+          toolTrace: entry.toolTrace || [],
+          llmPromptTrace: entry.llmPromptTrace || [],
+          inputTokens: entry.inputTokens ?? null,
+          outputTokens: entry.outputTokens ?? null,
+          totalTokens: entry.totalTokens ?? null,
+          modelName: entry.modelName ?? null,
+          artifacts: entry.artifacts || [],
         })),
       })),
       threadId: execution.threadId,

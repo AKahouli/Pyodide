@@ -545,6 +545,7 @@ export class PlaybookExecutionService {
           modelName: null,
           semanticMatch: null,
           evaluationHistory: [],
+          stepExecutions: [],
         },
       },
     });
@@ -2479,6 +2480,62 @@ ${
       { $set },
       { arrayFilters: [{ 'elem.taskId': taskId }] },
     );
+
+    await this.syncStepExecutionHistoryEntry(executionId, taskId);
+  }
+
+  private isTerminalStepStatus(status: string | undefined | null): boolean {
+    return status === StepStatus.COMPLETED
+      || status === StepStatus.FAILED
+      || status === StepStatus.SKIPPED;
+  }
+
+  private async syncStepExecutionHistoryEntry(executionId: string, taskId: string): Promise<void> {
+    const execution = await this.executionModel
+      .findById(executionId)
+      .select({ taskResults: { $elemMatch: { taskId } } })
+      .lean()
+      .exec();
+
+    const taskResult = execution?.taskResults?.[0] as any;
+    if (!taskResult || !this.isTerminalStepStatus(taskResult.status)) {
+      return;
+    }
+
+    const existingEntries = taskResult.stepExecutions || [];
+    const existingEntry = existingEntries.find((entry: any) => entry.attemptNumber === (taskResult.attemptNumber ?? null));
+    const nextEntry = {
+      id: existingEntry?.id || new Types.ObjectId().toString(),
+      attemptNumber: taskResult.attemptNumber ?? null,
+      status: taskResult.status,
+      output: taskResult.output ?? null,
+      error: taskResult.error ?? null,
+      durationMs: taskResult.durationMs ?? null,
+      startedAt: taskResult.startedAt ?? null,
+      completedAt: taskResult.completedAt ?? null,
+      components: taskResult.components || [],
+      toolTrace: taskResult.toolTrace || [],
+      llmPromptTrace: taskResult.llmPromptTrace || [],
+      inputTokens: taskResult.inputTokens ?? null,
+      outputTokens: taskResult.outputTokens ?? null,
+      totalTokens: taskResult.totalTokens ?? null,
+      modelName: taskResult.modelName ?? null,
+      artifacts: taskResult.artifacts || [],
+    };
+
+    const stepExecutions = [
+      nextEntry,
+      ...existingEntries.filter((entry: any) => entry.attemptNumber !== (taskResult.attemptNumber ?? null)),
+    ].sort((a: any, b: any) => {
+      const left = new Date(a.completedAt || a.startedAt || 0).getTime();
+      const right = new Date(b.completedAt || b.startedAt || 0).getTime();
+      return right - left;
+    });
+
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
+      { $set: { 'taskResults.$.stepExecutions': stepExecutions } },
+    ).exec();
   }
 
   /**
@@ -3250,6 +3307,7 @@ ${
       modelName: buffered.modelName !== undefined ? buffered.modelName : dbTr.modelName,
       semanticMatch: buffered.semanticMatch !== undefined ? buffered.semanticMatch : dbTr.semanticMatch,
       evaluationHistory: buffered.evaluationHistory !== undefined ? buffered.evaluationHistory : dbTr.evaluationHistory,
+      stepExecutions: dbTr.stepExecutions || [],
     };
   }
 
@@ -3304,6 +3362,11 @@ ${
               evaluationHistory: (merged.evaluationHistory || []).map((entry: any) => ({
                 ...entry,
                 createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+              })),
+              stepExecutions: (merged.stepExecutions || []).map((entry: any) => ({
+                ...entry,
+                startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
+                completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
               })),
               attemptNumber: merged.attemptNumber ?? 1,
               isStale: merged.isStale ?? false,

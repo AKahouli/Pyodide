@@ -7,6 +7,7 @@ import type { PlaybookExecution, TaskResult } from '../types';
 const storeState = vi.hoisted(() => ({
   currentPlaybook: null as any,
   deleteExecution: vi.fn(),
+  deleteStepExecution: vi.fn(),
   validateTaskReplay: vi.fn(),
   fetchTaskReplays: vi.fn().mockResolvedValue([]),
 }));
@@ -118,6 +119,61 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
   });
 
+  it('shows a step execution picker in the results tab when history exists', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          attemptNumber: 3,
+          stepExecutions: [
+            {
+              id: 'step-exec-2',
+              attemptNumber: 2,
+              status: 'completed',
+              output: 'Older result',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
+    expect(screen.getByText('detail.results.executionHint')).toBeInTheDocument();
+  });
+
   it('renders plain text output when no components', () => {
     render(<ExecutionStepDetail step={baseStep} />);
     expect(screen.getByText('Result text here')).toBeInTheDocument();
@@ -180,6 +236,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={withSemanticMatch} />);
+    expect(screen.queryByText('detail.evaluation.description')).not.toBeInTheDocument();
     expect(screen.getByText('detail.evaluation.semanticMatch')).toBeInTheDocument();
     expect(screen.getByText('detail.evaluation.evidenceConsistency')).toBeInTheDocument();
     expect(screen.getByText('93%')).toBeInTheDocument();
@@ -318,9 +375,100 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('detail.evaluation.historyLabel')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.stepExecutionLabel')).toBeInTheDocument();
     expect(screen.getByText(/detail.evaluation.trigger: manual/)).toBeInTheDocument();
     expect(screen.getByText(/detail.provenance.baseline: v3/)).toBeInTheDocument();
+  });
+
+  it('renders a step execution comparison when multiple evaluation history entries exist', () => {
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'completed',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [baseStep],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:00:05.200Z',
+      singleStepTaskId: null,
+      playbookSnapshot: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          semanticMatch: {
+            matchScore: 91,
+            semanticSimilarityScore: 88,
+            evidenceConsistencyScore: 93,
+            judgeScore: 90,
+            reason: 'Selected attempt.',
+            missingPoints: [],
+            changedPoints: [],
+            model: 'test-evaluation-model',
+            judgeUsed: true,
+          },
+          evaluationHistory: [
+            {
+              id: 'hist-1',
+              createdAt: '2025-01-01T00:01:00.000Z',
+              attemptNumber: 2,
+              trigger: 'manual',
+              baselineReplayId: 'r1',
+              baselineValidationVersion: 3,
+              semanticMatch: {
+                matchScore: 91,
+                semanticSimilarityScore: 88,
+                evidenceConsistencyScore: 93,
+                judgeScore: 90,
+                reason: 'Selected attempt.',
+                missingPoints: [],
+                changedPoints: [],
+                model: 'test-evaluation-model',
+                judgeUsed: true,
+              },
+            },
+            {
+              id: 'hist-2',
+              createdAt: '2025-01-01T00:02:00.000Z',
+              attemptNumber: 3,
+              trigger: 'manual',
+              baselineReplayId: 'r2',
+              baselineValidationVersion: 4,
+              semanticMatch: {
+                matchScore: 84,
+                semanticSimilarityScore: 80,
+                evidenceConsistencyScore: 82,
+                judgeScore: 86,
+                reason: 'Compared attempt.',
+                missingPoints: ['One item'],
+                changedPoints: ['Another item'],
+                model: 'test-evaluation-model',
+                judgeUsed: true,
+              },
+            },
+          ],
+        }}
+        execution={execution}
+      />,
+    );
+
+    expect(screen.getByText('detail.evaluation.stepExecutionLabel')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.compareWith')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.compareTitle')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.comparedExecution')).toBeInTheDocument();
   });
 
   it('shows an in-progress message while evaluation is running', () => {

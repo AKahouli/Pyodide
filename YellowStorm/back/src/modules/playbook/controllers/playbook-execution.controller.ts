@@ -45,4 +45,16 @@ export class PlaybookExecutionController {
     await this.playbookService.deleteExecution(playbookId, execId);
     return { success: true };
   }
+
+  @Delete(':execId/tasks/:taskId/step-executions/:stepExecutionId')
+  @UseGuards(PlaybookOwnerGuard)
+  async deleteStepExecution(
+    @Param('id') playbookId: string,
+    @Param('execId') execId: string,
+    @Param('taskId') taskId: string,
+    @Param('stepExecutionId') stepExecutionId: string,
+  ) {
+    await this.playbookService.deleteStepExecution(playbookId, execId, taskId, stepExecutionId);
+    return { success: true };
+  }
 }

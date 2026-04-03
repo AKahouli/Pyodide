@@ -45,22 +45,30 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
 
   return {
     ...data,
-    tasks: data.tasks.map(({
-      hasValidatedReplay,
-      activeReplayId,
-      activeReplayVersion,
-      activeReplayIsStale,
-      activeReplayStaleReasons,
-      activeReplayPreserveOutputFormat,
-      activeReplayFormatGuideStatus,
-      activeReplayFormatGuideError,
-      hasOutputFormatTemplate,
-      activeOutputFormatTemplateId,
-      activeOutputFormatTemplateVersion,
-      activeOutputFormatStatus,
-      activeOutputFormatError,
-      ...task
-    }) => task),
+    tasks: data.tasks.map((task) => ({
+      id: task.id,
+      title: task.title,
+      description: task.description,
+      assignedAgentId: task.assignedAgentId,
+      executionOrder: task.executionOrder,
+      positionX: task.positionX,
+      positionY: task.positionY,
+      interruptBefore: task.interruptBefore,
+      interruptAfter: task.interruptAfter,
+      allowClarification: task.allowClarification,
+      clarificationPrompt: task.clarificationPrompt,
+      maxClarifications: task.maxClarifications,
+      inputKeys: task.inputKeys,
+      outputKey: task.outputKey,
+      enabled: task.enabled,
+      notifyOnComplete: task.notifyOnComplete,
+      notifyEmails: task.notifyEmails,
+      stepReplayMode: task.stepReplayMode,
+      inputFiles: task.inputFiles,
+      taskType: task.taskType,
+      inputPorts: task.inputPorts,
+      outputPorts: task.outputPorts,
+    })),
   };
 }
 
@@ -321,6 +329,17 @@ export async function deleteExecution(
   executionId: string,
 ): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.playbooks.deleteExecution(playbookId, executionId));
+}
+
+export async function deleteStepExecution(
+  playbookId: string,
+  executionId: string,
+  taskId: string,
+  stepExecutionId: string,
+): Promise<void> {
+  await apiClient.delete(
+    API_ENDPOINTS.playbooks.deleteStepExecution(playbookId, executionId, taskId, stepExecutionId),
+  );
 }
 
 export async function deleteAllExecutions(

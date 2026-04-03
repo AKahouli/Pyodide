@@ -52,6 +52,19 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('4s')).toBeInTheDocument();
   });
 
+  it('shows the selected execution delete action when the workflow execution is deletable', async () => {
+    const execution = makeExecution({ status: 'completed' });
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+    });
+
+    render(<ExecutionPanel />);
+    await userEvent.click(screen.getByTitle('execution.deleteSelected'));
+
+    expect(screen.getByText('Delete execution')).toBeInTheDocument();
+  });
+
   it('shows stop button for running execution', () => {
     const execution = makeExecution({ status: 'running' });
     usePlaybookStore.setState({
