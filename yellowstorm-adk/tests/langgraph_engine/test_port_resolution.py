@@ -7,7 +7,7 @@ from src.langgraph_engine.port_resolution import (
 )
 
 
-def test_validate_port_routing_rejects_duplicate_input_port() -> None:
+def test_validate_port_routing_accepts_duplicate_input_port() -> None:
     tasks = [
         {"id": "source_a", "title": "Source A"},
         {"id": "source_b", "title": "Source B"},
@@ -18,8 +18,7 @@ def test_validate_port_routing_rejects_duplicate_input_port() -> None:
         {"source_id": "source_b", "target_id": "target", "source_output_port_id": "default", "target_input_port_id": "doc_in"},
     ]
 
-    with pytest.raises(ValueError, match="multiple upstream sources"):
-        validate_port_routing(tasks, edges)
+    validate_port_routing(tasks, edges)
 
 
 def test_resolve_task_inputs_falls_back_to_workspace_context_when_unbound() -> None:
@@ -73,6 +72,57 @@ def test_resolve_task_inputs_groups_documents_and_upstream_artifacts() -> None:
     assert summary_port["document_bindings"]["document_ids"] == ["doc-a", "doc-b"]
     assert resolved["has_port_sources"] is True
     assert build_tool_scope(resolved)["all_document_ids"] == ["doc-a", "doc-b"]
+
+
+def test_resolve_task_inputs_merges_multiple_upstream_sources_on_one_port() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [{"id": "default", "name": "Input", "artifact_kind": "document"}],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "source_a",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "default",
+                },
+                {
+                    "source_id": "source_b",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "default",
+                },
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {
+                "source_a:default": [
+                    {
+                        "artifact_kind": "document",
+                        "filename": "a.pdf",
+                        "url": "https://example.com/a.pdf",
+                    }
+                ],
+                "source_b:default": [
+                    {
+                        "artifact_kind": "document",
+                        "filename": "b.pdf",
+                        "url": "https://example.com/b.pdf",
+                    }
+                ],
+            },
+            "workspace_context": [],
+        },
+    )
+
+    default_port = resolved["ports"]["default"]
+    assert len(default_port["upstream_bindings"]) == 2
+    assert [item["filename"] for item in default_port["staged_files"]] == ["a.pdf", "b.pdf"]
 
 
 def test_resolve_task_inputs_rejects_artifact_kind_mismatch() -> None:

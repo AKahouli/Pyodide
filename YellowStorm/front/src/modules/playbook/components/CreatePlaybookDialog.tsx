@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowUp, PencilLine, Wand2 } from 'lucide-react';
+import { ArrowUp, PencilLine, Sparkles, Wand2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +21,59 @@ import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import type { GeneratePlaybookData } from '../types';
 import { rewritePlaybookPromptStream } from '../api';
 import { toast } from 'sonner';
+
+function getCaretCoordinates(textarea: HTMLTextAreaElement, position: number) {
+  const style = window.getComputedStyle(textarea);
+  const div = document.createElement('div');
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.wordWrap = 'break-word';
+  div.style.overflow = 'hidden';
+  div.style.left = '-9999px';
+  div.style.top = '0';
+
+  div.style.boxSizing = style.boxSizing;
+  div.style.width = `${textarea.clientWidth}px`;
+  div.style.height = style.height;
+  div.style.overflowX = style.overflowX;
+  div.style.overflowY = style.overflowY;
+  div.style.borderTopWidth = style.borderTopWidth;
+  div.style.borderRightWidth = style.borderRightWidth;
+  div.style.borderBottomWidth = style.borderBottomWidth;
+  div.style.borderLeftWidth = style.borderLeftWidth;
+  div.style.paddingTop = style.paddingTop;
+  div.style.paddingRight = style.paddingRight;
+  div.style.paddingBottom = style.paddingBottom;
+  div.style.paddingLeft = style.paddingLeft;
+  div.style.font = style.font;
+  div.style.fontFamily = style.fontFamily;
+  div.style.fontSize = style.fontSize;
+  div.style.fontWeight = style.fontWeight;
+  div.style.fontStyle = style.fontStyle;
+  div.style.letterSpacing = style.letterSpacing;
+  div.style.textTransform = style.textTransform;
+  div.style.textAlign = style.textAlign;
+  div.style.textIndent = style.textIndent;
+  div.style.lineHeight = style.lineHeight;
+  div.style.wordSpacing = style.wordSpacing;
+  div.style.tabSize = style.tabSize;
+  div.textContent = textarea.value.slice(0, position);
+
+  const span = document.createElement('span');
+  span.textContent = '\u200b';
+  div.appendChild(span);
+  document.body.appendChild(div);
+
+  const top = span.offsetTop;
+  const left = span.offsetLeft;
+  const height = span.offsetHeight || parseFloat(style.lineHeight) || 20;
+  const scrollTop = textarea.scrollTop;
+  const scrollLeft = textarea.scrollLeft;
+
+  document.body.removeChild(div);
+  return { top: top - scrollTop, left: left - scrollLeft, height };
+}
 
 interface Props {
   open: boolean;
@@ -43,6 +96,9 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
   const [autoWorkspaces, setAutoWorkspaces] = useState<string[]>([]);
   const [isRewritingPrompt, setIsRewritingPrompt] = useState(false);
   const [isRewriteStreamingStarted, setIsRewriteStreamingStarted] = useState(false);
+  const [rewriteShortcut, setRewriteShortcut] = useState({ top: 0, left: 0, visible: false });
+  const promptTextareaWrapperRef = useRef<HTMLDivElement | null>(null);
+  const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const createPlaybook = usePlaybookStore((s) => s.createPlaybook);
   const generatePlaybook = usePlaybookStore((s) => s.generatePlaybook);
@@ -147,6 +203,66 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
     onOpenChange(v);
   };
 
+  const updateRewriteShortcut = useCallback(() => {
+    const textarea = promptTextareaRef.current;
+    const wrapper = promptTextareaWrapperRef.current;
+
+    if (!open || tab !== 'auto' || !textarea || !wrapper || isRewritingPrompt || !autoPrompt.trim()) {
+      setRewriteShortcut((prev) => (prev.visible ? { ...prev, visible: false } : prev));
+      return;
+    }
+
+    const caretPos = textarea.selectionStart ?? autoPrompt.length;
+    const caret = getCaretCoordinates(textarea, caretPos);
+    const textareaRect = textarea.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+
+    const iconSize = 40;
+    const left = Math.min(
+      Math.max(4, textareaRect.left - wrapperRect.left + caret.left + 14),
+      Math.max(4, wrapperRect.width - iconSize - 4),
+    );
+    const top = Math.min(
+      Math.max(4, textareaRect.top - wrapperRect.top + caret.top + (caret.height / 2) - (iconSize / 2)),
+      Math.max(4, wrapperRect.height - iconSize - 4),
+    );
+
+    setRewriteShortcut({ top, left, visible: true });
+  }, [open, tab, isRewritingPrompt, autoPrompt]);
+
+  useLayoutEffect(() => {
+    updateRewriteShortcut();
+  }, [updateRewriteShortcut]);
+
+  useEffect(() => {
+    const textarea = promptTextareaRef.current;
+    if (!open || tab !== 'auto' || !textarea) return;
+
+    const handleSelectionChange = () => {
+      if (document.activeElement === textarea) {
+        updateRewriteShortcut();
+      }
+    };
+
+    const handleResize = () => updateRewriteShortcut();
+    const resizeObserver = new ResizeObserver(() => updateRewriteShortcut());
+
+    document.addEventListener('selectionchange', handleSelectionChange);
+    window.addEventListener('resize', handleResize);
+    textarea.addEventListener('scroll', handleResize);
+    resizeObserver.observe(textarea);
+    if (promptTextareaWrapperRef.current) {
+      resizeObserver.observe(promptTextareaWrapperRef.current);
+    }
+
+    return () => {
+      document.removeEventListener('selectionchange', handleSelectionChange);
+      window.removeEventListener('resize', handleResize);
+      textarea.removeEventListener('scroll', handleResize);
+      resizeObserver.disconnect();
+    };
+  }, [open, tab, updateRewriteShortcut]);
+
   const isManualValid = name.trim().length >= 2 && workspaces.length > 0;
   const isAutoValid = (autoName.trim() || deriveAutoName(autoPrompt)).length >= 2 && autoPrompt.trim().length >= 10 && autoWorkspaces.length > 0;
   const promptSuggestions = [
@@ -246,42 +362,61 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                   </div>
 
                   <div className="w-full rounded-[32px] border border-border bg-card/85 p-3 shadow-[0_34px_80px_-42px_rgba(15,23,42,0.35)] backdrop-blur-md">
-                    <div className="flex min-h-[147px] flex-col rounded-[28px] bg-background/90 px-5 py-4 text-left sm:px-8 sm:py-5">
+                    <div className="relative flex min-h-[147px] flex-col rounded-[28px] bg-background/90 px-5 py-4 text-left sm:px-8 sm:py-5">
                       <div className="mb-3 flex items-center justify-between gap-4">
                         <div>
                           <p className="text-sm font-medium text-foreground">{t('create.promptLabel')}</p>
-                          <p className="text-xs text-muted-foreground">{t('create.autoPromptBarCaption')}</p>
                         </div>
                       </div>
 
-                      <div className="relative">
+                      <div className="relative" ref={promptTextareaWrapperRef}>
                         {isRewritingPrompt && !isRewriteStreamingStarted && (
                           <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
                             <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-500/70 border-t-transparent" />
                           </div>
                         )}
 
-                      <Textarea
-                        id="auto-prompt"
-                        value={autoPrompt}
-                        onChange={(e) => setAutoPrompt(e.target.value)}
-                        placeholder={t('create.promptPlaceholder')}
-                        maxLength={5000}
-                        rows={3}
-                        className="min-h-[83px] resize-y border-0 bg-transparent px-0 py-0 text-base leading-7 text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 sm:text-[18px]"
-                        onKeyDown={(e) => {
-                          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isAutoValid) {
-                            e.preventDefault();
-                            handleGenerate();
-                          }
-                        }}
-                      />
+                        <Textarea
+                          ref={promptTextareaRef}
+                          id="auto-prompt"
+                          value={autoPrompt}
+                          onChange={(e) => {
+                            setAutoPrompt(e.target.value);
+                            requestAnimationFrame(() => requestAnimationFrame(updateRewriteShortcut));
+                          }}
+                          onKeyUp={updateRewriteShortcut}
+                          onClick={updateRewriteShortcut}
+                          onSelect={updateRewriteShortcut}
+                          onScroll={updateRewriteShortcut}
+                          onFocus={updateRewriteShortcut}
+                          placeholder={t('create.promptPlaceholder')}
+                          maxLength={5000}
+                          rows={3}
+                          className="min-h-[83px] resize-y border-0 bg-transparent px-0 py-0 text-base leading-7 text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 sm:text-[18px]"
+                          onKeyDown={(e) => {
+                            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isAutoValid) {
+                              e.preventDefault();
+                              handleGenerate();
+                            }
+                          }}
+                        />
+
+                        {rewriteShortcut.visible && !isRewritingPrompt && (
+                          <button
+                            type="button"
+                            className="absolute z-20 flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background/95 text-foreground shadow-md shadow-slate-900/10 backdrop-blur-sm transition hover:border-blue-400 hover:text-blue-600 dark:hover:text-blue-300"
+                            style={{ left: rewriteShortcut.left, top: rewriteShortcut.top }}
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={handleRewritePrompt}
+                            aria-label={t('create.rewritePromptAria')}
+                            title={t('create.rewritePromptAria')}
+                          >
+                            <Sparkles className="h-4 w-4" />
+                          </button>
+                        )}
                       </div>
 
                       <div className="mt-4 flex items-end justify-between gap-4">
-                        <p className="max-w-md text-xs leading-5 text-muted-foreground">
-                          {t('create.autoMinimalHint')}
-                        </p>
                         <div className="flex items-center gap-2">
                           <Button
                             type="button"
@@ -298,7 +433,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                           <Button
                             type="button"
                             size="icon"
-                            className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border-2 border-blue-400/70 bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 hover:border-blue-300 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-400 before:pointer-events-none before:absolute before:inset-0 before:rounded-full before:border before:border-blue-400/70 before:opacity-50 before:content-[''] before:animate-pulse before:[animation-duration:4s]"
+                            className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border-2 border-blue-400/70 bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 hover:border-blue-300 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-400 before:pointer-events-none before:absolute before:inset-0 before:rounded-full before:border before:border-blue-400/70 before:opacity-50 before:content-[''] before:animate-[pulse_4s_ease-in-out_infinite]"
                             onClick={handleGenerate}
                             disabled={!isAutoValid}
                           >

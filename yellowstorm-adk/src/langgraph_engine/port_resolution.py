@@ -193,22 +193,15 @@ def _artifact_file_ref(artifact: Dict[str, Any], port_id: str) -> Optional[Dict[
     }
 
 
-def _find_input_binding(edges: List[Dict[str, Any]], task_id: str, port_id: str) -> Optional[Dict[str, Any]]:
-    matches = [
+def _find_input_bindings(edges: List[Dict[str, Any]], task_id: str, port_id: str) -> List[Dict[str, Any]]:
+    return [
         edge for edge in edges
         if edge.get("target_id") == task_id and _normalize_port_id(edge.get("target_input_port_id")) == _normalize_port_id(port_id)
     ]
-    if not matches:
-        return None
-    if len(matches) > 1:
-        raise ValueError(
-            f"Task '{task_id}' input port '{port_id}' has multiple upstream sources."
-        )
-    return matches[0]
 
 
 def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> None:
-    """Fail fast when multiple upstream outputs target the same input port."""
+    """Validate that edges reference existing tasks and ports."""
 
     tasks_by_id = {str(task.get("id")): task for task in tasks if isinstance(task, dict) and task.get("id")}
 
@@ -244,21 +237,6 @@ def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any
             raise ValueError(
                 f"Task '{target_id}' references unknown source output port '{source_port_id}' on task '{source_id}'"
             )
-
-    grouped: Dict[tuple[str, str], List[Dict[str, Any]]] = {}
-    for edge in edges or []:
-        if not isinstance(edge, dict):
-            continue
-        target_id = str(edge.get("target_id") or "").strip()
-        target_port_id = _normalize_port_id(edge.get("target_input_port_id"))
-        grouped.setdefault((target_id, target_port_id), []).append(edge)
-
-    for (target_id, port_id), target_edges in grouped.items():
-        if len(target_edges) > 1:
-            raise ValueError(
-                f"Task '{target_id}' input port '{port_id}' has multiple upstream sources."
-            )
-
 
 def resolve_task_inputs(
     task_id: str,
@@ -299,19 +277,19 @@ def resolve_task_inputs(
 
     for port_id in port_ids:
         input_port = deepcopy(input_ports.get(port_id) or {"id": port_id, "name": port_id})
-        binding = _find_input_binding(edges, task_id, port_id)
-        upstream_binding = None
+        bindings = _find_input_bindings(edges, task_id, port_id)
+        upstream_bindings: List[Dict[str, Any]] = []
         workspace_artifacts: List[Dict[str, Any]] = []
         resolved_documents: List[Dict[str, Any]] = []
         staged_files: List[Dict[str, Any]] = []
 
-        if binding is not None:
+        expected_kind = str(input_port.get("artifact_kind") or "").strip()
+
+        for binding in bindings:
             source_task_id = str(binding.get("source_id") or "")
             source_output_port_id = _normalize_port_id(binding.get("source_output_port_id"))
             artifact_key = f"{source_task_id}:{source_output_port_id}"
             artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
-
-            expected_kind = str(input_port.get("artifact_kind") or "").strip()
 
             if not artifacts and expected_kind in {"", "text", "code"}:
                 fallback_result = task_results.get(source_task_id) or {}
@@ -337,12 +315,12 @@ def resolve_task_inputs(
                     f"Task '{task_id}' input port '{port_id}' expects artifact kind '{expected_kind}' but received '{actual_kind}'"
                 )
 
-            upstream_binding = {
+            upstream_bindings.append({
                 "source_task_id": source_task_id,
                 "source_output_port_id": source_output_port_id,
                 "artifact_kind": actual_kind,
                 "artifacts": artifacts,
-            }
+            })
             has_port_sources = True
 
             for artifact in artifacts:
@@ -353,6 +331,8 @@ def resolve_task_inputs(
                 file_ref = _artifact_file_ref(artifact, port_id)
                 if file_ref is not None:
                     staged_files.append(file_ref)
+
+        upstream_binding = upstream_bindings[0] if upstream_bindings else None
 
         document_bindings = []
         for port_binding in task_config.get("input_files_by_port") or []:
@@ -383,6 +363,7 @@ def resolve_task_inputs(
         resolved_ports[port_id] = {
             "input_port": input_port,
             "upstream_binding": upstream_binding,
+            "upstream_bindings": upstream_bindings,
             "document_bindings": {
                 "document_ids": document_bindings,
             },
@@ -494,7 +475,7 @@ def build_task_prompt(
 
     for port_id, port_state in ports.items():
         input_port = port_state.get("input_port") or {}
-        upstream_binding = port_state.get("upstream_binding")
+        upstream_bindings = list(port_state.get("upstream_bindings") or ([] if not port_state.get("upstream_binding") else [port_state.get("upstream_binding")]))
         document_ids = (port_state.get("document_bindings") or {}).get("document_ids") or []
         workspace_artifacts = port_state.get("workspace_artifacts") or []
 
@@ -503,20 +484,21 @@ def build_task_prompt(
         if artifact_kind:
             block_lines.append(f"Expected type: {artifact_kind}")
 
-        if upstream_binding:
-            block_lines.append(
-                f"Upstream source: {upstream_binding.get('source_task_id', '')}.{upstream_binding.get('source_output_port_id', '')}"
-            )
-            artifacts = upstream_binding.get("artifacts") or []
-            for artifact in artifacts:
-                kind = _artifact_kind(artifact)
-                if kind in {"text", "code"}:
-                    block_lines.append("Content:\n" + _artifact_content(artifact))
-                else:
-                    artifact_name = artifact.get("filename") or artifact.get("name") or artifact.get("url") or artifact.get("filepath") or "artifact"
-                    if _is_sandbox_local_path(str(artifact_name)):
-                        artifact_name = artifact.get("filename") or artifact.get("name") or "artifact"
-                    block_lines.append(f"Artifact: {artifact_name}")
+        if upstream_bindings:
+            for upstream_binding in upstream_bindings:
+                block_lines.append(
+                    f"Upstream source: {upstream_binding.get('source_task_id', '')}.{upstream_binding.get('source_output_port_id', '')}"
+                )
+                artifacts = upstream_binding.get("artifacts") or []
+                for artifact in artifacts:
+                    kind = _artifact_kind(artifact)
+                    if kind in {"text", "code"}:
+                        block_lines.append("Content:\n" + _artifact_content(artifact))
+                    else:
+                        artifact_name = artifact.get("filename") or artifact.get("name") or artifact.get("url") or artifact.get("filepath") or "artifact"
+                        if _is_sandbox_local_path(str(artifact_name)):
+                            artifact_name = artifact.get("filename") or artifact.get("name") or "artifact"
+                        block_lines.append(f"Artifact: {artifact_name}")
         else:
             block_lines.append("Upstream source: none")
 

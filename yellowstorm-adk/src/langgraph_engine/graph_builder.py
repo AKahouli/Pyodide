@@ -239,23 +239,8 @@ class DynamicGraphBuilder:
             playbook_id = state.get("playbook_id", "")
             thread_id = state.get("thread_id")
             agent_id = task_config.get("assigned_agent_id")
-
-            if not agent_id or agent_id not in state["agents"]:
-                error_msg = f"No agent assigned to task {task_id}"
-                logger.error(f"[{task_id}] {error_msg}")
-                return {
-                    "completed_task_ids": [task_id],
-                    "results": {task_id: {"error": error_msg}},
-                    "error": error_msg,
-                    "status": "failed",
-                }
-
-            agent = state["agents"][agent_id]
-
             start_time = time.time()
             started_at = datetime.utcnow().isoformat() + "Z"
-
-            logger.info(f"[{task_id}] Starting task", title=task_config.get("title"))
 
             async def _push_step_update(status, result=None, interrupt_data=None):
                 update: StepUpdate = {
@@ -271,6 +256,30 @@ class DynamicGraphBuilder:
                     await on_step_update(update)
                 except Exception:
                     logger.warning(f"[{task_id}] step_update callback failed", exc_info=True)
+
+            if not agent_id or agent_id not in state["agents"]:
+                error_msg = f"No agent assigned to task {task_id}"
+                logger.error(f"[{task_id}] {error_msg}")
+                await _push_step_update("failed", result={
+                    "task_id": task_id,
+                    "status": "failed",
+                    "output": "",
+                    "error": error_msg,
+                    "duration_ms": int((time.time() - start_time) * 1000),
+                    "components": [],
+                    "tool_trace": [],
+                    "llm_prompt_trace": [],
+                })
+                return {
+                    "completed_task_ids": [task_id],
+                    "results": {task_id: {"task_id": task_id, "status": "failed", "error": error_msg}},
+                    "error": error_msg,
+                    "status": "failed",
+                }
+
+            agent = state["agents"][agent_id]
+
+            logger.info(f"[{task_id}] Starting task", title=task_config.get("title"))
 
             components: List[Dict[str, Any]] = []
             tool_trace: List[Dict[str, Any]] = []
@@ -524,6 +533,7 @@ class DynamicGraphBuilder:
                     model_name = agent.get("model") or "gpt-4.1"
                     agent_params = agent.get("agent_params") or {}
                     temperature = float(agent_params.get("temperature", 0.7))
+                    llm_prompt_trace: List[Dict[str, Any]] = []
 
                     from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
                     from src.langgraph_engine.step_executor import _execute_with_tools, _execute_replay_tool_calls
