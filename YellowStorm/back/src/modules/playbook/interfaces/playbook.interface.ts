@@ -3,6 +3,7 @@ export interface InputFileData {
   id: string;
   name: string;
   workspaceId?: string;
+  portId?: string;
   metadata?: {
     workspaceId?: string;
     documentId?: string;

@@ -46,6 +46,7 @@ class TaskConfig(TypedDict):
     input_keys: Optional[List[str]]
     output_key: Optional[str]
     input_files: Optional[List[str]]
+    input_files_by_port: Optional[List[Dict[str, Any]]]  # Port-aware document bindings
     task_type: Optional[str]
     input_ports: Optional[List[Dict[str, Any]]]
     output_ports: Optional[List[Dict[str, Any]]]
@@ -115,13 +116,21 @@ def merge_task_outputs(left: Dict[str, str], right: Dict[str, str]) -> Dict[str,
 
 
 def merge_artifacts(
-    left: Dict[str, Dict[str, Any]], right: Dict[str, Dict[str, Any]]
-) -> Dict[str, Dict[str, Any]]:
+    left: Dict[str, List[Dict[str, Any]]], right: Dict[str, List[Dict[str, Any]]]
+) -> Dict[str, List[Dict[str, Any]]]:
     if not left:
         return right
     if not right:
         return left
-    return {**left, **right}
+
+    merged: Dict[str, List[Dict[str, Any]]] = {key: list(value or []) for key, value in left.items()}
+    for key, value in right.items():
+        incoming = value if isinstance(value, list) else [value]
+        if key in merged:
+            merged[key].extend([item for item in incoming if isinstance(item, dict)])
+        else:
+            merged[key] = [item for item in incoming if isinstance(item, dict)]
+    return merged
 
 
 def merge_status(left: str, right: str) -> str:
@@ -156,4 +165,4 @@ class ExecutionState(TypedDict):
     validated_replays_by_task: Optional[Dict[str, Any]]
     step_execution_modes: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
-    artifacts_by_port: Annotated[Dict[str, Dict[str, Any]], merge_artifacts]
+    artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]

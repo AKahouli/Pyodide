@@ -75,7 +75,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
   };
 
   const handleCreate = async () => {
-    if (!name.trim() || name.length < 2) return;
+    if (!name.trim() || name.length < 2 || workspaces.length === 0) return;
     setIsCreating(true);
     try {
       const playbook = await createPlaybook({
@@ -96,7 +96,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
   const handleGenerate = () => {
     const resolvedName = autoName.trim() || deriveAutoName(autoPrompt);
 
-    if (resolvedName.length < 2 || !autoPrompt.trim() || autoPrompt.length < 10) return;
+    if (resolvedName.length < 2 || !autoPrompt.trim() || autoPrompt.length < 10 || autoWorkspaces.length === 0) return;
     const data: GeneratePlaybookData = {
       name: resolvedName,
       prompt: autoPrompt.trim(),
@@ -117,8 +117,8 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
     onOpenChange(v);
   };
 
-  const isManualValid = name.trim().length >= 2;
-  const isAutoValid = (autoName.trim() || deriveAutoName(autoPrompt)).length >= 2 && autoPrompt.trim().length >= 10;
+  const isManualValid = name.trim().length >= 2 && workspaces.length > 0;
+  const isAutoValid = (autoName.trim() || deriveAutoName(autoPrompt)).length >= 2 && autoPrompt.trim().length >= 10 && autoWorkspaces.length > 0;
   const promptSuggestions = [
     t('create.promptSuggestionResearch'),
     t('create.promptSuggestionETL'),
@@ -182,6 +182,9 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                   <div className="space-y-2 md:col-span-2">
                     <Label>{t('workspace.label')}</Label>
                     <PlaybookWorkspaceSelect value={workspaces} onChange={setWorkspaces} />
+                    {workspaces.length === 0 && (
+                      <p className="text-xs text-destructive">Select at least one workspace.</p>
+                    )}
                   </div>
                 </div>
               </TabsContent>
@@ -292,6 +295,9 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                           <p className="text-xs text-slate-500">{t('create.autoWorkspaceHint')}</p>
                         </div>
                         <PlaybookWorkspaceSelect value={autoWorkspaces} onChange={setAutoWorkspaces} />
+                        {autoWorkspaces.length === 0 && (
+                          <p className="mt-2 text-xs text-destructive">Select at least one workspace.</p>
+                        )}
                       </div>
                     </section>
                   </section>
@@ -309,7 +315,11 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                 <Button onClick={handleCreate} disabled={!isManualValid || isCreating}>
                   {isCreating ? t('common.creating') : t('create.submit')}
                 </Button>
-              ) : null}
+              ) : (
+                <Button onClick={handleGenerate} disabled={!isAutoValid}>
+                  {t('create.submit')}
+                </Button>
+              )}
             </DialogFooter>
           </div>
         </div>

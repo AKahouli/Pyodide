@@ -186,6 +186,8 @@ export class PlaybookDesignService {
         edges: playbook.edges.map((e) => ({
           source_id: e.sourceId,
           target_id: e.targetId,
+          source_output_port_id: e.sourceOutputPortId || 'default',
+          target_input_port_id: e.targetInputPortId || 'default',
         })),
       },
       model: modelId,
@@ -293,6 +295,8 @@ export class PlaybookDesignService {
       id: `edge-${idx}`,
       sourceId: edge.source_id,
       targetId: edge.target_id,
+      sourceOutputPortId: edge.source_output_port_id || 'default',
+      targetInputPortId: edge.target_input_port_id || 'default',
     }));
 
     return { tasks, edges };
@@ -328,8 +332,8 @@ export class PlaybookDesignService {
       }
     }
 
-    const oldEdgeKeys = new Set(oldEdges.map((e) => `${e.sourceId}-${e.targetId}`));
-    const newEdgeKeys = new Set(newEdges.map((e) => `${e.sourceId}-${e.targetId}`));
+    const oldEdgeKeys = new Set(oldEdges.map((e) => this.buildEdgeKey(e)));
+    const newEdgeKeys = new Set(newEdges.map((e) => this.buildEdgeKey(e)));
     const edgesAdded = [...newEdgeKeys].filter((k) => !oldEdgeKeys.has(k)).length;
     const edgesRemoved = [...oldEdgeKeys].filter((k) => !newEdgeKeys.has(k)).length;
 
@@ -356,5 +360,13 @@ export class PlaybookDesignService {
       createdAt: message.createdAt?.toISOString?.() || message.createdAt,
       updatedAt: message.updatedAt?.toISOString?.() || message.updatedAt,
     };
+  }
+
+  private buildEdgeKey(edge: any): string {
+    const sourceId = edge.sourceId ?? edge.source_id ?? '';
+    const targetId = edge.targetId ?? edge.target_id ?? '';
+    const sourcePortId = edge.sourceOutputPortId ?? edge.source_output_port_id ?? 'default';
+    const targetPortId = edge.targetInputPortId ?? edge.target_input_port_id ?? 'default';
+    return `${sourceId}:${sourcePortId}->${targetId}:${targetPortId}`;
   }
 }

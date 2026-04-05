@@ -13,12 +13,14 @@ export class InputFileItem {
   id!: string;
   name!: string;
   workspaceId?: string;
+  portId?: string;
   metadata?: {
     workspaceId?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
     language?: string;
+    mimeType?: string;
   };
 }
 

@@ -1,5 +1,5 @@
-import { createContext, useContext, useMemo, useState, useCallback } from 'react';
-import { type NodeProps, Handle, Position } from '@xyflow/react';
+import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
+import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
 import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -223,6 +223,12 @@ function getOutputPortStyle(port: TaskOutputPort): React.CSSProperties {
   };
 }
 
+function getPortTopPercent(idx: number, total: number): number {
+  if (total <= 1) return 50;
+  const step = 100 / (total + 1);
+  return step * (idx + 1);
+}
+
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData;
   const actions = useContext(NodeContextMenuContext);
@@ -237,11 +243,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
   const [dragPortCompatible, setDragPortCompatible] = useState<boolean | null>(null);
+  const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
   const inputPorts = migratedTask.inputPorts ?? [];
   const outputPorts = migratedTask.outputPorts ?? [];
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
+
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, inputPorts.length, outputPorts.length, updateNodeInternals]);
 
   const inputFiles = currentTask?.inputFiles ?? data.inputFiles ?? [];
   const portFileMap = useMemo(() => {
@@ -264,7 +275,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
   const isSelected = selected || selectedStepId === id;
-  const selectedClass = isSelected ? 'border-[#ffcd03] ring-2 ring-inset ring-[#ffcd03]/70 shadow-lg shadow-[#ffcd03]/30 animate-[pulse_2.8s_ease-in-out_infinite]' : '';
+  const selectedClass = isSelected
+    ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
+    : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
   const replayBadgeLabel = currentTask?.activeReplayVersion
     ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
@@ -377,20 +390,25 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           onDrop={handleDrop}
         >
           {/* Input ports — left side */}
-          <div className="absolute left-0 inset-y-0 flex flex-col justify-around items-center z-10 w-0">
+          <div className="absolute left-0 inset-y-0 z-10 w-0 pointer-events-none">
           {inputPorts.map((port, idx) => {
             const isPortDragTarget = isDragOver && dragOverPortId === port.id;
             const portColors = PORT_COLORS[port.artifactKind];
             const boundFile = portFileMap[port.id];
+            const top = `${getPortTopPercent(idx, inputPorts.length)}%`;
 
             return (
-              <div key={port.id} className="relative flex items-center">
+              <div
+                key={port.id}
+                className="absolute left-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+                style={{ top }}
+              >
                 <Handle
                   id={`in-${port.id}`}
                   type="target"
                   position={Position.Left}
                   className="!w-3 !h-3"
-                  style={getInputPortStyle(port)}
+                  style={{ ...getInputPortStyle(port), top: 0 }}
                 />
                 {boundFile && !isPortDragTarget && (
                   <div
@@ -425,15 +443,19 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           </div>
 
           {/* Output ports — right side */}
-          <div className="absolute right-0 inset-y-0 flex flex-col justify-around items-center z-10 w-0">
+          <div className="absolute right-0 inset-y-0 z-10 w-0 pointer-events-none">
           {outputPorts.map((port, idx) => (
-            <div key={port.id} className="relative flex items-center">
+            <div
+              key={port.id}
+              className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+              style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
+            >
               <Handle
                 id={`out-${port.id}`}
                 type="source"
                 position={Position.Right}
                 className="!w-3 !h-3"
-                style={getOutputPortStyle(port)}
+                style={{ ...getOutputPortStyle(port), top: 0 }}
               />
               <PortLabel name={port.name} kind={port.artifactKind} position="right" />
             </div>

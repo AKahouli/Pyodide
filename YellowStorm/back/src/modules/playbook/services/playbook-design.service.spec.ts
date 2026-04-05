@@ -1221,6 +1221,28 @@ describe('PlaybookDesignService', () => {
       expect(result.message.aiSummary).toContain('Added 2 connections');
     });
 
+    it('counts same-node connections separately when their ports differ', async () => {
+      setupDesignResponse(
+        [
+          { id: 'task-0', title: 'Step A', description: 'Do A' },
+          { id: 'task-1', title: 'Step B', description: 'Do B' },
+        ],
+        [
+          { source_id: 'task-0', target_id: 'task-1' },
+          {
+            source_id: 'task-0',
+            target_id: 'task-1',
+            source_output_port_id: 'summary',
+            target_input_port_id: 'secondary',
+          },
+        ],
+      );
+
+      const result = await service.designPlaybook(userId, playbookId, dto);
+
+      expect(result.message.aiSummary).toContain('Added 1 connection');
+    });
+
     it('should report removed connections when edges disappear', async () => {
       setupDesignResponse(
         [

@@ -80,6 +80,10 @@ def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
     input_files: Optional[List[str]] = None,
+    documents_by_port: Optional[Dict[str, List[str]]] = None,
+    code_interpreter_files: Optional[List[Dict[str, str]]] = None,
+    output_workspace_id: str = "",
+    workspace_context_mode: str = "resolved_inputs_only",
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -87,6 +91,10 @@ def create_langchain_tools(
         agent_config: Agent dict with keys like tools, brain_ids, brain_documents.
         workspace_context: Optional workspace context list (from gRPC request).
         input_files: Optional list of document external_ids to restrict search to.
+        documents_by_port: Optional mapping of input port id to document external_ids.
+        code_interpreter_files: Optional list of resolved files to mount in the sandbox.
+        output_workspace_id: Workspace used for generated file uploads.
+        workspace_context_mode: Indicates whether the current task relies on fallback workspace context.
 
     Returns:
         Tuple of (list of StructuredTools, ToolResultCollector).
@@ -127,7 +135,8 @@ def create_langchain_tools(
     if "search" in tool_names and (doc_tree or input_files):
         search_tools = _create_search_tools(
             tool_configs, doc_tree, brain_tree, brain_ids, top_k, collector,
-            input_files=input_files
+            input_files=input_files,
+            documents_by_port=documents_by_port,
         )
         tools.extend(search_tools)
 
@@ -150,7 +159,17 @@ def create_langchain_tools(
 
     # --- Code interpreter ---
     if "code interpreter" in tool_names:
-        code_tool = _create_code_interpreter_tool(agent_config, brain_ids, brain_documents, collector)
+        if not output_workspace_id:
+            raise ValueError("Code interpreter requires a default playbook workspace")
+        code_tool = _create_code_interpreter_tool(
+            agent_config,
+            brain_ids,
+            code_interpreter_files or brain_documents,
+            collector,
+            documents_by_port=documents_by_port,
+            output_workspace_id=output_workspace_id,
+            workspace_context_mode=workspace_context_mode,
+        )
         if code_tool:
             tools.append(code_tool)
 
@@ -232,6 +251,51 @@ def _format_available_filenames(brain_documents: list, max_files: int = 12) -> s
     return ", ".join(visible) + suffix
 
 
+def _is_sandbox_local_path(path: str) -> bool:
+    normalized = str(path or "").strip().lower()
+    return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
+
+
+def _build_code_interpreter_file_list(code_interpreter_files: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+    deduped_by_filename: Dict[str, Dict[str, str]] = {}
+
+    for doc in code_interpreter_files or []:
+        filepath = str(doc.get("filepath", "")).strip()
+        filename = str(doc.get("filename", "")).strip()
+        if not filepath or not filename:
+            continue
+
+        existing = deduped_by_filename.get(filename)
+        current_is_local = _is_sandbox_local_path(filepath)
+        existing_is_local = _is_sandbox_local_path(existing.get("filepath", "")) if existing else False
+
+        if existing is None or (existing_is_local and not current_is_local):
+            deduped_by_filename[filename] = {"filepath": filepath, "filename": filename}
+
+    return [
+        entry for entry in deduped_by_filename.values()
+        if not _is_sandbox_local_path(entry.get("filepath", ""))
+    ]
+
+
+def _format_documents_by_port(documents_by_port: Optional[Dict[str, List[str]]], max_ports: int = 6) -> str:
+    if not documents_by_port:
+        return ""
+
+    entries = []
+    for port_id, document_ids in list(documents_by_port.items())[:max_ports]:
+        if document_ids:
+            entries.append(f"{port_id}: {len(document_ids)} doc(s)")
+
+    if not entries:
+        return ""
+
+    suffix = ""
+    if len(documents_by_port) > max_ports:
+        suffix = f" (+{len(documents_by_port) - max_ports} more ports)"
+    return ", ".join(entries) + suffix
+
+
 def _create_search_tools(
     tool_configs: list,
     doc_tree: list,
@@ -240,6 +304,7 @@ def _create_search_tools(
     top_k: int,
     collector: ToolResultCollector,
     input_files: Optional[List[str]] = None,
+    documents_by_port: Optional[Dict[str, List[str]]] = None,
 ) -> List[StructuredTool]:
     """Create document-search and brain-search LangChain tools.
 
@@ -345,6 +410,7 @@ def _create_search_tools(
                 f"Search within specific documents from the knowledge base. "
                 f"Restricted to {len(input_files)} document(s). "
                 f"Use this to find information in the specified documents only."
+                + (f" Port groups: {_format_documents_by_port(documents_by_port)}." if documents_by_port else "")
             ),
             func=None,
             coroutine=_filtered_search,
@@ -508,8 +574,11 @@ def _create_web_search_tool(brain_ids: list, collector: ToolResultCollector) -> 
 def _create_code_interpreter_tool(
     agent_config: dict,
     brain_ids: list,
-    brain_documents: list,
+    code_interpreter_files: list,
     collector: ToolResultCollector,
+    documents_by_port: Optional[Dict[str, List[str]]] = None,
+    output_workspace_id: str = "",
+    workspace_context_mode: str = "resolved_inputs_only",
 ) -> Optional[StructuredTool]:
     """Create a code interpreter LangChain tool.
 
@@ -524,18 +593,24 @@ def _create_code_interpreter_tool(
 
     settings = get_settings()
     backend_url = getattr(settings, "CODE_INTERPRETER_BACKEND_URL", None)
-    available_filenames = _format_available_filenames(brain_documents)
+    normalized_code_interpreter_files = _build_code_interpreter_file_list(code_interpreter_files)
+    available_filenames = _format_available_filenames(normalized_code_interpreter_files)
+    port_scope_note = _format_documents_by_port(documents_by_port)
 
     if not backend_url:
         logger.warning("Code interpreter backend URL not configured, skipping tool")
         return None
 
+    if not output_workspace_id:
+        logger.warning("Code interpreter output workspace not configured, skipping tool")
+        return None
+
     # Pre-compute v2 file_paths payload expected by the sandbox backend
     file_paths_base64 = None
-    if brain_documents:
+    if normalized_code_interpreter_files:
         file_paths_list = [
             {"azure_path": doc.get("filepath", ""), "filename": doc.get("filename", "")}
-            for doc in brain_documents
+            for doc in normalized_code_interpreter_files
             if doc.get("filepath") and doc.get("filename")
         ]
         if file_paths_list:
@@ -547,7 +622,7 @@ def _create_code_interpreter_tool(
     agent_params = agent_config.get("agent_params") or {}
     session_id = agent_params.get("session_id")
     user_id = agent_params.get("user_id")
-    brain_id = brain_ids[0] if brain_ids else None
+    brain_id = output_workspace_id or (brain_ids[0] if brain_ids else None)
 
     async def _run_code(code: str, timeout_seconds: int = 60) -> str:
         timeout_seconds = min(timeout_seconds, 300)
@@ -628,6 +703,8 @@ def _create_code_interpreter_tool(
             "Workspace documents are mounted into the execution workspace, and generated files "
             "(CSV, images, reports, PDFs) are automatically saved. "
             "Do not ask the user to upload workspace documents again; use the files already available in the sandbox."
+            + (f" Bound input-port document groups: {port_scope_note}." if port_scope_note else "")
+            + (" Fallback workspace context is available." if workspace_context_mode == "fallback_playbook" else "")
             + (f" Available workspace files: {available_filenames}." if available_filenames else "")
         ),
         func=None,

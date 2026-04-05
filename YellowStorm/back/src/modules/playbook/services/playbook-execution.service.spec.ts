@@ -617,7 +617,7 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.singleStepTaskId).toBe('task-1');
     });
 
-    it('should store playbookSnapshot on execution record', async () => {
+  it('should store playbookSnapshot on execution record', async () => {
       const playbook = createMockPlaybook();
       mockPlaybookService.findRawById.mockResolvedValue(playbook);
       mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
@@ -633,6 +633,58 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.playbookSnapshot).toBeDefined();
       expect(createArg.playbookSnapshot.tasks).toHaveLength(2);
       expect(createArg.playbookSnapshot.edges).toHaveLength(1);
+    });
+
+    it('preserves distinct same-node edges when ports differ in snapshot merges', () => {
+      const snapshot = {
+        tasks: [{ id: 'task-1' }, { id: 'task-2' }],
+        edges: [
+          {
+            id: 'edge-existing',
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'documents',
+            targetInputPortId: 'primary',
+          },
+        ],
+      };
+      const playbook = createMockPlaybook({
+        tasks: [{ id: 'task-1' }, { id: 'task-2' }],
+        edges: [
+          {
+            id: 'edge-existing',
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'documents',
+            targetInputPortId: 'primary',
+          },
+          {
+            id: 'edge-secondary',
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'summary',
+            targetInputPortId: 'secondary',
+          },
+        ],
+      });
+
+      const merged = (service as any).mergeSnapshotForNewTask(snapshot, playbook, 'task-1');
+
+      expect(merged.edges).toHaveLength(2);
+      expect(merged.edges).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: 'task-1',
+          targetId: 'task-2',
+          sourceOutputPortId: 'documents',
+          targetInputPortId: 'primary',
+        }),
+        expect.objectContaining({
+          sourceId: 'task-1',
+          targetId: 'task-2',
+          sourceOutputPortId: 'summary',
+          targetInputPortId: 'secondary',
+        }),
+      ]));
     });
   });
 

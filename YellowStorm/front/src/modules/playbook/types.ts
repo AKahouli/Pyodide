@@ -62,12 +62,13 @@ export interface InputFile {
   portId?: string;
   artifactKind?: ArtifactKind;
   metadata?: {
-    workspaceId?: string;
-    documentId?: string;
-    filename?: string;
-    filepath?: string;
-    language?: string;
-  };
+      workspaceId?: string;
+      documentId?: string;
+      filename?: string;
+      filepath?: string;
+      language?: string;
+      mimeType?: string;
+      };
 }
 
 export interface PlaybookTask {

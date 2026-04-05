@@ -59,6 +59,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
+import { toast } from 'sonner';
 
 // Edge colors per step status
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
@@ -133,6 +134,7 @@ function PlaybookCanvasInner() {
   const updatePlaybook = usePlaybookStore((s) => s.updatePlaybook);
   const clonePlaybook = usePlaybookStore((s) => s.clonePlaybook);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
+  const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
   const undo = usePlaybookStore((s) => s.undo);
   const redo = usePlaybookStore((s) => s.redo);
@@ -163,6 +165,7 @@ function PlaybookCanvasInner() {
     removeNode,
     updateNodeData,
     setNodes,
+    setEdges,
   } = usePlaybookCanvas();
 
   const { saveNow } = useAutosave();
@@ -678,6 +681,10 @@ function PlaybookCanvasInner() {
 
   const handleRun = useCallback(async () => {
     if (!id || !playbook) return;
+    if (!playbook.workspaces || playbook.workspaces.length === 0) {
+      toast.error('Select a default playbook workspace before running this playbook.');
+      return;
+    }
     if (isDirty) await saveNow();
     setPageMode('run');
     if (executionMode === 'live') {
@@ -746,6 +753,26 @@ function PlaybookCanvasInner() {
     [currentExecution, execution, id, nodes, pageMode, selectStep, setDesignerOpen, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
   );
 
+  const handleEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      captureSnapshot();
+      setEdges((currentEdges: Edge[]) => {
+        const updated = currentEdges.filter((candidate) => candidate.id !== edge.id);
+        updateEdges(
+          updated.map((candidate) => ({
+            id: candidate.id,
+            sourceId: candidate.source,
+            targetId: candidate.target,
+            sourceOutputPortId: candidate.sourceHandle?.replace('out-', '') || ((candidate.data as any)?.sourceOutputPortId) || 'default',
+            targetInputPortId: candidate.targetHandle?.replace('in-', '') || ((candidate.data as any)?.targetInputPortId) || 'default',
+          })),
+        );
+        return updated;
+      });
+    },
+    [captureSnapshot, setEdges, updateEdges],
+  );
+
   const handleViewExecutions = useCallback(() => {
     const nextOpen = !executionPanelOpen;
     setExecutionPanelOpen(nextOpen);
@@ -777,6 +804,10 @@ function PlaybookCanvasInner() {
 
   const handleWorkspacesChange = useCallback(
     (workspaces: string[]) => {
+      if (workspaces.length === 0) {
+        toast.error('Select at least one default workspace for this playbook.');
+        return;
+      }
       captureSnapshot();
       updateWorkspaces(workspaces);
       if (id) {
@@ -902,7 +933,7 @@ function PlaybookCanvasInner() {
             isDirty={isDirty}
             isSaving={isSaving}
             isExecuting={isExecuting}
-            canRun={playbook.tasks.length > 0 && !hasActiveExecution && !isSaving && !isDirty}
+            canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
             executionMode={executionMode}
             onExecutionModeChange={setExecutionMode}
             canUndo={canUndo}
@@ -943,6 +974,7 @@ function PlaybookCanvasInner() {
                   onConnect={onConnect}
                   onNodeClick={handleNodeClick}
                   onNodeDoubleClick={handleNodeDoubleClick}
+                  onEdgeDoubleClick={handleEdgeDoubleClick}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}

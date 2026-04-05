@@ -323,6 +323,11 @@ message MCPToolConfig {
     map<string, string> headers = 5;
 }
 
+message PortDocumentBinding {
+    string port_id = 1;           // The input port ID this document is bound to
+    repeated string document_ids = 2;  // Document external_ids bound to this port
+}
+
 message PlaybookTaskConfig {
     string id = 1;
     string title = 2;
@@ -336,17 +341,11 @@ message PlaybookTaskConfig {
     int32 max_clarifications = 10;
     repeated string input_keys = 11;
     string output_key = 12;
-    repeated string input_files = 13;  // Document IDs for this task
+    repeated string input_files = 13;  // List of document external_ids to restrict search to (legacy flat list)
     repeated TaskInputPort input_ports = 14;
     repeated TaskOutputPort output_ports = 15;
     string task_type = 16;
-}
-
-message PlaybookEdgeConfig {
-    string source_id = 1;
-    string target_id = 2;
-    string source_output_port_id = 3;
-    string target_input_port_id = 4;
+    repeated PortDocumentBinding input_files_by_port = 17;  // Port-aware document bindings
 }
 
 message TaskOutputPort {
@@ -372,6 +371,13 @@ message TaskArtifact {
     string filename = 5;
     string mime_type = 6;
     int64 size = 7;
+}
+
+message PlaybookEdgeConfig {
+    string source_id = 1;
+    string target_id = 2;
+    string source_output_port_id = 3;
+    string target_input_port_id = 4;
 }
 
 message PlaybookNodeConfig {
@@ -442,6 +448,8 @@ message RunStepRequest {
     repeated WorkspaceContext workspace_context = 7;
     string execution_mode = 8;
     ValidatedTaskReplay validated_replay = 9;
+    repeated PlaybookEdgeConfig edges = 10;
+    repeated PlaybookTaskResult upstream_results = 11;
 }
 
 message ResumeStepRequest {
@@ -465,8 +473,8 @@ message StopPlaybookWorkflowResponse {
 // --- Human-in-the-loop messages ---
 
 message HumanResponse {
-    string action = 1;               // "reply" | "approve" | "reject" | "skip"
-    string message = 2;              // Free-form user reply for conversational HITL
+    string action = 1;                 // "reply" | "approve" | "reject" | "skip"
+    string message = 2;                // Free-form user reply for conversational HITL
     bool approved = 3;               // Legacy compatibility: whether the human approved or rejected
     string reason = 4;               // Legacy compatibility: reason for rejection
     string feedback = 5;             // Legacy compatibility: review/clarification feedback
@@ -539,7 +547,7 @@ message InterruptPayload {
 }
 
 message PlaybookWorkflowResponse {
-    string status = 1;              // "completed" | "interrupted" | "failed"
+    string status = 1;              // "completed" | "suspended" | "failed"
     repeated PlaybookTaskResult task_results = 2;
     InterruptPayload interrupt = 3;
     string thread_id = 4;
@@ -560,7 +568,7 @@ message PlaybookStreamChunk {
 }
 
 message StepResponse {
-    string status = 1;              // "completed" | "interrupted" | "failed"
+    string status = 1;              // "completed" | "suspended" | "failed"
     PlaybookTaskResult result = 2;
     InterruptPayload interrupt = 3;
     string thread_id = 4;

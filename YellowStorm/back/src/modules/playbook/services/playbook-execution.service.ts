@@ -35,6 +35,7 @@ import {
   topologicalSortByLevel,
   mergeWithExistingHumanFeedback,
   extractArtifactsFromResult,
+  mapGrpcTaskArtifacts,
   MAX_COMPONENTS_PER_TASK_DEFAULT,
   MAX_CONCURRENT_STEPS_DEFAULT,
 } from '../utils/execution.utils';
@@ -297,6 +298,14 @@ export class PlaybookExecutionService {
     return value?.toString?.() || value || '';
   }
 
+  private buildEdgeKey(edge: any): string {
+    const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
+    const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
+    const sourcePortId = this.normalizeEdgeId(edge.sourceOutputPortId ?? edge.source_output_port_id) || 'default';
+    const targetPortId = this.normalizeEdgeId(edge.targetInputPortId ?? edge.target_input_port_id) || 'default';
+    return `${sourceId}:${sourcePortId}->${targetId}:${targetPortId}`;
+  }
+
   private buildTaskMapFromSnapshot(snapshot: any): Map<string, any> {
     const map = new Map<string, any>();
     for (const task of snapshot?.tasks || []) {
@@ -360,6 +369,151 @@ export class PlaybookExecutionService {
     }
 
     return taskOutputs;
+  }
+
+  private buildWorkspaceContextFromUpstreamArtifacts(
+    execution: any,
+    snapshot: any,
+    taskId: string,
+  ): {
+    workspaceContexts: Array<{ workspace_id: string; workspace_documents: any[] }>;
+    inputFilesByPort: Array<{ port_id: string; document_ids: string[] }>;
+  } {
+    const docsByWorkspace = new Map<string, Map<string, any>>();
+    const docIdsByPort = new Map<string, Set<string>>();
+    const taskResultsById = new Map<string, any>();
+
+    for (const tr of execution.taskResults || []) {
+      taskResultsById.set(tr.taskId, tr);
+    }
+
+    for (const edge of snapshot?.edges || []) {
+      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
+      if (targetId !== taskId) continue;
+
+      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
+      const sourcePortId = edge.sourceOutputPortId || edge.source_output_port_id || 'default';
+      const targetPortId = edge.targetInputPortId || edge.target_input_port_id || 'default';
+      const taskResult = taskResultsById.get(sourceId);
+      if (!taskResult || taskResult.status !== StepStatus.COMPLETED || taskResult.isStale) {
+        continue;
+      }
+
+      const matchingArtifacts = (taskResult.artifacts || []).filter((artifact: any) =>
+        artifact?.portId === sourcePortId
+        && artifact?.artifactKind === 'document'
+        && typeof artifact?.url === 'string'
+        && artifact.url.trim()
+        && typeof artifact?.filename === 'string'
+        && artifact.filename.trim()
+        && !artifact.url.startsWith('/box/')
+        && !artifact.url.startsWith('sandbox:/box/')
+      );
+
+      if (matchingArtifacts.length === 0) continue;
+      if (!docIdsByPort.has(targetPortId)) {
+        docIdsByPort.set(targetPortId, new Set<string>());
+      }
+
+      matchingArtifacts.forEach((artifact: any, index: number) => {
+        const syntheticDocId = `artifact:${sourceId}:${sourcePortId}:${index}:${artifact.filename}`;
+        const workspaceId = artifact?.metadata?.workspaceId || artifact?.metadata?.workspace_id || 'playbook_artifacts';
+
+        if (!docsByWorkspace.has(workspaceId)) {
+          docsByWorkspace.set(workspaceId, new Map<string, any>());
+        }
+
+        docsByWorkspace.get(workspaceId)!.set(syntheticDocId, {
+          _id: syntheticDocId,
+          filename: artifact.filename,
+          filepath: artifact.url,
+          in_memory: false,
+          language: 'fr',
+          indexing_token: 1200,
+          workspace_id: workspaceId,
+          createdAt: null,
+        });
+        docIdsByPort.get(targetPortId)!.add(syntheticDocId);
+      });
+    }
+
+    return {
+      workspaceContexts: Array.from(docsByWorkspace.entries()).map(([workspace_id, docMap]) => ({
+        workspace_id,
+        workspace_documents: Array.from(docMap.values()),
+      })),
+      inputFilesByPort: Array.from(docIdsByPort.entries()).map(([port_id, ids]) => ({
+        port_id,
+        document_ids: Array.from(ids),
+      })),
+    };
+  }
+
+  private mergeWorkspaceContexts(
+    baseContexts: Array<{ workspace_id: string; workspace_documents: any[] }>,
+    extraContexts: Array<{ workspace_id: string; workspace_documents: any[] }>,
+  ): Array<{ workspace_id: string; workspace_documents: any[] }> {
+    const merged = new Map<string, Map<string, any>>();
+
+    for (const ctx of [...(baseContexts || []), ...(extraContexts || [])]) {
+      const workspaceId = ctx.workspace_id;
+      if (!workspaceId) continue;
+      if (!merged.has(workspaceId)) {
+        merged.set(workspaceId, new Map<string, any>());
+      }
+      const docs = merged.get(workspaceId)!;
+      for (const doc of ctx.workspace_documents || []) {
+        const docId = doc?._id || doc?.id;
+        if (!docId) continue;
+        docs.set(String(docId), doc);
+      }
+    }
+
+    return Array.from(merged.entries()).map(([workspace_id, docs]) => ({
+      workspace_id,
+      workspace_documents: Array.from(docs.values()),
+    }));
+  }
+
+  private buildRunStepRoutingState(execution: any, snapshot: any, taskId: string): {
+    edges: any[];
+    upstreamResults: any[];
+  } {
+    const incomingEdges = (snapshot?.edges || []).filter((edge: any) =>
+      this.normalizeEdgeId(edge.targetId ?? edge.target_id) === taskId,
+    );
+
+    const sourceIds = new Set(
+      incomingEdges.map((edge: any) => this.normalizeEdgeId(edge.sourceId ?? edge.source_id)).filter(Boolean),
+    );
+
+    const upstreamResults = (execution?.taskResults || [])
+      .filter((tr: any) => sourceIds.has(tr.taskId) && !tr.isStale)
+      .map((tr: any) => ({
+        task_id: tr.taskId,
+        status: tr.status,
+        error: tr.error || '',
+        duration_ms: tr.durationMs || 0,
+        artifacts: (tr.artifacts || []).map((artifact: any) => ({
+          port_id: artifact.portId || 'default',
+          artifact_kind: artifact.artifactKind || 'text',
+          content: artifact.content || '',
+          url: artifact.url || '',
+          filename: artifact.filename || '',
+          mime_type: artifact.mimeType || '',
+          size: artifact.size || 0,
+        })),
+      }));
+
+    return {
+      edges: incomingEdges.map((edge: any) => ({
+        source_id: this.normalizeEdgeId(edge.sourceId ?? edge.source_id),
+        target_id: this.normalizeEdgeId(edge.targetId ?? edge.target_id),
+        source_output_port_id: edge.sourceOutputPortId || edge.source_output_port_id || 'default',
+        target_input_port_id: edge.targetInputPortId || edge.target_input_port_id || 'default',
+      })),
+      upstreamResults,
+    };
   }
 
   private async appendAttemptHistory(
@@ -452,9 +606,7 @@ export class PlaybookExecutionService {
     const seenEdges = new Set<string>();
     const mergedEdges = [...snapshotEdges];
     for (const edge of snapshotEdges) {
-      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-      seenEdges.add(`${sourceId}->${targetId}`);
+      seenEdges.add(this.buildEdgeKey(edge));
     }
 
     for (const edge of playbookEdges) {
@@ -463,7 +615,7 @@ export class PlaybookExecutionService {
       if (!mergedTaskIds.has(sourceId) || !mergedTaskIds.has(targetId)) {
         continue;
       }
-      const edgeKey = `${sourceId}->${targetId}`;
+      const edgeKey = this.buildEdgeKey(edge);
       if (seenEdges.has(edgeKey)) {
         continue;
       }
@@ -716,12 +868,17 @@ export class PlaybookExecutionService {
       edgeCount: playbook.edges.length,
     });
 
+    if (!playbook.workspaces || playbook.workspaces.length === 0) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Playbook must have a default workspace before execution');
+    }
+
     const enabledTasks = playbook.tasks.filter((task: any) => task.enabled !== false);
     const enabledTaskIds = new Set(enabledTasks.map((task: any) => task.id));
     const enabledEdges = playbook.edges.filter(
       (edge: any) => enabledTaskIds.has(edge.sourceId?.toString?.() || edge.sourceId)
         && enabledTaskIds.has(edge.targetId?.toString?.() || edge.targetId),
     );
+    const sanitizedEnabledEdges = this.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
 
     if (!dto.singleStepTaskId && enabledTasks.length === 0) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'No enabled steps to execute');
@@ -792,7 +949,7 @@ export class PlaybookExecutionService {
     }
 
     // Topological sort by level Ã¢â‚¬â€ determines execution order and parallelism
-    const orderedLevels = topologicalSortByLevel(enabledTasks, enabledEdges);
+    const orderedLevels = topologicalSortByLevel(enabledTasks, sanitizedEnabledEdges);
     const orderedTasks = orderedLevels.flat();
 
     // Build a map from taskId to topological index
@@ -873,7 +1030,7 @@ export class PlaybookExecutionService {
       }],
       playbookSnapshot: {
         tasks: playbook.tasks.map((t) => (t as any).toObject ? (t as any).toObject() : t),
-        edges: playbook.edges.map((e) => (e as any).toObject ? (e as any).toObject() : e),
+        edges: sanitizedEnabledEdges.map((e) => (e as any).toObject ? (e as any).toObject() : e),
       },
     });
 
@@ -915,11 +1072,24 @@ export class PlaybookExecutionService {
       // Single-step mode: use RunStep gRPC for just the one task
       this.logger.log('Starting single-step execution loop', { executionId, taskId: dto.singleStepTaskId });
       this.runExecutionLoop(userId, executionId, orderedLevels, grpcAgentMap, dto, effectiveModes, workspaceContexts, userEmail, playbook.name, activeReplayMap).catch(
-        (err) => {
+        async (err) => {
           this.logger.error('Execution loop failed', {
             executionId,
             error: (err as Error).message,
           });
+          try {
+            const exec = await this.executionModel.findById(executionId).select('startedAt status').lean().exec();
+            const startedAt = exec?.startedAt ? new Date(exec.startedAt) : new Date();
+            const isTerminal = exec?.status && ['completed', 'failed', 'cancelled'].includes(exec.status as string);
+            if (!isTerminal) {
+              await this.markRemainingSkippedAndFail(userId, executionId, (err as Error).message, startedAt);
+            }
+          } catch (finalizeErr) {
+            this.logger.error('Failed to finalize execution after loop error', {
+              executionId,
+              error: (finalizeErr as Error).message,
+            });
+          }
         },
       );
     } else {
@@ -938,11 +1108,24 @@ export class PlaybookExecutionService {
         activeReplayMap,
         activeOutputFormatMap,
       ).catch(
-        (err) => {
+        async (err) => {
           this.logger.error('Full workflow failed', {
             executionId,
             error: (err as Error).message,
           });
+          try {
+            const exec = await this.executionModel.findById(executionId).select('startedAt status').lean().exec();
+            const startedAt = exec?.startedAt ? new Date(exec.startedAt) : new Date();
+            const isTerminal = exec?.status && ['completed', 'failed', 'cancelled'].includes(exec.status as string);
+            if (!isTerminal) {
+              await this.markRemainingSkippedAndFail(userId, executionId, (err as Error).message, startedAt);
+            }
+          } catch (finalizeErr) {
+            this.logger.error('Failed to finalize execution after workflow error', {
+              executionId,
+              error: (finalizeErr as Error).message,
+            });
+          }
         },
       );
     }
@@ -988,6 +1171,7 @@ export class PlaybookExecutionService {
       (edge: any) => enabledTaskIds.has(edge.sourceId || edge.source_id)
         && enabledTaskIds.has(edge.targetId || edge.target_id),
     );
+    const sanitizedEnabledEdges = this.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
 
     // Build RunPlaybookWorkflowRequest
     const stepExecutionModesForGrpc: Record<string, string> = {};
@@ -998,14 +1182,44 @@ export class PlaybookExecutionService {
       }
     }
 
-    // Pre-extract input file IDs for all tasks
-    const taskInputFileIdsMap = new Map<string, string[]>();
+    // Pre-extract input file IDs for all tasks (port-aware)
+    const taskInputFileIdsByPortMap = new Map<string, Array<{ port_id: string; document_ids: string[] }>>();
+    const workspaceContextMap = new Map<string, Map<string, any>>();
+
+    const addWorkspaceContexts = (contexts: Array<{ workspace_id: string; workspace_documents: any[] }>) => {
+      for (const ctx of contexts || []) {
+        const workspaceId = ctx.workspace_id;
+        if (!workspaceId) continue;
+
+        if (!workspaceContextMap.has(workspaceId)) {
+          workspaceContextMap.set(workspaceId, new Map<string, any>());
+        }
+
+        const workspaceDocs = workspaceContextMap.get(workspaceId)!;
+        for (const doc of ctx.workspace_documents || []) {
+          const docId = doc?._id || doc?.id;
+          if (!docId) continue;
+          workspaceDocs.set(String(docId), doc);
+        }
+      }
+    };
+
+    addWorkspaceContexts(workspaceContexts);
+
     for (const task of enabledTasks) {
       if (task.inputFiles && task.inputFiles.length > 0) {
-        const ids = await this.contextService.extractDocumentIdsFromInputFiles(task.inputFiles);
-        taskInputFileIdsMap.set(task.id, ids);
+        const idsByPort = await this.contextService.extractDocumentIdsByPort(task.inputFiles);
+        taskInputFileIdsByPortMap.set(task.id, idsByPort);
+
+        const taskWorkspaceContexts = await this.contextService.buildWorkspaceContextFromInputFiles(task.inputFiles);
+        addWorkspaceContexts(taskWorkspaceContexts);
       }
     }
+
+    const effectiveWorkspaceContexts = Array.from(workspaceContextMap.entries()).map(([workspace_id, docMap]) => ({
+      workspace_id,
+      workspace_documents: Array.from(docMap.values()),
+    }));
 
     const request: any = {
       user_context: { user_id: userId, username: userEmail },
@@ -1026,7 +1240,7 @@ export class PlaybookExecutionService {
           max_clarifications: t.maxClarifications || 3,
           input_keys: t.inputKeys || [],
           output_key: t.outputKey || '',
-          input_files: taskInputFileIdsMap.get(t.id) || [],
+          input_files_by_port: taskInputFileIdsByPortMap.get(t.id) || [],
           input_ports: (t.inputPorts || []).map((p: any) => ({
             id: p.id,
             name: p.name,
@@ -1044,13 +1258,13 @@ export class PlaybookExecutionService {
         };
       }),
       agents: [],
-      edges: enabledEdges.map((e: any) => ({
+      edges: sanitizedEnabledEdges.map((e: any) => ({
         source_id: e.sourceId || e.source_id,
         target_id: e.targetId || e.target_id,
         source_output_port_id: e.sourceOutputPortId || 'default',
         target_input_port_id: e.targetInputPortId || 'default',
       })),
-      workspace_context: workspaceContexts,
+      workspace_context: effectiveWorkspaceContexts,
       execution_mode: 'live',
       step_execution_modes: stepExecutionModesForGrpc,
     };
@@ -1090,10 +1304,9 @@ export class PlaybookExecutionService {
       agentCount: request.agents?.length,
       edgeCount: request.edges?.length,
       query: request.query || null,
-      tasksWithInputFiles: request.tasks?.filter((t: any) => t.input_files?.length > 0).map((t: any) => ({
+      tasksWithInputFiles: request.tasks?.filter((t: any) => t.input_files_by_port?.length > 0).map((t: any) => ({
         taskId: t.id,
-        inputFilesCount: t.input_files?.length || 0,
-        inputFilesIds: t.input_files || [],
+        inputFilesByPort: t.input_files_by_port || [],
       })) || [],
     });
     this.logger.debug('RunPlaybookWorkflow gRPC request body', {
@@ -1153,7 +1366,8 @@ export class PlaybookExecutionService {
         const durationMs = parseInt(result?.duration_ms || '0', 10);
         const existing = stepBuffer.get(taskId);
         const completedTask = taskMap.get(taskId);
-        const artifacts = extractArtifactsFromResult(completedTask, grpcComps);
+        const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
+        const artifacts = grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(completedTask, grpcComps);
 
         const usage = result?.usage;
         const usageFields = usage ? {
@@ -1197,7 +1411,8 @@ export class PlaybookExecutionService {
         const durationMs = parseInt(result?.duration_ms || '0', 10);
         const existing = stepBuffer.get(taskId);
         const failedTask = taskMap.get(taskId);
-        const artifacts = extractArtifactsFromResult(failedTask, grpcComps);
+        const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
+        const artifacts = grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(failedTask, grpcComps);
 
         const usage = result?.usage;
         const usageFields = usage ? {
@@ -1238,7 +1453,8 @@ export class PlaybookExecutionService {
         const durationMs = parseInt(result?.duration_ms || '0', 10);
         const existing = stepBuffer.get(taskId);
         const skippedTask = taskMap.get(taskId);
-        const artifacts = extractArtifactsFromResult(skippedTask, grpcComps);
+        const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
+        const artifacts = grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(skippedTask, grpcComps);
 
         const usage = result?.usage;
         const usageFields = usage ? {
@@ -1284,6 +1500,52 @@ export class PlaybookExecutionService {
         break;
       }
     }
+  }
+
+  private sanitizeEdgesForTasks(tasks: any[], edges: any[]): any[] {
+    const taskMap = new Map<string, any>();
+    for (const task of tasks || []) {
+      taskMap.set(task.id, task);
+    }
+
+    return (edges || []).filter((edge: any) => {
+      const sourceId = edge.sourceId || edge.source_id;
+      const targetId = edge.targetId || edge.target_id;
+      const sourceTask = taskMap.get(sourceId);
+      const targetTask = taskMap.get(targetId);
+
+      if (!sourceTask || !targetTask) {
+        this.logger.warn('Dropping edge with missing task reference', {
+          edgeId: edge.id,
+          sourceId,
+          targetId,
+        });
+        return false;
+      }
+
+      const sourcePortId = edge.sourceOutputPortId || edge.source_output_port_id || 'default';
+      const targetPortId = edge.targetInputPortId || edge.target_input_port_id || 'default';
+      const sourcePorts = sourceTask.outputPorts || sourceTask.output_ports || [];
+      const targetPorts = targetTask.inputPorts || targetTask.input_ports || [];
+
+      const sourcePortExists = sourcePorts.length === 0 || sourcePorts.some((p: any) => p.id === sourcePortId);
+      const targetPortExists = targetPorts.length === 0 || targetPorts.some((p: any) => p.id === targetPortId);
+
+      if (!sourcePortExists || !targetPortExists) {
+        this.logger.warn('Dropping edge with stale port reference', {
+          edgeId: edge.id,
+          sourceId,
+          sourcePortId,
+          targetId,
+          targetPortId,
+          sourcePortIds: sourcePorts.map((p: any) => p.id),
+          targetPortIds: targetPorts.map((p: any) => p.id),
+        });
+        return false;
+      }
+
+      return true;
+    });
   }
 
   /**
@@ -1857,16 +2119,47 @@ export class PlaybookExecutionService {
 
     // If task has inputFiles, build workspace_context from those (overrides playbook-level context)
     let taskWorkspaceContexts = workspaceContexts;
-    let inputFileIds: string[] = [];
+    let inputFilesByPort: Array<{ port_id: string; document_ids: string[] }> = [];
     if (task.inputFiles && task.inputFiles.length > 0) {
       taskWorkspaceContexts = await this.contextService.buildWorkspaceContextFromInputFiles(task.inputFiles);
-      inputFileIds = await this.contextService.extractDocumentIdsFromInputFiles(task.inputFiles);
+      inputFilesByPort = await this.contextService.extractDocumentIdsByPort(task.inputFiles);
       this.logger.log('Using task-level input files for workspace_context', {
         executionId,
         taskId,
         inputFilesCount: task.inputFiles.length,
         contextCount: taskWorkspaceContexts.length,
-        documentIdsCount: inputFileIds.length,
+        inputFilesByPortCount: inputFilesByPort.length,
+      });
+    }
+
+    const currentExecutionState = await this.executionModel.findById(executionId).select('taskResults').lean().exec();
+
+    const upstreamPortInputs = this.buildWorkspaceContextFromUpstreamArtifacts(
+      currentExecutionState,
+      snapshot,
+      taskId,
+    );
+    const routingState = this.buildRunStepRoutingState(currentExecutionState, snapshot, taskId);
+    if (upstreamPortInputs.workspaceContexts.length > 0 || upstreamPortInputs.inputFilesByPort.length > 0) {
+      taskWorkspaceContexts = this.mergeWorkspaceContexts(taskWorkspaceContexts, upstreamPortInputs.workspaceContexts);
+      const byPort = new Map<string, Set<string>>();
+      for (const entry of [...inputFilesByPort, ...upstreamPortInputs.inputFilesByPort]) {
+        if (!byPort.has(entry.port_id)) {
+          byPort.set(entry.port_id, new Set<string>());
+        }
+        for (const documentId of entry.document_ids || []) {
+          byPort.get(entry.port_id)!.add(documentId);
+        }
+      }
+      inputFilesByPort = Array.from(byPort.entries()).map(([port_id, ids]) => ({
+        port_id,
+        document_ids: Array.from(ids),
+      }));
+      this.logger.log('Injected upstream port artifacts for step execution', {
+        executionId,
+        taskId,
+        workspaceContextCount: taskWorkspaceContexts.length,
+        inputFilesByPortCount: inputFilesByPort.length,
       });
     }
 
@@ -1884,10 +2177,10 @@ export class PlaybookExecutionService {
         allow_clarification: task.allowClarification || false,
         clarification_prompt: task.clarificationPrompt || '',
         max_clarifications: task.maxClarifications || 3,
-        input_keys: task.inputKeys || [],
-        output_key: task.outputKey || '',
-        input_files: inputFileIds,
-        input_ports: (task.inputPorts || []).map((p: any) => ({
+          input_keys: task.inputKeys || [],
+          output_key: task.outputKey || '',
+          input_files_by_port: inputFilesByPort,
+          input_ports: (task.inputPorts || []).map((p: any) => ({
           id: p.id,
           name: p.name,
           artifact_kind: p.artifactKind,
@@ -1905,6 +2198,8 @@ export class PlaybookExecutionService {
       context_from_dependencies: contextFromDependencies,
       workspace_context: taskWorkspaceContexts,
       execution_mode: executionMode,
+      edges: routingState.edges,
+      upstream_results: routingState.upstreamResults,
     };
 
     if (grpcAgent) {
@@ -1929,10 +2224,11 @@ export class PlaybookExecutionService {
       hasAgent: !!grpcAgent,
       agentName: grpcAgent?.name || null,
       contextLength: contextFromDependencies.length,
+      edgeCount: routingState.edges.length,
+      upstreamResultCount: routingState.upstreamResults.length,
       workspaceContextSource: task.inputFiles && task.inputFiles.length > 0 ? 'task_inputFiles' : 'playbook_workspaces',
       workspaceContextCount: taskWorkspaceContexts.length,
-      inputFilesCount: inputFileIds.length,
-      inputFilesIds: inputFileIds,
+      inputFilesByPort: inputFilesByPort,
     });
     this.logger.debug('RunStep gRPC request body', {
       executionId,
@@ -1962,7 +2258,8 @@ export class PlaybookExecutionService {
         const llmPromptTrace = this.mapGrpcLlmPromptTrace(response.result?.llm_prompt_trace || []);
         const semanticMatch = this.mapGrpcSemanticMatch(response.result?.semantic_match);
         const output = extractTextFromComponents(grpcComps);
-        const artifacts = extractArtifactsFromResult(task, grpcComps);
+        const grpcArtifacts = mapGrpcTaskArtifacts(response.result?.artifacts);
+        const artifacts = grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(task, grpcComps);
 
         const usage = response.result?.usage;
         const usageFields = usage ? {

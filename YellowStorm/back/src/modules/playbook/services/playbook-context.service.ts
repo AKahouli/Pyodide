@@ -243,4 +243,60 @@ export class PlaybookContextService {
       return [];
     }
   }
+
+  /**
+   * Extract document IDs from task inputFiles, grouped by port.
+   * Files without a portId are grouped under the 'default' port.
+   * For document-type: returns the document ID directly.
+   * For workspace-type: fetches all document IDs from that workspace.
+   */
+  async extractDocumentIdsByPort(
+    inputFiles: Array<{ type: string; id: string; name: string; workspaceId?: string; portId?: string; metadata?: any }>,
+  ): Promise<Array<{ port_id: string; document_ids: string[] }>> {
+    if (!inputFiles || inputFiles.length === 0) {
+      return [];
+    }
+
+    const portToDocIds = new Map<string, Set<string>>();
+
+    try {
+      for (const file of inputFiles) {
+        const portId = file.portId || 'default';
+        if (!portToDocIds.has(portId)) {
+          portToDocIds.set(portId, new Set<string>());
+        }
+
+        if (file.type === 'document') {
+          portToDocIds.get(portId)!.add(file.id);
+        } else if (file.type === 'workspace') {
+          const result = await this.workspaceDocumentService.findAllByWorkspace(file.id, {
+            limit: 1000,
+            status: DocumentStatus.COMPLETED,
+          });
+          const workspaceDocIds = result.documents.map((doc: any) => doc.id);
+          for (const docId of workspaceDocIds) {
+            portToDocIds.get(portId)!.add(docId);
+          }
+        }
+      }
+
+      const result = Array.from(portToDocIds.entries()).map(([port_id, docIds]) => ({
+        port_id,
+        document_ids: Array.from(docIds),
+      }));
+
+      this.logger.log('Extracted document IDs by port from input files', {
+        inputFilesCount: inputFiles.length,
+        portCount: result.length,
+        ports: result.map(p => ({ portId: p.port_id, docCount: p.document_ids.length })),
+      });
+
+      return result;
+    } catch (error) {
+      this.logger.warn('Failed to extract document IDs by port from input files', {
+        error: (error as Error).message,
+      });
+      return [];
+    }
+  }
 }

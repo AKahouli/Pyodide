@@ -13,6 +13,14 @@ from typing import Dict, Any, Optional, List
 
 from structlog import get_logger
 
+from src.langgraph_engine.port_resolution import (
+    resolve_task_inputs,
+    build_task_prompt,
+    build_tool_scope,
+    format_workspace_file_hint,
+    select_output_workspace_id,
+)
+
 logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 10
@@ -152,31 +160,13 @@ def extract_follow_up_question(text: Any) -> str:
     return ""
 
 
-def _format_workspace_file_hint(workspace_context: Optional[list], max_files: int = 12) -> str:
-    filenames: List[str] = []
-    seen = set()
-    for workspace in workspace_context or []:
-        for doc in workspace.get("documents", []):
-            filename = str(doc.get("filename", "")).strip()
-            if filename and filename not in seen:
-                filenames.append(filename)
-                seen.add(filename)
-
-    if not filenames:
-        return ""
-
-    visible = filenames[:max_files]
-    suffix = ""
-    if len(filenames) > max_files:
-        suffix = f" (+{len(filenames) - max_files} more)"
-    return ", ".join(visible) + suffix
-
-
 async def execute_step(
     task: Dict[str, Any],
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -203,6 +193,8 @@ async def execute_step(
             agent=agent,
             context_from_dependencies=context_from_dependencies,
             workspace_context=workspace_context,
+            edges=edges,
+            upstream_results=upstream_results,
             execution_mode=execution_mode,
             validated_replay=validated_replay,
             evaluation_user_id=evaluation_user_id,
@@ -213,6 +205,8 @@ async def execute_step(
         agent=agent,
         context_from_dependencies=context_from_dependencies,
         workspace_context=workspace_context,
+        edges=edges,
+        upstream_results=upstream_results,
         execution_mode=execution_mode,
         validated_replay=validated_replay,
         evaluation_user_id=evaluation_user_id,
@@ -224,6 +218,8 @@ async def _execute_step_direct(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -239,38 +235,69 @@ async def _execute_step_direct(
     agent_params = agent.get("agent_params") or {}
     temperature = float(agent_params.get("temperature", 0.7))
 
+    upstream_results_map = {
+        str(item.get("task_id") or "").strip(): item
+        for item in (upstream_results or [])
+        if isinstance(item, dict) and str(item.get("task_id") or "").strip()
+    }
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for upstream_task_id, upstream_result in upstream_results_map.items():
+        for artifact in upstream_result.get("artifacts") or []:
+            if not isinstance(artifact, dict):
+                continue
+            port_id = str(artifact.get("port_id") or artifact.get("portId") or "default").strip() or "default"
+            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(artifact)
+
+    resolved_inputs = resolve_task_inputs(task_id, task, {
+        "edges": edges or [],
+        "results": upstream_results_map,
+        "task_outputs": {},
+        "artifacts_by_port": artifacts_by_port,
+        "workspace_context": workspace_context,
+    })
+    workspace_file_hint = format_workspace_file_hint(workspace_context if not resolved_inputs.get("has_port_sources") else None)
+
     system_prompt = (
         f"You are {agent['name']}.\n\n"
         f"Your instructions:\n{agent_instructions}\n\n"
         f"You are working on a task as part of a playbook execution."
     )
 
-    user_prompt = f"Task: {task['title']}\n\nDescription:\n{task['description']}"
-    if context_from_dependencies:
-        user_prompt += f"\n\nContext from previous tasks:\n{context_from_dependencies}"
-    workspace_file_hint = _format_workspace_file_hint(workspace_context)
-    if workspace_file_hint:
-        user_prompt += (
-            "\n\nWorkspace files already available in the sandbox:\n"
-            f"{workspace_file_hint}\n"
-            "Do not ask the user to upload these files again."
-        )
-    user_prompt += "\n\nPlease complete this task and provide a clear output."
+    user_prompt = build_task_prompt(
+        task,
+        resolved_inputs,
+        context_from_dependencies=context_from_dependencies,
+        workspace_file_hint=workspace_file_hint,
+    )
     llm_prompt_trace: List[Dict[str, Any]] = []
 
     try:
         from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
 
-        input_files = task.get("input_files")
+        tool_scope = build_tool_scope(resolved_inputs)
+        output_workspace_id = select_output_workspace_id(resolved_inputs)
+        code_interpreter_files = tool_scope["all_files"] or tool_scope["fallback_files"]
+        input_files = list(task.get("input_files") or [])
+        for doc_id in tool_scope["all_document_ids"]:
+            if doc_id not in input_files:
+                input_files.append(doc_id)
 
         logger.info(
             f"[{task_id}] INPUT_FILES_DEBUG",
-            has_input_files=input_files is not None,
-            input_files_count=len(input_files) if input_files else 0,
+            has_input_files=bool(input_files),
+            input_files_count=len(input_files),
+            input_files_by_port_count=len(tool_scope["documents_by_port"]),
+            workspace_context_mode=tool_scope["workspace_context_mode"],
         )
 
         lc_tools, collector = create_langchain_tools(
-            agent, workspace_context=workspace_context, input_files=input_files
+            agent,
+            workspace_context=workspace_context,
+            input_files=input_files,
+            documents_by_port=tool_scope["documents_by_port"],
+            code_interpreter_files=code_interpreter_files,
+            output_workspace_id=output_workspace_id,
+            workspace_context_mode=tool_scope["workspace_context_mode"],
         )
 
         if execution_mode in ("replay_strict", "replay_flex", "replay_adaptive") and validated_replay:

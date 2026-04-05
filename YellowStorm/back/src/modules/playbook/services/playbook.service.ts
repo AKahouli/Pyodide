@@ -791,6 +791,7 @@ export class PlaybookService {
         staleReason: tr.staleReason ?? null,
         invalidatedByTaskId: tr.invalidatedByTaskId ?? null,
         semanticMatch: tr.semanticMatch ?? null,
+        artifacts: tr.artifacts || [],
         evaluationHistory: (tr.evaluationHistory || []).map((entry: any) => ({
           id: entry.id,
           createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,

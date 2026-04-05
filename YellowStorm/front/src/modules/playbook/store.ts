@@ -424,19 +424,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
             playbooks: state.playbooks.map((p) => (p.id === id ? summary : p)),
             currentPlaybook: state.currentPlaybook?.id !== id
               ? state.currentPlaybook
-              : hasNewerLocalChanges
-                ? {
-                    ...state.currentPlaybook,
-                    updatedAt: playbook.updatedAt,
-                    createdAt: playbook.createdAt,
-                    name: playbook.name,
-                    description: playbook.description,
-                    workspaces: playbook.workspaces,
-                    isFavorite: playbook.isFavorite,
-                    isActive: playbook.isActive,
-                    createdBy: playbook.createdBy,
-                  }
-                : playbook,
+              : {
+                  ...playbook,
+                  tasks: state.currentPlaybook.tasks,
+                  edges: state.currentPlaybook.edges,
+                },
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,
             savingDirtyVersion: isLatestSaveRequest ? null : state.savingDirtyVersion,
@@ -1375,6 +1367,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           return { executionCache, currentExecution };
         });
+
+        const cachedExecution = get().executionCache[data.executionId];
+        if (cachedExecution?.playbookId) {
+          void get().fetchExecution(cachedExecution.playbookId, data.executionId);
+        }
       },
 
       onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => {

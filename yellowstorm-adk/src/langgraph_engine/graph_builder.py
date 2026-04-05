@@ -30,10 +30,112 @@ from src.langgraph_engine.step_executor import (
     extract_interrupt_message,
     extract_follow_up_question,
 )
+from src.langgraph_engine.port_resolution import (
+    resolve_task_inputs,
+    build_task_prompt,
+    build_tool_scope,
+    format_workspace_file_hint,
+    select_output_workspace_id,
+)
 from datetime import datetime
 import json
 
 logger = get_logger(__name__)
+
+
+def _extract_artifacts_from_components(
+    components: List[Dict[str, Any]],
+    task_config: TaskConfig,
+) -> List[Dict[str, Any]]:
+    """Derive port-routed artifacts from task components.
+
+    Mirrors the NestJS ``extractArtifactsFromResult`` logic so that the ADK
+    ``artifacts_by_port`` state is populated correctly for downstream tasks.
+    """
+    artifacts: List[Dict[str, Any]] = []
+    if not components:
+        return artifacts
+
+    output_ports = task_config.get("output_ports") or []
+
+    for comp in components:
+        comp_type = comp.get("type", "")
+        data = comp.get("data") or {}
+
+        if comp_type == "artifact":
+            file_path = str(data.get("file_path", "")).strip()
+            filename = str(data.get("filename", "")).strip()
+            if not file_path or not filename:
+                continue
+            doc_port = next(
+                (p for p in output_ports if p.get("artifact_kind") == "document"),
+                None,
+            )
+            port_id = doc_port.get("id", "default") if doc_port else "default"
+            artifacts.append({
+                "port_id": port_id,
+                "artifact_kind": "document",
+                "url": file_path,
+                "filename": filename,
+            })
+
+        elif comp_type == "text":
+            text_content = str(data.get("content", "")).strip()
+            if not text_content:
+                continue
+            text_port = next(
+                (p for p in output_ports if p.get("artifact_kind") == "text"),
+                None,
+            )
+            if text_port is None:
+                continue
+            port_id = text_port.get("id", "default")
+            artifacts.append({
+                "port_id": port_id,
+                "artifact_kind": "text",
+                "content": text_content,
+            })
+
+        elif comp_type == "code":
+            code_content = str(data.get("code", "")).strip()
+            if not code_content:
+                continue
+            code_port = next(
+                (p for p in output_ports if p.get("artifact_kind") == "code"),
+                None,
+            )
+            if code_port is None:
+                continue
+            port_id = code_port.get("id", "default")
+            artifacts.append({
+                "port_id": port_id,
+                "artifact_kind": "code",
+                "content": code_content,
+            })
+
+    text_output = ""
+    for comp in components:
+        comp_type = comp.get("type", "")
+        data = comp.get("data") or {}
+        if comp_type == "text":
+            text_output = str(data.get("content", "")).strip()
+            if text_output:
+                break
+
+    has_text_artifact = any(a.get("artifact_kind") == "text" for a in artifacts)
+    text_port = next(
+        (p for p in output_ports if p.get("artifact_kind") == "text"),
+        None,
+    )
+    if text_output and not has_text_artifact and (text_port is not None or not output_ports):
+        port_id = text_port.get("id", "default") if text_port else "default"
+        artifacts.append({
+            "port_id": port_id,
+            "artifact_kind": "text",
+            "content": text_output,
+        })
+
+    return artifacts
 
 
 class DynamicGraphBuilder:
@@ -47,50 +149,14 @@ class DynamicGraphBuilder:
         task_id: str,
         task_config: TaskConfig,
         state: ExecutionState,
-    ) -> tuple[str, list]:
-        """Build context string from dependency results using structured routing.
+    ) -> tuple[str, Dict[str, Any], list]:
+        """Build legacy dependency context and resolve the task inputs."""
 
-        Uses typed port resolution (new path) when input_ports and
-        artifacts_by_port are available.  Falls back to legacy input_keys /
-        edge-walking for playbooks without ports.
-
-        Returns:
-            Tuple of (prompt_text, workspace_artifacts) where workspace_artifacts
-            is a list of heavy artifacts (document, image, etc.) that should be
-            injected into workspace_context for agent tool access.
-        """
+        resolved_inputs = resolve_task_inputs(task_id, task_config, state)
         prompt_parts: List[str] = []
-        workspace_artifacts: list = []
-        seen_source_ids: set[str] = set()
 
-        # 1. Typed port resolution (new path)
-        input_ports = {p["id"]: p for p in task_config.get("input_ports") or []}
-        artifacts_by_port = state.get("artifacts_by_port") or {}
-
-        if input_ports and artifacts_by_port:
-            for edge in state.get("edges") or []:
-                if edge.get("target_id") != task_id:
-                    continue
-
-                source_port_id = edge.get("source_output_port_id", "default")
-                target_port_id = edge.get("target_input_port_id", "default")
-                artifact_key = f"{edge['source_id']}:{source_port_id}"
-
-                artifact = artifacts_by_port.get(artifact_key)
-                if not artifact:
-                    continue
-
-                target_port = input_ports.get(target_port_id, {})
-                label = target_port.get("name", target_port_id)
-                seen_source_ids.add(edge["source_id"])
-
-                artifact_kind = artifact.get("artifact_kind", "text")
-                if artifact_kind in ("text", "code"):
-                    prompt_parts.append(f"Input '{label}':\n{artifact.get('content', '')}")
-                else:
-                    workspace_artifacts.append(artifact)
-
-        # 2. Legacy fallback — input_keys
+        # Legacy fallback — keep raw upstream outputs available for playbooks that
+        # still rely on input_keys or edge-walk context.
         input_keys = task_config.get("input_keys") or []
         if input_keys and state.get("task_outputs"):
             for key in input_keys:
@@ -98,29 +164,33 @@ class DynamicGraphBuilder:
                 if value is not None:
                     prompt_parts.append(f"Input '{key}':\n{value}")
 
-        # 3. Legacy fallback — walk edges for raw output
-        if not prompt_parts and not seen_source_ids:
-            for edge in state.get("edges") or []:
-                if edge["target_id"] != task_id:
-                    continue
-                source_id = edge["source_id"]
-                if source_id in seen_source_ids:
-                    continue
-                if source_id not in state["results"]:
-                    continue
+        seen_source_ids: set[str] = set()
+        for edge in state.get("edges") or []:
+            if edge.get("target_id") != task_id:
+                continue
+            source_id = edge.get("source_id")
+            if source_id in seen_source_ids:
+                continue
+            if source_id not in state.get("results", {}):
+                continue
 
-                source_task = next(
-                    (t for t in state["tasks"] if t.get("id") == source_id),
-                    None,
-                )
-                if not source_task:
-                    continue
+            source_task = next(
+                (t for t in state.get("tasks") or [] if t.get("id") == source_id),
+                None,
+            )
+            if not source_task:
+                continue
 
-                output = state["results"][source_id].get("output", "")
-                if output:
-                    prompt_parts.append(f"\n\nPrevious task '{source_task['title']}' result:\n{output}")
+            output = state["results"][source_id].get("output", "")
+            if output:
+                prompt_parts.append(f"\n\nPrevious task '{source_task['title']}' result:\n{output}")
+                seen_source_ids.add(source_id)
 
-        return "\n\n".join(prompt_parts), workspace_artifacts
+        workspace_artifacts: list = []
+        for port_state in (resolved_inputs.get("ports") or {}).values():
+            workspace_artifacts.extend(port_state.get("workspace_artifacts") or [])
+
+        return "\n\n".join(prompt_parts), resolved_inputs, workspace_artifacts
 
     def _create_task_node(
         self,
@@ -173,6 +243,10 @@ class DynamicGraphBuilder:
                     await on_step_update(update)
                 except Exception:
                     logger.warning(f"[{task_id}] step_update callback failed", exc_info=True)
+
+            components: List[Dict[str, Any]] = []
+            tool_trace: List[Dict[str, Any]] = []
+            llm_prompt_trace: List[Dict[str, Any]] = []
 
             try:
                 await _push_step_update("in_progress")
@@ -368,34 +442,20 @@ class DynamicGraphBuilder:
                             "description": f"{task_for_execution['description']}\n\nHuman Feedback: {feedback_message}",
                         }
 
-                # === STEP 3: Build context from dependency results ===
-                context, workspace_artifacts = self._build_structured_context(task_id, task_config, state)
+                # === STEP 3: Build prompt context from resolved inputs ===
+                context, resolved_inputs, workspace_artifacts = self._build_structured_context(task_id, task_config, state)
+
+                workspace_context_for_hint = state.get("workspace_context") if not resolved_inputs.get("has_port_sources") else None
+                workspace_file_hint = format_workspace_file_hint(workspace_context_for_hint)
 
                 def _build_user_prompt(current_task_for_execution: Dict[str, Any]) -> str:
-                    prompt = (
-                        f"Task: {current_task_for_execution['title']}\n\n"
-                        f"Description:\n{current_task_for_execution['description']}"
+                    return build_task_prompt(
+                        current_task_for_execution,
+                        resolved_inputs,
+                        context_from_dependencies=context,
+                        user_query=state.get("query", ""),
+                        workspace_file_hint=workspace_file_hint,
                     )
-
-                    if context:
-                        prompt += f"\n\nContext from previous tasks:{context}"
-
-                    if state.get("query"):
-                        prompt += f"\n\nUser query: {state['query']}"
-
-                    if workspace_filenames:
-                        visible_files = workspace_filenames[:12]
-                        suffix = ""
-                        if len(workspace_filenames) > 12:
-                            suffix = f" (+{len(workspace_filenames) - 12} more)"
-                        prompt += (
-                            "\n\nWorkspace files already available in the sandbox:\n"
-                            f"{', '.join(visible_files)}{suffix}\n"
-                            "Do not ask the user to upload these files again."
-                        )
-
-                    prompt += "\n\nPlease complete this task and provide a clear output."
-                    return prompt
 
                 agent_instructions = agent.get("instructions") or agent.get("prompt", "")
                 system_prompt = (
@@ -403,9 +463,6 @@ class DynamicGraphBuilder:
                     f"Your instructions:\n{agent_instructions}\n\n"
                     f"You are working on a task as part of a larger playbook execution."
                 )
-
-                workspace_filenames = []
-                seen_workspace_files = set()
 
                 effective_workspace_context = list(state.get("workspace_context") or [])
                 if workspace_artifacts:
@@ -430,13 +487,6 @@ class DynamicGraphBuilder:
                         artifact_count=len(workspace_artifacts),
                     )
 
-                for workspace in effective_workspace_context:
-                    for doc in workspace.get("documents", []):
-                        filename = str(doc.get("filename", "")).strip()
-                        if filename and filename not in seen_workspace_files:
-                            workspace_filenames.append(filename)
-                            seen_workspace_files.add(filename)
-
                 user_prompt = _build_user_prompt(task_for_execution)
 
                 async def _execute_task_once(
@@ -450,22 +500,31 @@ class DynamicGraphBuilder:
                     from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
                     from src.langgraph_engine.step_executor import _execute_with_tools, _execute_replay_tool_calls
 
-                    input_files = task_config.get("input_files")
+                    tool_scope = build_tool_scope(resolved_inputs)
+                    output_workspace_id = select_output_workspace_id(resolved_inputs)
+                    code_interpreter_files = tool_scope["all_files"] or tool_scope["fallback_files"]
+                    input_files = list(task_config.get("input_files") or [])
+                    for doc_id in tool_scope["all_document_ids"]:
+                        if doc_id not in input_files:
+                            input_files.append(doc_id)
 
                     logger.info(
                         f"[{task_id}] INPUT_FILES_DEBUG",
-                        has_input_files=input_files is not None,
-                        input_files_count=len(input_files) if input_files else 0,
+                        has_input_files=bool(input_files),
+                        input_files_count=len(input_files),
+                        input_files_by_port_count=len(tool_scope["documents_by_port"]),
+                        workspace_context_mode=tool_scope["workspace_context_mode"],
                     )
 
                     lc_tools, collector = create_langchain_tools(
                         agent,
-                        workspace_context=state.get("workspace_context"),
+                        workspace_context=effective_workspace_context,
                         input_files=input_files,
+                        documents_by_port=tool_scope["documents_by_port"],
+                        code_interpreter_files=code_interpreter_files,
+                        output_workspace_id=output_workspace_id,
+                        workspace_context_mode=tool_scope["workspace_context_mode"],
                     )
-                    components: List[Dict[str, Any]] = []
-                    tool_trace: List[Dict[str, Any]] = []
-                    llm_prompt_trace: List[Dict[str, Any]] = []
                     step_execution_modes = state.get("step_execution_modes") or {}
                     execution_mode = step_execution_modes.get(task_id) or state.get("execution_mode", "live")
                     validated_replay = (state.get("validated_replays_by_task") or {}).get(task_id)
@@ -776,6 +835,13 @@ class DynamicGraphBuilder:
                 output_text = task_result.get("output", "")
                 output_key = task_config.get("output_key")
 
+                task_artifacts = _extract_artifacts_from_components(
+                    task_result.get("components") or [],
+                    task_config,
+                )
+                if task_artifacts:
+                    task_result["artifacts"] = task_artifacts
+
                 state_update: Dict[str, Any] = {
                     "completed_task_ids": [task_id],
                     "results": {task_id: task_result},
@@ -786,11 +852,11 @@ class DynamicGraphBuilder:
 
                 raw_artifacts = task_result.get("artifacts") or []
                 if raw_artifacts:
-                    port_artifacts: Dict[str, Dict[str, Any]] = {}
+                    port_artifacts: Dict[str, List[Dict[str, Any]]] = {}
                     for art in raw_artifacts:
                         port_id = art.get("port_id", "default")
                         art_key = f"{task_id}:{port_id}"
-                        port_artifacts[art_key] = art
+                        port_artifacts.setdefault(art_key, []).append(art)
                     state_update["artifacts_by_port"] = port_artifacts
 
                 return state_update

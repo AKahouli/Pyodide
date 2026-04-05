@@ -24,6 +24,7 @@ from src.langgraph_engine.graph_cache import (
     cleanup_stale_graphs,
 )
 from src.langgraph_engine.playbook_queue import register_queue, get_queue, remove_queue
+from src.langgraph_engine.port_resolution import validate_port_routing
 
 logger = get_logger(__name__)
 
@@ -168,6 +169,8 @@ async def run_playbook(
     """Execute a playbook workflow with dynamic graph."""
     cleanup_stale_graphs()
 
+    validate_port_routing(tasks, edges)
+
     if thread_id is None:
         thread_id = f"{playbook_id}_{uuid.uuid4().hex[:8]}"
 
@@ -205,6 +208,7 @@ async def run_playbook(
         "validated_replays_by_task": validated_replays_by_task or {},
         "step_execution_modes": step_execution_modes or {},
         "task_outputs": {},
+        "artifacts_by_port": {},
     }
 
     config = {"configurable": {"thread_id": thread_id}}
@@ -379,6 +383,8 @@ async def run_single_step_graph(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -398,15 +404,28 @@ async def run_single_step_graph(
     task_id = task.get("id", "single_step")
     thread_id = f"step_{task_id}_{uuid.uuid4().hex[:8]}"
 
+    upstream_results_map = {
+        str(item.get("task_id") or "").strip(): item
+        for item in (upstream_results or [])
+        if isinstance(item, dict) and str(item.get("task_id") or "").strip()
+    }
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for upstream_task_id, upstream_result in upstream_results_map.items():
+        for artifact in upstream_result.get("artifacts") or []:
+            if not isinstance(artifact, dict):
+                continue
+            port_id = str(artifact.get("port_id") or artifact.get("portId") or "default").strip() or "default"
+            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(artifact)
+
     initial_state: ExecutionState = {
         "playbook_id": task_id,
         "thread_id": thread_id,
         "tasks": [task],
-        "edges": [],
+        "edges": edges or [],
         "agents": {agent.get("id", "agent_single"): agent},
         "current_task_ids": [],
         "completed_task_ids": [],
-        "results": {},
+        "results": upstream_results_map,
         "status": "in_progress",
         "error": None,
         "interrupt_payload": None,
@@ -418,6 +437,7 @@ async def run_single_step_graph(
         "validated_replays_by_task": {task_id: validated_replay} if validated_replay else {},
         "step_execution_modes": {},
         "task_outputs": {},
+        "artifacts_by_port": artifacts_by_port,
     }
 
     if context_from_dependencies:

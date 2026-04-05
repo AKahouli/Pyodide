@@ -1516,6 +1516,8 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                 agent=agent,
                 context_from_dependencies=request.context_from_dependencies,
                 workspace_context=_proto_workspace_context(request.workspace_context),
+                edges=[_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else [],
+                upstream_results=[_proto_task_result_to_dict(item) for item in request.upstream_results] if request.upstream_results else [],
                 execution_mode=request.execution_mode or "live",
                 validated_replay=validated_replay,
                 evaluation_user_id=request.user_context.username or request.user_context.user_id or "unknown",
@@ -1631,6 +1633,10 @@ def _proto_task_to_dict(proto_task) -> dict:
         "input_keys": list(proto_task.input_keys) if proto_task.input_keys else None,
         "output_key": proto_task.output_key or None,
         "input_files": list(proto_task.input_files) if proto_task.input_files else None,
+        "input_files_by_port": [
+            {"port_id": b.port_id, "document_ids": list(b.document_ids) if b.document_ids else []}
+            for b in proto_task.input_files_by_port
+        ] if proto_task.input_files_by_port else None,
         "task_type": proto_task.task_type or None,
         "input_ports": [
             {"id": p.id, "name": p.name, "artifact_kind": p.artifact_kind, "required": p.required, "description": p.description or None}
@@ -1696,6 +1702,27 @@ def _proto_edge_to_dict(proto_edge) -> dict:
         "target_id": proto_edge.target_id,
         "source_output_port_id": proto_edge.source_output_port_id or "default",
         "target_input_port_id": proto_edge.target_input_port_id or "default",
+    }
+
+
+def _proto_task_result_to_dict(proto_result) -> dict:
+    return {
+        "task_id": proto_result.task_id,
+        "status": proto_result.status,
+        "error": proto_result.error,
+        "duration_ms": proto_result.duration_ms,
+        "artifacts": [
+            {
+                "port_id": artifact.port_id,
+                "artifact_kind": artifact.artifact_kind,
+                "content": artifact.content,
+                "url": artifact.url,
+                "filename": artifact.filename,
+                "mime_type": artifact.mime_type,
+                "size": artifact.size,
+            }
+            for artifact in proto_result.artifacts
+        ] if proto_result.artifacts else [],
     }
 
 
@@ -1919,6 +1946,17 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
             stage=str(prompt_item.get("stage", "") or ""),
             model=str(prompt_item.get("model", "") or ""),
             prompt=str(prompt_item.get("prompt", "") or ""),
+        ))
+
+    for artifact in tr.get("artifacts", []) or []:
+        task_result_proto.artifacts.append(chatbot_pb2.TaskArtifact(
+            port_id=str(artifact.get("port_id") or artifact.get("portId") or "default"),
+            artifact_kind=str(artifact.get("artifact_kind") or artifact.get("artifactKind") or "text"),
+            content=str(artifact.get("content", "") or ""),
+            url=str(artifact.get("url", "") or ""),
+            filename=str(artifact.get("filename", "") or ""),
+            mime_type=str(artifact.get("mime_type") or artifact.get("mimeType") or ""),
+            size=int(artifact.get("size", 0) or 0),
         ))
 
     return task_result_proto

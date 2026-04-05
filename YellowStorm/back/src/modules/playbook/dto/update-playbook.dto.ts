@@ -35,6 +35,10 @@ export class InputFileMetadataDto {
   @IsOptional()
   @IsString()
   language?: string;
+
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
 }
 
 export class InputFileDto {
@@ -53,6 +57,10 @@ export class InputFileDto {
   @IsOptional()
   @IsString()
   workspaceId?: string;
+
+  @IsOptional()
+  @IsString()
+  portId?: string;
 
   @IsOptional()
   @ValidateNested()

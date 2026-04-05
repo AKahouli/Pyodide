@@ -308,13 +308,28 @@ export function extractArtifactsFromResult(
   }
 
   const textOutput = extractTextFromComponents(grpcComponents);
-  if (textOutput && !artifacts.some((a) => a.artifactKind === 'text')) {
+  const textPort = outputPorts.find((p: any) => p.artifactKind === 'text');
+  if (textOutput && !artifacts.some((a) => a.artifactKind === 'text') && (textPort || outputPorts.length === 0)) {
     artifacts.push({
-      portId: outputPorts[0]?.id || 'default',
+      portId: (textPort as any)?.id || 'default',
       artifactKind: 'text',
       content: textOutput,
     });
   }
 
   return artifacts;
+}
+
+export function mapGrpcTaskArtifacts(grpcArtifacts: any[] | undefined | null): TaskArtifactEntry[] {
+  return (grpcArtifacts || [])
+    .filter((artifact: any) => artifact && typeof artifact === 'object')
+    .map((artifact: any) => ({
+      portId: artifact.port_id || artifact.portId || 'default',
+      artifactKind: artifact.artifact_kind || artifact.artifactKind || 'text',
+      content: artifact.content || undefined,
+      url: artifact.url || undefined,
+      filename: artifact.filename || undefined,
+      mimeType: artifact.mime_type || artifact.mimeType || undefined,
+      size: typeof artifact.size === 'string' ? Number(artifact.size) : artifact.size,
+    }));
 }
