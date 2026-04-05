@@ -52,6 +52,7 @@ const SSE_EVENT_TYPES = [
   'playbook_heartbeat',
   'playbook_execution_start',
   'playbook_step_start',
+  'playbook_step_update',
   'playbook_step_complete',
   'playbook_step_evaluation_updated',
   'playbook_replay_format_guide_updated',
@@ -109,6 +110,9 @@ function handleSsePayload(raw: string) {
         break;
       case 'playbook_step_start':
         store.onStepStart(eventData);
+        break;
+      case 'playbook_step_update':
+        store.onStepUpdate(eventData);
         break;
       case 'playbook_step_complete':
         store.onStepComplete(eventData);

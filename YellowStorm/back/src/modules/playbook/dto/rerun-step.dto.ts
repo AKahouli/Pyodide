@@ -12,4 +12,8 @@ export class RerunStepDto {
   @IsString()
   @IsIn(['live', 'replay_strict', 'replay_flex', 'replay_adaptive'])
   executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+
+  @IsOptional()
+  @IsBoolean()
+  streaming?: boolean;
 }

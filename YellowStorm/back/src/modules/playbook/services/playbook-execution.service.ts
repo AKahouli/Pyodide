@@ -212,6 +212,34 @@ export class PlaybookExecutionService {
     };
   }
 
+  private resolveStreamStepStatus(update: any): string {
+    const rawStatus = typeof update?.status === 'string' ? update.status.trim() : '';
+    const resultStatus = typeof update?.result?.status === 'string' ? update.result.status.trim() : '';
+
+    if (['completed', 'failed', 'skipped'].includes(resultStatus) && rawStatus !== 'suspended') {
+      return resultStatus;
+    }
+    if (rawStatus) {
+      return rawStatus;
+    }
+    if (update?.interrupt) {
+      return 'suspended';
+    }
+    return resultStatus;
+  }
+
+  private normalizeStreamStepUpdate(update: any): any {
+    const status = this.resolveStreamStepStatus(update);
+    if (!status || update?.status === status) {
+      return update;
+    }
+
+    return {
+      ...update,
+      status,
+    };
+  }
+
   private formatReplayForGrpc(replay: any) {
     return {
       replay_id: replay.id,
@@ -1071,7 +1099,7 @@ export class PlaybookExecutionService {
     if (dto.singleStepTaskId) {
       // Single-step mode: use RunStep gRPC for just the one task
       this.logger.log('Starting single-step execution loop', { executionId, taskId: dto.singleStepTaskId });
-      this.runExecutionLoop(userId, executionId, orderedLevels, grpcAgentMap, dto, effectiveModes, workspaceContexts, userEmail, playbook.name, activeReplayMap).catch(
+      this.runExecutionLoop(userId, executionId, orderedLevels, grpcAgentMap, dto, effectiveModes, dto.streaming === true, workspaceContexts, userEmail, playbook.name, activeReplayMap).catch(
         async (err) => {
           this.logger.error('Execution loop failed', {
             executionId,
@@ -1359,21 +1387,60 @@ export class PlaybookExecutionService {
     evalEnabled: boolean = false,
     playbookId: string = '',
   ): void {
-    const { task_id: taskId, status, result, interrupt } = update;
+    const normalizedUpdate = this.normalizeStreamStepUpdate(update);
+    const { task_id: taskId, status, result, interrupt } = normalizedUpdate;
 
-    this.logger.log('Stream step update received', { executionId, taskId, status });
+    this.logger.log('Stream step update received', {
+      executionId,
+      taskId,
+      status,
+      rawStatus: update?.status || '',
+      resultStatus: update?.result?.status || '',
+    });
 
     switch (status) {
       case 'in_progress': {
+        const existing = stepBuffer.get(taskId);
+        const grpcComps = result?.components || [];
+        const components = mapGrpcComponents(grpcComps, taskId);
+        const output = extractTextFromComponents(grpcComps);
+        const toolTrace = this.mapGrpcToolTrace(result?.tool_trace || []);
+        const llmPromptTrace = this.mapGrpcLlmPromptTrace(result?.llm_prompt_trace || []);
+        const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
+        const activeTask = taskMap.get(taskId);
+        const artifacts = grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(activeTask, grpcComps);
+
         stepBuffer.set(taskId, {
           taskId,
           status: StepStatus.RUNNING,
-          startedAt: new Date(),
+          startedAt: existing?.startedAt || new Date(),
+          output: output || existing?.output,
+          components: components.length > 0 ? components : existing?.components,
+          toolTrace: toolTrace.length > 0 ? toolTrace : existing?.toolTrace,
+          llmPromptTrace: llmPromptTrace.length > 0 ? llmPromptTrace : existing?.llmPromptTrace,
+          artifacts: artifacts.length > 0 ? artifacts : existing?.artifacts,
         });
-        this.streamGateway.sendToUser(userId, {
-          type: 'playbook_step_start',
-          data: { executionId, taskId, status: 'running' },
-        });
+
+        if (result && (grpcComps.length > 0 || toolTrace.length > 0 || llmPromptTrace.length > 0 || artifacts.length > 0)) {
+          this.streamGateway.sendToUser(userId, {
+            type: 'playbook_step_update',
+            data: {
+              executionId,
+              taskId,
+              status: 'running',
+              output: output || '',
+              components,
+              artifacts,
+              toolTrace,
+              llmPromptTrace,
+            },
+          });
+        } else {
+          this.streamGateway.sendToUser(userId, {
+            type: 'playbook_step_start',
+            data: { executionId, taskId, status: 'running' },
+          });
+        }
         break;
       }
 
@@ -1594,34 +1661,68 @@ export class PlaybookExecutionService {
     }
 
     for (const [taskId, buffered] of stepBuffer) {
-      const fields: Record<string, any> = {
-        status: buffered.status,
-        startedAt: buffered.startedAt,
-      };
-      // Only include fields that were actually set in the buffer to avoid
-      // overwriting existing DB data (e.g. answered humanFeedback components)
-      if (buffered.output !== undefined) fields.output = buffered.output;
-      if (buffered.error !== undefined) fields.error = buffered.error;
-      if (buffered.durationMs !== undefined) fields.durationMs = buffered.durationMs;
-      if (buffered.completedAt !== undefined) fields.completedAt = buffered.completedAt;
-      if (buffered.inputTokens !== undefined) fields.inputTokens = buffered.inputTokens;
-      if (buffered.outputTokens !== undefined) fields.outputTokens = buffered.outputTokens;
-      if (buffered.totalTokens !== undefined) fields.totalTokens = buffered.totalTokens;
-      if (buffered.modelName !== undefined) fields.modelName = buffered.modelName;
-      if (buffered.semanticMatch !== undefined) fields.semanticMatch = buffered.semanticMatch;
-      if (buffered.toolTrace !== undefined) fields.toolTrace = buffered.toolTrace;
-      if ((buffered as any).llmPromptTrace !== undefined) fields.llmPromptTrace = (buffered as any).llmPromptTrace;
-      if ((buffered as any).artifacts !== undefined) fields.artifacts = (buffered as any).artifacts;
-      // Only write components when the buffer actually has them, and merge
-      // with existing humanFeedback components so answered HF is preserved
-      if (buffered.components !== undefined) {
-        fields.components = mergeWithExistingHumanFeedback(
-          hfMap.get(taskId) || [],
-          buffered.components,
-        );
-      }
-      await this.updateTaskResult(executionId, taskId, fields);
+      await this.flushBufferedTaskResult(executionId, taskId, buffered, hfMap.get(taskId) || []);
     }
+  }
+
+  private async flushBufferedTaskResult(
+    executionId: string,
+    taskId: string,
+    buffered: BufferedStepResult,
+    existingHumanFeedback: any[] = [],
+  ): Promise<void> {
+    const fields: Record<string, any> = {
+      status: buffered.status,
+      startedAt: buffered.startedAt,
+    };
+    if (buffered.output !== undefined) fields.output = buffered.output;
+    if (buffered.error !== undefined) fields.error = buffered.error;
+    if (buffered.durationMs !== undefined) fields.durationMs = buffered.durationMs;
+    if (buffered.completedAt !== undefined) fields.completedAt = buffered.completedAt;
+    if (buffered.inputTokens !== undefined) fields.inputTokens = buffered.inputTokens;
+    if (buffered.outputTokens !== undefined) fields.outputTokens = buffered.outputTokens;
+    if (buffered.totalTokens !== undefined) fields.totalTokens = buffered.totalTokens;
+    if (buffered.modelName !== undefined) fields.modelName = buffered.modelName;
+    if (buffered.semanticMatch !== undefined) fields.semanticMatch = buffered.semanticMatch;
+    if (buffered.toolTrace !== undefined) fields.toolTrace = buffered.toolTrace;
+    if ((buffered as any).llmPromptTrace !== undefined) fields.llmPromptTrace = (buffered as any).llmPromptTrace;
+    if ((buffered as any).artifacts !== undefined) fields.artifacts = (buffered as any).artifacts;
+    if (buffered.components !== undefined) {
+      fields.components = mergeWithExistingHumanFeedback(existingHumanFeedback, buffered.components);
+    }
+    await this.updateTaskResult(executionId, taskId, fields);
+  }
+
+  private async recordBufferedTaskUsage(
+    userId: string,
+    executionId: string,
+    buffered: BufferedStepResult,
+    startedAt: Date,
+  ): Promise<void> {
+    const inputTokens = buffered.inputTokens ?? 0;
+    const outputTokens = buffered.outputTokens ?? 0;
+    const totalTokens = buffered.totalTokens ?? 0;
+    if (totalTokens <= 0) {
+      return;
+    }
+
+    await this.executionModel.findByIdAndUpdate(executionId, {
+      $inc: {
+        totalInputTokens: inputTokens,
+        totalOutputTokens: outputTokens,
+        totalTokens,
+      },
+    });
+
+    this.usageService.recordUsage({
+      userId,
+      inputTokens,
+      outputTokens,
+      usageType: UsageType.PLAYBOOK,
+      modelName: buffered.modelName || undefined,
+      endpoint: 'playbook.executeStep.stream',
+      durationMs: Date.now() - startedAt.getTime(),
+    }).catch((err) => this.logger.warn('Failed to record step stream usage', { error: (err as Error).message }));
   }
 
   /**
@@ -1792,17 +1893,18 @@ export class PlaybookExecutionService {
         if (chunk.thread_id) streamThreadId = chunk.thread_id;
 
         if (chunk.step_update) {
+          const normalizedUpdate = this.normalizeStreamStepUpdate(chunk.step_update);
           try {
-            this.handleStepUpdate(userId, executionId, chunk.step_update, stepBuffer, taskMap, playbookName, evalEnabled);
+            this.handleStepUpdate(userId, executionId, normalizedUpdate, stepBuffer, taskMap, playbookName, evalEnabled);
           } catch (err) {
-            this.logger.error('handleStepUpdate threw', { executionId, taskId: chunk.step_update.task_id, error: (err as Error).message, stack: (err as Error).stack });
+            this.logger.error('handleStepUpdate threw', { executionId, taskId: normalizedUpdate.task_id, error: (err as Error).message, stack: (err as Error).stack });
           }
-          if (chunk.step_update.status === 'suspended' && chunk.step_update.interrupt) {
-            const interruptTaskId = chunk.step_update.interrupt.task_id || chunk.step_update.task_id;
+          if (normalizedUpdate.status === 'suspended' && normalizedUpdate.interrupt) {
+            const interruptTaskId = normalizedUpdate.interrupt.task_id || normalizedUpdate.task_id;
             const sameTask = resumedTaskId && interruptTaskId === resumedTaskId;
-            const interruptId = chunk.step_update.interrupt.interrupt_id || '';
-            const interruptType = chunk.step_update.interrupt.type || '';
-            const interruptRound = chunk.step_update.interrupt.round || 0;
+            const interruptId = normalizedUpdate.interrupt.interrupt_id || '';
+            const interruptType = normalizedUpdate.interrupt.type || '';
+            const interruptRound = normalizedUpdate.interrupt.round || 0;
             const sameInterrupt =
               !!sameTask
               && (
@@ -1824,8 +1926,8 @@ export class PlaybookExecutionService {
               });
             } else {
               suspendedInterrupts.push({
-                interrupt: chunk.step_update.interrupt,
-                threadId: streamThreadId || chunk.step_update.interrupt.thread_id || '',
+                interrupt: normalizedUpdate.interrupt,
+                threadId: streamThreadId || normalizedUpdate.interrupt.thread_id || '',
               });
             }
           }
@@ -1939,6 +2041,7 @@ export class PlaybookExecutionService {
     grpcAgentMap: Map<string, IGrpcAgent>,
     dto: ExecutePlaybookDto,
     effectiveModes: Map<string, string>,
+    streamingEnabled: boolean = false,
     workspaceContexts: Array<{ workspace_id: string; workspace_documents: any[] }> = [],
     userEmail: string = '',
     playbookName: string = '',
@@ -1991,7 +2094,7 @@ export class PlaybookExecutionService {
       const limiter = pLimit(this.maxConcurrentSteps);
       const results = await Promise.allSettled(
         runnableTasks.map((task) =>
-          limiter(() => this.executeStep(userId, executionId, playbookId, task, grpcAgentMap, taskOutputs, snapshot, workspaceContexts, userEmail, playbookName, effectiveModes.get(task.id) || 'live', activeReplayMap.get(task.id) || null, (execution as any).runEvaluation === true)),
+          limiter(() => this.executeStep(userId, executionId, playbookId, task, grpcAgentMap, taskOutputs, snapshot, workspaceContexts, userEmail, playbookName, effectiveModes.get(task.id) || 'live', activeReplayMap.get(task.id) || null, (execution as any).runEvaluation === true, streamingEnabled)),
         ),
       );
 
@@ -2103,6 +2206,7 @@ export class PlaybookExecutionService {
     executionMode: string = 'live',
     validatedReplay: any = null,
     runEvaluation: boolean = false,
+    streamingEnabled: boolean = false,
   ): Promise<{ outcome: 'completed' | 'failed' | 'interrupted' | 'skipped'; error?: string; response?: any }> {
     const taskId = task.id;
 
@@ -2256,6 +2360,19 @@ export class PlaybookExecutionService {
       taskId,
       request: JSON.stringify(grpcRequest),
     });
+
+    if (streamingEnabled) {
+      return this.executeStepWithStreaming(
+        userId,
+        executionId,
+        playbookId,
+        task,
+        grpcRequest,
+        taskOutputs,
+        playbookName,
+        runEvaluation,
+      );
+    }
 
     const stepStartTime = Date.now();
     try {
@@ -2523,6 +2640,152 @@ export class PlaybookExecutionService {
       });
       return { outcome: 'failed', error };
     }
+  }
+
+  private async executeStepWithStreaming(
+    userId: string,
+    executionId: string,
+    playbookId: string,
+    task: any,
+    grpcRequest: any,
+    taskOutputs: Map<string, string>,
+    playbookName: string,
+    runEvaluation: boolean,
+  ): Promise<{ outcome: 'completed' | 'failed' | 'interrupted' | 'skipped'; error?: string; response?: any }> {
+    const taskId = task.id;
+    const startedAt = new Date();
+    const sharedBuffer = this.activeStepBuffers.get(executionId) || new Map<string, BufferedStepResult>();
+    this.activeStepBuffers.set(executionId, sharedBuffer);
+
+    const taskMap = new Map<string, any>();
+    taskMap.set(taskId, task);
+
+    const call = this.grpcService.runStepStream(grpcRequest);
+    let interruptPayload: any = null;
+    let threadId = '';
+
+    return new Promise((resolve, reject) => {
+      call.on('data', (chunk: any) => {
+        if (chunk.thread_id) {
+          threadId = chunk.thread_id;
+        }
+        if (!chunk.step_update) {
+          return;
+        }
+
+        const normalizedUpdate = this.normalizeStreamStepUpdate(chunk.step_update);
+        this.handleStepUpdate(userId, executionId, normalizedUpdate, sharedBuffer, taskMap, playbookName, runEvaluation, playbookId);
+        if (normalizedUpdate.status === 'suspended' && normalizedUpdate.interrupt) {
+          interruptPayload = normalizedUpdate.interrupt;
+        }
+      });
+
+      call.on('end', async () => {
+        try {
+          const buffered = sharedBuffer.get(taskId);
+        if (buffered) {
+          const execution = await this.executionModel.findById(executionId)
+            .select('taskResults.taskId taskResults.components')
+            .lean()
+            .exec();
+          const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
+            .filter((component: any) => component.type === 'humanFeedback');
+          await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
+          await this.recordBufferedTaskUsage(userId, executionId, buffered, startedAt);
+
+            if (buffered.output) {
+              taskOutputs.set(taskId, buffered.output);
+              if (task.outputKey) {
+                taskOutputs.set(task.outputKey, buffered.output);
+              }
+            }
+          }
+
+          sharedBuffer.delete(taskId);
+          if (sharedBuffer.size === 0) {
+            this.activeStepBuffers.delete(executionId);
+          }
+
+          if (interruptPayload) {
+            await this.appendHumanFeedbackComponent(executionId, taskId, {
+              interruptType: interruptPayload.type || 'unknown',
+              message: interruptPayload.message || '',
+              status: 'pending',
+              taskDescription: interruptPayload.task_description || '',
+              result: interruptPayload.result || '',
+              interruptId: interruptPayload.interrupt_id || '',
+              round: interruptPayload.round || 0,
+              payloadJson: interruptPayload.conversation_json || '',
+              resumableActions: interruptPayload.resumable_actions || [],
+            });
+            await this.updateTaskResult(executionId, taskId, {
+              status: StepStatus.RUNNING,
+              durationMs: buffered?.durationMs ?? (Date.now() - startedAt.getTime()),
+              isStale: false,
+              staleReason: null,
+              invalidatedByTaskId: null,
+            });
+            this.sendStepNotificationEmail(task, 'interrupted', playbookName, {
+              output: interruptPayload.message || 'Awaiting human input',
+              playbookId,
+              executionId,
+            });
+            resolve({
+              outcome: 'interrupted',
+              response: {
+                status: 'suspended',
+                interrupt: interruptPayload,
+                thread_id: threadId || interruptPayload.thread_id || '',
+              },
+            });
+            return;
+          }
+
+          if (!buffered) {
+            resolve({ outcome: 'failed', error: 'RunStepStream ended without a step result' });
+            return;
+          }
+
+          if (buffered.status === StepStatus.COMPLETED) {
+            resolve({ outcome: 'completed' });
+            return;
+          }
+          if (buffered.status === StepStatus.SKIPPED) {
+            resolve({ outcome: 'skipped' });
+            return;
+          }
+          if (buffered.status === StepStatus.FAILED) {
+            resolve({ outcome: 'failed', error: buffered.error || 'Step failed' });
+            return;
+          }
+
+          resolve({ outcome: 'failed', error: 'RunStepStream ended before the step reached a terminal state' });
+        } catch (error) {
+          reject(error);
+        }
+      });
+
+      call.on('error', async (err: Error) => {
+        try {
+          const buffered = sharedBuffer.get(taskId);
+          if (buffered) {
+            const execution = await this.executionModel.findById(executionId)
+              .select('taskResults.taskId taskResults.components')
+              .lean()
+              .exec();
+            const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
+              .filter((component: any) => component.type === 'humanFeedback');
+            await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
+          }
+        } finally {
+          sharedBuffer.delete(taskId);
+          if (sharedBuffer.size === 0) {
+            this.activeStepBuffers.delete(executionId);
+          }
+        }
+        reject(err);
+      });
+    });
   }
 
   private buildExecutionDetailUrl(playbookId: string, executionId: string): string {
@@ -3036,6 +3299,7 @@ ${
     taskId: string,
     runEvaluation: boolean = false,
     executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+    streamingEnabled: boolean = false,
     userEmail: string = '',
   ): Promise<{ status: string; executionId: string }> {
     const execution = await this.getExecutionForReuse(userId, playbookId, executionId);
@@ -3110,6 +3374,7 @@ ${
       selectedExecutionMode,
       validatedReplay,
       runEvaluation,
+      streamingEnabled,
     ).then(async (outcome) => {
       if (outcome.outcome === 'completed' || outcome.outcome === 'skipped') {
         if (outcome.outcome === 'completed' && runEvaluation) {
@@ -3174,6 +3439,7 @@ ${
     playbookId: string,
     executionId: string,
     taskId: string,
+    streamingEnabled: boolean = false,
     userEmail: string = '',
   ): Promise<{ status: string; executionId: string }> {
     const execution = await this.getExecutionForReuse(userId, playbookId, executionId);
@@ -3221,6 +3487,7 @@ ${
       grpcAgentMap,
       { query: '', singleStepTaskId: undefined },
       new Map(subgraphTasks.map((t: any) => [t.id, (t as any).stepReplayMode || 'live'])),
+      streamingEnabled,
       workspaceContexts,
       userEmail,
       playbook.name,
@@ -3617,6 +3884,7 @@ ${
       durationMs: buffered.durationMs !== undefined ? buffered.durationMs : dbTr.durationMs,
       startedAt: buffered.startedAt !== undefined ? buffered.startedAt : dbTr.startedAt,
       completedAt: buffered.completedAt !== undefined ? buffered.completedAt : dbTr.completedAt,
+      components: buffered.components !== undefined ? buffered.components : dbTr.components,
       toolTrace: buffered.toolTrace !== undefined ? buffered.toolTrace : dbTr.toolTrace,
       llmPromptTrace: (buffered as any).llmPromptTrace !== undefined ? (buffered as any).llmPromptTrace : dbTr.llmPromptTrace,
       inputTokens: buffered.inputTokens !== undefined ? buffered.inputTokens : dbTr.inputTokens,
@@ -3626,6 +3894,7 @@ ${
       semanticMatch: buffered.semanticMatch !== undefined ? buffered.semanticMatch : dbTr.semanticMatch,
       evaluationHistory: buffered.evaluationHistory !== undefined ? buffered.evaluationHistory : dbTr.evaluationHistory,
       stepExecutions: dbTr.stepExecutions || [],
+      artifacts: (buffered as any).artifacts !== undefined ? (buffered as any).artifacts : dbTr.artifacts,
     };
   }
 
@@ -3670,6 +3939,7 @@ ${
             startedAt: merged.startedAt?.toISOString?.() || merged.startedAt,
             completedAt: merged.completedAt?.toISOString?.() || merged.completedAt,
             components: merged.components || [],
+            artifacts: merged.artifacts || [],
             toolTrace: merged.toolTrace || [],
             llmPromptTrace: merged.llmPromptTrace || [],
             inputTokens: merged.inputTokens ?? null,

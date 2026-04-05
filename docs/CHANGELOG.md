@@ -1,4 +1,76 @@
-﻿# Changelog
+# Changelog
+
+## [2026-04-05 18:31] — Auto-follow streaming execution detail
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added auto-scroll behavior to the execution detail panel during live streaming and a jump-to-bottom button when the viewer scrolls away from the tail, with regression coverage for both the auto-follow and the escape hatch.
+- **Why:** Even after streaming was fixed, long-running runs were still hard to follow because the newest updates could scroll out of view without a quick way to jump back to the live tail.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `docs/playbook/README_2026-04-05_18-31-39.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_18-31-39.md`
+
+## [2026-04-05 18:24] — Stream live progress for whole workflows
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Wired full-workflow graph execution to pass `on_progress` into live tool runs, replay tool runs, and direct LLM calls, converting partial task output/tool/component updates into `in_progress` step updates, and included artifacts on completed workflow step chunks.
+- **Why:** Whole-workflow executions were still showing step results only as a final block because the graph builder emitted only start/complete step updates and never forwarded partial progress from task execution.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `docs/playbook/README_2026-04-05_18-24-59.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_18-24-59.md`
+
+## [2026-04-05 18:20] — Prefer live current attempt in result tab
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the frontend step detail view to replace persisted `stepExecutions` history for the current attempt with the live in-memory task snapshot before rendering the result tab and execution picker, and added regression coverage for that selection rule.
+- **Why:** Realtime step updates could still appear only as a final block because the result tab was rendering an older persisted snapshot for the same attempt number instead of the actively streaming current step.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `docs/playbook/README_2026-04-05_18-20-42.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_18-20-42.md`
+
+## [2026-04-05 18:15] — Stream non-text single-step progress
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the ADK single-step stream to attach in-progress `result` payloads for tool traces, prompt traces, components, and artifacts even when no partial text output exists yet.
+- **Why:** Tool-driven steps could still appear as a single final block because realtime progress without text was being dropped before it reached the Nest SSE bridge and the step detail result tab.
+- **Impact:** `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `docs/playbook/README_2026-04-05_18-15-32.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_18-15-32.md`
+
+## [2026-04-05 18:03] — Fix streamed PlaybookStepUpdate protobuf building
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Reworked streamed step update protobuf construction in the ADK servicer to build `PlaybookStepUpdate` first and `CopyFrom(...)` nested result and interrupt payloads, removing the protobuf kwargs path that could misinterpret raw result dicts containing logical `output` keys.
+- **Why:** Single-step realtime streaming was still failing before the result tab could update because protobuf raised `ValueError: Protocol message PlaybookTaskResult has no "output" field` while serializing streamed step updates.
+- **Impact:** `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `docs/playbook/README_2026-04-05_18-03-07.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_18-03-07.md`
+
+## [2026-04-05 17:47] — Harden single-step terminal streaming
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Normalized streamed step status in the Nest execution service so terminal state can be recovered from `step_update.result.status`, added regression coverage for that shape, and made the ADK step stream emit a terminal failed chunk when protobuf serialization of a step update breaks.
+- **Why:** Single-step runs were still ending after an `in_progress` update with no terminal chunk visible to the backend, which caused valid runs to be marked failed instead of streaming their final result.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `docs/playbook/README_2026-04-05_17-47-12.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_17-47-12.md`
+
+## [2026-04-05 17:18] — Fix streaming step finalization
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Simplified the single-step streaming RPC so it drains progress updates and always emits a terminal chunk after the execution completes, preventing progress-only streams from being treated as failed runs.
+- **Why:** The backend was receiving live updates but not a terminal step event, so interactive node runs were being marked failed even though the step was still executing.
+- **Impact:** `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/src/langgraph_engine/workflow_service.py`, `docs/playbook/README_2026-04-05_17-18-43.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_17-18-43.md`
+
+## [2026-04-05 17:12] — Stream single-step node runs
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added a streaming gRPC path for single-step playbook execution, wired the playbook UI to request streaming for interactive runs, and merged live step progress into the execution cache so node switching keeps the active stream visible.
+- **Why:** Node execution was returning only one final block, which made interactive runs feel blocked and hid intermediate tool/text progress.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-grpc.service.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook.controller.ts`, `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2_grpc.py`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/services/playbookStreamService.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/types.ts`, `docs/playbook/README_2026-04-05_17-12-56.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_17-12-56.md`
 
 ## [2026-04-05 16:19] — Move playbook node port labels to side rails
 

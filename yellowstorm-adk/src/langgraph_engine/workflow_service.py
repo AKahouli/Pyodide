@@ -388,6 +388,7 @@ async def run_single_step_graph(
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
+    on_progress=None,
 ) -> Dict[str, Any]:
     """Execute a single task via a dedicated LangGraph for HITL support.
 

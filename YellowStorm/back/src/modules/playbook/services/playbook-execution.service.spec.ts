@@ -223,6 +223,7 @@ describe('PlaybookExecutionService', () => {
     mockGrpcService = {
       isAvailable: true,
       runStep: jest.fn(),
+      runStepStream: jest.fn(),
       runPlaybookWorkflow: jest.fn(),
       resumePlaybookWorkflow: jest.fn(),
       resumeStep: jest.fn(),
@@ -810,6 +811,47 @@ describe('PlaybookExecutionService', () => {
             outputTokens: 50,
             totalTokens: 150,
             modelName: 'test-runtime-model-a',
+          }),
+        }),
+      );
+    });
+
+    it('should derive completed status from result payload when step status is missing', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution();
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'task-1',
+          result: {
+            status: 'completed',
+            components: [],
+            duration_ms: '1500',
+          },
+        },
+      });
+
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_step_complete',
+          data: expect.objectContaining({
+            taskId: 'task-1',
+            status: 'completed',
+            durationMs: 1500,
           }),
         }),
       );
@@ -1924,6 +1966,62 @@ describe('PlaybookExecutionService', () => {
       expect(mockLoggerService.warn).toHaveBeenCalledWith(
         'StopPlaybookWorkflow gRPC failed (best-effort)',
         expect.any(Object),
+      );
+    });
+  });
+
+  describe('executeStepWithStreaming', () => {
+    function createMockStream(): EventEmitter & { cancel: jest.Mock } {
+      const stream = new EventEmitter() as EventEmitter & { cancel: jest.Mock };
+      stream.cancel = jest.fn();
+      return stream;
+    }
+
+    it('should complete when terminal status is present only on the result payload', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runStepStream.mockReturnValue(mockStream);
+
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+        ],
+      })));
+
+      const promise = (service as any).executeStepWithStreaming(
+        objectId('user1').toString(),
+        objectId('exec1').toString(),
+        objectId('pb1').toString(),
+        createMockPlaybook().tasks[0],
+        { playbook_id: objectId('pb1').toString(), task: { id: 'task-1' } },
+        new Map<string, string>(),
+        'Test Playbook',
+        false,
+      );
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'task-1',
+          result: {
+            status: 'completed',
+            components: [],
+            duration_ms: '250',
+          },
+        },
+      });
+      mockStream.emit('end');
+
+      await expect(promise).resolves.toEqual(expect.objectContaining({ outcome: 'completed' }));
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        objectId('user1').toString(),
+        expect.objectContaining({
+          type: 'playbook_step_complete',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            taskId: 'task-1',
+            status: 'completed',
+            durationMs: 250,
+          }),
+        }),
       );
     });
   });

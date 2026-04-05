@@ -9,7 +9,7 @@ creates its own mini StateGraph.
 import json
 import re
 import time
-from typing import Dict, Any, Optional, List
+from typing import Awaitable, Callable, Dict, Any, Optional, List
 
 from structlog import get_logger
 
@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 10
 SKIP_STEP_REASON = "__SKIP_STEP__"
+StepProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
 
 
 def _serialize_prompt_messages(messages: List[Dict[str, str]]) -> str:
@@ -64,6 +65,44 @@ def _summarize_tool_result(result: Any, max_length: int = 2000) -> str:
     if len(text) <= max_length:
         return text
     return f"{text[:max_length]}...[truncated]"
+
+
+def _content_to_text(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: List[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        return "".join(parts)
+    return str(content or "")
+
+
+async def _stream_chat_response(
+    runnable,
+    messages,
+    on_progress: Optional[StepProgressCallback] = None,
+):
+    aggregated = None
+    latest_text = ""
+
+    async for chunk in runnable.astream(messages):
+        aggregated = chunk if aggregated is None else aggregated + chunk
+        if on_progress is None:
+            continue
+        current_text = _content_to_text(getattr(aggregated, "content", ""))
+        if current_text == latest_text:
+            continue
+        latest_text = current_text
+        await on_progress({"output": current_text})
+
+    return aggregated
 
 
 def _extract_interrupt_from_snapshot(state_snapshot, task_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
@@ -170,6 +209,7 @@ async def execute_step(
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
+    on_progress: Optional[StepProgressCallback] = None,
 ) -> Dict[str, Any]:
     """Execute a single task.
 
@@ -198,6 +238,7 @@ async def execute_step(
             execution_mode=execution_mode,
             validated_replay=validated_replay,
             evaluation_user_id=evaluation_user_id,
+            on_progress=on_progress,
         )
 
     return await _execute_step_direct(
@@ -210,6 +251,7 @@ async def execute_step(
         execution_mode=execution_mode,
         validated_replay=validated_replay,
         evaluation_user_id=evaluation_user_id,
+        on_progress=on_progress,
     )
 
 
@@ -223,6 +265,7 @@ async def _execute_step_direct(
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
+    on_progress: Optional[StepProgressCallback] = None,
 ) -> Dict[str, Any]:
     from src.config.settings import get_settings
 
@@ -329,6 +372,7 @@ async def _execute_step_direct(
                 },
                 settings=settings,
                 model_name=model_name,
+                on_progress=on_progress,
             )
             if execution_mode in ("replay_flex", "replay_adaptive"):
                 logger.info("[%s] REPLAY_FLEX_FINAL_SYNTHESIS", task_id)
@@ -348,7 +392,7 @@ async def _execute_step_direct(
                 )
                 response, usage = await _llm_call(
                     settings, model_name, system_prompt, replay_user_prompt,
-                    temperature=temperature, prompt_trace=llm_prompt_trace, stage="replay_final_synthesis"
+                    temperature=temperature, prompt_trace=llm_prompt_trace, stage="replay_final_synthesis", on_progress=on_progress
                 )
             else:
                 response = strict_response
@@ -357,12 +401,12 @@ async def _execute_step_direct(
             logger.info(f"[{task_id}] Executing with real tools", count=len(lc_tools),
                         tools=[t.name for t in lc_tools])
             response, components, usage, tool_trace, llm_prompt_trace = await _execute_with_tools(
-                settings, model_name, system_prompt, user_prompt, lc_tools, collector, temperature=temperature
+                settings, model_name, system_prompt, user_prompt, lc_tools, collector, temperature=temperature, on_progress=on_progress
             )
         else:
             response, usage = await _llm_call(
                 settings, model_name, system_prompt, user_prompt,
-                temperature=temperature, prompt_trace=llm_prompt_trace, stage="task_direct_completion"
+                temperature=temperature, prompt_trace=llm_prompt_trace, stage="task_direct_completion", on_progress=on_progress
             )
             components = []
             tool_trace = []
@@ -446,6 +490,7 @@ async def _execute_with_tools(
     tools: List,
     collector=None,
     temperature: float = 0.7,
+    on_progress: Optional[StepProgressCallback] = None,
 ) -> tuple:
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -482,7 +527,12 @@ async def _execute_with_tools(
                 for message in messages
             ],
         )
-        response = await llm_with_tools.ainvoke(messages)
+        if on_progress is not None:
+            response = await _stream_chat_response(llm_with_tools, messages, on_progress)
+            if response is None:
+                response = await llm_with_tools.ainvoke(messages)
+        else:
+            response = await llm_with_tools.ainvoke(messages)
         messages.append(response)
 
         iter_usage = _extract_usage(response)
@@ -502,6 +552,17 @@ async def _execute_with_tools(
 
         for tool_call in response.tool_calls:
             tool = tool_map.get(tool_call["name"])
+            pending_tool_trace = tool_trace + [{
+                "call_index": len(tool_trace) + 1,
+                "tool_name": tool_call["name"],
+                "args": tool_call.get("args", {}),
+                "output_summary": "Running...",
+            }]
+            if on_progress is not None:
+                await on_progress({
+                    "tool_trace": pending_tool_trace,
+                    "components": list(all_components),
+                })
             if tool:
                 try:
                     result = await tool.ainvoke(tool_call["args"])
@@ -526,6 +587,11 @@ async def _execute_with_tools(
 
             if collector:
                 all_components.extend(collector.get_and_clear())
+            if on_progress is not None:
+                await on_progress({
+                    "tool_trace": list(tool_trace),
+                    "components": list(all_components),
+                })
 
     logger.warning("Max tool iterations reached", max=MAX_TOOL_ITERATIONS)
     last_content = messages[-1].content if hasattr(messages[-1], "content") else ""
@@ -541,6 +607,7 @@ async def _execute_replay_tool_calls(
     adaptation_context: Optional[Dict[str, Any]] = None,
     settings=None,
     model_name: Optional[str] = None,
+    on_progress: Optional[StepProgressCallback] = None,
 ) -> tuple[str, List[Dict[str, Any]], List[Dict[str, Any]], str]:
     tool_map = {tool.name: tool for tool in tools}
     all_components: List[Dict[str, Any]] = []
@@ -591,6 +658,16 @@ async def _execute_replay_tool_calls(
             tool_name=tool_name,
             tool_args_preview=_summarize_tool_args(tool_args),
         )
+        if on_progress is not None:
+            await on_progress({
+                "tool_trace": tool_trace + [{
+                    "call_index": call_index,
+                    "tool_name": tool_name,
+                    "args": tool_args,
+                    "output_summary": "Running...",
+                }],
+                "components": list(all_components),
+            })
         result = await tool.ainvoke(tool_args)
         tool_trace.append({
             "call_index": call_index,
@@ -614,6 +691,11 @@ async def _execute_replay_tool_calls(
 
         if collector:
             all_components.extend(collector.get_and_clear())
+        if on_progress is not None:
+            await on_progress({
+                "tool_trace": list(tool_trace),
+                "components": list(all_components),
+            })
 
     return (
         validated_replay.get("reference_output", "") or "",
@@ -697,6 +779,7 @@ async def _llm_call(
     temperature: float = 0.7,
     prompt_trace: Optional[List[Dict[str, Any]]] = None,
     stage: str = "llm_call",
+    on_progress: Optional[StepProgressCallback] = None,
 ) -> tuple:
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage
@@ -716,8 +799,14 @@ async def _llm_call(
             {"role": "user", "content": user_prompt},
         ],
     )
-    result = await llm.ainvoke([
+    messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt),
-    ])
-    return result.content, _extract_usage(result)
+    ]
+    if on_progress is not None:
+        result = await _stream_chat_response(llm, messages, on_progress)
+        if result is None:
+            result = await llm.ainvoke(messages)
+    else:
+        result = await llm.ainvoke(messages)
+    return _content_to_text(result.content), _extract_usage(result)

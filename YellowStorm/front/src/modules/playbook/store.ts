@@ -22,6 +22,7 @@ import type {
   PlaybookExecutionSummary,
   PlaybookExecutionStartEvent,
   PlaybookStepStartEvent,
+  PlaybookStepUpdateEvent,
   PlaybookStepCompleteEvent,
   PlaybookStepEvaluationUpdatedEvent,
   PlaybookReplayFormatGuideUpdatedEvent,
@@ -1126,7 +1127,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live') => {
+      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false) => {
         set((state) => {
           const cachedExecution = state.executionCache[executionId];
           const updatedExecution = cachedExecution
@@ -1155,7 +1156,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           };
         });
         try {
-          await api.rerunPlaybookStep(playbookId, executionId, { taskId, runEvaluation, executionMode });
+          await api.rerunPlaybookStep(playbookId, executionId, { taskId, runEvaluation, executionMode, streaming });
           await Promise.all([
             get().fetchExecution(playbookId, executionId),
             get().fetchExecutions(playbookId),
@@ -1169,7 +1170,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      resumeFromStep: async (playbookId, executionId, taskId) => {
+      resumeFromStep: async (playbookId, executionId, taskId, streaming = false) => {
         set((state) => {
           const cachedExecution = state.executionCache[executionId];
           const updatedExecution = cachedExecution
@@ -1198,7 +1199,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           };
         });
         try {
-          await api.resumePlaybookFromStep(playbookId, executionId, { taskId });
+          await api.resumePlaybookFromStep(playbookId, executionId, { taskId, streaming });
           await Promise.all([
             get().fetchExecution(playbookId, executionId),
             get().fetchExecutions(playbookId),
@@ -1326,6 +1327,68 @@ export const usePlaybookStore = create<PlaybookStore>()(
             selectedStepId,
             playbooks: updatePlaybookExecutionStatus(state.playbooks, cached.playbookId, 'running'),
           };
+        });
+      },
+
+      onStepUpdate: (data: PlaybookStepUpdateEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const existing = cached.taskResults;
+          const found = existing.some((tr) => tr.taskId === data.taskId);
+          const taskResults = found
+            ? existing.map((tr) => {
+                if (tr.taskId !== data.taskId) return tr;
+                const merged = mergeComponents(tr.components, data.components || []);
+                return {
+                  ...tr,
+                  status: 'running' as const,
+                  output: data.output ?? tr.output ?? null,
+                  components: merged,
+                  toolTrace: data.toolTrace ?? tr.toolTrace ?? [],
+                  llmPromptTrace: data.llmPromptTrace ?? tr.llmPromptTrace ?? [],
+                  artifacts: data.artifacts ?? tr.artifacts,
+                  startedAt: tr.startedAt || new Date().toISOString(),
+                  completedAt: null,
+                  durationMs: null,
+                  error: null,
+                  isStale: false,
+                  staleReason: null,
+                  invalidatedByTaskId: null,
+                };
+              })
+            : [
+                ...existing,
+                {
+                  taskId: data.taskId,
+                  nodeTitle: '',
+                  agentName: '',
+                  order: existing.length,
+                  status: 'running' as const,
+                  output: data.output ?? null,
+                  error: null,
+                  durationMs: null,
+                  startedAt: new Date().toISOString(),
+                  completedAt: null,
+                  components: data.components || [],
+                  toolTrace: data.toolTrace ?? [],
+                  llmPromptTrace: data.llmPromptTrace ?? [],
+                  artifacts: data.artifacts,
+                  evaluationHistory: [],
+                  stepExecutions: [],
+                  isStale: false,
+                  staleReason: null,
+                  invalidatedByTaskId: null,
+                },
+              ];
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution =
+            state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+
+          return { executionCache, currentExecution };
         });
       },
 

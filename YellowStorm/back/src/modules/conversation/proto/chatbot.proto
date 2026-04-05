@@ -307,6 +307,7 @@ service ChatbotService {
     rpc RunPlaybookWorkflow(RunPlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
     rpc ResumePlaybookWorkflow(ResumePlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
     rpc RunStep(RunStepRequest) returns (StepResponse);
+    rpc RunStepStream(RunStepRequest) returns (stream PlaybookStreamChunk);
     rpc ResumeStep(ResumeStepRequest) returns (StepResponse);
     rpc EvaluateSemanticMatch(EvaluateSemanticMatchRequest) returns (EvaluateSemanticMatchResponse);
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);

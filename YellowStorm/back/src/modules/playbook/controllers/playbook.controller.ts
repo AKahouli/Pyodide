@@ -383,6 +383,7 @@ export class PlaybookController {
       dto.taskId,
       dto.runEvaluation === true,
       dto.executionMode,
+      dto.streaming === true,
       user.email,
     );
   }
@@ -400,6 +401,7 @@ export class PlaybookController {
       id,
       executionId,
       dto.taskId,
+      dto.streaming === true,
       user.email,
     );
   }

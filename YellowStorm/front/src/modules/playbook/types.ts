@@ -486,6 +486,17 @@ export interface PlaybookStepStartEvent {
   status: string;
 }
 
+export interface PlaybookStepUpdateEvent {
+  executionId: string;
+  taskId: string;
+  status: string;
+  output?: string;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  artifacts?: TaskArtifact[];
+}
+
 export interface PlaybookStepCompleteEvent {
   executionId: string;
   taskId: string;
@@ -613,6 +624,7 @@ export interface ExecutePlaybookData {
   executionMode?: 'live' | 'inherit';
   stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   runEvaluation?: boolean;
+  streaming?: boolean;
 }
 
 export interface ValidateTaskReplayData {
@@ -647,6 +659,12 @@ export interface RerunStepData {
   taskId: string;
   runEvaluation?: boolean;
   executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  streaming?: boolean;
+}
+
+export interface ResumeFromStepData {
+  taskId: string;
+  streaming?: boolean;
 }
 
 // ===== Store =====
@@ -729,8 +747,9 @@ export interface PlaybookActions {
     taskId: string,
     runEvaluation?: boolean,
     executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+    streaming?: boolean,
   ) => Promise<void>;
-  resumeFromStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
+  resumeFromStep: (playbookId: string, executionId: string, taskId: string, streaming?: boolean) => Promise<void>;
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
   stopExecution: (playbookId: string, executionId: string) => Promise<void>;
   deleteExecution: (playbookId: string, executionId: string) => Promise<void>;
@@ -765,6 +784,7 @@ export interface PlaybookActions {
   // SSE handlers
   onExecutionStart: (data: PlaybookExecutionStartEvent) => void;
   onStepStart: (data: PlaybookStepStartEvent) => void;
+  onStepUpdate: (data: PlaybookStepUpdateEvent) => void;
   onStepComplete: (data: PlaybookStepCompleteEvent) => void;
   onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => void;
   onReplayFormatGuideUpdated: (data: PlaybookReplayFormatGuideUpdatedEvent) => void;

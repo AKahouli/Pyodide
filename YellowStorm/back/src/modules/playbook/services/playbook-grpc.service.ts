@@ -101,6 +101,16 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
+  runStepStream(request: any): grpc.ClientReadableStream<any> {
+    this.logger.log('gRPC RunStepStream initiated', {
+      taskId: request.task?.id,
+      playbookId: request.playbook_id,
+      executionMode: request.execution_mode || 'live',
+    });
+
+    return this.chatbotClient.RunStepStream(request);
+  }
+
   runPlaybookWorkflow(request: any): grpc.ClientReadableStream<any> {
     this.logger.log('gRPC RunPlaybookWorkflow stream initiated', {
       playbookId: request.playbook_id,

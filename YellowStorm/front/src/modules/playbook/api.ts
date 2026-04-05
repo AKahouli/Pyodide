@@ -257,7 +257,7 @@ export async function rerunPlaybookStep(
 export async function resumePlaybookFromStep(
   playbookId: string,
   executionId: string,
-  data: { taskId: string },
+  data: { taskId: string; streaming?: boolean },
 ): Promise<{ status: string; executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ status: string; executionId: string }>>(
     API_ENDPOINTS.playbooks.resumeFromStep(playbookId, executionId),

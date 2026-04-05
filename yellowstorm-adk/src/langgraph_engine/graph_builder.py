@@ -530,10 +530,13 @@ class DynamicGraphBuilder:
                     current_task_for_execution: Dict[str, Any],
                     current_user_prompt: str,
                 ) -> tuple[Dict[str, Any], str]:
+                    nonlocal components, tool_trace, llm_prompt_trace
                     model_name = agent.get("model") or "gpt-4.1"
                     agent_params = agent.get("agent_params") or {}
                     temperature = float(agent_params.get("temperature", 0.7))
-                    llm_prompt_trace: List[Dict[str, Any]] = []
+                    components = []
+                    tool_trace = []
+                    llm_prompt_trace = []
 
                     from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
                     from src.langgraph_engine.step_executor import _execute_with_tools, _execute_replay_tool_calls
@@ -575,6 +578,53 @@ class DynamicGraphBuilder:
                         available_tools=[tool.name for tool in lc_tools],
                     )
 
+                    progress_state: Dict[str, Any] = {
+                        "output": "",
+                        "components": list(components),
+                        "tool_trace": list(tool_trace),
+                        "llm_prompt_trace": list(llm_prompt_trace),
+                        "artifacts": [],
+                    }
+
+                    async def _on_execution_progress(progress: Dict[str, Any]) -> None:
+                        nonlocal components, tool_trace, llm_prompt_trace
+
+                        if progress.get("output") is not None:
+                            progress_state["output"] = progress.get("output") or ""
+                        if "components" in progress:
+                            progress_state["components"] = list(progress.get("components") or [])
+                            components = list(progress_state["components"])
+                        if "tool_trace" in progress:
+                            progress_state["tool_trace"] = list(progress.get("tool_trace") or [])
+                            tool_trace = list(progress_state["tool_trace"])
+                        if "llm_prompt_trace" in progress:
+                            progress_state["llm_prompt_trace"] = list(progress.get("llm_prompt_trace") or [])
+                            llm_prompt_trace = list(progress_state["llm_prompt_trace"])
+                        if "artifacts" in progress:
+                            progress_state["artifacts"] = list(progress.get("artifacts") or [])
+
+                        has_progress = (
+                            bool(progress_state["output"])
+                            or bool(progress_state["components"])
+                            or bool(progress_state["tool_trace"])
+                            or bool(progress_state["llm_prompt_trace"])
+                            or bool(progress_state["artifacts"])
+                        )
+                        if not has_progress:
+                            return
+
+                        await _push_step_update("in_progress", result={
+                            "task_id": task_id,
+                            "status": "in_progress",
+                            "output": progress_state["output"],
+                            "error": "",
+                            "duration_ms": int((time.time() - start_time) * 1000),
+                            "components": progress_state["components"],
+                            "tool_trace": progress_state["tool_trace"],
+                            "llm_prompt_trace": progress_state["llm_prompt_trace"],
+                            "artifacts": progress_state["artifacts"],
+                        })
+
                     if execution_mode in ("replay_strict", "replay_flex", "replay_adaptive") and validated_replay:
                         if not lc_tools:
                             raise ValueError(f"Validated replay for task {task_id} cannot run because no tools are configured")
@@ -601,6 +651,7 @@ class DynamicGraphBuilder:
                             },
                             settings=settings,
                             model_name=model_name,
+                            on_progress=_on_execution_progress,
                         )
                         if execution_mode in ("replay_flex", "replay_adaptive"):
                             format_guide = (validated_replay.get("output_format_guide") or "").strip()
@@ -626,6 +677,7 @@ class DynamicGraphBuilder:
                                 temperature=temperature,
                                 prompt_trace=llm_prompt_trace,
                                 stage="replay_final_synthesis",
+                                on_progress=_on_execution_progress,
                             )
                         else:
                             response = strict_response
@@ -640,6 +692,7 @@ class DynamicGraphBuilder:
                             lc_tools,
                             collector,
                             temperature=temperature,
+                            on_progress=_on_execution_progress,
                         )
                     else:
                         response, usage = await self._llm_direct_call(
@@ -650,6 +703,7 @@ class DynamicGraphBuilder:
                             temperature=temperature,
                             prompt_trace=llm_prompt_trace,
                             stage="task_direct_completion",
+                            on_progress=_on_execution_progress,
                         )
                         components = []
                         tool_trace = []
@@ -857,6 +911,13 @@ class DynamicGraphBuilder:
 
                 logger.info(f"[{task_id}] Completed", duration_ms=duration_ms)
 
+                task_artifacts = _extract_artifacts_from_components(
+                    task_result.get("components") or [],
+                    task_config,
+                )
+                if task_artifacts:
+                    task_result["artifacts"] = task_artifacts
+
                 await _push_step_update("completed", result={
                     "task_id": task_id,
                     "status": "completed",
@@ -868,17 +929,11 @@ class DynamicGraphBuilder:
                     "tool_trace": task_result.get("tool_trace", []),
                     "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
                     "semantic_match": task_result.get("semantic_match"),
+                    "artifacts": task_result.get("artifacts", []),
                 })
 
                 output_text = task_result.get("output", "")
                 output_key = task_config.get("output_key")
-
-                task_artifacts = _extract_artifacts_from_components(
-                    task_result.get("components") or [],
-                    task_config,
-                )
-                if task_artifacts:
-                    task_result["artifacts"] = task_artifacts
 
                 state_update: Dict[str, Any] = {
                     "completed_task_ids": [task_id],
@@ -958,10 +1013,11 @@ class DynamicGraphBuilder:
         temperature: float = 0.7,
         prompt_trace: Optional[List[Dict[str, Any]]] = None,
         stage: str = "llm_call",
+        on_progress=None,
     ) -> tuple:
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
-        from src.langgraph_engine.step_executor import _extract_usage, _append_prompt_trace
+        from src.langgraph_engine.step_executor import _extract_usage, _append_prompt_trace, _content_to_text, _stream_chat_response
 
         llm = ChatOpenAI(
             base_url=settings.LITELLM_API_BASE_URL,
@@ -978,11 +1034,17 @@ class DynamicGraphBuilder:
                 {"role": "user", "content": user_prompt},
             ],
         )
-        result = await llm.ainvoke([
+        messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_prompt),
-        ])
-        return result.content, _extract_usage(result)
+        ]
+        if on_progress is not None:
+            result = await _stream_chat_response(llm, messages, on_progress)
+            if result is None:
+                result = await llm.ainvoke(messages)
+        else:
+            result = await llm.ainvoke(messages)
+        return _content_to_text(result.content), _extract_usage(result)
 
     def _find_entry_tasks(self, tasks: List[TaskConfig], edges: List[EdgeConfig]) -> List[str]:
         all_task_ids = {t["id"] for t in tasks if t.get("id")}

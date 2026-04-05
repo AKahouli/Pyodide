@@ -1480,8 +1480,11 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                 return
 
             if "step_update" in item:
-                chunk = _build_step_update_chunk(item["step_update"])
-                chunk.thread_id = thread_id
+                chunk = _safe_build_step_update_chunk(
+                    item["step_update"],
+                    stream_name="_stream_playbook_queue",
+                    thread_id=thread_id,
+                )
                 if item["step_update"].get("interrupt"):
                     logger.debug("[servicer] yielding SUSPENDED chunk via gRPC", task=item["step_update"].get("task_id"), interrupt_type=item["step_update"].get("interrupt", {}).get("type"))
                 yield chunk
@@ -1534,6 +1537,122 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                     status="failed",
                     error=str(e),
                 ),
+            )
+
+    async def RunStepStream(self, request, context):
+        """Execute a single task and stream step updates in realtime."""
+        from src.langgraph_engine.step_executor import execute_step
+
+        task_id = request.task.id if request.task else "unknown"
+        agent_name = request.agent.name if request.agent else "unknown"
+        logger.info("[RunStepStream] Request received", task_id=task_id, agent=agent_name)
+
+        queue: asyncio.Queue[dict] = asyncio.Queue()
+
+        async def on_progress(progress: Dict[str, Any]) -> None:
+            await queue.put(progress)
+
+        try:
+            task = _proto_task_to_dict(request.task)
+            agent = _proto_agent_to_dict(request.agent)
+            validated_replay = _proto_validated_replay_to_dict(request.validated_replay) \
+                if getattr(request, "validated_replay", None) and request.validated_replay.task_id \
+                else None
+
+            bg_task = asyncio.create_task(
+                execute_step(
+                    task=task,
+                    agent=agent,
+                    context_from_dependencies=request.context_from_dependencies,
+                    workspace_context=_proto_workspace_context(request.workspace_context),
+                    edges=[_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else [],
+                    upstream_results=[_proto_task_result_to_dict(item) for item in request.upstream_results] if request.upstream_results else [],
+                    execution_mode=request.execution_mode or "live",
+                    validated_replay=validated_replay,
+                    evaluation_user_id=request.user_context.username or request.user_context.user_id or "unknown",
+                    on_progress=on_progress,
+                )
+            )
+
+            while True:
+                if bg_task.done():
+                    exception = bg_task.exception()
+                    if exception:
+                        raise exception
+                    break
+
+                try:
+                    progress = await asyncio.wait_for(queue.get(), timeout=0.25)
+                except asyncio.TimeoutError:
+                    continue
+
+                if not progress:
+                    continue
+
+                step_update = {
+                    "task_id": task_id,
+                    "task_title": task.get("title", ""),
+                    "status": progress.get("status", "in_progress"),
+                }
+                progress_result = _build_in_progress_result(task_id, progress)
+                if progress_result is not None:
+                    step_update["result"] = progress_result
+
+                yield _safe_build_step_update_chunk(
+                    step_update,
+                    stream_name="RunStepStream",
+                )
+
+            result = await bg_task
+            while not queue.empty():
+                progress = await queue.get()
+                if not progress:
+                    continue
+                drained_step_update = {
+                    "task_id": task_id,
+                    "task_title": task.get("title", ""),
+                    "status": progress.get("status", "in_progress"),
+                }
+                progress_result = _build_in_progress_result(task_id, progress)
+                if progress_result is not None:
+                    drained_step_update["result"] = progress_result
+
+                yield _safe_build_step_update_chunk(
+                    drained_step_update,
+                    stream_name="RunStepStream",
+                )
+
+            if result.get("status") == "suspended" and result.get("interrupt"):
+                yield _safe_build_step_update_chunk({
+                    "task_id": task_id,
+                    "task_title": task.get("title", ""),
+                    "status": "suspended",
+                    "interrupt": result.get("interrupt"),
+                }, stream_name="RunStepStream")
+            else:
+                yield _safe_build_step_update_chunk({
+                    "task_id": task_id,
+                    "task_title": task.get("title", ""),
+                    "status": result.get("status", "completed"),
+                    "result": result.get("result"),
+                }, stream_name="RunStepStream")
+
+        except asyncio.CancelledError:
+            logger.info("[RunStepStream] Client cancelled stream")
+            if 'bg_task' in locals() and not bg_task.done():
+                bg_task.cancel()
+                try:
+                    await bg_task
+                except Exception:
+                    pass
+            return
+
+        except Exception as e:
+            logger.error("[RunStepStream] Unhandled error", error=str(e), exc_info=True)
+            yield _build_failed_step_update_chunk(
+                task_id=task_id,
+                task_title=task.get("title", "") if 'task' in locals() else "",
+                error=str(e),
             )
 
     async def ResumeStep(self, request, context):
@@ -1964,20 +2083,20 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
 
 def _build_step_update_chunk(update: Dict[str, Any]) -> chatbot_pb2.PlaybookStreamChunk:
     """Convert a step-update dict to a PlaybookStreamChunk with PlaybookStepUpdate."""
-    step_kwargs = {
-        "task_id": update.get("task_id", ""),
-        "task_title": update.get("task_title", ""),
-        "status": update.get("status", ""),
-    }
+    step_update = chatbot_pb2.PlaybookStepUpdate(
+        task_id=update.get("task_id", ""),
+        task_title=update.get("task_title", ""),
+        status=update.get("status", ""),
+    )
 
     result_data = update.get("result")
     if result_data:
-        step_kwargs["result"] = _build_task_result_proto(result_data)
+        step_update.result.CopyFrom(_build_task_result_proto(result_data))
 
     interrupt_data = update.get("interrupt")
     if interrupt_data:
         logger.debug("[servicer] _build_step_update_chunk SUSPENDED", task=interrupt_data.get("task_id"), interrupt_type=interrupt_data.get("type"))
-        step_kwargs["interrupt"] = chatbot_pb2.InterruptPayload(
+        step_update.interrupt.CopyFrom(chatbot_pb2.InterruptPayload(
             type=interrupt_data.get("type", ""),
             task_id=interrupt_data.get("task_id", ""),
             task_title=interrupt_data.get("task_title", ""),
@@ -1989,11 +2108,86 @@ def _build_step_update_chunk(update: Dict[str, Any]) -> chatbot_pb2.PlaybookStre
             round=int(interrupt_data.get("round", 0) or 0),
             conversation_json=interrupt_data.get("conversation_json", ""),
             resumable_actions=[str(action) for action in (interrupt_data.get("resumable_actions", []) or [])],
-        )
+        ))
 
     return chatbot_pb2.PlaybookStreamChunk(
-        step_update=chatbot_pb2.PlaybookStepUpdate(**step_kwargs),
+        step_update=step_update,
     )
+
+
+def _build_failed_step_update_chunk(
+    task_id: str,
+    task_title: str,
+    error: str,
+    *,
+    thread_id: str = "",
+) -> chatbot_pb2.PlaybookStreamChunk:
+    return chatbot_pb2.PlaybookStreamChunk(
+        step_update=chatbot_pb2.PlaybookStepUpdate(
+            task_id=task_id,
+            task_title=task_title,
+            status="failed",
+            result=chatbot_pb2.PlaybookTaskResult(
+                task_id=task_id,
+                status="failed",
+                error=error,
+                duration_ms=0,
+            ),
+        ),
+        thread_id=thread_id,
+    )
+
+
+def _safe_build_step_update_chunk(
+    update: Dict[str, Any],
+    *,
+    stream_name: str,
+    thread_id: str = "",
+) -> chatbot_pb2.PlaybookStreamChunk:
+    try:
+        chunk = _build_step_update_chunk(update)
+        if thread_id:
+            chunk.thread_id = thread_id
+        return chunk
+    except Exception as exc:
+        task_id = str(update.get("task_id", "") or "")
+        task_title = str(update.get("task_title", "") or "")
+        logger.error(
+            f"[{stream_name}] Failed to serialize step update chunk",
+            task_id=task_id,
+            status=str(update.get("status", "") or ""),
+            error=str(exc),
+            exc_info=True,
+        )
+        return _build_failed_step_update_chunk(
+            task_id=task_id,
+            task_title=task_title,
+            error=f"Failed to serialize step update: {exc}",
+            thread_id=thread_id,
+        )
+
+
+def _build_in_progress_result(task_id: str, progress: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    output = progress.get("output")
+    components = progress.get("components", []) or []
+    tool_trace = progress.get("tool_trace", []) or []
+    llm_prompt_trace = progress.get("llm_prompt_trace", []) or []
+    artifacts = progress.get("artifacts", []) or []
+
+    if output is None and not components and not tool_trace and not llm_prompt_trace and not artifacts:
+        return None
+
+    return {
+        "task_id": task_id,
+        "status": "in_progress",
+        "output": output or "",
+        "error": "",
+        "duration_ms": 0,
+        "components": components,
+        "tool_trace": tool_trace,
+        "llm_prompt_trace": llm_prompt_trace,
+        "artifacts": artifacts,
+    }
 
 
 def _build_step_response(result: Dict[str, Any]) -> chatbot_pb2.StepResponse:

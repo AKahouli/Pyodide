@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
@@ -207,6 +207,7 @@ export function ExecutionStepDetail({
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
   const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
   const deleteStepExecution = usePlaybookStore((s) => s.deleteStepExecution);
@@ -276,14 +277,46 @@ export function ExecutionStepDetail({
   const outputFormatBadgeTone = currentTask?.activeOutputFormatStatus === 'failed'
     ? 'border-red-500/30 bg-red-50 text-red-700'
     : 'border-sky-500/30 bg-sky-100 text-sky-700';
+  const isLiveStreaming = step?.status === 'running' || step?.status === 'interrupted';
+  const [isNearBottom, setIsNearBottom] = useState(true);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const threshold = 96;
+    const updateNearBottom = () => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      setIsNearBottom(distanceFromBottom <= threshold);
+    };
+
+    updateNearBottom();
+    container.addEventListener('scroll', updateNearBottom, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', updateNearBottom);
+    };
+  }, [step?.taskId]);
 
   const canDownload = step ? step.status === 'completed' || step.status === 'failed' || step.status === 'skipped' || step.status === 'interrupted' : false;
   const stepExecutions = useMemo(() => {
     if (!step) return [];
     const current = buildCurrentStepExecution(step);
     const persisted = step.stepExecutions || [];
-    const hasCurrentPersisted = persisted.some((entry) => entry.attemptNumber === current.attemptNumber);
-    return (hasCurrentPersisted ? persisted : [current, ...persisted]).sort((a, b) => {
+    const mergedExecutions = [
+      current,
+      ...persisted.filter((entry) => entry.attemptNumber !== current.attemptNumber),
+    ];
+    return mergedExecutions.sort((a, b) => {
       const left = new Date(a.completedAt || a.startedAt || 0).getTime();
       const right = new Date(b.completedAt || b.startedAt || 0).getTime();
       return right - left;
@@ -345,144 +378,166 @@ export function ExecutionStepDetail({
   const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
   const isEvaluationPending = isRunningEvaluation || step.status === 'running';
   const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
+  const streamingContentKey = [
+    step.taskId,
+    step.status,
+    step.output || '',
+    step.error || '',
+    step.components?.length || 0,
+    step.toolTrace?.length || 0,
+    step.llmPromptTrace?.length || 0,
+    step.artifacts?.length || 0,
+    selectedStepExecution?.id || 'no-step-execution',
+  ].join('|');
+
+  useEffect(() => {
+    if (!isLiveStreaming) return;
+    if (!isNearBottom) return;
+    scrollToBottom('auto');
+  }, [isLiveStreaming, isNearBottom, streamingContentKey, scrollToBottom]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mb-6">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
-          {showReplayBadge && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-              {replayBadgeVersion
-                ? t('detail.badges.replayBaseline', { version: replayBadgeVersion })
-                : t('detail.badges.baseline')}
-            </span>
-          )}
-          {showOutputFormatBadge && (
-            <button
-              type="button"
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors hover:opacity-90 ${outputFormatBadgeTone}`}
-              onClick={() => onOpenOutputFormatEditor?.(step.taskId)}
-            >
-              {isOutputFormatBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-              {currentTask?.activeOutputFormatTemplateVersion
-                ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
-                : t('detail.badges.outputFormat')}
-            </button>
-          )}
-          {step.isStale && (
-            <span
-              className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
-              title={step.staleReason || 'Invalidated by an upstream rerun'}
-            >
-              {t('detail.badges.stale')}
-            </span>
-          )}
-          {(execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') && (
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {getExecutionModeLabel(execution?.executionMode, t)}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-1.5">
-            <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
-            <Select
-              value={currentTask?.stepReplayMode ?? 'live'}
-              onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
-              disabled={!currentTask?.hasValidatedReplay}
-            >
-              <SelectTrigger className="h-7 w-[130px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
-                <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
-                <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
-                <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
-              </SelectContent>
-            </Select>
-            {!currentTask?.hasValidatedReplay && (
-              <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
-                {t('detail.noBaseline')}
+    <div className="relative flex-1 overflow-hidden">
+      <div
+        ref={scrollContainerRef}
+        data-testid="execution-step-scroll"
+        className="h-full overflow-y-auto p-6"
+      >
+        <div className="mb-6">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
+            {showReplayBadge && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                {replayBadgeVersion
+                  ? t('detail.badges.replayBaseline', { version: replayBadgeVersion })
+                  : t('detail.badges.baseline')}
               </span>
             )}
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-8 w-8" title={t('detail.actions')}>
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {execution && step.status === 'completed' && (
-                <DropdownMenuItem onClick={() => onRequestValidateReplay?.(step.taskId)}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  {t('detail.actions.saveReplay')}
-                </DropdownMenuItem>
+            {showOutputFormatBadge && (
+              <button
+                type="button"
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors hover:opacity-90 ${outputFormatBadgeTone}`}
+                onClick={() => onOpenOutputFormatEditor?.(step.taskId)}
+              >
+                {isOutputFormatBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                {currentTask?.activeOutputFormatTemplateVersion
+                  ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
+                  : t('detail.badges.outputFormat')}
+              </button>
+            )}
+            {step.isStale && (
+              <span
+                className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                title={step.staleReason || 'Invalidated by an upstream rerun'}
+              >
+                {t('detail.badges.stale')}
+              </span>
+            )}
+            {(execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') && (
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {getExecutionModeLabel(execution?.executionMode, t)}
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-1.5">
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
+              <Select
+                value={currentTask?.stepReplayMode ?? 'live'}
+                onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
+                disabled={!currentTask?.hasValidatedReplay}
+              >
+                <SelectTrigger className="h-7 w-[130px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
+                  <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
+                  <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
+                  <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
+                </SelectContent>
+              </Select>
+              {!currentTask?.hasValidatedReplay && (
+                <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
+                  {t('detail.noBaseline')}
+                </span>
               )}
-              {execution && (
-                <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  {t('detail.actions.runEvaluation')}
-                </DropdownMenuItem>
-              )}
-              {execution && step.status === 'completed' && !!step.output && (
-                <DropdownMenuItem onClick={() => onRequestGrabOutputFormat?.(step.taskId)}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  {t('detail.actions.saveOutputFormat')}
-                </DropdownMenuItem>
-              )}
-              {canDownload && (
-                <>
-                  <DropdownMenuItem onClick={handleDownloadHtml}>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8" title={t('detail.actions')}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {execution && step.status === 'completed' && (
+                  <DropdownMenuItem onClick={() => onRequestValidateReplay?.(step.taskId)}>
                     <FileText className="mr-2 h-4 w-4" />
-                    {t('detail.actions.downloadHtml')}
+                    {t('detail.actions.saveReplay')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleDownloadPdf}>
-                    <Download className="mr-2 h-4 w-4" />
-                    {t('detail.actions.downloadPdf')}
+                )}
+                {execution && (
+                  <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('detail.actions.runEvaluation')}
                   </DropdownMenuItem>
-                </>
-              )}
-              {execution && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => void deleteExecution(execution.playbookId, execution.id)}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    {t('detail.actions.deleteExecution')}
+                )}
+                {execution && step.status === 'completed' && !!step.output && (
+                  <DropdownMenuItem onClick={() => onRequestGrabOutputFormat?.(step.taskId)}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('detail.actions.saveOutputFormat')}
                   </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                )}
+                {canDownload && (
+                  <>
+                    <DropdownMenuItem onClick={handleDownloadHtml}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      {t('detail.actions.downloadHtml')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleDownloadPdf}>
+                      <Download className="mr-2 h-4 w-4" />
+                      {t('detail.actions.downloadPdf')}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {execution && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => void deleteExecution(execution.playbookId, execution.id)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {t('detail.actions.deleteExecution')}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+            {step.agentName && <span>{t('detail.metadata.agent')}: {step.agentName}</span>}
+            <span>{t('detail.metadata.started')}: {formatTime(step.startedAt)}</span>
+            {step.completedAt && (
+              <span>{t('detail.metadata.completed')}: {formatTime(step.completedAt)}</span>
+            )}
+            <span>{t('detail.metadata.duration')}: {formatDuration(step.durationMs)}</span>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-          {step.agentName && <span>{t('detail.metadata.agent')}: {step.agentName}</span>}
-          <span>{t('detail.metadata.started')}: {formatTime(step.startedAt)}</span>
-          {step.completedAt && (
-            <span>{t('detail.metadata.completed')}: {formatTime(step.completedAt)}</span>
+
+          {step.isStale && (
+            <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {t('detail.staleMessage')}
+            </div>
           )}
-          <span>{t('detail.metadata.duration')}: {formatDuration(step.durationMs)}</span>
-        </div>
-      </div>
 
-      {step.isStale && (
-        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {t('detail.staleMessage')}
-        </div>
-      )}
-
-      <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
-          <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
-          <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
-          <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
-          <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
-        </TabsList>
+          <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
+            <TabsList className="grid w-full grid-cols-5">
+              <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
+              <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+              <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
+              <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
+              <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
+            </TabsList>
 
         <TabsContent value="results" className="space-y-4">
           {stepExecutions.length > 0 && (
@@ -1008,7 +1063,20 @@ export function ExecutionStepDetail({
             </div>
           )}
         </TabsContent>
-      </Tabs>
+        </Tabs>
+      </div>
+
+      {isLiveStreaming && !isNearBottom && (
+        <Button
+          type="button"
+          size="sm"
+          className="absolute bottom-4 right-4 z-20 shadow-lg"
+          onClick={() => scrollToBottom()}
+        >
+          <ChevronDown className="mr-1 h-4 w-4" />
+          Jump to bottom
+        </Button>
+      )}
     </div>
   );
 }

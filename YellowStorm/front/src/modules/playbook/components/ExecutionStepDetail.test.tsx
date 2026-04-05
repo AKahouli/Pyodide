@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
@@ -172,6 +172,95 @@ describe('ExecutionStepDetail', () => {
 
     expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
     expect(screen.getByText('detail.results.executionHint')).toBeInTheDocument();
+  });
+
+  it('prefers the live current attempt over persisted history for the same attempt number', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          status: 'running',
+          attemptNumber: 3,
+          output: 'Streaming output',
+          completedAt: null,
+          durationMs: null,
+          stepExecutions: [
+            {
+              id: 'step-exec-3',
+              attemptNumber: 3,
+              status: 'completed',
+              output: 'Persisted final snapshot',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Streaming output')).toBeInTheDocument();
+    expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
+    expect(screen.getByText('execution.running')).toBeInTheDocument();
+  });
+
+  it('auto-scrolls while streaming and exposes a jump-to-bottom button when scrolled up', () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as any;
+
+    try {
+      const { rerender } = render(
+        <ExecutionStepDetail
+          step={{
+            ...baseStep,
+            status: 'running',
+            output: 'First streaming chunk',
+            components: [],
+            toolTrace: [],
+            llmPromptTrace: [],
+            artifacts: [],
+            stepExecutions: [],
+          }}
+        />,
+      );
+
+      const scrollContainer = screen.getByTestId('execution-step-scroll');
+      Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+      Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1200, configurable: true });
+      Object.defineProperty(scrollContainer, 'scrollTop', { value: 120, writable: true, configurable: true });
+      fireEvent.scroll(scrollContainer);
+
+      expect(screen.getByRole('button', { name: 'Jump to bottom' })).toBeInTheDocument();
+
+      rerender(
+        <ExecutionStepDetail
+          step={{
+            ...baseStep,
+            status: 'running',
+            output: 'Second streaming chunk',
+            components: [],
+            toolTrace: [],
+            llmPromptTrace: [],
+            artifacts: [],
+            stepExecutions: [],
+          }}
+        />,
+      );
+
+      expect(scrollTo).toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
   });
 
   it('renders plain text output when no components', () => {

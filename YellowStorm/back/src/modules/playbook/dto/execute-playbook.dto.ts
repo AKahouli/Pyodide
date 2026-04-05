@@ -28,4 +28,9 @@ export class ExecutePlaybookDto {
   @IsOptional()
   @IsBoolean()
   runEvaluation?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable realtime step streaming for interactive runs' })
+  @IsOptional()
+  @IsBoolean()
+  streaming?: boolean;
 }

@@ -471,10 +471,10 @@ function PlaybookCanvasInner() {
         || null;
       try {
         if (targetExecution) {
-          await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode);
+          await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true);
           return;
         }
-        await executePlaybook(id, { singleStepTaskId: nodeId, executionMode: 'live', stepExecutionModes: { [nodeId]: selectedStepMode } });
+        await executePlaybook(id, { singleStepTaskId: nodeId, executionMode: 'live', stepExecutionModes: { [nodeId]: selectedStepMode }, streaming: true });
       } catch {
         // handled in store
       }
@@ -492,7 +492,7 @@ function PlaybookCanvasInner() {
         || null;
       if (!targetExecution) return;
       try {
-        await resumeFromStep(id, targetExecution.id, nodeId);
+        await resumeFromStep(id, targetExecution.id, nodeId, true);
       } catch {
         // handled in store
       }
@@ -693,10 +693,10 @@ function PlaybookCanvasInner() {
       return;
     }
     if (isDirty) await saveNow();
-    setPageMode('run');
-    if (executionMode === 'live') {
-      await executePlaybook(id, { executionMode: 'live' });
-    } else {
+      setPageMode('run');
+      if (executionMode === 'live') {
+      await executePlaybook(id, { executionMode: 'live', streaming: true });
+      } else {
       const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
       for (const task of playbook.tasks) {
         if (task.enabled !== false) {
@@ -704,8 +704,8 @@ function PlaybookCanvasInner() {
           stepExecutionModes[task.id] = mode;
         }
       }
-      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes });
-    }
+      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes, streaming: true });
+      }
   }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, setPageMode]);
 
   const handleAutoLayout = useCallback(() => {
