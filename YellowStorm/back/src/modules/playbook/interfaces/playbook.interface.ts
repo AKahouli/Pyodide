@@ -1,3 +1,5 @@
+import { ExecutionStatus } from '../schemas/playbook-execution.schema';
+
 export interface InputFileData {
   type: 'workspace' | 'document';
   id: string;

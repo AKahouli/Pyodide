@@ -430,9 +430,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 )}
                 {/* Persistent label */}
                 <PortLabel
-                  name={boundFile ? `${port.name}: ${boundFile.name}` : port.name}
+                  name={boundFile?.name || port.name}
                   kind={port.artifactKind}
                   position="left"
+                  selected={isSelected}
                 />
                 {port.required && hasMultiplePorts && (
                   <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
@@ -457,7 +458,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 className="!w-3 !h-3"
                 style={{ ...getOutputPortStyle(port), top: 0 }}
               />
-              <PortLabel name={port.name} kind={port.artifactKind} position="right" />
+              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected} />
             </div>
           ))}
           </div>

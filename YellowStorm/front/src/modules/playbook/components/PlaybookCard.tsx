@@ -94,9 +94,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, se
             </div>
           </div>
           <div className='flex items-center gap-1.5 shrink-0'>
-            {hasExecutionStatus && playbook.executionStatus ? (
-              <PlaybookStatusBadge status={playbook.executionStatus} size='xs' />
-            ) : null}
+            <PlaybookStatusBadge status={playbook.executionStatus ?? 'idle'} size='xs' />
             <Button
               variant='ghost'
               size='icon'

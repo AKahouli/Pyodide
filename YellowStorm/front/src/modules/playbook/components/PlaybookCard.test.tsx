@@ -78,6 +78,18 @@ describe('PlaybookCard', () => {
     expect(screen.getByText('status.running')).toBeInTheDocument();
   });
 
+  it('shows idle when no execution is running', () => {
+    render(
+      <PlaybookCard
+        playbook={{ ...playbook, executionStatus: null }}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onToggleFavorite={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('status.idle')).toBeInTheDocument();
+  });
+
   it('opens the scheduler from the shortcut icon', async () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
     await userEvent.click(screen.getByLabelText('Open scheduler'));
