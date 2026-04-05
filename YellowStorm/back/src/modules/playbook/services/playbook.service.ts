@@ -167,8 +167,7 @@ export class PlaybookService {
       matchQuery[dateField] = dateRange;
     }
 
-    const needsExecutionLookup =
-      sortBy === 'lastExecutionAt' || dateField === 'lastExecutionAt';
+    const needsExecutionLookup = true;
 
     // Build aggregation pipeline
     const pipeline: any[] = [{ $match: matchQuery }];
@@ -197,7 +196,7 @@ export class PlaybookService {
               { $match: { $expr: { $eq: ['$playbookId', '$$pid'] } } },
               { $sort: { startedAt: -1 } },
               { $limit: 1 },
-              { $project: { startedAt: 1 } },
+              { $project: { startedAt: 1, status: 1 } },
             ],
             as: '_lastExec',
           },
@@ -206,6 +205,9 @@ export class PlaybookService {
           $addFields: {
             lastExecutionAt: {
               $ifNull: [{ $arrayElemAt: ['$_lastExec.startedAt', 0] }, null],
+            },
+            executionStatus: {
+              $ifNull: [{ $arrayElemAt: ['$_lastExec.status', 0] }, null],
             },
           },
         },
@@ -705,6 +707,7 @@ export class PlaybookService {
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
       scheduleEnabled: Boolean(playbook.scheduleEnabled),
+      executionStatus: playbook.executionStatus ?? null,
       integrationToken: playbook.integrationToken || null,
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,

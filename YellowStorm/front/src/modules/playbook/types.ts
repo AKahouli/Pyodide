@@ -188,6 +188,8 @@ export interface PlaybookSummary {
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
   scheduleEnabled: boolean;
+  /** Latest known execution state for the list badge. */
+  executionStatus?: ExecutionStatus | null;
   integrationToken?: string | null;
   /** Full schedule data when included by the list API (optional, backend-dependent). */
   executionSchedule?: ExecutionScheduleData | null;

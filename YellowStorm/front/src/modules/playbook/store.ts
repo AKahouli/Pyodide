@@ -180,6 +180,18 @@ function toTimestamp(value: string | null | undefined): number {
   return Number.isNaN(timestamp) ? 0 : timestamp;
 }
 
+function updatePlaybookExecutionStatus(
+  playbooks: PlaybookSummary[],
+  playbookId: string,
+  status: ExecutionStatus | null | undefined,
+): PlaybookSummary[] {
+  return playbooks.map((playbook) => (
+    playbook.id === playbookId
+      ? { ...playbook, executionStatus: status ?? null }
+      : playbook
+  ));
+}
+
 function shouldKeepRunningAttempt(
   cachedTaskResult: PlaybookExecution['taskResults'][number],
   incomingTaskResult: PlaybookExecution['taskResults'][number],
@@ -366,6 +378,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           taskCount: playbook.tasks.length,
           isFavorite: playbook.isFavorite,
           scheduleEnabled: playbook.executionSchedule?.enabled === true,
+          executionStatus: null,
           lastExecutionAt: null,
           createdAt: playbook.createdAt,
           updatedAt: playbook.updatedAt,
@@ -412,6 +425,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             taskCount: playbook.tasks.length,
             isFavorite: existing?.isFavorite ?? false,
             scheduleEnabled: playbook.executionSchedule?.enabled === true,
+            executionStatus: existing?.executionStatus ?? null,
             lastExecutionAt: existing?.lastExecutionAt ?? null,
             createdAt: playbook.createdAt,
             updatedAt: playbook.updatedAt,
@@ -464,6 +478,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           taskCount: cloned.tasks.length,
           isFavorite: cloned.isFavorite,
           scheduleEnabled: cloned.executionSchedule?.enabled === true,
+          executionStatus: null,
           lastExecutionAt: null,
           createdAt: cloned.createdAt,
           updatedAt: cloned.updatedAt,
@@ -1252,6 +1267,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             executingPlaybookIds: state.executingPlaybookIds.includes(data.playbookId)
               ? state.executingPlaybookIds
               : [...state.executingPlaybookIds, data.playbookId],
+            playbooks: updatePlaybookExecutionStatus(state.playbooks, data.playbookId, data.status as ExecutionStatus),
             currentExecution: shouldSetCurrent ? newExecution : state.currentExecution,
             executionCache,
             executionHistory: [newSummary, ...state.executionHistory].slice(0, MAX_EXECUTION_HISTORY),
@@ -1304,7 +1320,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
             state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
           const selectedStepId = state.selectedStepId ?? data.taskId;
 
-          return { executionCache, currentExecution, selectedStepId };
+          return {
+            executionCache,
+            currentExecution,
+            selectedStepId,
+            playbooks: updatePlaybookExecutionStatus(state.playbooks, cached.playbookId, 'running'),
+          };
         });
       },
 
@@ -1365,7 +1386,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const currentExecution =
             state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
 
-          return { executionCache, currentExecution };
+          return {
+            executionCache,
+            currentExecution,
+          };
         });
 
         const cachedExecution = get().executionCache[data.executionId];
@@ -1525,6 +1549,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             executionHistory,
             executingPlaybookIds,
             isStopping: false,
+            playbooks: execPlaybookId
+              ? updatePlaybookExecutionStatus(state.playbooks, execPlaybookId, status)
+              : state.playbooks,
           };
         });
       },
@@ -1680,6 +1707,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
             executionCache: evictCache(executionCache),
             executingPlaybookIds: [...executingIds],
             currentExecution,
+            playbooks: state.playbooks.map((playbook) => {
+              const matched = executions.find((execution) => execution.playbookId === playbook.id);
+              return matched ? { ...playbook, executionStatus: matched.status } : playbook;
+            }),
           };
         });
       },

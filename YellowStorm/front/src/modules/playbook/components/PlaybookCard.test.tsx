@@ -29,6 +29,10 @@ vi.mock('@/lib/api/config', () => ({
   },
 }));
 
+vi.mock('./PlaybookStatusBadge', () => ({
+  PlaybookStatusBadge: ({ status }: { status: string }) => <span>{`status.${status}`}</span>,
+}));
+
 const playbook: PlaybookSummary = {
   id: 'p1',
   name: 'Deploy Pipeline',
@@ -36,6 +40,7 @@ const playbook: PlaybookSummary = {
   taskCount: 5,
   isFavorite: false,
   scheduleEnabled: false,
+  executionStatus: null,
   integrationToken: 'integration-token',
   lastExecutionAt: null,
   createdAt: '2025-01-01T00:00:00.000Z',
@@ -59,6 +64,24 @@ describe('PlaybookCard', () => {
       />,
     );
     expect(screen.getByTitle('card.scheduled')).toBeInTheDocument();
+  });
+
+  it('shows a realtime status badge when execution is running', () => {
+    render(
+      <PlaybookCard
+        playbook={{ ...playbook, executionStatus: 'running' }}
+        onDelete={vi.fn()}
+        onClone={vi.fn()}
+        onToggleFavorite={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('status.running')).toBeInTheDocument();
+  });
+
+  it('opens the scheduler from the shortcut icon', async () => {
+    render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
+    await userEvent.click(screen.getByLabelText('Open scheduler'));
+    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1?schedule=1');
   });
 
   it('navigates to playbook on card click', async () => {

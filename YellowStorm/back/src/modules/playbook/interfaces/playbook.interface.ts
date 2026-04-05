@@ -119,6 +119,8 @@ export interface PlaybookSummaryResponse {
   isFavorite: boolean;
   /** True when embedded `executionSchedule` exists and is enabled (scheduled runs). */
   scheduleEnabled: boolean;
+  /** Latest execution status for the list badge. */
+  executionStatus?: ExecutionStatus | null;
   integrationToken?: string | null;
   lastExecutionAt: string | null;
   createdAt: string;

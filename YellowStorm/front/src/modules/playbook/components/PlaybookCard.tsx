@@ -11,6 +11,7 @@ import { API_CONFIG, API_ENDPOINTS } from '@/lib/api/config';
 import type { PlaybookSummary } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
+import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 
 type Props = Readonly<{
   playbook: PlaybookSummary;
@@ -33,6 +34,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, se
   const integrationLink = playbook.integrationToken
     ? `${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.publicExecute(playbook.integrationToken)}`
     : '';
+  const hasExecutionStatus = Boolean(playbook.executionStatus);
 
   const handleCopyIntegrationLink = async (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
@@ -69,25 +71,44 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, se
         }
       }}>
       <CardHeader className='pb-2'>
-        <div className='flex items-start gap-2'>
-          {selectable && <Checkbox checked={selected} onCheckedChange={(checked) => onSelect?.(playbook.id, checked === true)} onClick={(e) => e.stopPropagation()} className='mt-0.5 shrink-0' />}
-          <div className='min-w-0 flex-1'>
-            <div className='flex min-w-0 items-center gap-1.5'>
-              <CardTitle className='text-base truncate'>{playbook.name}</CardTitle>
-              {playbook.scheduleEnabled ? (
-                playbook.executionSchedule ? (
-                  <PlaybookScheduleBadge schedule={playbook.executionSchedule} className="shrink-0" />
-                ) : (
-                  <span className='inline-flex shrink-0' title={t('card.scheduled')}>
-                    <CalendarClock
-                      className='h-3.5 w-3.5 text-muted-foreground'
-                      aria-hidden
-                    />
-                  </span>
-                )
-              ) : null}
+        <div className='flex items-start justify-between gap-3'>
+          <div className='flex items-start gap-2 min-w-0 flex-1'>
+            {selectable && <Checkbox checked={selected} onCheckedChange={(checked) => onSelect?.(playbook.id, checked === true)} onClick={(e) => e.stopPropagation()} className='mt-0.5 shrink-0' />}
+            <div className='min-w-0 flex-1'>
+              <div className='flex min-w-0 items-center gap-1.5'>
+                <CardTitle className='text-base truncate'>{playbook.name}</CardTitle>
+                {playbook.scheduleEnabled ? (
+                  playbook.executionSchedule ? (
+                    <PlaybookScheduleBadge schedule={playbook.executionSchedule} className="shrink-0" />
+                  ) : (
+                    <span className='inline-flex shrink-0' title={t('card.scheduled')}>
+                      <CalendarClock
+                        className='h-3.5 w-3.5 text-muted-foreground'
+                        aria-hidden
+                      />
+                    </span>
+                  )
+                ) : null}
+              </div>
+              {playbook.description && <CardDescription className='line-clamp-2 text-xs'>{playbook.description}</CardDescription>}
             </div>
-            {playbook.description && <CardDescription className='line-clamp-2 text-xs'>{playbook.description}</CardDescription>}
+          </div>
+          <div className='flex items-center gap-1.5 shrink-0'>
+            {hasExecutionStatus && playbook.executionStatus ? (
+              <PlaybookStatusBadge status={playbook.executionStatus} size='xs' />
+            ) : null}
+            <Button
+              variant='ghost'
+              size='icon'
+              className='h-7 w-7'
+              onClick={(e) => {
+                e.stopPropagation();
+                navigate(`/playbooks/${playbook.id}?schedule=1`);
+              }}
+              title='Open scheduler'
+              aria-label='Open scheduler'>
+              <CalendarClock className='h-3.5 w-3.5' />
+            </Button>
           </div>
         </div>
       </CardHeader>

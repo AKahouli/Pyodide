@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2, Share2, FolderOpen, Copy } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -106,6 +106,7 @@ function canReuseExecutionForTask(
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -200,6 +201,12 @@ function PlaybookCanvasInner() {
     // Ensure agents are loaded so nodes can display agent names
     useAgentStore.getState().fetchAgents();
   }, [id, isGeneratingRoute, fetchPlaybook, fetchExecutions]);
+
+  useEffect(() => {
+    if (searchParams.get('schedule') === '1') {
+      setScheduleSheetOpen(true);
+    }
+  }, [searchParams]);
 
   // Fallback polling while an execution is active. This keeps both the canvas
   // and the detail pane in sync if an SSE step-complete/execution-complete event
