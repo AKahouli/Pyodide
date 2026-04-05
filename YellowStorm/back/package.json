@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "build": "nest build",
-    "postbuild": "cp package.json dist/",
+    "postbuild": "node -e \"const fs=require('fs'); fs.copyFileSync('package.json','dist/package.json')\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

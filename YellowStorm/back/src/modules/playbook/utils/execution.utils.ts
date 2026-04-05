@@ -266,6 +266,25 @@ export interface TaskArtifactEntry {
   metadata?: Record<string, unknown>;
 }
 
+function selectOutputPortForArtifact(outputPorts: any[], preferredKind: string, usedPortIds: Set<string>): any | null {
+  if (!outputPorts?.length) return null;
+
+  let candidates = outputPorts.filter((p: any) => p?.artifactKind === preferredKind);
+  if (candidates.length === 0) {
+    candidates = outputPorts;
+  }
+
+  for (const candidate of candidates) {
+    const portId = candidate?.id || 'default';
+    if (!usedPortIds.has(portId)) {
+      usedPortIds.add(portId);
+      return candidate;
+    }
+  }
+
+  return candidates[0] || null;
+}
+
 export function extractArtifactsFromResult(
   task: any,
   grpcComponents: any[],
@@ -273,15 +292,18 @@ export function extractArtifactsFromResult(
   const artifacts: TaskArtifactEntry[] = [];
   if (!task) return artifacts;
   const outputPorts = task.outputPorts || [];
+  const usedOutputPortIds = new Set<string>();
 
   for (const comp of grpcComponents) {
     const { type, data } = extractComponentData(comp);
 
     if (type === 'artifact') {
-      const port = outputPorts.find((p: any) => p.artifactKind === 'document') || { id: 'default' };
+      const preferredKind = (data as any)?.artifact_kind || (data as any)?.artifactKind || 'document';
+      const port = selectOutputPortForArtifact(outputPorts, preferredKind, usedOutputPortIds) || { id: 'default' };
+      const artifactKind = (port as any).artifactKind || preferredKind || 'document';
       artifacts.push({
         portId: (port as any).id || 'default',
-        artifactKind: 'document',
+        artifactKind,
         url: (data as any)?.file_path,
         filename: (data as any)?.filename,
         mimeType: (data as any)?.mime_type,

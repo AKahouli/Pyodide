@@ -404,7 +404,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 style={{ top }}
               >
                 <Handle
-                  id={`in-${port.id}`}
+                  id={port.id}
                   type="target"
                   position={Position.Left}
                   className="!w-3 !h-3"
@@ -451,7 +451,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
             >
               <Handle
-                id={`out-${port.id}`}
+                id={port.id}
                 type="source"
                 position={Position.Right}
                 className="!w-3 !h-3"

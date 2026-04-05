@@ -763,8 +763,8 @@ function PlaybookCanvasInner() {
             id: candidate.id,
             sourceId: candidate.source,
             targetId: candidate.target,
-            sourceOutputPortId: candidate.sourceHandle?.replace('out-', '') || ((candidate.data as any)?.sourceOutputPortId) || 'default',
-            targetInputPortId: candidate.targetHandle?.replace('in-', '') || ((candidate.data as any)?.targetInputPortId) || 'default',
+            sourceOutputPortId: candidate.sourceHandle || ((candidate.data as any)?.sourceOutputPortId) || 'default',
+            targetInputPortId: candidate.targetHandle || ((candidate.data as any)?.targetInputPortId) || 'default',
           })),
         );
         return updated;

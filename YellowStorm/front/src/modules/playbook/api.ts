@@ -3,7 +3,7 @@
  */
 
 import apiClient, { type ApiResponse } from '@/lib/api/client';
-import { API_ENDPOINTS } from '@/lib/api/config';
+import { API_CONFIG, API_ENDPOINTS, AUTH_STORAGE_KEYS } from '@/lib/api/config';
 import type {
   Playbook,
   PlaybookSummary,
@@ -13,6 +13,8 @@ import type {
   DesignMessage,
   CreatePlaybookData,
   GeneratePlaybookData,
+  RewritePlaybookPromptData,
+  RewritePlaybookPromptResult,
   DesignPlaybookData,
   UpdatePlaybookData,
   ExecutePlaybookData,
@@ -127,6 +129,53 @@ export async function generatePlaybook(
   return response.data.data;
 }
 
+export async function rewritePlaybookPrompt(
+  data: RewritePlaybookPromptData,
+): Promise<RewritePlaybookPromptResult> {
+  const response = await apiClient.post<ApiResponse<RewritePlaybookPromptResult>>(
+    API_ENDPOINTS.playbooks.rewritePrompt,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function rewritePlaybookPromptStream(
+  data: RewritePlaybookPromptData,
+  onChunk: (chunk: string) => void,
+): Promise<RewritePlaybookPromptResult> {
+  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.rewritePrompt}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    if (!chunk) continue;
+    fullText += chunk;
+    onChunk(chunk);
+  }
+
+  fullText += decoder.decode();
+  return { prompt: fullText.trim() };
+}
+
 export async function updatePlaybook(
   id: string,
   data: UpdatePlaybookData,
@@ -149,6 +198,13 @@ export async function executePlaybook(
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbooks.execute(id),
     data || {},
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookIntegrationToken(id: string): Promise<{ token: string }> {
+  const response = await apiClient.post<ApiResponse<{ token: string }>>(
+    API_ENDPOINTS.playbooks.integrationLink(id),
   );
   return response.data.data;
 }

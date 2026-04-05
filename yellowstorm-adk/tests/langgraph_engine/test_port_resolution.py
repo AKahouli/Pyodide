@@ -140,3 +140,20 @@ def test_resolve_task_inputs_accepts_backend_artifact_shape() -> None:
     assert doc_port["upstream_binding"]["artifact_kind"] == "document"
     assert doc_port["staged_files"][0]["filename"] == "report.pdf"
     assert doc_port["staged_files"][0]["filepath"] == "https://example.com/report.pdf"
+
+
+def test_validate_port_routing_accepts_prefixed_and_unprefixed_port_ids() -> None:
+    tasks = [
+        {"id": "source", "title": "Source", "output_ports": [{"id": "out-d5ebb147", "name": "Out"}]},
+        {"id": "target", "title": "Target", "input_ports": [{"id": "in-0d697e28", "name": "In"}]},
+    ]
+    edges = [
+        {
+            "source_id": "source",
+            "target_id": "target",
+            "source_output_port_id": "d5ebb147",
+            "target_input_port_id": "0d697e28",
+        }
+    ]
+
+    validate_port_routing(tasks, edges)

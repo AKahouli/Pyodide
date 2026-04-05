@@ -43,6 +43,34 @@ import json
 logger = get_logger(__name__)
 
 
+def _normalize_port_id(value: Any) -> str:
+    raw = str(value or "default").strip() or "default"
+    if raw.startswith(("in-", "out-")):
+        return raw.split("-", 1)[1] or "default"
+    return raw
+
+
+def _select_output_port_for_artifact(
+    output_ports: List[Dict[str, Any]],
+    preferred_kind: str,
+    used_port_ids: set[str],
+) -> Dict[str, Any] | None:
+    if not output_ports:
+        return None
+
+    candidates = [p for p in output_ports if str(p.get("artifact_kind") or "").strip() == preferred_kind]
+    if not candidates:
+        candidates = output_ports
+
+    for candidate in candidates:
+        port_id = str(candidate.get("id") or "default").strip() or "default"
+        if port_id not in used_port_ids:
+            used_port_ids.add(port_id)
+            return candidate
+
+    return candidates[0] if candidates else None
+
+
 def _extract_artifacts_from_components(
     components: List[Dict[str, Any]],
     task_config: TaskConfig,
@@ -57,6 +85,7 @@ def _extract_artifacts_from_components(
         return artifacts
 
     output_ports = task_config.get("output_ports") or []
+    used_output_port_ids: set[str] = set()
 
     for comp in components:
         comp_type = comp.get("type", "")
@@ -67,14 +96,13 @@ def _extract_artifacts_from_components(
             filename = str(data.get("filename", "")).strip()
             if not file_path or not filename:
                 continue
-            doc_port = next(
-                (p for p in output_ports if p.get("artifact_kind") == "document"),
-                None,
-            )
-            port_id = doc_port.get("id", "default") if doc_port else "default"
+            preferred_kind = str(data.get("artifact_kind") or data.get("artifactKind") or "document").strip() or "document"
+            selected_port = _select_output_port_for_artifact(output_ports, preferred_kind, used_output_port_ids)
+            port_id = selected_port.get("id", "default") if selected_port else "default"
+            artifact_kind = str(selected_port.get("artifact_kind") if selected_port else preferred_kind) or preferred_kind
             artifacts.append({
                 "port_id": port_id,
-                "artifact_kind": "document",
+                "artifact_kind": artifact_kind,
                 "url": file_path,
                 "filename": filename,
             })
@@ -854,7 +882,7 @@ class DynamicGraphBuilder:
                 if raw_artifacts:
                     port_artifacts: Dict[str, List[Dict[str, Any]]] = {}
                     for art in raw_artifacts:
-                        port_id = art.get("port_id", "default")
+                        port_id = _normalize_port_id(art.get("port_id", "default"))
                         art_key = f"{task_id}:{port_id}"
                         port_artifacts.setdefault(art_key, []).append(art)
                     state_update["artifacts_by_port"] = port_artifacts

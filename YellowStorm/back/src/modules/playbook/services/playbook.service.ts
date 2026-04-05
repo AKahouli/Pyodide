@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { nanoid } from 'nanoid';
 import { Playbook, PlaybookDocument } from '../schemas/playbook.schema';
 import {
   PlaybookExecution,
@@ -60,6 +61,7 @@ export class PlaybookService {
       workspaces: (dto.workspaces || []).map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     this.logger.log('Playbook created', { playbookId: playbook._id, userId });
@@ -82,6 +84,7 @@ export class PlaybookService {
       workspaces: workspaceIds.map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     this.logger.log('Playbook created with tasks', {
@@ -111,6 +114,7 @@ export class PlaybookService {
       workspaces: source.workspaces || [],
       createdBy: new Types.ObjectId(targetUserId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     await this.cloneExecutionsForPlaybook(sourcePlaybookId, cloned._id.toString(), targetUserId);
@@ -227,6 +231,7 @@ export class PlaybookService {
           { $limit: limit },
           {
             $project: {
+              integrationToken: 1,
               name: 1,
               description: 1,
               taskCount: 1,
@@ -246,6 +251,17 @@ export class PlaybookService {
     const [result] = await this.playbookModel.aggregate(pipeline);
     const total = result.metadata[0]?.total ?? 0;
     const playbooks = result.data as any[];
+
+    const missingTokenPlaybooks = playbooks.filter((p) => !p.integrationToken);
+    if (missingTokenPlaybooks.length > 0) {
+      await Promise.all(
+        missingTokenPlaybooks.map(async (p) => {
+          const integrationToken = nanoid(32);
+          await this.playbookModel.updateOne({ _id: p._id }, { $set: { integrationToken } }).exec();
+          p.integrationToken = integrationToken;
+        }),
+      );
+    }
 
     return {
       playbooks: playbooks.map((p) => this.mapToSummaryResponse(p)),
@@ -360,6 +376,32 @@ export class PlaybookService {
     const newValue = !playbook.isFavorite;
     await this.playbookModel.findByIdAndUpdate(playbookId, { $set: { isFavorite: newValue } });
     return { isFavorite: newValue };
+  }
+
+  async getOrCreateIntegrationToken(
+    playbookId: string,
+    userId: string,
+  ): Promise<{ token: string }> {
+    const playbook = await this.playbookModel.findOne({
+      _id: new Types.ObjectId(playbookId),
+      createdBy: new Types.ObjectId(userId),
+      isActive: true,
+    }).exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    if (!playbook.integrationToken) {
+      playbook.integrationToken = nanoid(32);
+      await playbook.save();
+    }
+
+    return { token: playbook.integrationToken };
+  }
+
+  async findByIntegrationToken(token: string): Promise<PlaybookDocument | null> {
+    return this.playbookModel.findOne({ integrationToken: token, isActive: true }).exec();
   }
 
   async findRawById(playbookId: string): Promise<PlaybookDocument | null> {
@@ -663,6 +705,7 @@ export class PlaybookService {
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
       scheduleEnabled: Boolean(playbook.scheduleEnabled),
+      integrationToken: playbook.integrationToken || null,
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,

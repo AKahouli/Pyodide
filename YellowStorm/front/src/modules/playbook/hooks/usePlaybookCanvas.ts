@@ -46,8 +46,8 @@ function playbookEdgesToFlowEdges(edges: PlaybookEdge[]): Edge[] {
     id: edge.id,
     source: edge.sourceId,
     target: edge.targetId,
-    sourceHandle: edge.sourceOutputPortId ? `out-${edge.sourceOutputPortId}` : undefined,
-    targetHandle: edge.targetInputPortId ? `in-${edge.targetInputPortId}` : undefined,
+    sourceHandle: edge.sourceOutputPortId || undefined,
+    targetHandle: edge.targetInputPortId || undefined,
     type: 'animated',
     data: {
       sourceOutputPortId: edge.sourceOutputPortId || 'default',
@@ -217,8 +217,8 @@ export function usePlaybookCanvas() {
           return eds;
         }
 
-        const sourceOutputPortId = connection.sourceHandle?.replace('out-', '') ?? 'default';
-        const targetInputPortId = connection.targetHandle?.replace('in-', '') ?? 'default';
+        const sourceOutputPortId = connection.sourceHandle ?? 'default';
+        const targetInputPortId = connection.targetHandle ?? 'default';
 
         const newEdgeId = `e-${connection.source}-${sourceOutputPortId}-${connection.target}-${targetInputPortId}`;
         if (eds.some((e) => e.id === newEdgeId)) {

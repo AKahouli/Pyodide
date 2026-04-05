@@ -398,6 +398,12 @@ async def run_single_step_graph(
     from src.langgraph_engine.graph_cache import store_thread_graph, cleanup_thread_graph
     from src.langgraph_engine.step_executor import _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot
 
+    def _normalize_port_id(value: Any) -> str:
+        raw = str(value or "default").strip() or "default"
+        if raw.startswith(("in-", "out-")):
+            return raw.split("-", 1)[1] or "default"
+        return raw
+
     checkpointer = await get_checkpointer()
     builder = DynamicGraphBuilder(checkpointer=checkpointer)
 
@@ -414,7 +420,7 @@ async def run_single_step_graph(
         for artifact in upstream_result.get("artifacts") or []:
             if not isinstance(artifact, dict):
                 continue
-            port_id = str(artifact.get("port_id") or artifact.get("portId") or "default").strip() or "default"
+            port_id = _normalize_port_id(artifact.get("port_id") or artifact.get("portId") or "default")
             artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(artifact)
 
     initial_state: ExecutionState = {

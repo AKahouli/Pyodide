@@ -76,11 +76,16 @@ def _resolve_document_metadata(
 
 
 def _port_map(port_defs: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
-    return {
-        str(port.get("id")): port
-        for port in port_defs or []
-        if isinstance(port, dict) and port.get("id")
-    }
+    result: Dict[str, Dict[str, Any]] = {}
+    for port in port_defs or []:
+        if not isinstance(port, dict) or not port.get("id"):
+            continue
+        port_id = str(port.get("id")).strip()
+        if not port_id:
+            continue
+        result[port_id] = port
+        result.setdefault(_normalize_port_id(port_id), port)
+    return result
 
 
 def _artifact_list(value: Any) -> List[Dict[str, Any]]:
@@ -89,6 +94,13 @@ def _artifact_list(value: Any) -> List[Dict[str, Any]]:
     if isinstance(value, dict):
         return [value]
     return []
+
+
+def _normalize_port_id(value: Any) -> str:
+    raw = str(value or "default").strip() or "default"
+    if raw.startswith("in-") or raw.startswith("out-"):
+        return raw.split("-", 1)[1] or "default"
+    return raw
 
 
 def _artifact_kind(artifact: Dict[str, Any]) -> str:
@@ -184,7 +196,7 @@ def _artifact_file_ref(artifact: Dict[str, Any], port_id: str) -> Optional[Dict[
 def _find_input_binding(edges: List[Dict[str, Any]], task_id: str, port_id: str) -> Optional[Dict[str, Any]]:
     matches = [
         edge for edge in edges
-        if edge.get("target_id") == task_id and str(edge.get("target_input_port_id") or "default") == port_id
+        if edge.get("target_id") == task_id and _normalize_port_id(edge.get("target_input_port_id")) == _normalize_port_id(port_id)
     ]
     if not matches:
         return None
@@ -220,14 +232,14 @@ def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any
             raise ValueError(f"Task '{target_id}' references unknown source task '{source_id}'")
 
         target_ports = _port_map(target_task.get("input_ports") or [])
-        target_port_id = str(edge.get("target_input_port_id") or "default").strip() or "default"
+        target_port_id = _normalize_port_id(edge.get("target_input_port_id"))
         if target_ports and target_port_id not in target_ports:
             raise ValueError(
                 f"Task '{target_id}' references unknown input port '{target_port_id}'"
             )
 
         source_ports = _port_map(source_task.get("output_ports") or [])
-        source_port_id = str(edge.get("source_output_port_id") or "default").strip() or "default"
+        source_port_id = _normalize_port_id(edge.get("source_output_port_id"))
         if source_ports and source_port_id not in source_ports:
             raise ValueError(
                 f"Task '{target_id}' references unknown source output port '{source_port_id}' on task '{source_id}'"
@@ -238,7 +250,7 @@ def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any
         if not isinstance(edge, dict):
             continue
         target_id = str(edge.get("target_id") or "").strip()
-        target_port_id = str(edge.get("target_input_port_id") or "default").strip() or "default"
+        target_port_id = _normalize_port_id(edge.get("target_input_port_id"))
         grouped.setdefault((target_id, target_port_id), []).append(edge)
 
     for (target_id, port_id), target_edges in grouped.items():
@@ -270,7 +282,7 @@ def resolve_task_inputs(
     port_ids = list(input_ports.keys())
     for port_binding in task_config.get("input_files_by_port") or []:
         if isinstance(port_binding, dict):
-            port_id = str(port_binding.get("port_id") or "default").strip() or "default"
+            port_id = _normalize_port_id(port_binding.get("port_id"))
             if port_id not in port_ids:
                 port_ids.append(port_id)
 
@@ -295,7 +307,7 @@ def resolve_task_inputs(
 
         if binding is not None:
             source_task_id = str(binding.get("source_id") or "")
-            source_output_port_id = str(binding.get("source_output_port_id") or "default").strip() or "default"
+            source_output_port_id = _normalize_port_id(binding.get("source_output_port_id"))
             artifact_key = f"{source_task_id}:{source_output_port_id}"
             artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
 

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookCard } from './PlaybookCard';
 import type { PlaybookSummary } from '../types';
+const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 
 const navigateMock = vi.hoisted(() => vi.fn());
 
@@ -15,6 +16,19 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
+vi.mock('sonner', () => ({
+  toast: toastMock,
+}));
+
+vi.mock('@/lib/api/config', () => ({
+  API_CONFIG: { baseURL: 'http://localhost:3000/api/v1' },
+  API_ENDPOINTS: {
+    playbooks: {
+      publicExecute: (token: string) => `/playbooks/public/${token}/execute`,
+    },
+  },
+}));
+
 const playbook: PlaybookSummary = {
   id: 'p1',
   name: 'Deploy Pipeline',
@@ -22,6 +36,7 @@ const playbook: PlaybookSummary = {
   taskCount: 5,
   isFavorite: false,
   scheduleEnabled: false,
+  integrationToken: 'integration-token',
   lastExecutionAt: null,
   createdAt: '2025-01-01T00:00:00.000Z',
   updatedAt: '2025-02-01T00:00:00.000Z',
@@ -64,6 +79,23 @@ describe('PlaybookCard', () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={onFav} />);
     await userEvent.click(screen.getByTitle('card.favorite'));
     expect(onFav).toHaveBeenCalledWith('p1');
+  });
+
+  it('copies the public integration url', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
+
+    await userEvent.click(screen.getByTitle('Copy integration URL'));
+    expect(screen.getByDisplayValue('http://localhost:3000/api/v1/playbooks/public/integration-token/execute')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /copy/i }));
+
+    expect(writeText).toHaveBeenCalledWith('http://localhost:3000/api/v1/playbooks/public/integration-token/execute');
+    expect(toastMock.success).toHaveBeenCalledWith('Integration URL copied');
   });
 
   it('calls onSelect in selectable mode instead of navigating', async () => {

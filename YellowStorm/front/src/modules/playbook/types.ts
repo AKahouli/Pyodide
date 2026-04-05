@@ -188,6 +188,7 @@ export interface PlaybookSummary {
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
   scheduleEnabled: boolean;
+  integrationToken?: string | null;
   /** Full schedule data when included by the list API (optional, backend-dependent). */
   executionSchedule?: ExecutionScheduleData | null;
   lastExecutionAt: string | null;
@@ -557,6 +558,14 @@ export interface GeneratePlaybookData {
   name: string;
   prompt: string;
   workspaces?: string[];
+}
+
+export interface RewritePlaybookPromptData {
+  prompt: string;
+}
+
+export interface RewritePlaybookPromptResult {
+  prompt: string;
 }
 
 export interface PlaybookSnapshot {

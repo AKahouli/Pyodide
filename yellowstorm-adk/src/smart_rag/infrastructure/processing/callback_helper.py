@@ -14,13 +14,62 @@ Functions:
 import base64
 import uuid
 from typing import Optional, Dict, Any
-from google.genai import types
-import re2 as re
-from datetime import datetime
-import pytz
-from google.adk.agents.callback_context import CallbackContext
-from google.adk.models import LlmRequest, LlmResponse
-from google.adk.tools import ToolContext, BaseTool
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+try:
+    from google.genai import types
+except Exception:  # pragma: no cover - optional dependency
+
+    @dataclass
+    class _Part:
+        text: Optional[str] = None
+        data: Optional[bytes] = None
+        mime_type: Optional[str] = None
+
+        @classmethod
+        def from_bytes(cls, data: bytes, mime_type: str):
+            return cls(data=data, mime_type=mime_type)
+
+    @dataclass
+    class _Content:
+        role: Optional[str] = None
+        parts: list = field(default_factory=list)
+
+    @dataclass
+    class _FunctionResponse:
+        name: Optional[str] = None
+        response: Any = None
+
+    class _Types:
+        Part = _Part
+        Content = _Content
+        FunctionResponse = _FunctionResponse
+
+    types = _Types()
+try:
+    import re2 as re
+except Exception:  # pragma: no cover - optional dependency
+    import re
+
+try:
+    from google.adk.agents.callback_context import CallbackContext
+    from google.adk.models import LlmRequest, LlmResponse
+    from google.adk.tools import ToolContext, BaseTool
+except Exception:  # pragma: no cover - optional dependency
+    class CallbackContext:  # type: ignore[no-redef]
+        pass
+
+    class LlmRequest:  # type: ignore[no-redef]
+        pass
+
+    class LlmResponse:  # type: ignore[no-redef]
+        pass
+
+    class ToolContext:  # type: ignore[no-redef]
+        pass
+
+    class BaseTool:  # type: ignore[no-redef]
+        pass
 
 def add_timestamp_to_agent(callback_context: CallbackContext) -> Optional[dict]:
     """
@@ -29,7 +78,7 @@ def add_timestamp_to_agent(callback_context: CallbackContext) -> Optional[dict]:
     current_state = callback_context.state.to_dict()
 
     if not current_state.get("time", None):
-        utc_time = datetime.now(pytz.utc).isoformat()
+        utc_time = datetime.now(timezone.utc).isoformat()
         callback_context.state["time"] = utc_time
         return None
 
@@ -366,8 +415,23 @@ def inject_images_before_model(
 
     return None
 
-import re2
-from bs4 import BeautifulSoup
+try:
+    import re2
+except Exception:  # pragma: no cover - optional dependency
+    import re as re2
+
+try:
+    from bs4 import BeautifulSoup
+except Exception:  # pragma: no cover - optional dependency
+    class BeautifulSoup:  # type: ignore[no-redef]
+        def __init__(self, html: str, parser: str):
+            self._html = html
+
+        def find(self, tag: str):
+            return None
+
+        def __str__(self):
+            return self._html
 
 def extract_html(result):
     result = str(result)

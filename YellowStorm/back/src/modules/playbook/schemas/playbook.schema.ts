@@ -180,6 +180,9 @@ export class Playbook extends Document {
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 
+  @Prop({ type: String, trim: true })
+  integrationToken?: string;
+
   @Prop({ type: ExecutionScheduleSchema, default: null })
   executionSchedule!: ExecutionSchedule | null;
 
@@ -192,6 +195,7 @@ export const PlaybookSchema = SchemaFactory.createForClass(Playbook);
 PlaybookSchema.index({ createdBy: 1, updatedAt: -1 });
 PlaybookSchema.index({ createdBy: 1, isActive: 1, updatedAt: -1 });
 PlaybookSchema.index({ isActive: 1, 'executionSchedule.enabled': 1 });
+PlaybookSchema.index({ integrationToken: 1 }, { unique: true, sparse: true });
 
 PlaybookSchema.set('toJSON', {
   virtuals: true,

@@ -8,18 +8,19 @@ Classes:
     LLMFactory: Factory class for creating LLM instances with different configurations.
 """
 
-from google.adk.models.lite_llm import LiteLlm
+from typing import TYPE_CHECKING
 from src.config.settings import get_settings
 from src.middleware.correlation import get_user
 from src.logger.logging import get_logger
 import os
-import litellm
 from typing import Dict, Any
+
+if TYPE_CHECKING:
+    from google.adk.models.lite_llm import LiteLlm
 
 
 logger = get_logger("api.smart_rag.llm_factory")
 app_settings = get_settings()
-litellm.drop_params = True
 os.environ["OLLAMA_API_BASE"] = app_settings.OLLAMA_API_BASE_URL
 os.environ["OLLAMA_API_KEY"] = app_settings.OLLAMA_API_KEY
 
@@ -35,7 +36,7 @@ class LLMFactory:
         create_no_tool_calls_llm: Creates LLM instance without tool calling capabilities.
     """
     @staticmethod
-    def create_parallel_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> LiteLlm:
+    def create_parallel_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance with parallel tool calls disabled.
 
         Creates a language model configured for sequential tool execution,
@@ -54,6 +55,9 @@ class LLMFactory:
             Exception: If LLM creation fails due to configuration or connection issues.
         """
         try:
+            import litellm
+            litellm.drop_params = True
+            from google.adk.models.lite_llm import LiteLlm
             if isinstance(model_name, dict):
                 model_name = str(model_name.get('provider'))
 
@@ -88,10 +92,13 @@ class LLMFactory:
             raise
 
     @staticmethod
-    def create_no_parallel_tool_calls_llm(model_name: str, temperature=None, tool_choice:str="auto",max_completion_tokens=20000) -> LiteLlm:
+    def create_no_parallel_tool_calls_llm(model_name: str, temperature=None, tool_choice:str="auto",max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance without tool calls."""
 
         try:
+            import litellm
+            litellm.drop_params = True
+            from google.adk.models.lite_llm import LiteLlm
             if isinstance(model_name, dict):
                 model_name = str(model_name.get('provider'))
 
@@ -128,9 +135,12 @@ class LLMFactory:
             raise
 
     @staticmethod
-    def create_no_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> LiteLlm:
+    def create_no_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> 'LiteLlm':
         """Create an LLM instance without tool calls."""
         try:
+            import litellm
+            litellm.drop_params = True
+            from google.adk.models.lite_llm import LiteLlm
             if isinstance(model_name, dict):
                 model_name = str(model_name.get('provider'))
             # Create new LLM instance

@@ -152,7 +152,7 @@ function createMockPlaybook(overrides: Record<string, any> = {}) {
     edges: [
       { sourceId: 'task-1', targetId: 'task-2', toObject: function () { return { sourceId: 'task-1', targetId: 'task-2' }; } },
     ],
-    workspaces: [],
+    workspaces: [objectId('ws1')],
     ...overrides,
   };
 }
@@ -216,6 +216,7 @@ describe('PlaybookExecutionService', () => {
 
     mockPlaybookService = {
       findRawById: jest.fn(),
+      findByIntegrationToken: jest.fn(),
       getNextExecutionNumber: jest.fn().mockResolvedValue(1),
     };
 
@@ -290,7 +291,9 @@ describe('PlaybookExecutionService', () => {
     mockExecutionModel.findById = jest.fn().mockReturnValue(createChainMock(null));
     mockExecutionModel.findByIdAndUpdate = jest.fn().mockResolvedValue(null);
     mockExecutionModel.findOne = jest.fn().mockReturnValue(createChainMock(null));
-    mockExecutionModel.updateOne = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    mockExecutionModel.updateOne = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+    });
     mockExecutionModel.create = jest.fn().mockResolvedValue({
       _id: objectId('exec1'),
       toString: () => objectId('exec1').toString(),
@@ -378,6 +381,32 @@ describe('PlaybookExecutionService', () => {
   });
 
   // ===== executePlaybook =====
+
+  describe('executePlaybookByIntegrationToken', () => {
+    it('should resolve the playbook owner and delegate to executePlaybook', async () => {
+      const playbook = {
+        _id: objectId('pb1'),
+        createdBy: objectId('user1'),
+      };
+      mockPlaybookService.findByIntegrationToken.mockResolvedValue(playbook);
+      mockUserService.findById.mockResolvedValue({ email: 'owner@example.com' });
+
+      const executeSpy = jest.spyOn(service, 'executePlaybook').mockResolvedValue({ executionId: 'exec-public-1' });
+
+      const result = await service.executePlaybookByIntegrationToken('public-token', {} as any);
+
+      expect(mockPlaybookService.findByIntegrationToken).toHaveBeenCalledWith('public-token');
+      expect(mockUserService.findById).toHaveBeenCalledWith(objectId('user1').toString());
+      expect(executeSpy).toHaveBeenCalledWith(
+        objectId('user1').toString(),
+        objectId('pb1').toString(),
+        {},
+        'owner@example.com',
+        { executionTrigger: 'manual' },
+      );
+      expect(result).toEqual({ executionId: 'exec-public-1' });
+    });
+  });
 
   describe('executePlaybook', () => {
     const userId = objectId('user1').toString();

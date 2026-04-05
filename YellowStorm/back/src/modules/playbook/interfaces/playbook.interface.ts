@@ -119,9 +119,14 @@ export interface PlaybookSummaryResponse {
   isFavorite: boolean;
   /** True when embedded `executionSchedule` exists and is enabled (scheduled runs). */
   scheduleEnabled: boolean;
+  integrationToken?: string | null;
   lastExecutionAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PlaybookIntegrationLinkResponse {
+  token: string;
 }
 
 export interface PaginatedPlaybookSummaries {

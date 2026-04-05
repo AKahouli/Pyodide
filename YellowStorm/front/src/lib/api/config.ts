@@ -190,7 +190,10 @@ export const API_ENDPOINTS = {
   playbooks: {
     list: '/playbooks',
     generate: '/playbooks/generate',
+    rewritePrompt: '/playbooks/rewrite-prompt',
     byId: (id: string) => `/playbooks/${id}`,
+    integrationLink: (id: string) => `/playbooks/${id}/integration-link`,
+    publicExecute: (token: string) => `/playbooks/public/${token}/execute`,
     execute: (id: string) => `/playbooks/${id}/execute`,
     resume: (id: string) => `/playbooks/${id}/resume`,
     skipStep: (id: string) => `/playbooks/${id}/skip-step`,

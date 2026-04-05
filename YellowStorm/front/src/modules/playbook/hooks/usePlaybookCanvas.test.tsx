@@ -101,14 +101,14 @@ describe('usePlaybookCanvas', () => {
       result.current.onConnect({
         source: 'task-1',
         target: 'task-2',
-        sourceHandle: 'out-out-1',
-        targetHandle: 'in-in-1',
+        sourceHandle: 'out-1',
+        targetHandle: 'in-1',
       } as any);
       result.current.onConnect({
         source: 'task-1',
         target: 'task-2',
-        sourceHandle: 'out-out-2',
-        targetHandle: 'in-in-2',
+        sourceHandle: 'out-2',
+        targetHandle: 'in-2',
       } as any);
     });
 

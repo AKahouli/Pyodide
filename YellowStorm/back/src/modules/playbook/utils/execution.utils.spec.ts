@@ -5,6 +5,7 @@ import {
   pLimit,
   mergeWithExistingHumanFeedback,
   topologicalSortByLevel,
+  extractArtifactsFromResult,
   MAX_COMPONENTS_PER_TASK_DEFAULT,
   MAX_COMPONENT_DATA_BYTES_DEFAULT,
 } from './execution.utils';
@@ -220,6 +221,59 @@ describe('execution.utils', () => {
       // Verify the defaults are exported and reasonable
       expect(MAX_COMPONENTS_PER_TASK_DEFAULT).toBe(200);
       expect(MAX_COMPONENT_DATA_BYTES_DEFAULT).toBe(500_000);
+    });
+  });
+
+  describe('extractArtifactsFromResult', () => {
+    it('assigns same-kind file outputs in port order', () => {
+      mockExtractComponentData.mockImplementation((comp: any) => {
+        if (comp.id === 'artifact-1') {
+          return {
+            type: 'artifact' as any,
+            data: {
+              artifact_kind: 'document',
+              file_path: 'https://example.com/report.pdf',
+              filename: 'report.pdf',
+            },
+          };
+        }
+
+        return {
+          type: 'artifact' as any,
+          data: {
+            artifact_kind: 'document',
+            file_path: 'https://example.com/deck.pptx',
+            filename: 'deck.pptx',
+          },
+        };
+      });
+
+      const result = extractArtifactsFromResult(
+        {
+          outputPorts: [
+            { id: 'out-pdf', name: 'PDF', artifactKind: 'document' },
+            { id: 'out-pptx', name: 'pptx', artifactKind: 'document' },
+          ],
+        },
+        [{ id: 'artifact-1' }, { id: 'artifact-2' }],
+      );
+
+      expect(result).toEqual([
+        {
+          portId: 'out-pdf',
+          artifactKind: 'document',
+          url: 'https://example.com/report.pdf',
+          filename: 'report.pdf',
+          mimeType: undefined,
+        },
+        {
+          portId: 'out-pptx',
+          artifactKind: 'document',
+          url: 'https://example.com/deck.pptx',
+          filename: 'deck.pptx',
+          mimeType: undefined,
+        },
+      ]);
     });
   });
 

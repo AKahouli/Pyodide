@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { PlaybookService } from './playbook.service';
@@ -16,8 +17,16 @@ import { BadRequestException, ServiceUnavailableException } from '../../exceptio
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentService } from '../../agent/agent.service';
 import { ModelsService } from '../../models/models.service';
+import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { UsageService } from '../../usage/usage.service';
 import { UsageType } from '../../usage/schemas/usage.schema';
+import type { AxiosResponse } from 'axios';
+
+const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
+  'You rewrite workflow prompts for a playbook builder.',
+  'Improve clarity, specificity, structure, and actionability while preserving the user\'s intent.',
+  'Return only the rewritten prompt as plain text, with no preamble, no bullets, and no quotes.',
+].join(' ');
 
 @Injectable()
 export class PlaybookDesignService {
@@ -29,10 +38,42 @@ export class PlaybookDesignService {
     private readonly contextService: PlaybookContextService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
+    private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly configService: ConfigService,
     private readonly usageService: UsageService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('PlaybookDesignService');
+  }
+
+  private extractChatCompletionText(responseData: any): string | null {
+    const content = responseData?.choices?.[0]?.message?.content;
+    if (typeof content === 'string') {
+      return content.trim() || null;
+    }
+
+    if (Array.isArray(content)) {
+      const text = content
+        .map((item) => (typeof item?.text === 'string' ? item.text : ''))
+        .join('\n')
+        .trim();
+      return text || null;
+    }
+
+    return null;
+  }
+
+  private normalizeRewritePrompt(text: string): string {
+    return text
+      .trim()
+      .replace(/^```(?:text)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .replace(/^(rewritten prompt|rewrite|prompt rewrite)\s*:\s*/i, '')
+      .trim();
+  }
+
+  private getPromptRewriteSystemPrompt(): string {
+    return this.configService.get<string>('playbook.promptRewriteSystemPrompt')?.trim() || FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT;
   }
 
   /**
@@ -125,6 +166,164 @@ export class PlaybookDesignService {
         stack: (error as Error).stack,
       });
       throw new ServiceUnavailableException(ErrorCode.PLAYBOOK_GENERATE_FAILED);
+    }
+  }
+
+  async rewritePrompt(userId: string, prompt: string): Promise<{ prompt: string }> {
+    const sourcePrompt = prompt.trim();
+    this.logger.log('rewritePrompt called', { userId, prompt: sourcePrompt.slice(0, 100) });
+
+    if (!sourcePrompt) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+
+    const httpClient = this.liteLLMConnectionService.getHttpClient();
+    if (!httpClient) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    if (!model) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const systemPrompt = this.getPromptRewriteSystemPrompt();
+    const userPrompt = `<original_prompt>\n${sourcePrompt}\n</original_prompt>`;
+
+    try {
+      const response = await httpClient.post('/v1/chat/completions', {
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }, {
+        timeout: 30000,
+      });
+
+      const rewrittenPrompt = this.normalizeRewritePrompt(this.extractChatCompletionText(response.data) || sourcePrompt);
+
+      const usage = response.data?.usage;
+      if (usage) {
+        this.usageService.recordUsage({
+          userId,
+          inputTokens: usage.prompt_tokens || usage.input_tokens || 0,
+          outputTokens: usage.completion_tokens || usage.output_tokens || 0,
+          usageType: UsageType.PLAYBOOK,
+          modelName: usage.model || model,
+          endpoint: 'playbook.rewrite-prompt',
+        }).catch((err) => this.logger.warn('Failed to record rewrite usage', { error: (err as Error).message }));
+      }
+
+      return { prompt: rewrittenPrompt };
+    } catch (error) {
+      this.logger.error('Prompt rewrite failed', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+  }
+
+  async rewritePromptStream(
+    userId: string,
+    prompt: string,
+    onChunk: (chunk: string) => void,
+  ): Promise<{ prompt: string }> {
+    const sourcePrompt = prompt.trim();
+    this.logger.log('rewritePromptStream called', { userId, prompt: sourcePrompt.slice(0, 100) });
+
+    if (!sourcePrompt) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+
+    const httpClient = this.liteLLMConnectionService.getHttpClient();
+    if (!httpClient) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    if (!model) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const systemPrompt = this.getPromptRewriteSystemPrompt();
+    const userPrompt = `<original_prompt>\n${sourcePrompt}\n</original_prompt>`;
+
+    let pending = '';
+    let streamedText = '';
+
+    try {
+      const response = await httpClient.post('/v1/chat/completions', {
+        model,
+        temperature: 0.2,
+        stream: true,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }, {
+        timeout: 30000,
+        responseType: 'stream',
+      }) as AxiosResponse;
+
+      for await (const rawChunk of response.data as AsyncIterable<Buffer | string>) {
+        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk.toString('utf8') : String(rawChunk);
+        pending += chunk;
+
+        let separatorIndex = pending.indexOf('\n\n');
+        while (separatorIndex !== -1) {
+          const event = pending.slice(0, separatorIndex).trim();
+          pending = pending.slice(separatorIndex + 2);
+
+          const payload = event
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.replace(/^data:\s*/, ''))
+            .join('\n')
+            .trim();
+
+          if (payload && payload !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(payload);
+              const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content;
+              if (typeof delta === 'string' && delta) {
+                streamedText += delta;
+                onChunk(delta);
+              }
+            } catch {
+              // Ignore malformed streaming chunks and continue.
+            }
+          }
+
+          separatorIndex = pending.indexOf('\n\n');
+        }
+      }
+
+      const result = this.normalizeRewritePrompt(streamedText || sourcePrompt);
+
+      const usage = response.data?.usage;
+      if (usage) {
+        this.usageService.recordUsage({
+          userId,
+          inputTokens: usage.prompt_tokens || usage.input_tokens || 0,
+          outputTokens: usage.completion_tokens || usage.output_tokens || 0,
+          usageType: UsageType.PLAYBOOK,
+          modelName: usage.model || model,
+          endpoint: 'playbook.rewrite-prompt',
+        }).catch((err) => this.logger.warn('Failed to record rewrite usage', { error: (err as Error).message }));
+      }
+
+      return { prompt: result };
+    } catch (error) {
+      this.logger.error('Prompt rewrite stream failed', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
   }
 

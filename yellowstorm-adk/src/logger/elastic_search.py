@@ -1,7 +1,14 @@
 import logging
 from datetime import datetime, timezone
+from typing import Any, TYPE_CHECKING
 
-from elasticsearch import Elasticsearch
+if TYPE_CHECKING:
+    from elasticsearch import Elasticsearch
+
+try:
+    from elasticsearch import Elasticsearch
+except Exception:  # pragma: no cover - optional dependency
+    Elasticsearch = Any  # type: ignore[misc,assignment]
 
 
 def elastic_search_logging(

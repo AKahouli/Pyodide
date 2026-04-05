@@ -9,4 +9,9 @@ export default registerAs('playbook', () => ({
   maxComponentsPerTask: parseInt(process.env.PLAYBOOK_MAX_COMPONENTS_PER_TASK || '200', 10),
   maxComponentDataBytes: parseInt(process.env.PLAYBOOK_MAX_COMPONENT_DATA_BYTES || '500000', 10),
   maxConcurrentSteps: parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_STEPS || '5', 10),
+  promptRewriteSystemPrompt: process.env.PLAYBOOK_PROMPT_REWRITE_SYSTEM_PROMPT || [
+    'You rewrite workflow prompts for a playbook builder.',
+    'Improve clarity, specificity, structure, and actionability while preserving the user\'s intent.',
+    'Return only the rewritten prompt as plain text, with no preamble, no bullets, and no quotes.',
+  ].join(' '),
 }));

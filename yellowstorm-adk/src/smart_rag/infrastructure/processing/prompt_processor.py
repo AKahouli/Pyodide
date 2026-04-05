@@ -5,7 +5,10 @@ Handles prompt processing, extraction, and transformation operations.
 """
 
 from typing import Tuple, Optional
-import re2 as re
+try:
+    import re2 as re
+except Exception:  # pragma: no cover - optional dependency
+    import re
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 

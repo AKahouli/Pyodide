@@ -144,6 +144,9 @@ export const configValidationSchema = Joi.object({
   LITELLM_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).default(0),
   LITELLM_RECONNECT_MULTIPLIER: Joi.number().min(1).max(10).default(2),
 
+  // Playbook
+  PLAYBOOK_PROMPT_REWRITE_SYSTEM_PROMPT: Joi.string().optional(),
+
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),

@@ -9,9 +9,11 @@ import {
   Param,
   Query,
   UseGuards,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { Public } from '../../auth/decorators/public.decorator';
 import { PlaybookService } from '../services/playbook.service';
 import { PlaybookExecutionService } from '../services/playbook-execution.service';
 import { PlaybookDesignService } from '../services/playbook-design.service';
@@ -42,6 +44,10 @@ import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.
 import { UpdateOutputFormatTemplateDto } from '../dto/update-output-format-template.dto';
 import { RerunStepDto } from '../dto/rerun-step.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
+import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
+import type { Response } from 'express';
+import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.decorator';
+import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -82,6 +88,46 @@ export class PlaybookController {
     @Body() dto: GeneratePlaybookDto,
   ) {
     return this.designService.generatePlaybook(user._id.toString(), dto, user.email);
+  }
+
+  @Post('rewrite-prompt')
+  @UseGuards(UsageLimitGuard)
+  @CheckUsage()
+  @SkipResponseWrap()
+  async rewritePrompt(
+    @CurrentUser() user: { _id: string; email: string },
+    @Body() dto: RewritePromptDto,
+    @Res() res: Response,
+  ) {
+    res.status(200);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    let fullText = '';
+
+    try {
+      const result = await this.designService.rewritePromptStream(
+        user._id.toString(),
+        dto.prompt,
+        (chunk) => {
+          fullText += chunk;
+          res.write(chunk);
+          res.flush?.();
+        },
+      );
+
+      res.end();
+      return;
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(503);
+      }
+      res.end();
+      return;
+    }
   }
 
   @Post('bulk-delete')
@@ -189,6 +235,24 @@ export class PlaybookController {
     return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email, {
       executionTrigger: 'manual',
     });
+  }
+
+  @Post(':id/integration-link')
+  @UseGuards(PlaybookOwnerGuard)
+  async getIntegrationLink(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+  ): Promise<PlaybookIntegrationLinkResponse> {
+    return this.playbookService.getOrCreateIntegrationToken(id, user._id.toString());
+  }
+
+  @Post('public/:token/execute')
+  @Public()
+  async executePublic(
+    @Param('token') token: string,
+    @Body() dto: ExecutePlaybookDto,
+  ) {
+    return this.executionService.executePlaybookByIntegrationToken(token, dto);
   }
 
   @Post(':id/tasks/:taskId/validate-replay')

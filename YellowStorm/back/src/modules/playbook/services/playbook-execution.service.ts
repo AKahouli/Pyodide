@@ -1133,6 +1133,27 @@ export class PlaybookExecutionService {
     return { executionId };
   }
 
+  async executePlaybookByIntegrationToken(
+    token: string,
+    dto: ExecutePlaybookDto,
+  ): Promise<{ executionId: string }> {
+    const playbook = await this.playbookService.findByIntegrationToken(token);
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    const ownerId = playbook.createdBy?.toString?.() || '';
+    if (!ownerId) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    const owner = await this.userService.findById(ownerId);
+    return this.executePlaybook(ownerId, playbook._id.toString(), dto, owner?.email || '', {
+      executionTrigger: 'manual',
+    });
+  }
+
   /**
    * Full workflow execution: delegates orchestration to LangGraph via RunPlaybookWorkflow.
    * Consumes server-side stream, forwarding step updates to frontend via SSE in real-time.

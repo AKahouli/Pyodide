@@ -25,12 +25,13 @@ describe('PlaybookController', () => {
       | 'getSchedule'
       | 'upsertSchedule'
       | 'clearSchedule'
+      | 'getOrCreateIntegrationToken'
     >
   >;
   let executionService: jest.Mocked<
     Pick<
       PlaybookExecutionService,
-      'executePlaybook' | 'stopExecution' | 'resumeExecution' | 'findActiveExecutionsByUser'
+      'executePlaybook' | 'executePlaybookByIntegrationToken' | 'stopExecution' | 'resumeExecution' | 'findActiveExecutionsByUser'
     >
   >;
   let designService: jest.Mocked<
@@ -60,10 +61,12 @@ describe('PlaybookController', () => {
       getSchedule: jest.fn().mockResolvedValue(null),
       upsertSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
       clearSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
+      getOrCreateIntegrationToken: jest.fn().mockResolvedValue({ token: 'integration-token' }),
     };
 
     executionService = {
       executePlaybook: jest.fn().mockResolvedValue({ executionId: 'exec-1' }),
+      executePlaybookByIntegrationToken: jest.fn().mockResolvedValue({ executionId: 'exec-public-1' }),
       stopExecution: jest.fn().mockResolvedValue(undefined),
       resumeExecution: jest.fn().mockResolvedValue({ executionId: 'exec-1' }),
       findActiveExecutionsByUser: jest.fn().mockResolvedValue([]),
@@ -231,6 +234,25 @@ describe('PlaybookController', () => {
         'test@example.com',
         { executionTrigger: 'manual' },
       );
+    });
+  });
+
+  describe('getIntegrationLink', () => {
+    it('should delegate to playbookService.getOrCreateIntegrationToken', async () => {
+      const result = await controller.getIntegrationLink(user, playbookId);
+
+      expect(playbookService.getOrCreateIntegrationToken).toHaveBeenCalledWith(playbookId, 'user-123');
+      expect(result).toEqual({ token: 'integration-token' });
+    });
+  });
+
+  describe('executePublic', () => {
+    it('should delegate to executionService.executePlaybookByIntegrationToken', async () => {
+      const dto = { variables: {} } as any;
+
+      await controller.executePublic('integration-token', dto);
+
+      expect(executionService.executePlaybookByIntegrationToken).toHaveBeenCalledWith('integration-token', dto);
     });
   });
 
