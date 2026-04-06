@@ -20,7 +20,6 @@ import {
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
-import { ArtifactBadge } from './ArtifactBadge';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
 import { usePlaybookStore } from '../store';
@@ -265,9 +264,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
   const isConfigured = !!data.assignedAgentId;
   const status = data.stepStatus as StepStatus | undefined;
-  const stepArtifacts = usePlaybookStore((s) =>
-    s.currentExecution?.taskResults.find((tr) => tr.taskId === id)?.artifacts,
-  );
   const semanticMatch = data.stepSemanticMatch;
   const ringClass = status ? STATUS_RING[status] : '';
   const headerBgClass = status ? STATUS_HEADER_BG[status] : '';
@@ -525,10 +521,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   />
                 )}
               </div>
-            )}
-
-            {stepArtifacts && stepArtifacts.length > 0 && (
-              <ArtifactBadge artifacts={stepArtifacts} />
             )}
 
             <div className="flex items-center justify-between gap-2 pt-1">

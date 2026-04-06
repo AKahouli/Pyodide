@@ -506,27 +506,33 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
   });
 
-  it('fetches execution and keeps newer cached status over older api status', async () => {
+  it('prefers terminal api execution state over cached running state', async () => {
     const cached = makeExecution({
       id: 'e1',
       status: 'running',
       taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'running' }],
       updatedAt: '2025-01-01T00:00:10.000Z',
     });
-    usePlaybookStore.setState({ executionCache: { e1: cached }, selectedStepId: null });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      selectedStepId: null,
+      executingPlaybookIds: ['p1'],
+    });
 
     apiMock.getExecution.mockResolvedValueOnce(
       makeExecution({
         id: 'e1',
-        status: 'pending',
-        taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'pending' }],
+        playbookId: 'p1',
+        status: 'completed',
+        taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed' }],
       }),
     );
 
     await usePlaybookStore.getState().fetchExecution('p1', 'e1');
     const state = usePlaybookStore.getState();
-    expect(state.currentExecution?.status).toBe('running');
-    expect(state.currentExecution?.taskResults[0].status).toBe('running');
+    expect(state.currentExecution?.status).toBe('completed');
+    expect(state.currentExecution?.taskResults[0].status).toBe('completed');
+    expect(state.executingPlaybookIds).not.toContain('p1');
   });
 
   it('optimistically updates statuses when resuming from a step', async () => {
@@ -627,7 +633,7 @@ describe('playbook store', () => {
       output: null,
       isStale: false,
     });
-    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2' });
+    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2', streaming: false });
   });
 
   it('optimistically updates the rerun step status immediately', async () => {

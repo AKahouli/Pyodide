@@ -2339,7 +2339,7 @@ describe('PlaybookExecutionService', () => {
         result: { components: [], duration_ms: '1' },
       });
 
-      await service.rerunStepInExecution(userId, playbookId, objectId('exec1').toString(), 'task-1', false, 'live', '');
+      await service.rerunStepInExecution(userId, playbookId, objectId('exec1').toString(), 'task-1', false, 'live', false, '');
 
       expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
         objectId('exec1').toString(),
@@ -2862,6 +2862,57 @@ describe('PlaybookExecutionService', () => {
       stream.cancel = jest.fn();
       return stream;
     }
+
+    it('should mark execution CANCELLED when a locally cancelled stream ends', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+      mockGrpcService.wasCancelled.mockReturnValueOnce(true);
+
+      const execution = createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+          { taskId: 'task-2', status: StepStatus.PENDING, components: [] },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        objectId('exec1').toString(),
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: ExecutionStatus.CANCELLED,
+          }),
+        }),
+      );
+
+      expect(mockLoggerService.warn).not.toHaveBeenCalledWith(
+        'Stream ended prematurely with tasks still pending/running',
+        expect.anything(),
+      );
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_execution_complete',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            status: ExecutionStatus.CANCELLED,
+          }),
+        }),
+      );
+    });
 
     it('should mark execution FAILED when stream ends with tasks still pending', async () => {
       const mockStream = createMockStream();

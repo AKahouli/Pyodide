@@ -151,6 +151,10 @@ const STATUS_PRIORITY: Record<string, number> = {
   cancelled: 3,
 };
 
+function isActiveExecutionStatus(status: ExecutionStatus | string | null | undefined): boolean {
+  return status === 'running' || status === 'interrupted';
+}
+
 function isNewerStatus(a: string, b: string): boolean {
   return (STATUS_PRIORITY[a] ?? 0) > (STATUS_PRIORITY[b] ?? 0);
 }
@@ -214,6 +218,10 @@ function shouldKeepRunningExecution(
   incomingExecution: Pick<PlaybookExecution, 'status' | 'updatedAt' | 'startedAt' | 'completedAt'>,
 ): boolean {
   if (cachedExecution.status !== 'running') {
+    return false;
+  }
+
+  if (!isActiveExecutionStatus(incomingExecution.status)) {
     return false;
   }
 
@@ -1720,6 +1728,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set((state) => {
           let executionCache = { ...state.executionCache };
           const executingIds = new Set(state.executingPlaybookIds);
+          const completedPlaybookIds = new Set<string>();
           let currentExecution = state.currentExecution;
 
           for (const incoming of executions) {
@@ -1758,12 +1767,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionCache[incoming.id] = incoming;
             }
 
-            if (incoming.status === 'running' || executionCache[incoming.id].status === 'running') {
+            const mergedExecution = executionCache[incoming.id];
+            if (isActiveExecutionStatus(incoming.status) || isActiveExecutionStatus(mergedExecution.status)) {
               executingIds.add(incoming.playbookId);
+            } else {
+              completedPlaybookIds.add(incoming.playbookId);
             }
             if (state.currentPlaybook?.id === incoming.playbookId) {
-              currentExecution = executionCache[incoming.id];
+              currentExecution = mergedExecution;
             }
+          }
+
+          for (const playbookId of completedPlaybookIds) {
+            executingIds.delete(playbookId);
           }
 
           return {
@@ -1847,11 +1863,15 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const sorted = [...merged.taskResults].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
           const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
           const executionCache = { ...get().executionCache, [execId]: merged };
+          const executingPlaybookIds = isActiveExecutionStatus(merged.status)
+            ? get().executingPlaybookIds
+            : get().executingPlaybookIds.filter((pid) => pid !== playbookId);
           set({
             currentExecution: merged,
             currentExecutionLoading: false,
             executionCache,
             selectedStepId: get().selectedStepId || firstStep?.taskId || null,
+            executingPlaybookIds,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Failed to fetch execution';

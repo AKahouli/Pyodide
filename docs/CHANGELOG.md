@@ -1,5 +1,50 @@
 # Changelog
 
+## [2026-04-06 07:51] — Finalize cancelled workflow streams correctly
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Taught the backend workflow stream consumer to recognize locally cancelled gRPC streams in the `end` handler, not just the `error` handler, and added a regression test for the `cancel -> end` path.
+- **Why:** Some cancelled workflow streams were ending cleanly and being misclassified as failed with `Stream ended unexpectedly before all tasks completed`.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `docs/playbook/README_2026-04-06_07-51-44.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_07-51-44.md`
+
+## [2026-04-06 07:34] — Batch frontend playbook stream updates
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Batched rapid frontend `playbook_step_update` SSE events per execution step and flushed them before terminal events, with regression tests covering batching and ordering.
+- **Why:** The UI could freeze when streaming started because every partial update immediately hit the store and rerendered the playbook frontend.
+- **Impact:** `YellowStorm/front/src/modules/playbook/services/playbookStreamService.ts`, `YellowStorm/front/src/modules/playbook/services/playbookStreamService.test.tsx`, `docs/playbook/README_2026-04-06_07-34-04.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_07-34-04.md`
+
+## [2026-04-06 07:30] — Add workflow results download
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added a combined HTML export for all workflow step results and surfaced it as a new download action in the execution header.
+- **Why:** Users need a single artifact that captures the full workflow run output, not just the selected step.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionHeader.tsx`, `YellowStorm/front/src/modules/playbook/utils/renderStepResultHtml.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionHeader.test.tsx`, `YellowStorm/front/src/modules/playbook/utils/renderStepResultHtml.test.ts`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, `docs/playbook/README_2026-04-06_07-30-50.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_07-30-50.md`
+
+## [2026-04-06 07:22] — Clear stale active-run state
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Tightened execution-state reconciliation so terminal refetches clear stale active-run state, and added regression coverage for the completed-vs-running merge path.
+- **Why:** The Run button could remain stuck in a running state when the terminal SSE event was missed but the subsequent refetch proved the execution had already completed.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `docs/playbook/README_2026-04-06_07-22-39.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_07-22-39.md`
+
+## [2026-04-06 07:03] — Trim playbook canvas churn
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Removed the complementary artefact badge from playbook node cards and changed the live execution canvas to reuse unchanged node and edge objects instead of recreating the full overlay on every streamed update.
+- **Why:** Large workflow runs were freezing the frontend, and the extra per-node artefact pane added avoidable DOM and reconciliation work during frequent execution updates.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookNode.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookNode.test.tsx`, `docs/playbook/README_2026-04-06_07-03-14.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_07-03-14.md`
+
 ## [2026-04-06 05:59] — Reuse final output synthesis in workflow nodes
 
 - **Feature:** `playbook`

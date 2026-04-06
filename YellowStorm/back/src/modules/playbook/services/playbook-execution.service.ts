@@ -1942,6 +1942,13 @@ export class PlaybookExecutionService {
           this.activeStepBuffers.delete(executionId);
           await this.recordStreamUsage(userId, executionId, stepBuffer, startedAt);
 
+          const wasCancelled = this.grpcService.wasCancelled(executionId);
+          if (wasCancelled) {
+            await this.markExecutionCancelled(userId, executionId, startedAt);
+            resolve();
+            return;
+          }
+
           const resumedBuffered = resumedTaskId ? stepBuffer.get(resumedTaskId) : undefined;
           const resumedNeedsCompletion = resumedTaskId && (
             !resumedBuffered ||

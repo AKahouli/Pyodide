@@ -39,6 +39,8 @@ const defaultProps = {
   canRedo: false,
   onUndo: vi.fn(),
   onRedo: vi.fn(),
+  onDownloadAllResults: vi.fn(),
+  canDownloadAllResults: true,
 };
 
 describe('PlaybookToolbar', () => {
@@ -49,6 +51,7 @@ describe('PlaybookToolbar', () => {
     expect(screen.getByText('toolbar.designer')).toBeInTheDocument();
     expect(screen.getByText('toolbar.addBlankStep')).toBeInTheDocument();
     expect(screen.getByText('toolbar.autoLayout')).toBeInTheDocument();
+    expect(screen.getByText('execution.downloadAllResults')).toBeInTheDocument();
     expect(screen.getByText('toolbar.saved')).toBeInTheDocument();
     expect(screen.getByText('toolbar.run')).toBeInTheDocument();
   });
@@ -113,5 +116,12 @@ describe('PlaybookToolbar', () => {
   it('hides executions button in design mode when there is no execution context', () => {
     render(<PlaybookToolbar {...defaultProps} pageMode="design" hasExecutionContext={false} />);
     expect(screen.queryByText('toolbar.executions')).not.toBeInTheDocument();
+  });
+
+  it('calls onDownloadAllResults when download button is clicked', async () => {
+    const onDownloadAllResults = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} onDownloadAllResults={onDownloadAllResults} />);
+    await userEvent.click(screen.getByText('execution.downloadAllResults'));
+    expect(onDownloadAllResults).toHaveBeenCalledOnce();
   });
 });

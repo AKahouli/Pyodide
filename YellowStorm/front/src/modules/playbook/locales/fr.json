@@ -145,6 +145,7 @@
   "execution.noOutput": "Aucun r\u00e9sultat disponible",
   "execution.stop": "Arrêter",
   "execution.stopping": "Arrêt en cours...",
+  "execution.downloadAllResults": "Télécharger tous les résultats",
   "execution.running": "En cours...",
   "execution.error": "Erreur",
   "execution.mode.live": "Live",

@@ -147,6 +147,7 @@
   "execution.noOutput": "No output available",
   "execution.stop": "Stop",
   "execution.stopping": "Stopping...",
+  "execution.downloadAllResults": "Download all results",
   "execution.running": "Running...",
   "execution.error": "Error",
   "execution.mode.live": "Live",

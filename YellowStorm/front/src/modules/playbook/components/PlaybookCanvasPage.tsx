@@ -54,7 +54,8 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate } from '../types';
+import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -70,6 +71,15 @@ const EDGE_STYLES: Record<string, React.CSSProperties> = {
   pending: { stroke: 'var(--muted-foreground)', strokeWidth: 1, opacity: 0.4 },
   skipped: { stroke: 'var(--muted-foreground)', strokeWidth: 1, opacity: 0.3 },
 };
+
+function hasEdgeStyleChanged(edge: Edge, nextStyle: React.CSSProperties): boolean {
+  const currentStyle = edge.style as React.CSSProperties | undefined;
+  if (!currentStyle) return true;
+  return currentStyle.stroke !== nextStyle.stroke
+    || currentStyle.strokeWidth !== nextStyle.strokeWidth
+    || currentStyle.strokeDasharray !== nextStyle.strokeDasharray
+    || currentStyle.opacity !== nextStyle.opacity;
+}
 
 function normalizeTaskForExecutionReuse(task: Partial<PlaybookTask> | null | undefined) {
   if (!task) return null;
@@ -300,6 +310,7 @@ function PlaybookCanvasInner() {
     currentExecution?.playbookId === id
       ? currentExecution
       : execution;
+  const executionTaskResults = executionForCanvas?.taskResults;
 
   // Build step status map from the selected execution for this playbook
   const isLiveExecution = executionForCanvas &&
@@ -307,35 +318,46 @@ function PlaybookCanvasInner() {
 
   const stepStatusMap = useMemo(() => {
     const map = new Map<string, StepStatus>();
-    if (!executionForCanvas) return map;
-    for (const tr of executionForCanvas.taskResults) {
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
       map.set(tr.taskId, tr.status);
     }
     return map;
-  }, [executionForCanvas]);
+  }, [executionTaskResults]);
 
   const stepSemanticMatchMap = useMemo(() => {
     const map = new Map<string, SemanticMatchResult | null>();
-    if (!executionForCanvas) return map;
-    for (const tr of executionForCanvas.taskResults) {
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
       map.set(tr.taskId, tr.semanticMatch || null);
     }
     return map;
-  }, [executionForCanvas]);
+  }, [executionTaskResults]);
 
   // Overlay step statuses onto nodes
   const liveNodes = useMemo(() => {
     return nodes.map((node) => {
       const status = stepStatusMap.get(node.id);
-      const semanticMatch = stepSemanticMatchMap.get(node.id) ?? null;
+      const semanticMatch = stepSemanticMatchMap.get(node.id);
+      const currentData = node.data as PlaybookNodeData;
+      const nextSelected = node.id === selectedStepId;
+      const nextData = {
+        ...currentData,
+        ...(status !== undefined ? { stepStatus: status } : {}),
+        ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
+      } as PlaybookNodeData;
+
+      const dataChanged = currentData.stepStatus !== nextData.stepStatus
+        || currentData.stepSemanticMatch !== nextData.stepSemanticMatch;
+
+      if (!dataChanged && node.selected === nextSelected) {
+        return node;
+      }
+
       return {
         ...node,
-        selected: node.id === selectedStepId,
-        data: {
-          ...node.data,
-          ...(status !== undefined ? { stepStatus: status } : {}),
-          stepSemanticMatch: semanticMatch,
-        },
+        selected: nextSelected,
+        data: nextData,
       };
     });
   }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap]);
@@ -346,6 +368,9 @@ function PlaybookCanvasInner() {
     return edges.map((edge): Edge => {
       const sourceStatus = stepStatusMap.get(edge.source) ?? 'pending';
       const style = EDGE_STYLES[sourceStatus] || EDGE_STYLES.pending;
+      if (!hasEdgeStyleChanged(edge, style)) {
+        return edge;
+      }
       return { ...edge, style };
     });
   }, [edges, stepStatusMap]);
@@ -790,6 +815,13 @@ function PlaybookCanvasInner() {
     }
   }, [executionPanelOpen, pageMode, setExecutionPanelOpen, setPageMode]);
 
+  const activeDownloadExecution = currentExecution?.playbookId === id ? currentExecution : execution;
+  const handleDownloadAllResults = useCallback(() => {
+    if (activeDownloadExecution) {
+      downloadWorkflowExecutionResultsHtml(activeDownloadExecution);
+    }
+  }, [activeDownloadExecution]);
+
   const handlePageModeChange = useCallback(
     (mode: PlaybookPageMode) => {
       setPageMode(mode);
@@ -947,6 +979,8 @@ function PlaybookCanvasInner() {
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
+            onDownloadAllResults={handleDownloadAllResults}
+            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
             onSchedule={() => setScheduleSheetOpen(true)}
           />
         </div>

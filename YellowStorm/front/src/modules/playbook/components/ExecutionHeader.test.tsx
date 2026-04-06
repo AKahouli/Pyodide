@@ -72,4 +72,5 @@ describe('ExecutionHeader', () => {
     render(<ExecutionHeader execution={makeExecution()} playbook={null} />);
     expect(screen.getByTestId('history-dropdown')).toBeInTheDocument();
   });
+
 });

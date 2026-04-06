@@ -1,4 +1,4 @@
-import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown,CalendarClock } from 'lucide-react';
+import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown, CalendarClock, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
@@ -36,6 +36,8 @@ interface Props {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onDownloadAllResults?: () => void;
+  canDownloadAllResults?: boolean;
   /** Opens schedule dialog (design mode). */
   onSchedule?: () => void;
 }
@@ -63,6 +65,8 @@ export function PlaybookToolbar({
   canRedo,
   onUndo,
   onRedo,
+  onDownloadAllResults,
+  canDownloadAllResults = false,
   onSchedule,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
@@ -147,6 +151,12 @@ export function PlaybookToolbar({
         <LayoutGrid className="h-4 w-4 sm:mr-1" />
         <span className="hidden sm:inline">{t('toolbar.autoLayout')}</span>
       </Button>
+      {onDownloadAllResults && (
+        <Button variant="outline" size="sm" onClick={onDownloadAllResults} disabled={!canDownloadAllResults} className="px-2 sm:px-3">
+          <Download className="h-4 w-4 sm:mr-1" />
+          <span className="hidden sm:inline">{t('execution.downloadAllResults')}</span>
+        </Button>
+      )}
       {showCopilotAction && (
         <Button
           variant={copilotOpen ? 'default' : 'outline'}

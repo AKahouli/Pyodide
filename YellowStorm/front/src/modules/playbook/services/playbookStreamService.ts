@@ -14,6 +14,7 @@
 import { useEffect } from 'react';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
 import { usePlaybookStore } from '../store';
+import type { PlaybookStepUpdateEvent } from '../types';
 
 // ===== Constants =====
 
@@ -27,6 +28,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const BASE_RECONNECT_DELAY_MS = 1_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const SSE_HEARTBEAT_TIMEOUT_MS = 30_000;
+const STEP_UPDATE_BATCH_MS = 32;
 
 // ===== Tab identity =====
 
@@ -46,6 +48,9 @@ let sseHeartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let leaderHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
 let leaderWatchTimer: ReturnType<typeof setTimeout> | null = null;
 let electionTimer: ReturnType<typeof setTimeout> | null = null;
+let stepUpdateFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+const pendingStepUpdates = new Map<string, PlaybookStepUpdateEvent>();
 
 const SSE_EVENT_TYPES = [
   'playbook_connected',
@@ -73,11 +78,51 @@ const reconnectRef = { get current() { return reconnectTimer; }, set current(v) 
 const sseHbRef = { get current() { return sseHeartbeatTimer; }, set current(v) { sseHeartbeatTimer = v; } };
 const leaderWatchRef = { get current() { return leaderWatchTimer; }, set current(v) { leaderWatchTimer = v; } };
 const electionRef = { get current() { return electionTimer; }, set current(v) { electionTimer = v; } };
+const stepUpdateFlushRef = { get current() { return stepUpdateFlushTimer; }, set current(v) { stepUpdateFlushTimer = v; } };
 
 // ===== BroadcastChannel messaging =====
 
 function broadcast(msg: Record<string, unknown>) {
   try { channel?.postMessage(msg); } catch { /* channel closed */ }
+}
+
+function flushPendingStepUpdates() {
+  clearTimer(stepUpdateFlushRef);
+  if (pendingStepUpdates.size === 0) return;
+
+  const store = usePlaybookStore.getState();
+  const updates = Array.from(pendingStepUpdates.values());
+  pendingStepUpdates.clear();
+
+  for (const update of updates) {
+    store.onStepUpdate(update);
+  }
+}
+
+function scheduleStepUpdateFlush() {
+  if (stepUpdateFlushTimer) return;
+  stepUpdateFlushRef.current = setTimeout(() => {
+    flushPendingStepUpdates();
+  }, STEP_UPDATE_BATCH_MS);
+}
+
+function queueStepUpdate(data: PlaybookStepUpdateEvent) {
+  const key = `${data.executionId}:${data.taskId}`;
+  const existing = pendingStepUpdates.get(key);
+
+  pendingStepUpdates.set(key, existing
+    ? {
+        ...existing,
+        ...data,
+        output: data.output ?? existing.output,
+        components: data.components ?? existing.components,
+        toolTrace: data.toolTrace ?? existing.toolTrace,
+        llmPromptTrace: data.llmPromptTrace ?? existing.llmPromptTrace,
+        artifacts: data.artifacts ?? existing.artifacts,
+      }
+    : data);
+
+  scheduleStepUpdateFlush();
 }
 
 // ===== Event handling (shared by leader + follower) =====
@@ -93,6 +138,10 @@ function handleSsePayload(raw: string) {
     const eventType = type || '';
     const eventData = data || parsed;
     const store = usePlaybookStore.getState();
+
+    if (eventType !== 'playbook_step_update') {
+      flushPendingStepUpdates();
+    }
 
     switch (eventType) {
       case 'playbook_connected':
@@ -112,7 +161,7 @@ function handleSsePayload(raw: string) {
         store.onStepStart(eventData);
         break;
       case 'playbook_step_update':
-        store.onStepUpdate(eventData);
+        queueStepUpdate(eventData);
         break;
       case 'playbook_step_complete':
         store.onStepComplete(eventData);
@@ -407,8 +456,10 @@ function teardown() {
   closeEventSource();
   clearTimer(reconnectRef);
   clearTimer(electionRef);
+  clearTimer(stepUpdateFlushRef);
   stopLeaderWatch();
   stopLeaderHeartbeat();
+  pendingStepUpdates.clear();
 
   if (channel) {
     channel.onmessage = null;

@@ -38,7 +38,6 @@ export function ExecutionHeader({ execution, playbook }: Props) {
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
 
   const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
-
   return (
     <div className="flex items-center justify-between px-4 py-2 border-b bg-background">
       <div className="flex items-center gap-3">
