@@ -75,7 +75,7 @@ export class TaskInputPortDto {
   @IsString()
   name!: string;
 
-  @IsEnum(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'])
+  @IsEnum(['text', 'document', 'code', 'image', 'data', 'dashboard'])
   artifactKind!: string;
 
   @IsOptional()
@@ -94,7 +94,7 @@ export class TaskOutputPortDto {
   @IsString()
   name!: string;
 
-  @IsEnum(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'])
+  @IsEnum(['text', 'document', 'code', 'image', 'data', 'dashboard'])
   artifactKind!: string;
 
   @IsOptional()

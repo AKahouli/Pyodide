@@ -134,12 +134,14 @@ message GenerateConversationNameResponse {
 // Component type definitions
 message TextComponent {
     string content = 1;          // Text/Markdown content
+    string output_port_id = 2;   // Optional target playbook output port
 }
 
 message CodeComponent {
     string content = 1;          // The code itself
     string language = 2;         // e.g., "typescript", "python"
     string filename = 3;         // Optional filename
+    string output_port_id = 4;   // Optional target playbook output port
 }
 
 message ReasoningComponent {
@@ -227,6 +229,9 @@ message WebPreviewComponent {
 message ArtifactComponent {
     string file_path = 1;        // Path to the generated file
     string filename = 2;         // Name of the generated file
+    string output_port_id = 3;   // Optional target playbook output port
+    string artifact_kind = 4;    // Optional artifact kind override
+    string mime_type = 5;        // Optional file MIME type
 }
 
 message TextSourceData {

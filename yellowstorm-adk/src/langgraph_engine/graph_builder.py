@@ -9,6 +9,7 @@ single streaming path (LangGraph ``astream``) is the only mechanism in use.
 """
 
 from typing import Any, Callable, Dict, List, Optional
+from pathlib import Path
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
@@ -29,6 +30,10 @@ from src.langgraph_engine.step_executor import (
     normalize_interrupt_action,
     extract_interrupt_message,
     extract_follow_up_question,
+    _task_requires_structured_output_synthesis,
+    _synthesize_structured_outputs,
+    _build_task_artifacts_from_structured_outputs,
+    _collect_generated_artifacts,
 )
 from src.langgraph_engine.port_resolution import (
     resolve_task_inputs,
@@ -42,6 +47,74 @@ import json
 
 logger = get_logger(__name__)
 
+_ARTIFACT_KIND_BY_EXTENSION = {
+    ".pdf": "document",
+    ".doc": "document",
+    ".docx": "document",
+    ".odt": "document",
+    ".rtf": "document",
+    ".txt": "text",
+    ".md": "text",
+    ".py": "code",
+    ".js": "code",
+    ".ts": "code",
+    ".tsx": "code",
+    ".jsx": "code",
+    ".java": "code",
+    ".kt": "code",
+    ".go": "code",
+    ".rs": "code",
+    ".c": "code",
+    ".cpp": "code",
+    ".h": "code",
+    ".cs": "code",
+    ".rb": "code",
+    ".php": "code",
+    ".sh": "code",
+    ".bat": "code",
+    ".sql": "code",
+    ".r": "code",
+    ".lua": "code",
+    ".swift": "code",
+    ".csv": "data",
+    ".xlsx": "data",
+    ".xls": "data",
+    ".json": "data",
+    ".xml": "data",
+    ".yaml": "data",
+    ".yml": "data",
+    ".tsv": "data",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".bmp": "image",
+    ".svg": "image",
+    ".webp": "image",
+    ".pptx": "document",
+    ".ppt": "document",
+    ".odp": "document",
+}
+
+_ARTIFACT_KIND_BY_MIME = {
+    "application/pdf": "document",
+    "application/msword": "document",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "document",
+    "text/plain": "text",
+    "text/markdown": "text",
+    "text/csv": "data",
+    "application/json": "data",
+    "application/xml": "data",
+    "text/xml": "data",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "data",
+    "image/png": "image",
+    "image/jpeg": "image",
+    "image/gif": "image",
+    "image/svg+xml": "image",
+    "image/webp": "image",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "document",
+}
+
 
 def _normalize_port_id(value: Any) -> str:
     raw = str(value or "default").strip() or "default"
@@ -50,25 +123,103 @@ def _normalize_port_id(value: Any) -> str:
     return raw
 
 
-def _select_output_port_for_artifact(
+def _infer_artifact_kind(filename: str = "", mime_type: str = "") -> str | None:
+    lower_filename = str(filename or "").strip().lower()
+    if "." in lower_filename:
+        extension = lower_filename[lower_filename.rfind("."):]
+        inferred = _ARTIFACT_KIND_BY_EXTENSION.get(extension)
+        if inferred:
+            return inferred
+
+    normalized_mime = str(mime_type or "").strip().lower()
+    if normalized_mime:
+        return _ARTIFACT_KIND_BY_MIME.get(normalized_mime)
+
+    return None
+
+
+def _infer_output_port_id_from_filename(filename: str, output_ports: List[Dict[str, Any]]) -> str:
+    normalized_filename = Path(filename or "").name.lower().strip()
+    if not normalized_filename:
+        return ""
+
+    stem = Path(normalized_filename).stem
+    candidate_tokens = [stem]
+    if stem.startswith(("out-", "in-")):
+        candidate_tokens.append(stem.split("-", 1)[1])
+
+    for candidate in candidate_tokens:
+        candidate = candidate.strip()
+        if not candidate:
+            continue
+        for port in output_ports:
+            port_id = _normalize_port_id(port.get("id"))
+            if port_id and port_id.lower() == candidate:
+                return port_id
+            port_name = str(port.get("name") or "").strip().lower()
+            if port_name and port_name.replace(" ", "-") == candidate:
+                return port_id
+
+    return ""
+
+
+def _resolve_output_port(
+    task_config: TaskConfig,
     output_ports: List[Dict[str, Any]],
-    preferred_kind: str,
-    used_port_ids: set[str],
+    *,
+    preferred_kind: str = "",
+    explicit_port_id: str = "",
+    filename: str = "",
+    skip_if_no_compatible: bool = False,
+    component_label: str,
 ) -> Dict[str, Any] | None:
     if not output_ports:
         return None
 
-    candidates = [p for p in output_ports if str(p.get("artifact_kind") or "").strip() == preferred_kind]
+    task_id = str(task_config.get("id") or "unknown").strip() or "unknown"
+    normalized_port_id = _normalize_port_id(explicit_port_id) if explicit_port_id else ""
+    normalized_kind = str(preferred_kind or "").strip()
+
+    if normalized_port_id:
+        selected_port = next(
+            (port for port in output_ports if _normalize_port_id(port.get("id")) == normalized_port_id),
+            None,
+        )
+        if selected_port is None:
+            raise ValueError(
+                f"Task '{task_id}' produced {component_label} targeting unknown output port '{normalized_port_id}'"
+            )
+        port_kind = str(selected_port.get("artifact_kind") or "").strip()
+        if normalized_kind and port_kind and port_kind != normalized_kind:
+            raise ValueError(
+                f"Task '{task_id}' produced {component_label} for output port '{normalized_port_id}' with incompatible kind '{normalized_kind}'"
+            )
+        return selected_port
+
+    candidates = [
+        port for port in output_ports
+        if not normalized_kind or str(port.get("artifact_kind") or "").strip() == normalized_kind
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+    if filename:
+        inferred_port_id = _infer_output_port_id_from_filename(filename, candidates)
+        if inferred_port_id:
+            selected_port = next(
+                (port for port in candidates if _normalize_port_id(port.get("id")) == inferred_port_id),
+                None,
+            )
+            if selected_port is not None:
+                return selected_port
+    if not candidates and skip_if_no_compatible:
+        return None
     if not candidates:
-        candidates = output_ports
-
-    for candidate in candidates:
-        port_id = str(candidate.get("id") or "default").strip() or "default"
-        if port_id not in used_port_ids:
-            used_port_ids.add(port_id)
-            return candidate
-
-    return candidates[0] if candidates else None
+        raise ValueError(
+            f"Task '{task_id}' produced {component_label} with no compatible output port for kind '{normalized_kind or 'unknown'}'"
+        )
+    raise ValueError(
+        f"Task '{task_id}' produced {component_label} without output_port_id, but {len(candidates)} compatible output ports are declared"
+    )
 
 
 def _extract_artifacts_from_components(
@@ -85,19 +236,31 @@ def _extract_artifacts_from_components(
         return artifacts
 
     output_ports = task_config.get("output_ports") or []
-    used_output_port_ids: set[str] = set()
 
     for comp in components:
         comp_type = comp.get("type", "")
         data = comp.get("data") or {}
 
         if comp_type == "artifact":
-            file_path = str(data.get("file_path", "")).strip()
+            file_path = str(data.get("file_path") or data.get("filePath") or "").strip()
             filename = str(data.get("filename", "")).strip()
+            mime_type = str(data.get("mime_type") or data.get("mimeType") or "").strip()
             if not file_path or not filename:
                 continue
-            preferred_kind = str(data.get("artifact_kind") or data.get("artifactKind") or "document").strip() or "document"
-            selected_port = _select_output_port_for_artifact(output_ports, preferred_kind, used_output_port_ids)
+            preferred_kind = str(
+                data.get("artifact_kind")
+                or data.get("artifactKind")
+                or _infer_artifact_kind(filename, mime_type)
+                or "document"
+            ).strip() or "document"
+            selected_port = _resolve_output_port(
+                task_config,
+                output_ports,
+                preferred_kind=preferred_kind,
+                explicit_port_id=str(data.get("output_port_id") or data.get("outputPortId") or "").strip(),
+                filename=filename,
+                component_label=f"artifact '{filename or file_path or 'unnamed'}'",
+            )
             port_id = selected_port.get("id", "default") if selected_port else "default"
             artifact_kind = str(selected_port.get("artifact_kind") if selected_port else preferred_kind) or preferred_kind
             artifacts.append({
@@ -105,15 +268,25 @@ def _extract_artifacts_from_components(
                 "artifact_kind": artifact_kind,
                 "url": file_path,
                 "filename": filename,
+                "mime_type": mime_type,
             })
 
         elif comp_type == "text":
             text_content = str(data.get("content", "")).strip()
             if not text_content:
                 continue
-            text_port = next(
-                (p for p in output_ports if p.get("artifact_kind") == "text"),
-                None,
+            explicit_text_port_id = str(data.get("output_port_id") or data.get("outputPortId") or "").strip()
+            if not explicit_text_port_id:
+                text_ports = [p for p in output_ports if p.get("artifact_kind") == "text"]
+                if len(text_ports) > 1:
+                    continue
+            text_port = _resolve_output_port(
+                task_config,
+                output_ports,
+                preferred_kind="text",
+                explicit_port_id=explicit_text_port_id,
+                skip_if_no_compatible=True,
+                component_label="text component",
             )
             if text_port is None:
                 continue
@@ -125,15 +298,18 @@ def _extract_artifacts_from_components(
             })
 
         elif comp_type == "code":
-            code_content = str(data.get("code", "")).strip()
+            code_content = str(data.get("code") or data.get("content") or "").strip()
             if not code_content:
                 continue
-            code_port = next(
-                (p for p in output_ports if p.get("artifact_kind") == "code"),
-                None,
+            code_port = _resolve_output_port(
+                task_config,
+                output_ports,
+                preferred_kind="code",
+                explicit_port_id=str(data.get("output_port_id") or data.get("outputPortId") or "").strip(),
+                component_label="code component",
             )
             if code_port is None:
-                continue
+                code_port = {"id": "default"}
             port_id = code_port.get("id", "default")
             artifacts.append({
                 "port_id": port_id,
@@ -151,10 +327,8 @@ def _extract_artifacts_from_components(
                 break
 
     has_text_artifact = any(a.get("artifact_kind") == "text" for a in artifacts)
-    text_port = next(
-        (p for p in output_ports if p.get("artifact_kind") == "text"),
-        None,
-    )
+    text_ports = [p for p in output_ports if p.get("artifact_kind") == "text"]
+    text_port = text_ports[0] if len(text_ports) == 1 else None
     if text_output and not has_text_artifact and (text_port is not None or not output_ports):
         port_id = text_port.get("id", "default") if text_port else "default"
         artifacts.append({
@@ -719,6 +893,27 @@ class DynamicGraphBuilder:
                             "data": {"content": response},
                         })
 
+                    artifacts: List[Dict[str, Any]] = []
+                    if _task_requires_structured_output_synthesis(current_task_for_execution):
+                        structured_outputs = await _synthesize_structured_outputs(
+                            settings,
+                            model_name,
+                            current_task_for_execution,
+                            response,
+                            components,
+                            prompt_trace=llm_prompt_trace,
+                        )
+                        generated_artifacts = _collect_generated_artifacts(components)
+                        if not structured_outputs and (str(response or "").strip() or generated_artifacts):
+                            raise ValueError(
+                                f"Task '{task_id}' completed without structured output mappings for semantically ambiguous output ports"
+                            )
+                        artifacts = _build_task_artifacts_from_structured_outputs(
+                            current_task_for_execution,
+                            structured_outputs,
+                            generated_artifacts,
+                        )
+
                     return ({
                         "output": "" if is_visualizer else response,
                         "task_id": task_id,
@@ -728,6 +923,7 @@ class DynamicGraphBuilder:
                         "usage": usage,
                         "tool_trace": tool_trace,
                         "llm_prompt_trace": llm_prompt_trace,
+                        "artifacts": artifacts,
                     }, response)
 
                 review_round = 0
@@ -911,10 +1107,12 @@ class DynamicGraphBuilder:
 
                 logger.info(f"[{task_id}] Completed", duration_ms=duration_ms)
 
-                task_artifacts = _extract_artifacts_from_components(
-                    task_result.get("components") or [],
-                    task_config,
-                )
+                task_artifacts = list(task_result.get("artifacts") or [])
+                if not task_artifacts:
+                    task_artifacts = _extract_artifacts_from_components(
+                        task_result.get("components") or [],
+                        task_config,
+                    )
                 if task_artifacts:
                     task_result["artifacts"] = task_artifacts
 

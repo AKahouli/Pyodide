@@ -14,6 +14,55 @@ from structlog import get_logger
 
 logger = get_logger(__name__)
 
+_GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
+    ".pdf": "document",
+    ".doc": "document",
+    ".docx": "document",
+    ".odt": "document",
+    ".rtf": "document",
+    ".txt": "text",
+    ".md": "text",
+    ".py": "code",
+    ".js": "code",
+    ".ts": "code",
+    ".tsx": "code",
+    ".jsx": "code",
+    ".java": "code",
+    ".kt": "code",
+    ".go": "code",
+    ".rs": "code",
+    ".c": "code",
+    ".cpp": "code",
+    ".h": "code",
+    ".cs": "code",
+    ".rb": "code",
+    ".php": "code",
+    ".sh": "code",
+    ".bat": "code",
+    ".sql": "code",
+    ".r": "code",
+    ".lua": "code",
+    ".swift": "code",
+    ".csv": "data",
+    ".xlsx": "data",
+    ".xls": "data",
+    ".json": "data",
+    ".xml": "data",
+    ".yaml": "data",
+    ".yml": "data",
+    ".tsv": "data",
+    ".png": "image",
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".gif": "image",
+    ".bmp": "image",
+    ".svg": "image",
+    ".webp": "image",
+    ".pptx": "document",
+    ".ppt": "document",
+    ".odp": "document",
+}
+
 
 # --- ToolResultCollector ---
 
@@ -254,6 +303,13 @@ def _format_available_filenames(brain_documents: list, max_files: int = 12) -> s
 def _is_sandbox_local_path(path: str) -> bool:
     normalized = str(path or "").strip().lower()
     return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
+
+
+def _infer_generated_artifact_kind(filename: str) -> Optional[str]:
+    normalized = str(filename or "").strip().lower()
+    if "." not in normalized:
+        return None
+    return _GENERATED_ARTIFACT_KIND_BY_EXTENSION.get(normalized[normalized.rfind("."):])
 
 
 def _build_code_interpreter_file_list(code_interpreter_files: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
@@ -664,9 +720,11 @@ def _create_code_interpreter_tool(
 
             # Collect artifact components for generated files
             for gf in result.get("generated_files", []):
+                generated_filename = gf.get("filename", gf.get("name", ""))
                 collector.add_component("artifact", {
                     "file_path": gf.get("azure_path", gf.get("file_path", "")),
-                    "filename": gf.get("filename", gf.get("name", "")),
+                    "filename": generated_filename,
+                    "artifact_kind": _infer_generated_artifact_kind(generated_filename) or "document",
                 })
 
             # Build text response for the LLM

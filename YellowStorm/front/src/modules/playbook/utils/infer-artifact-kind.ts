@@ -44,9 +44,9 @@ const EXT_KIND_MAP: Record<string, ArtifactKind> = {
   '.bmp': 'image',
   '.svg': 'image',
   '.webp': 'image',
-  '.pptx': 'slide_deck',
-  '.ppt': 'slide_deck',
-  '.odp': 'slide_deck',
+  '.pptx': 'document',
+  '.ppt': 'document',
+  '.odp': 'document',
 };
 
 const MIME_KIND_MAP: Record<string, ArtifactKind> = {
@@ -65,7 +65,7 @@ const MIME_KIND_MAP: Record<string, ArtifactKind> = {
   'image/gif': 'image',
   'image/svg+xml': 'image',
   'image/webp': 'image',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'slide_deck',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'document',
 };
 
 export function inferArtifactKind(

@@ -34,7 +34,7 @@ export class TaskInputPortSchema {
   @Prop({ type: String, required: true })
   name!: string;
 
-  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'], required: true })
+  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'dashboard'], required: true })
   artifactKind!: string;
 
   @Prop({ type: Boolean, default: false })
@@ -54,7 +54,7 @@ export class TaskOutputPortSchema {
   @Prop({ type: String, required: true })
   name!: string;
 
-  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'], required: true })
+  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'dashboard'], required: true })
   artifactKind!: string;
 
   @Prop({ type: String })

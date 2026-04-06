@@ -354,7 +354,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                   }}
                   className="h-7 text-xs rounded border bg-background px-1"
                 >
-                  {(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'] as const).map((kind) => (
+                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
                     <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
                   ))}
                 </select>
@@ -427,7 +427,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                   }}
                   className="h-7 text-xs rounded border bg-background px-1"
                 >
-                  {(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'] as const).map((kind) => (
+                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
                     <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
                   ))}
                 </select>

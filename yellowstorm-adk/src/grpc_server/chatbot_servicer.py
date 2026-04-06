@@ -798,13 +798,15 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
 
         if component_type == "text":
             component_kwargs["text"] = chatbot_pb2.TextComponent(
-                content=component_data.get("content", "")
+                content=component_data.get("content", ""),
+                output_port_id=component_data.get("output_port_id") or component_data.get("outputPortId", ""),
             )
         elif component_type == "code":
             component_kwargs["code"] = chatbot_pb2.CodeComponent(
                 content=component_data.get("content", ""),
                 language=component_data.get("language", ""),
-                filename=component_data.get("filename", "")
+                filename=component_data.get("filename", ""),
+                output_port_id=component_data.get("output_port_id") or component_data.get("outputPortId", ""),
             )
         elif component_type == "reasoning":
             component_kwargs["reasoning"] = chatbot_pb2.ReasoningComponent(
@@ -886,7 +888,10 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
         elif component_type == "artifact":
             component_kwargs["artifact"] = chatbot_pb2.ArtifactComponent(
                 file_path=component_data.get("file_path", ""),
-                filename=component_data.get("filename", "")
+                filename=component_data.get("filename", ""),
+                output_port_id=component_data.get("output_port_id") or component_data.get("outputPortId", ""),
+                artifact_kind=component_data.get("artifact_kind") or component_data.get("artifactKind", ""),
+                mime_type=component_data.get("mime_type") or component_data.get("mimeType", ""),
             )
         elif component_type == "citation":
             # Build CitationComponent with TextSourceData or ImageSourceData
@@ -1098,10 +1103,10 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
                 ],
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
-                temperature=0.3,
                 max_tokens=4096,
                 response_format={"type": "json_object"},
             )
+            
 
             raw = response.choices[0].message.content.strip()
 
@@ -1981,6 +1986,9 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
         component.artifact.CopyFrom(chatbot_pb2.ArtifactComponent(
             file_path=data.get("file_path", ""),
             filename=data.get("filename", ""),
+            output_port_id=data.get("output_port_id") or data.get("outputPortId", ""),
+            artifact_kind=data.get("artifact_kind") or data.get("artifactKind", ""),
+            mime_type=data.get("mime_type") or data.get("mimeType", ""),
         ))
 
     elif comp_type == "web_preview":
@@ -1991,6 +1999,15 @@ def _dict_to_proto_component(comp_dict: dict) -> chatbot_pb2.Component:
     elif comp_type == "text":
         component.text.CopyFrom(chatbot_pb2.TextComponent(
             content=data.get("content", ""),
+            output_port_id=data.get("output_port_id") or data.get("outputPortId", ""),
+        ))
+
+    elif comp_type == "code":
+        component.code.CopyFrom(chatbot_pb2.CodeComponent(
+            content=data.get("content", ""),
+            language=data.get("language", ""),
+            filename=data.get("filename", ""),
+            output_port_id=data.get("output_port_id") or data.get("outputPortId", ""),
         ))
 
     return component

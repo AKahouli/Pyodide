@@ -471,6 +471,7 @@ def build_task_prompt(
     ]
 
     ports = resolved_inputs.get("ports") or {}
+    output_ports = list(task_config.get("output_ports") or [])
     structured_blocks: List[str] = []
 
     for port_id, port_state in ports.items():
@@ -513,6 +514,23 @@ def build_task_prompt(
 
     if structured_blocks:
         lines.append("Structured inputs for this task:\n\n" + "\n\n".join(structured_blocks))
+
+    if output_ports:
+        output_lines = []
+        for output_port in output_ports:
+            port_id = str(output_port.get("id") or "default").strip() or "default"
+            port_name = str(output_port.get("name") or port_id).strip() or port_id
+            port_kind = str(output_port.get("artifact_kind") or "").strip()
+            description = str(output_port.get("description") or "").strip()
+            output_lines.append(f"- `{port_id}` ({port_kind or 'unknown'}): {port_name}")
+            if description:
+                output_lines.append(f"  Description: {description}")
+
+        lines.append(
+            "Declared output ports:\n"
+            + "\n".join(output_lines)
+            + "\n\nTreat the port names and descriptions as semantic targets. When multiple output ports share the same artifact kind, use the meaning of each port name/description to decide what belongs where. When you produce structured playbook outputs (text components, code components, or file artifacts), set `output_port_id` to one of the declared ids. If multiple compatible ports exist, outputs without `output_port_id` will fail routing instead of being guessed."
+        )
 
     if not resolved_inputs.get("has_port_sources"):
         lines.append(

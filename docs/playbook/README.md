@@ -78,7 +78,6 @@ Current kinds:
 - `code`
 - `image`
 - `data`
-- `slide_deck`
 - `dashboard`
 
 ### Edge

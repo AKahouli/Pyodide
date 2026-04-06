@@ -1,5 +1,41 @@
 # Changelog
 
+## [2026-04-06 05:59] — Reuse final output synthesis in workflow nodes
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the full-workflow graph-builder executor to run the same post-stream structured-output synthesis and authoritative artifact materialization that single-step execution already used, and added regression coverage that the workflow node writes synthesized artifacts into `artifacts_by_port` for downstream tasks.
+- **Why:** Workflow runs were still deriving downstream port state from raw components only, which meant upstream tasks with semantically ambiguous output ports could complete successfully in single-step mode but leave no routed artifacts for downstream input-port document bindings during full workflow execution.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/tests/langgraph_engine/test_graph_builder.py`, `docs/playbook/README_2026-04-06_05-59-30.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_05-59-30.md`
+
+## [2026-04-06 05:30] — Synthesize final port outputs after streaming
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added a post-stream structured-output synthesis pass for tasks with semantically ambiguous output ports, exposed output port names and descriptions as semantic targets in the task prompt, built authoritative final `TaskArtifact` entries from the completed result instead of partial stream text, and skipped unassigned preview text when multiple text ports exist.
+- **Why:** Streaming text is a live draft and cannot be reliably classified into ports token-by-token, especially when several output ports share the same artifact kind and differ only by semantic intent such as `Summary` versus `Specific Context`.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/src/langgraph_engine/port_resolution.py`, `yellowstorm-adk/tests/langgraph_engine/test_step_executor.py`, `yellowstorm-adk/tests/langgraph_engine/test_graph_builder.py`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.ts`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.spec.ts`, `docs/playbook/README_2026-04-06_05-30-29.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_05-30-29.md`
+
+## [2026-04-05 19:26] — Route file artifacts by filename when port ids are omitted
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added filename-based output-port inference for generated file artifacts in both the ADK graph builder and the backend execution artifact mapper, so artifacts like `out-0f975e8a.pdf` can be routed deterministically even when the producer omits `output_port_id`.
+- **Why:** Whole-workflow runs were still failing when a task produced a valid artifact without `output_port_id` and multiple compatible document-like output ports existed, which left downstream tasks waiting for an artifact that was never assigned to a port.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.ts`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.spec.ts`, `docs/playbook/README_2026-04-05_19-26-59.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_19-26-59.md`
+
+## [2026-04-05 18:54] — Make output port routing deterministic
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added explicit `output_port_id` routing metadata to playbook text/code/artifact components, inferred artifact kinds from filenames and MIME types when producers omit them, updated both ADK and Nest routing logic to reject ambiguous compatible ports instead of assigning by port order, and documented declared output ports in the task prompt.
+- **Why:** Output routing was coupled to artifact order and broad kind matching, which made nodes with multiple text outputs or multiple document-like outputs unreliable and could silently send artifacts to the wrong downstream port.
+- **Impact:** `yellowstorm-adk/grpc/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2_grpc.py`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/src/langgraph_engine/port_resolution.py`, `yellowstorm-adk/src/langgraph_engine/playbook_tool_factory.py`, `yellowstorm-adk/tests/langgraph_engine/test_graph_builder.py`, `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/conversation/utils/component-mapper.ts`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.ts`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.spec.ts`, `docs/playbook/README_2026-04-05_18-54-41.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-05_18-54-41.md`
+
 ## [2026-04-05 18:31] — Auto-follow streaming execution detail
 
 - **Feature:** `playbook`

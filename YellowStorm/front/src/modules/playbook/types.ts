@@ -9,7 +9,7 @@ export type PlaybookComponent = MessageComponent | { type: 'humanFeedback'; data
 
 // ===== Typed Port & Artifact Model =====
 
-export type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'slide_deck' | 'dashboard';
+export type ArtifactKind = 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
 
 export interface TaskOutputPort {
   id: string;
@@ -62,13 +62,13 @@ export interface InputFile {
   portId?: string;
   artifactKind?: ArtifactKind;
   metadata?: {
-      workspaceId?: string;
-      documentId?: string;
-      filename?: string;
-      filepath?: string;
-      language?: string;
-      mimeType?: string;
-      };
+    workspaceId?: string;
+    documentId?: string;
+    filename?: string;
+    filepath?: string;
+    language?: string;
+    mimeType?: string;
+  };
 }
 
 export interface PlaybookTask {

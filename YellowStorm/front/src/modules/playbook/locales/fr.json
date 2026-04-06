@@ -81,7 +81,7 @@
   "canvas.generatingHint": "L'IA con\u00e7oit votre workflow",
   "canvas.designing": "Mise \u00e0 jour de votre playbook",
   "canvas.designingHint": "L'IA modifie votre workflow",
-"canvas.executionRunning": "Ex\u00e9cution en cours",
+  "canvas.executionRunning": "Ex\u00e9cution en cours",
   "mode.design": "Conception",
   "mode.run": "Ex\u00e9cution",
   "toolbar.designer": "Designer",
@@ -226,7 +226,6 @@
   "workspace.selectPlaceholder": "Sélectionner des espaces...",
   "workspace.searchPlaceholder": "Rechercher un espace...",
   "workspace.empty": "Aucun espace de travail trouvé.",
-
   "share.cloneTitle": "Partager le Playbook (Copie)",
   "share.cloneDescription": "Chaque destinataire recevra sa propre copie de ce playbook.",
   "share.emailPlaceholder": "Saisir des adresses email...",
@@ -238,7 +237,6 @@
   "share.userNotFound": "Utilisateur introuvable",
   "share.selfShare": "Impossible de partager avec soi-même",
   "share.invalidEmail": "Adresse email invalide",
-
   "beta.title": "Playbook — Bêta",
   "beta.subtitle": "Cette fonctionnalité est encore en accès anticipé.",
   "beta.disclaimer1": "Playbook est actuellement en version bêta. L'expérience n'est pas définitive et peut évoluer au fil des améliorations.",
@@ -246,7 +244,6 @@
   "beta.disclaimer3": "Nous apprécions vos retours pour améliorer cette fonctionnalité. Merci d'être un utilisateur précoce !",
   "beta.dontShowAgain": "Ne plus afficher",
   "beta.understood": "Compris",
-
   "list.select": "Sélectionner",
   "list.cancelSelect": "Annuler",
   "list.selected": "{{count}} sélectionné(s)",
@@ -258,7 +255,6 @@
   "store.toasts.bulkDeleted": "{{count}} playbook(s) supprimé(s)",
   "store.errors.bulkDeleteFailed": "Échec de la suppression des playbooks",
   "store.errors.favoriteFailed": "Échec du basculement du favori",
-
   "compare.title": "Comparer les exécutions",
   "compare.compare": "Comparer",
   "compare.selectHint": "Sélectionnez 2 exécutions à comparer ({{count}}/2 sélectionnées)",
@@ -269,7 +265,6 @@
   "compare.stepNotPresent": "Étape absente de cette exécution",
   "compare.missingParams": "Sélectionnez deux exécutions à comparer",
   "compare.loadError": "Échec du chargement des exécutions",
-
   "execution.steps": "\u00c9tapes",
   "execution.staleResult": "R\u00e9sultat obsol\u00e8te",
   "node.disabled": "D\u00e9sactiv\u00e9e",
@@ -374,7 +369,6 @@
   "toolbar.addBlankStep": "\u00c9tape vide",
   "toolbar.fromTemplate": "Depuis un mod\u00e8le",
   "toolbar.browseTemplates": "Parcourir tous les mod\u00e8les...",
-
   "templates.title": "Mod\u00e8les de t\u00e2che",
   "templates.search": "Rechercher des mod\u00e8les...",
   "templates.categories.content": "Contenu",
@@ -382,7 +376,6 @@
   "templates.categories.analysis": "Analyse",
   "templates.categories.code": "Code",
   "templates.noResults": "Aucun mod\u00e8le trouv\u00e9.",
-
   "ports.inputPorts": "Ports d\u2019entr\u00e9e",
   "ports.outputPorts": "Ports de sortie",
   "ports.addInput": "Ajouter un port d\u2019entr\u00e9e",
@@ -393,22 +386,18 @@
   "ports.required": "Requis",
   "ports.optional": "Optionnel",
   "ports.typeMismatch": "Incompatibilit\u00e9 de type sur cette connexion",
-
   "artifacts.download": "T\u00e9l\u00e9charger",
   "artifacts.preview": "Aper\u00e7u",
   "artifacts.generatedBy": "G\u00e9n\u00e9r\u00e9 par",
   "artifacts.title": "Artefacts g\u00e9n\u00e9r\u00e9s",
   "artifacts.sectionTitle": "Artefacts",
   "artifacts.noArtifacts": "Aucun artefact g\u00e9n\u00e9r\u00e9",
-
   "artifactKind.text": "Texte",
   "artifactKind.document": "Document",
   "artifactKind.code": "Code",
   "artifactKind.image": "Image",
   "artifactKind.data": "Donn\u00e9es",
-  "artifactKind.slide_deck": "Pr\u00e9sentation",
   "artifactKind.dashboard": "Tableau de bord",
-
   "taskType.generic": "G\u00e9n\u00e9rique",
   "taskType.summarizer": "R\u00e9sumeur",
   "taskType.docxgen": "G\u00e9n\u00e9rateur de documents",

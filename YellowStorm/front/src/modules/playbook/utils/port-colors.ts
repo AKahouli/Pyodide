@@ -16,7 +16,6 @@ export const PORT_COLORS: Record<ArtifactKind, PortColorEntry> = {
   code: { bg: 'bg-green-100', ring: 'ring-green-500/50', dot: 'bg-green-500', raw: '#22c55e', icon: Code },
   image: { bg: 'bg-pink-100', ring: 'ring-pink-500/50', dot: 'bg-pink-500', raw: '#ec4899', icon: Image },
   data: { bg: 'bg-amber-100', ring: 'ring-amber-500/50', dot: 'bg-amber-500', raw: '#f59e0b', icon: Table2 },
-  slide_deck: { bg: 'bg-orange-100', ring: 'ring-orange-500/50', dot: 'bg-orange-500', raw: '#f97316', icon: Presentation },
   dashboard: { bg: 'bg-purple-100', ring: 'ring-purple-500/50', dot: 'bg-purple-500', raw: '#a855f7', icon: BarChart3 },
 };
 

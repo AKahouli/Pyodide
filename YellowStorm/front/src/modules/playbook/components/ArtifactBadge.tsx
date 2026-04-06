@@ -11,7 +11,7 @@ const BADGE_TONES: Record<string, string> = {
   code: 'border-green-500/30 bg-green-100 text-green-700',
   image: 'border-pink-500/30 bg-pink-100 text-pink-700',
   data: 'border-amber-500/30 bg-amber-100 text-amber-700',
-  slide_deck: 'border-orange-500/30 bg-orange-100 text-orange-700',
+  json: 'border-orange-500/30 bg-orange-100 text-orange-700',
   dashboard: 'border-purple-500/30 bg-purple-100 text-purple-700',
 };
 

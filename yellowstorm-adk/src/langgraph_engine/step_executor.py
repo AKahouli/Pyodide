@@ -9,6 +9,8 @@ creates its own mini StateGraph.
 import json
 import re
 import time
+from collections import Counter
+from pathlib import Path
 from typing import Awaitable, Callable, Dict, Any, Optional, List
 
 from structlog import get_logger
@@ -26,6 +28,222 @@ logger = get_logger(__name__)
 MAX_TOOL_ITERATIONS = 10
 SKIP_STEP_REASON = "__SKIP_STEP__"
 StepProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
+
+
+def _normalize_port_id(value: Any) -> str:
+    raw = str(value or "default").strip() or "default"
+    if raw.startswith(("in-", "out-")):
+        return raw.split("-", 1)[1] or "default"
+    return raw
+
+
+def _get_output_ports(task: Dict[str, Any]) -> List[Dict[str, Any]]:
+    return list(task.get("output_ports") or task.get("outputPorts") or [])
+
+
+def _output_port_kind(port: Dict[str, Any]) -> str:
+    return str(port.get("artifact_kind") or port.get("artifactKind") or "").strip()
+
+
+def _task_requires_structured_output_synthesis(task: Dict[str, Any]) -> bool:
+    output_ports = _get_output_ports(task)
+    if len(output_ports) <= 1:
+        return False
+
+    kind_counts = Counter(
+        kind for kind in (_output_port_kind(port) for port in output_ports) if kind
+    )
+    return any(count > 1 for count in kind_counts.values())
+
+
+def _collect_generated_artifacts(components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    generated: List[Dict[str, Any]] = []
+    for comp in components or []:
+        if not isinstance(comp, dict) or comp.get("type") != "artifact":
+            continue
+        data = comp.get("data") or {}
+        generated.append({
+            "file_path": str(data.get("file_path") or data.get("filePath") or "").strip(),
+            "filename": str(data.get("filename") or "").strip(),
+            "artifact_kind": str(data.get("artifact_kind") or data.get("artifactKind") or "").strip(),
+            "mime_type": str(data.get("mime_type") or data.get("mimeType") or "").strip(),
+        })
+    return generated
+
+
+def _find_generated_artifact_match(
+    output_spec: Dict[str, Any],
+    generated_artifacts: List[Dict[str, Any]],
+    used_indexes: set[int],
+) -> Optional[Dict[str, Any]]:
+    requested_filename = str(output_spec.get("filename") or "").strip().lower()
+    requested_file_path = str(output_spec.get("file_path") or output_spec.get("filePath") or "").strip().lower()
+
+    for index, artifact in enumerate(generated_artifacts):
+        if index in used_indexes:
+            continue
+        filename = str(artifact.get("filename") or "").strip().lower()
+        file_path = str(artifact.get("file_path") or "").strip().lower()
+        if requested_filename and filename == requested_filename:
+            used_indexes.add(index)
+            return artifact
+        if requested_file_path and file_path == requested_file_path:
+            used_indexes.add(index)
+            return artifact
+
+    if requested_filename:
+        requested_stem = Path(requested_filename).stem
+        for index, artifact in enumerate(generated_artifacts):
+            if index in used_indexes:
+                continue
+            artifact_filename = str(artifact.get("filename") or "").strip().lower()
+            if artifact_filename and Path(artifact_filename).stem == requested_stem:
+                used_indexes.add(index)
+                return artifact
+
+    return None
+
+
+def _build_task_artifacts_from_structured_outputs(
+    task: Dict[str, Any],
+    structured_outputs: List[Dict[str, Any]],
+    generated_artifacts: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    output_ports = _get_output_ports(task)
+    port_by_id = {
+        _normalize_port_id(port.get("id")): port
+        for port in output_ports
+    }
+    used_generated_indexes: set[int] = set()
+    artifacts: List[Dict[str, Any]] = []
+
+    for output_spec in structured_outputs:
+        if not isinstance(output_spec, dict):
+            continue
+
+        output_port_id = _normalize_port_id(output_spec.get("output_port_id") or output_spec.get("outputPortId"))
+        port = port_by_id.get(output_port_id)
+        if port is None:
+            raise ValueError(f"Structured output references unknown output port '{output_port_id}'")
+
+        port_kind = _output_port_kind(port)
+        output_kind = str(output_spec.get("artifact_kind") or output_spec.get("artifactKind") or port_kind).strip() or port_kind
+        if port_kind and output_kind and port_kind != output_kind:
+            raise ValueError(
+                f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
+            )
+
+        if output_kind in {"text", "code"}:
+            content = str(output_spec.get("content") or "").strip()
+            if not content:
+                continue
+            artifacts.append({
+                "port_id": str(port.get("id") or output_port_id),
+                "artifact_kind": output_kind,
+                "content": content,
+            })
+            continue
+
+        matched_artifact = _find_generated_artifact_match(output_spec, generated_artifacts, used_generated_indexes)
+        if matched_artifact is None:
+            requested_name = output_spec.get("filename") or output_spec.get("file_path") or output_spec.get("filePath") or output_port_id
+            raise ValueError(f"Structured output for port '{output_port_id}' references unknown artifact '{requested_name}'")
+
+        artifacts.append({
+            "port_id": str(port.get("id") or output_port_id),
+            "artifact_kind": output_kind or str(matched_artifact.get("artifact_kind") or "document"),
+            "url": str(matched_artifact.get("file_path") or ""),
+            "filename": str(matched_artifact.get("filename") or ""),
+            "mime_type": str(matched_artifact.get("mime_type") or ""),
+        })
+
+    return artifacts
+
+
+async def _synthesize_structured_outputs(
+    settings,
+    model_name: str,
+    task: Dict[str, Any],
+    response_text: str,
+    components: List[Dict[str, Any]],
+    prompt_trace: Optional[List[Dict[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    output_ports = _get_output_ports(task)
+    generated_artifacts = _collect_generated_artifacts(components)
+    if not output_ports:
+        return []
+
+    ports_payload = [
+        {
+            "id": str(port.get("id") or "default"),
+            "name": str(port.get("name") or port.get("id") or "default"),
+            "artifact_kind": _output_port_kind(port),
+            "description": str(port.get("description") or ""),
+        }
+        for port in output_ports
+    ]
+    artifacts_payload = [
+        {
+            "filename": artifact.get("filename") or "",
+            "file_path": artifact.get("file_path") or "",
+            "artifact_kind": artifact.get("artifact_kind") or "",
+            "mime_type": artifact.get("mime_type") or "",
+        }
+        for artifact in generated_artifacts
+    ]
+
+    system_prompt = (
+        "You map a completed playbook task result into declared output ports. "
+        "The user already saw the live streamed draft, so this pass is only for final downstream routing. "
+        "Use output port names and descriptions semantically, especially when multiple ports share the same artifact kind. "
+        "Return JSON only."
+    )
+    user_prompt = (
+        f"Task title: {task.get('title', '')}\n"
+        f"Task description: {task.get('description', '')}\n\n"
+        "Declared output ports JSON:\n"
+        f"{json.dumps(ports_payload, ensure_ascii=True, indent=2)}\n\n"
+        "Final freeform response text:\n"
+        f"{response_text or ''}\n\n"
+        "Generated artifact candidates JSON:\n"
+        f"{json.dumps(artifacts_payload, ensure_ascii=True, indent=2)}\n\n"
+        "Return JSON with this exact shape:\n"
+        "{\n"
+        '  "outputs": [\n'
+        "    {\n"
+        '      "output_port_id": "declared-port-id",\n'
+        '      "artifact_kind": "text|code|document|image|data|dashboard",\n'
+        '      "content": "required for text/code outputs",\n'
+        '      "filename": "required for generated file outputs",\n'
+        '      "file_path": "optional exact file path when needed"\n'
+        "    }\n"
+        "  ]\n"
+        "}\n\n"
+        "Rules:\n"
+        "- Use only declared output_port_id values.\n"
+        "- Use the semantic meaning of each port name and description to decide the target.\n"
+        "- For text/code outputs, include only final downstream content, not the whole streamed draft unless that is the intended port output.\n"
+        "- For file outputs, assign generated artifacts by filename or file_path.\n"
+        "- Do not invent files that are not in the generated artifact candidates list.\n"
+        "- If no structured downstream output should be produced for a port, omit it.\n"
+        "- Return JSON only."
+    )
+
+    synthesis_text, _usage = await _llm_call(
+        settings,
+        model_name,
+        system_prompt,
+        user_prompt,
+        temperature=0.1,
+        prompt_trace=prompt_trace,
+        stage="playbook_output_routing",
+        on_progress=None,
+    )
+    payload = _extract_json_object(synthesis_text)
+    outputs = payload.get("outputs") or []
+    if not isinstance(outputs, list):
+        raise ValueError("Structured output synthesis returned an invalid outputs list")
+    return [item for item in outputs if isinstance(item, dict)]
 
 
 def _serialize_prompt_messages(messages: List[Dict[str, str]]) -> str:
@@ -422,6 +640,26 @@ async def _execute_step_direct(
                 "data": {"content": response},
             })
 
+        artifacts: List[Dict[str, Any]] = []
+        if _task_requires_structured_output_synthesis(task):
+            structured_outputs = await _synthesize_structured_outputs(
+                settings,
+                model_name,
+                task,
+                response,
+                components,
+                prompt_trace=llm_prompt_trace,
+            )
+            if not structured_outputs and (str(response or "").strip() or _collect_generated_artifacts(components)):
+                raise ValueError(
+                    f"Task '{task_id}' completed without structured output mappings for semantically ambiguous output ports"
+                )
+            artifacts = _build_task_artifacts_from_structured_outputs(
+                task,
+                structured_outputs,
+                _collect_generated_artifacts(components),
+            )
+
         duration_ms = int((time.time() - start_time) * 1000)
         semantic_match = None
 
@@ -438,6 +676,7 @@ async def _execute_step_direct(
                 "tool_trace": tool_trace,
                 "llm_prompt_trace": llm_prompt_trace,
                 "semantic_match": semantic_match,
+                "artifacts": artifacts,
             },
             "interrupt": None,
             "thread_id": "",
