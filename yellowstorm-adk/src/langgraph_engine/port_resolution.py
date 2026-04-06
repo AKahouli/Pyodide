@@ -2,12 +2,46 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Optional
 
 from structlog import get_logger
 
 logger = get_logger(__name__)
+
+
+def load_prompt_registry(prompt_overrides: Optional[Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
+    registry: Dict[str, Dict[str, Any]] = {}
+    for key, value in (prompt_overrides or {}).items():
+        if not key:
+            continue
+        if isinstance(value, dict):
+            registry[key] = value
+            continue
+        if not value:
+            continue
+        try:
+            parsed = json.loads(value)
+            if isinstance(parsed, dict):
+                registry[key] = parsed
+                continue
+        except Exception:
+            pass
+        registry[key] = {"systemTemplate": str(value)}
+    return registry
+
+
+def resolve_prompt_template(
+    prompt_registry: Optional[Dict[str, Dict[str, Any]]],
+    key: str,
+    *,
+    field: str = "systemTemplate",
+    fallback: str = "",
+) -> str:
+    entry = (prompt_registry or {}).get(key) or {}
+    value = str(entry.get(field) or "").strip()
+    return value or fallback
 
 _DOCUMENT_EXTENSION_PRIORITY = {
     ".pdf": 100,
@@ -463,8 +497,11 @@ def build_task_prompt(
     context_from_dependencies: str = "",
     user_query: str = "",
     workspace_file_hint: str = "",
+    prompt_overrides: Optional[Dict[str, str]] = None,
 ) -> str:
     """Build a consistent task prompt from resolved inputs."""
+
+    prompt_registry = load_prompt_registry(prompt_overrides)
 
     lines = [
         f"Task: {task_config.get('title', '')}\n\nDescription:\n{task_config.get('description', '')}",
@@ -517,6 +554,12 @@ def build_task_prompt(
 
     if output_ports:
         output_lines = []
+        output_ports_intro = resolve_prompt_template(
+            prompt_registry,
+            'task.output_ports.note',
+            field='userTemplate',
+            fallback='Declared output ports are semantic targets. When multiple ports share a kind, use the port name and description to decide the right target. If you produce structured outputs, set `output_port_id` to a declared id.',
+        )
         for output_port in output_ports:
             port_id = str(output_port.get("id") or "default").strip() or "default"
             port_name = str(output_port.get("name") or port_id).strip() or port_id
@@ -529,7 +572,7 @@ def build_task_prompt(
         lines.append(
             "Declared output ports:\n"
             + "\n".join(output_lines)
-            + "\n\nTreat the port names and descriptions as semantic targets. When multiple output ports share the same artifact kind, use the meaning of each port name/description to decide what belongs where. When you produce structured playbook outputs (text components, code components, or file artifacts), set `output_port_id` to one of the declared ids. If multiple compatible ports exist, outputs without `output_port_id` will fail routing instead of being guessed."
+            + f"\n\n{output_ports_intro}"
         )
 
     if not resolved_inputs.get("has_port_sources"):
@@ -550,5 +593,12 @@ def build_task_prompt(
             "Do not ask the user to upload these files again."
         )
 
-    lines.append("Please complete this task and provide a clear output.")
+    lines.append(
+        resolve_prompt_template(
+            prompt_registry,
+            'task.user.footer',
+            field='userTemplate',
+            fallback='Please complete this task and provide a clear output.',
+        )
+    )
     return "\n\n".join(lines)

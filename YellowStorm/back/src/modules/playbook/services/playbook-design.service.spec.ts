@@ -11,7 +11,10 @@ import { ServiceUnavailableException, BadRequestException } from '../../exceptio
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentService } from '../../agent/agent.service';
 import { ModelsService } from '../../models/models.service';
+import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { UsageService } from '../../usage/usage.service';
+import { ConfigService } from '@nestjs/config';
+import { PlaybookPromptService } from './playbook-prompt.service';
 
 describe('PlaybookDesignService', () => {
   let service: PlaybookDesignService;
@@ -23,6 +26,7 @@ describe('PlaybookDesignService', () => {
   let agentService: Record<string, jest.Mock>;
   let modelsService: Record<string, jest.Mock>;
   let usageService: Record<string, jest.Mock>;
+  let promptService: Record<string, jest.Mock>;
   let loggerService: Record<string, jest.Mock>;
   let designMessageModel: Record<string, jest.Mock>;
 
@@ -86,8 +90,25 @@ describe('PlaybookDesignService', () => {
       getDefaultModel: jest.fn().mockResolvedValue(mockDefaultModel),
     };
 
+    const mockLiteLLMConnectionService = {
+      getHttpClient: jest.fn(),
+    };
+
+    const mockConfigService = {
+      get: jest.fn(),
+    };
+
     const mockUsageService = {
       recordUsage: jest.fn().mockResolvedValue(undefined),
+    };
+
+    const mockPromptService = {
+      getPromptOverridesPayload: jest.fn().mockResolvedValue({
+        'playbook.generate': JSON.stringify({
+          key: 'playbook.generate',
+          systemTemplate: 'Custom preprompt',
+        }),
+      }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -99,7 +120,10 @@ describe('PlaybookDesignService', () => {
         { provide: PlaybookContextService, useValue: mockContextService },
         { provide: AgentService, useValue: mockAgentService },
         { provide: ModelsService, useValue: mockModelsService },
+        { provide: LiteLLMConnectionService, useValue: mockLiteLLMConnectionService },
+        { provide: ConfigService, useValue: mockConfigService },
         { provide: UsageService, useValue: mockUsageService },
+        { provide: PlaybookPromptService, useValue: mockPromptService },
         { provide: LoggerService, useValue: mockLoggerService },
       ],
     }).compile();
@@ -111,6 +135,7 @@ describe('PlaybookDesignService', () => {
     agentService = module.get(AgentService);
     modelsService = module.get(ModelsService);
     usageService = module.get(UsageService);
+    promptService = module.get(PlaybookPromptService);
     loggerService = module.get(LoggerService);
     designMessageModel = module.get(getModelToken(PlaybookDesignMessage.name));
   });
@@ -217,12 +242,20 @@ describe('PlaybookDesignService', () => {
 
       await service.generatePlaybook(userId, dto);
 
+      expect(promptService.getPromptOverridesPayload).toHaveBeenCalledTimes(1);
+
       expect(grpcService.generatePlaybook).toHaveBeenCalledWith({
         query: dto.prompt,
         available_agents: mockGrpcAgents,
         workspace_context: [{ id: 'ws1', content: 'workspace data' }],
         existing_playbook: null,
         model: 'gpt-4o',
+        prompt_overrides: {
+          'playbook.generate': JSON.stringify({
+            key: 'playbook.generate',
+            systemTemplate: 'Custom preprompt',
+          }),
+        },
       });
     });
 
@@ -313,7 +346,9 @@ describe('PlaybookDesignService', () => {
       expect(edges[0]).toEqual({
         id: 'edge-0',
         sourceId: 'task-0',
+        sourceOutputPortId: 'default',
         targetId: 'task-1',
+        targetInputPortId: 'default',
       });
     });
 
@@ -663,6 +698,7 @@ describe('PlaybookDesignService', () => {
           query: dto.query,
           available_agents: mockGrpcAgents,
           model: 'gpt-4o',
+          prompt_overrides: expect.any(Object),
           existing_playbook: {
             nodes: existingPlaybook.tasks.map((t) => ({
               id: t.id,
@@ -682,7 +718,9 @@ describe('PlaybookDesignService', () => {
             })),
             edges: existingPlaybook.edges.map((e) => ({
               source_id: e.sourceId,
+              source_output_port_id: 'default',
               target_id: e.targetId,
+              target_input_port_id: 'default',
             })),
           },
         }),
@@ -987,9 +1025,9 @@ describe('PlaybookDesignService', () => {
 
       const edges = playbookService.createWithTasksAndEdges.mock.calls[0][4];
       expect(edges).toEqual([
-        { id: 'edge-0', sourceId: 'task-0', targetId: 'task-1' },
-        { id: 'edge-1', sourceId: 'task-1', targetId: 'task-2' },
-        { id: 'edge-2', sourceId: 'task-0', targetId: 'task-2' },
+        { id: 'edge-0', sourceId: 'task-0', sourceOutputPortId: 'default', targetId: 'task-1', targetInputPortId: 'default' },
+        { id: 'edge-1', sourceId: 'task-1', sourceOutputPortId: 'default', targetId: 'task-2', targetInputPortId: 'default' },
+        { id: 'edge-2', sourceId: 'task-0', sourceOutputPortId: 'default', targetId: 'task-2', targetInputPortId: 'default' },
       ]);
     });
 

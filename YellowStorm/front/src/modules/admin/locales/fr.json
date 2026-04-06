@@ -21,6 +21,8 @@
   "menu.agentTypes.description": "Gérer la configuration des types d'agents",
   "menu.agents.label": "Agents par défaut",
   "menu.agents.description": "Gérer les agents par défaut",
+  "menu.playbookPrompts.label": "Prompts du playbook",
+  "menu.playbookPrompts.description": "Gérer les modèles de prompts du playbook",
   "menu.tools.label": "Outils",
   "menu.tools.description": "Gérer les outils des agents",
   "menu.reports.label": "Signalements",

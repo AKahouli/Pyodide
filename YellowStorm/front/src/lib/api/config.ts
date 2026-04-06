@@ -166,6 +166,10 @@ export const API_ENDPOINTS = {
     list: '/admin/tools',
     byId: (id: string) => `/admin/tools/${id}`,
   },
+  adminPlaybookPrompts: {
+    list: '/admin/playbook-prompts',
+    byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,
+  },
   adminAgentTypes: {
     list: '/admin/agent-types',
     byId: (id: string) => `/admin/agent-types/${id}`,

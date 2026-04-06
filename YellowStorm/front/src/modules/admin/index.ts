@@ -20,6 +20,7 @@ export {
   ToolsPage,
   AgentTypesPage,
   DefaultAgentsPage,
+  PlaybookPromptsPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS } from './constants';
 export type {
@@ -78,6 +79,9 @@ export type {
   AdminModelsListResponse,
   UpdateModelRequest,
   SyncModelsResponse,
+  PlaybookPromptResponse,
+  PlaybookPromptListResponse,
+  UpsertPlaybookPromptRequest,
   ToolAttributeType,
   ToolAttributeResponse,
   ToolResponse,
@@ -130,6 +134,9 @@ export {
   clearDefaultModel,
   syncModels,
   getDefaultModel,
+  getPlaybookPrompts,
+  getPlaybookPrompt,
+  updatePlaybookPrompt,
   getTools,
   getToolById,
   createTool,

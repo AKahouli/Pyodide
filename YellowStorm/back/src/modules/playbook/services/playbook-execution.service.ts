@@ -27,6 +27,7 @@ import { EmailService } from '../../email/email.service';
 import { UserService } from '../../user/user.service';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import {
   extractTextFromComponents,
@@ -66,6 +67,7 @@ export class PlaybookExecutionService {
     private readonly userService: UserService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly promptService: PlaybookPromptService,
     private readonly semanticEnrichmentService: PlaybookSemanticEnrichmentService,
   ) {
     this.logger.setContext('PlaybookExecutionService');
@@ -210,6 +212,10 @@ export class PlaybookExecutionService {
       model: String(rawSemanticMatch.model || ''),
       judgeUsed: Boolean(rawSemanticMatch.judge_used),
     };
+  }
+
+  private async buildPromptOverrides(): Promise<Record<string, string>> {
+    return this.promptService.getPromptOverridesPayload();
   }
 
   private resolveStreamStepStatus(update: any): string {
@@ -1269,6 +1275,7 @@ export class PlaybookExecutionService {
       workspace_id,
       workspace_documents: Array.from(docMap.values()),
     }));
+    const promptOverrides = await this.buildPromptOverrides();
 
     const request: any = {
       user_context: { user_id: userId, username: userEmail },
@@ -1316,6 +1323,7 @@ export class PlaybookExecutionService {
       workspace_context: effectiveWorkspaceContexts,
       execution_mode: 'live',
       step_execution_modes: stepExecutionModesForGrpc,
+      prompt_overrides: promptOverrides,
     };
 
     if (activeReplayMap.size > 0) {
@@ -2295,6 +2303,8 @@ export class PlaybookExecutionService {
       });
     }
 
+    const promptOverrides = await this.buildPromptOverrides();
+
     const grpcRequest: any = {
       user_context: { user_id: userId, username: userEmail },
       playbook_id: playbookId,
@@ -2332,6 +2342,7 @@ export class PlaybookExecutionService {
       execution_mode: executionMode,
       edges: routingState.edges,
       upstream_results: routingState.upstreamResults,
+      prompt_overrides: promptOverrides,
     };
 
     if (grpcAgent) {

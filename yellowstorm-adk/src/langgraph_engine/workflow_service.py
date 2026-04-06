@@ -165,6 +165,7 @@ async def run_playbook(
     validated_replays_by_task: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
     step_execution_modes: Optional[Dict[str, str]] = None,
+    prompt_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute a playbook workflow with dynamic graph."""
     cleanup_stale_graphs()
@@ -209,6 +210,7 @@ async def run_playbook(
         "step_execution_modes": step_execution_modes or {},
         "task_outputs": {},
         "artifacts_by_port": {},
+        "prompt_overrides": prompt_overrides or {},
     }
 
     config = {"configurable": {"thread_id": thread_id}}
@@ -389,6 +391,7 @@ async def run_single_step_graph(
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
     on_progress=None,
+    prompt_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute a single task via a dedicated LangGraph for HITL support.
 
@@ -445,6 +448,7 @@ async def run_single_step_graph(
         "step_execution_modes": {},
         "task_outputs": {},
         "artifacts_by_port": artifacts_by_port,
+        "prompt_overrides": prompt_overrides or {},
     }
 
     if context_from_dependencies:

@@ -866,6 +866,36 @@ export interface SyncModelsResponse {
   total: number;
 }
 
+// Playbook Prompt Types
+
+export interface PlaybookPromptResponse {
+  id: string;
+  key: string;
+  title: string;
+  category: string;
+  description?: string;
+  systemTemplate: string;
+  userTemplate: string;
+  enabled: boolean;
+  version: number;
+  isBuiltIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaybookPromptListResponse {
+  items: PlaybookPromptResponse[];
+}
+
+export interface UpsertPlaybookPromptRequest {
+  title: string;
+  category: string;
+  description?: string;
+  systemTemplate?: string;
+  userTemplate?: string;
+  enabled?: boolean;
+}
+
 // Agent Type Types
 
 export interface AgentTypeResponse {

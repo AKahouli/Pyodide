@@ -53,31 +53,36 @@ def test_extract_artifacts_routes_explicit_same_kind_outputs_by_port_id() -> Non
     ]
 
 
-def test_extract_artifacts_fails_on_ambiguous_same_kind_outputs_without_port_id() -> None:
-    try:
-        _extract_artifacts_from_components(
-            [
-                {
-                    "type": "artifact",
-                    "data": {
-                        "artifact_kind": "document",
-                        "file_path": "https://example.com/report.pdf",
-                        "filename": "report.pdf",
-                    },
-                },
-            ],
+def test_extract_artifacts_routes_same_kind_outputs_by_filename() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
             {
-                "id": "task-1",
-                "output_ports": [
-                    {"id": "out-pdf", "name": "PDF", "artifact_kind": "document"},
-                    {"id": "out-docx", "name": "DOCX", "artifact_kind": "document"},
-                ],
+                "type": "artifact",
+                "data": {
+                    "artifact_kind": "document",
+                    "file_path": "https://example.com/report.pdf",
+                    "filename": "report.pdf",
+                },
             },
-        )
-    except ValueError as exc:
-        assert "without output_port_id" in str(exc)
-    else:
-        raise AssertionError("Expected ambiguous same-kind routing to fail")
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "out-pdf", "name": "PDF", "artifact_kind": "document"},
+                {"id": "out-docx", "name": "DOCX", "artifact_kind": "document"},
+            ],
+        },
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "out-pdf",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+            "mime_type": "",
+        }
+    ]
 
 
 def test_extract_artifacts_infers_file_kind_before_routing() -> None:
@@ -108,7 +113,7 @@ def test_extract_artifacts_infers_file_kind_before_routing() -> None:
     )
 
     assert [artifact["port_id"] for artifact in artifacts] == ["pdf-doc", "ppt-doc"]
-    assert [artifact["artifact_kind"] for artifact in artifacts] == ["document"]
+    assert [artifact["artifact_kind"] for artifact in artifacts] == ["document", "document"]
 
 
 def test_task_without_assigned_agent_emits_failed_step_update() -> None:

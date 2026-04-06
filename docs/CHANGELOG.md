@@ -1,5 +1,50 @@
 # Changelog
 
+## [2026-04-06 10:20] — Add Chrome DevTools MCP to OpenCode
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Added a project-scoped `chrome-devtools` MCP server to `opencode.json` so OpenCode can launch `chrome-devtools-mcp` directly alongside the existing skill permissions, and refreshed the OpenCode agent docs snapshot.
+- **Why:** OpenCode needed live browser tooling available through MCP for direct Chrome debugging and console inspection.
+- **Impact:** `opencode.json`, `docs/opencode-agents/README_2026-04-06_10-20-28.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_10-20-28.md`
+
+## [2026-04-06 10:02] — Enable browser-based OpenCode validation
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Exposed repository-approved OpenCode skills in `opencode.json`, added a `browser-qa-engineer` subagent for real-browser web app testing, and updated the frontend and test agents to use the `chrome-devtools` skill for live UI validation.
+- **Why:** OpenCode needed a direct way to verify frontend behavior in the running application instead of relying only on static reasoning or code-level tests.
+- **Impact:** `opencode.json`, `.opencode/agents/browser-qa-engineer.md`, `.opencode/agents/test-engineer.md`, `.opencode/agents/frontend-ui-ux-designer.md`, `docs/opencode-agents/README_2026-04-06_10-02-14.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_10-02-14.md`
+
+## [2026-04-06 10:00] — Tighten OpenCode agent permissions and add specialist roles
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Tightened OpenCode bash permissions to default to approval with explicit safe-command allowlists, added `refactoring-maintainer` and `docs-maintainer` subagents, and tuned specialist prompts to the repository's NestJS backend, React frontend, and Python ADK/gRPC split.
+- **Why:** The initial agent setup needed safer command defaults, explicit support for refactoring and documentation work, and prompts grounded in the actual repository architecture.
+- **Impact:** `opencode.json`, `.opencode/agents/backend-architect.md`, `.opencode/agents/frontend-ui-ux-designer.md`, `.opencode/agents/test-engineer.md`, `.opencode/agents/performance-engineer.md`, `.opencode/agents/debugger-root-cause.md`, `.opencode/agents/ai-systems-engineer.md`, `.opencode/agents/refactoring-maintainer.md`, `.opencode/agents/docs-maintainer.md`, `docs/opencode-agents/README_2026-04-06_10-00-31.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_10-00-31.md`
+
+## [2026-04-06 09:56] — Add project OpenCode agent team
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Added a project-level `opencode.json` with `build` and `plan` task-permission routing, and created project-local OpenCode subagents for backend architecture, frontend UX, review, testing, security, performance, debugging, and AI systems work.
+- **Why:** The repository needed a reusable OpenCode team setup optimized for software delivery quality, safety, maintainability, and specialist delegation.
+- **Impact:** `opencode.json`, `.opencode/agents/backend-architect.md`, `.opencode/agents/frontend-ui-ux-designer.md`, `.opencode/agents/code-reviewer.md`, `.opencode/agents/test-engineer.md`, `.opencode/agents/security-auditor.md`, `.opencode/agents/performance-engineer.md`, `.opencode/agents/debugger-root-cause.md`, `.opencode/agents/ai-systems-engineer.md`, `docs/opencode-agents/README_2026-04-06_09-56-28.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_09-56-28.md`
+
+## [2026-04-06 09:22] — Add playbook generation preprompt registry
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Routed the playbook autobuilder preprompt through the prompt registry, added a `playbook.generate` prompt slot, and passed `prompt_overrides` through the generation and design gRPC requests.
+- **Why:** The generation path was still using a hardcoded preprompt, so admin prompt edits were not affecting newly generated playbooks.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-design.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-prompt.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-design.service.spec.ts`, `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `yellowstorm-adk/grpc/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/langgraph_engine/generate_playbook_prompt.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2.py`, `docs/playbook/README_2026-04-06_09-22-02.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_09-22-02.md`
+
 ## [2026-04-06 07:51] — Finalize cancelled workflow streams correctly
 
 - **Feature:** `playbook`

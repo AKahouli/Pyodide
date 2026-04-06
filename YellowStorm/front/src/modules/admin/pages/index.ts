@@ -10,3 +10,4 @@ export { ModelsPage } from './ModelsPage';
 export { ToolsPage } from './ToolsPage';
 export { AgentTypesPage } from './AgentTypesPage';
 export { DefaultAgentsPage } from './DefaultAgentsPage';
+export { PlaybookPromptsPage } from './PlaybookPromptsPage';

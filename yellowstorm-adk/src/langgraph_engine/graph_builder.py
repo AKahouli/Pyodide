@@ -41,6 +41,8 @@ from src.langgraph_engine.port_resolution import (
     build_tool_scope,
     format_workspace_file_hint,
     select_output_workspace_id,
+    load_prompt_registry,
+    resolve_prompt_template,
 )
 from datetime import datetime
 import json
@@ -138,26 +140,61 @@ def _infer_artifact_kind(filename: str = "", mime_type: str = "") -> str | None:
     return None
 
 
-def _infer_output_port_id_from_filename(filename: str, output_ports: List[Dict[str, Any]]) -> str:
-    normalized_filename = Path(filename or "").name.lower().strip()
+def _normalize_port_text(value: Any) -> str:
+    return str(value or "").strip().lower().replace(" ", "-")
+
+
+_FILENAME_PORT_HINTS = {
+    ".docx": ["docx", "doc"],
+    ".pptx": ["pptx", "ppt"],
+    ".xlsx": ["xlsx", "xls", "excel"],
+    ".doc": ["doc"],
+    ".ppt": ["ppt"],
+    ".xls": ["xls", "excel"],
+    ".pdf": ["pdf"],
+    ".md": ["md", "markdown"],
+    ".txt": ["txt", "text"],
+}
+
+
+def _filename_tokens(filename: str) -> List[str]:
+    normalized_filename = str(filename or "").strip().lower()
     if not normalized_filename:
-        return ""
+        return []
 
+    tokens = []
     stem = Path(normalized_filename).stem
-    candidate_tokens = [stem]
-    if stem.startswith(("out-", "in-")):
-        candidate_tokens.append(stem.split("-", 1)[1])
+    for candidate in [stem, stem.split("-", 1)[1] if stem.startswith(("out-", "in-")) else ""]:
+        token = _normalize_port_text(candidate)
+        if token and token not in tokens:
+            tokens.append(token)
 
-    for candidate in candidate_tokens:
-        candidate = candidate.strip()
-        if not candidate:
-            continue
+    suffix = Path(normalized_filename).suffix.lower()
+    for candidate in [suffix[1:] if suffix else "", *(_FILENAME_PORT_HINTS.get(suffix, []))]:
+        token = _normalize_port_text(candidate)
+        if token and token not in tokens:
+            tokens.append(token)
+
+    return tokens
+
+
+def _port_matches_filename_token(port: Dict[str, Any], token: str) -> bool:
+    normalized_token = _normalize_port_text(token)
+    if not normalized_token:
+        return False
+
+    for candidate in [port.get("id"), port.get("name")]:
+        normalized_candidate = _normalize_port_text(candidate)
+        if normalized_candidate and (normalized_candidate == normalized_token or normalized_token in normalized_candidate):
+            return True
+    return False
+
+
+def _infer_output_port_id_from_filename(filename: str, output_ports: List[Dict[str, Any]]) -> str:
+    for candidate in _filename_tokens(filename):
         for port in output_ports:
             port_id = _normalize_port_id(port.get("id"))
-            if port_id and port_id.lower() == candidate:
-                return port_id
-            port_name = str(port.get("name") or "").strip().lower()
-            if port_name and port_name.replace(" ", "-") == candidate:
+            if port_id and _port_matches_filename_token(port, candidate):
                 return port_id
 
     return ""
@@ -508,12 +545,17 @@ class DynamicGraphBuilder:
                             f"{turn.get('role', 'user')}: {turn.get('content', '')}"
                             for turn in clarification_transcript
                         )
-                        clarification_prompt = task_config.get("clarification_prompt") or (
-                            "Review the task below and determine if you have enough information to complete it.\n"
-                            f"Task: {task_config['title']}\n"
-                            f"Description: {task_for_execution['description']}\n"
-                            "If you need clarification, respond with one clear question only. "
-                            "If everything is clear, respond with exactly 'CLEAR'."
+                        clarification_prompt = task_config.get("clarification_prompt") or resolve_prompt_template(
+                            prompt_registry,
+                            'task.clarification',
+                            field='systemTemplate',
+                            fallback=(
+                                "Review the task below and determine if you have enough information to complete it.\n"
+                                f"Task: {task_config['title']}\n"
+                                f"Description: {task_for_execution['description']}\n"
+                                "If you need clarification, respond with one clear question only. "
+                                "If everything is clear, respond with exactly 'CLEAR'."
+                            ),
                         )
                         if prior_turns:
                             clarification_prompt += f"\n\nPrior clarification turns:\n{prior_turns}"
@@ -655,6 +697,7 @@ class DynamicGraphBuilder:
 
                 # === STEP 3: Build prompt context from resolved inputs ===
                 context, resolved_inputs, workspace_artifacts = self._build_structured_context(task_id, task_config, state)
+                prompt_registry = load_prompt_registry(state.get("prompt_overrides") or {})
 
                 workspace_context_for_hint = state.get("workspace_context") if not resolved_inputs.get("has_port_sources") else None
                 workspace_file_hint = format_workspace_file_hint(workspace_context_for_hint)
@@ -666,14 +709,21 @@ class DynamicGraphBuilder:
                         context_from_dependencies=context,
                         user_query=state.get("query", ""),
                         workspace_file_hint=workspace_file_hint,
+                        prompt_overrides=state.get("prompt_overrides") or {},
                     )
 
                 agent_instructions = agent.get("instructions") or agent.get("prompt", "")
-                system_prompt = (
-                    f"You are {agent['name']}.\n\n"
-                    f"Your instructions:\n{agent_instructions}\n\n"
-                    f"You are working on a task as part of a larger playbook execution."
+                system_prompt = resolve_prompt_template(
+                    prompt_registry,
+                    'task.system',
+                    field='systemTemplate',
+                    fallback=(
+                        f"You are {agent['name']}.\n\n"
+                        f"Your instructions:\n{agent_instructions}\n\n"
+                        f"You are working on a task as part of a larger playbook execution."
+                    ),
                 )
+                system_prompt = system_prompt.replace('{{agentName}}', agent['name']).replace('{{agentInstructions}}', agent_instructions)
 
                 effective_workspace_context = list(state.get("workspace_context") or [])
                 if workspace_artifacts:
@@ -826,9 +876,23 @@ class DynamicGraphBuilder:
                             settings=settings,
                             model_name=model_name,
                             on_progress=_on_execution_progress,
+                            prompt_overrides=state.get("prompt_overrides") or {},
                         )
                         if execution_mode in ("replay_flex", "replay_adaptive"):
                             format_guide = (validated_replay.get("output_format_guide") or "").strip()
+                            replay_system_prompt = resolve_prompt_template(
+                                prompt_registry,
+                                'replay.final_synthesis',
+                                field='systemTemplate',
+                                fallback=system_prompt,
+                            )
+                            replay_user_prefix = resolve_prompt_template(
+                                prompt_registry,
+                                'replay.final_synthesis',
+                                field='userTemplate',
+                                fallback='Use the following replayed tool execution results to produce the final answer.',
+                            )
+                            replay_user_prefix = replay_user_prefix.replace('{{synthesisContext}}', synthesis_context)
                             format_instruction = ""
                             if validated_replay.get("preserve_output_format") and format_guide:
                                 format_instruction = (
@@ -839,14 +903,13 @@ class DynamicGraphBuilder:
                                 )
                             replay_user_prompt = (
                                 f"{current_user_prompt}\n\n"
-                                "Use the following replayed tool execution results to produce the final answer.\n\n"
-                                f"{synthesis_context}"
+                                f"{replay_user_prefix}"
                                 f"{format_instruction}"
                             )
                             response, usage = await self._llm_direct_call(
                                 settings,
                                 model_name,
-                                system_prompt,
+                                replay_system_prompt,
                                 replay_user_prompt,
                                 temperature=temperature,
                                 prompt_trace=llm_prompt_trace,
@@ -902,6 +965,7 @@ class DynamicGraphBuilder:
                             response,
                             components,
                             prompt_trace=llm_prompt_trace,
+                            prompt_overrides=state.get("prompt_overrides") or {},
                         )
                         generated_artifacts = _collect_generated_artifacts(components)
                         if not structured_outputs and (str(response or "").strip() or generated_artifacts):

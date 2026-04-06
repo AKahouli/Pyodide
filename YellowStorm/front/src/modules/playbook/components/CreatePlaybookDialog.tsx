@@ -18,6 +18,7 @@ import { usePlaybookStore } from '../store';
 import { handleApiError } from '@/lib/api-error';
 import { useModuleTranslation } from '@/modules/localization';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
+import { getWorkspaces } from '@/modules/workspace';
 import type { GeneratePlaybookData } from '../types';
 import { rewritePlaybookPromptStream } from '../api';
 import { toast } from 'sonner';
@@ -125,6 +126,18 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
       setAutoWorkspaces(retryData.workspaces ?? []);
     }
   }, [retryData, open]);
+
+  // Auto-select first workspace when dialog opens (new creation, not retry)
+  useEffect(() => {
+    if (!open || retryData) return;
+    getWorkspaces({ limit: 100 })
+      .then((res) => {
+        if (res.workspaces.length > 0) {
+          setAutoWorkspaces([res.workspaces[0].id]);
+        }
+      })
+      .catch(() => {});
+  }, [open, retryData]);
 
   const resetForm = () => {
     setName('');

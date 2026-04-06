@@ -51,6 +51,9 @@ import type {
   AdminModelResponse,
   UpdateModelRequest,
   SyncModelsResponse,
+  PlaybookPromptListResponse,
+  PlaybookPromptResponse,
+  UpsertPlaybookPromptRequest,
   ToolListResponse,
   ToolResponse,
   CreateToolRequest,
@@ -460,6 +463,33 @@ export async function clearDefaultModel(id: string): Promise<AdminModelResponse>
 export async function syncModels(): Promise<SyncModelsResponse> {
   const response = await apiClient.post<ApiResponse<SyncModelsResponse>>(
     API_ENDPOINTS.adminModels.sync
+  );
+  return response.data.data;
+}
+
+// Playbook Prompts API
+
+export async function getPlaybookPrompts(): Promise<PlaybookPromptListResponse> {
+  const response = await apiClient.get<ApiResponse<PlaybookPromptListResponse>>(
+    API_ENDPOINTS.adminPlaybookPrompts.list
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookPrompt(key: string): Promise<PlaybookPromptResponse | null> {
+  const response = await apiClient.get<ApiResponse<PlaybookPromptResponse | null>>(
+    API_ENDPOINTS.adminPlaybookPrompts.byKey(key)
+  );
+  return response.data.data;
+}
+
+export async function updatePlaybookPrompt(
+  key: string,
+  data: UpsertPlaybookPromptRequest,
+): Promise<PlaybookPromptResponse> {
+  const response = await apiClient.patch<ApiResponse<PlaybookPromptResponse>>(
+    API_ENDPOINTS.adminPlaybookPrompts.byKey(key),
+    data,
   );
   return response.data.data;
 }

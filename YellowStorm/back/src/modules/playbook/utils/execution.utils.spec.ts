@@ -279,7 +279,7 @@ describe('execution.utils', () => {
       ]);
     });
 
-    it('fails on ambiguous same-kind file outputs without output port id', () => {
+    it('routes same-kind file outputs by filename when possible', () => {
       mockExtractComponentData.mockReturnValue({
         type: 'artifact' as any,
         data: {
@@ -289,18 +289,26 @@ describe('execution.utils', () => {
         },
       });
 
-      expect(() =>
-        extractArtifactsFromResult(
-          {
-            id: 'task-1',
-            outputPorts: [
-              { id: 'out-pdf', name: 'PDF', artifactKind: 'document' },
-              { id: 'out-docx', name: 'DOCX', artifactKind: 'document' },
-            ],
-          },
-          [{ id: 'artifact-1' }],
-        ),
-      ).toThrow(/without output_port_id/);
+      const result = extractArtifactsFromResult(
+        {
+          id: 'task-1',
+          outputPorts: [
+            { id: 'out-pdf', name: 'PDF', artifactKind: 'document' },
+            { id: 'out-docx', name: 'DOCX', artifactKind: 'document' },
+          ],
+        },
+        [{ id: 'artifact-1' }],
+      );
+
+      expect(result).toEqual([
+        {
+          portId: 'out-pdf',
+          artifactKind: 'document',
+          url: 'https://example.com/report.pdf',
+          filename: 'report.pdf',
+          mimeType: '',
+        },
+      ]);
     });
 
     it('infers the output port from the generated filename when possible', () => {

@@ -121,6 +121,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.agents.description',
   },
   {
+    id: 'playbook-prompts',
+    label: 'Playbook Prompts',
+    labelKey: 'menu.playbookPrompts.label',
+    path: '/admin/playbook-prompts',
+    icon: FileText,
+    permissions: ['admin.*', '*'],
+    description: 'Manage playbook prompt templates',
+    descriptionKey: 'menu.playbookPrompts.description',
+  },
+  {
     id: 'tools',
     label: 'Tools',
     labelKey: 'menu.tools.label',

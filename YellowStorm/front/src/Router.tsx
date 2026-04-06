@@ -41,6 +41,7 @@ import {
   ToolsPage,
   AgentTypesPage,
   DefaultAgentsPage,
+  PlaybookPromptsPage,
 } from "./modules/admin";
 
 function RouteErrorFallback() {
@@ -117,6 +118,7 @@ export const router = createHashRouter([
           { path: "tools", element: <ToolsPage /> },
           { path: "agent-types", element: <AgentTypesPage /> },
           { path: "agents", element: <DefaultAgentsPage /> },
+          { path: "playbook-prompts", element: <PlaybookPromptsPage /> },
           { path: "analytics", element: <AnalyticsPage /> },
           { path: "system", element: <SystemPage /> },
         ],

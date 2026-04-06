@@ -355,26 +355,67 @@ function inferArtifactKind(filename?: string, mimeType?: string): string | undef
   return undefined;
 }
 
-function inferOutputPortIdFromFilename(filename: string | undefined, outputPorts: any[]): string {
-  const normalizedFilename = String(filename || '').trim().toLowerCase();
-  if (!normalizedFilename) return '';
+function normalizePortText(value: any): string {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
+const FILENAME_PORT_HINTS: Record<string, string[]> = {
+  '.docx': ['docx', 'doc'],
+  '.pptx': ['pptx', 'ppt'],
+  '.xlsx': ['xlsx', 'xls', 'excel'],
+  '.doc': ['doc'],
+  '.ppt': ['ppt'],
+  '.xls': ['xls', 'excel'],
+  '.pdf': ['pdf'],
+  '.md': ['md', 'markdown'],
+  '.txt': ['txt', 'text'],
+};
+
+function inferFilenameTokens(filename: string | undefined): string[] {
+  const normalizedFilename = String(filename || '').trim().toLowerCase();
+  if (!normalizedFilename) return [];
+
+  const tokens = new Set<string>();
   const stem = normalizedFilename.replace(/\.[^.]+$/, '');
-  const candidateTokens = [stem];
+  if (stem) tokens.add(normalizePortText(stem));
   if (stem.startsWith('out-') || stem.startsWith('in-')) {
-    candidateTokens.push(stem.split('-', 2)[1] || '');
+    tokens.add(normalizePortText(stem.split('-', 2)[1] || ''));
   }
 
+  const extension = normalizedFilename.includes('.')
+    ? normalizedFilename.slice(normalizedFilename.lastIndexOf('.'))
+    : '';
+  if (extension) {
+    tokens.add(normalizePortText(extension.slice(1)));
+    for (const hint of FILENAME_PORT_HINTS[extension] || []) {
+      tokens.add(normalizePortText(hint));
+    }
+  }
+
+  return [...tokens].filter(Boolean);
+}
+
+function portMatchesFilenameToken(port: any, token: string): boolean {
+  const normalizedToken = normalizePortText(token);
+  if (!normalizedToken) return false;
+
+  const portId = normalizePortText(port?.id);
+  const portName = normalizePortText(port?.name);
+  return [portId, portName].some((value) => value && (value === normalizedToken || value.includes(normalizedToken)));
+}
+
+function inferOutputPortIdFromFilename(filename: string | undefined, outputPorts: any[]): string {
+  const candidateTokens = inferFilenameTokens(filename);
+  if (!candidateTokens.length) return '';
+
   for (const candidate of candidateTokens) {
-    const normalizedCandidate = candidate.trim();
-    if (!normalizedCandidate) continue;
     for (const port of outputPorts || []) {
       const portId = normalizePortId(port?.id);
-      if (portId && portId.toLowerCase() === normalizedCandidate) {
-        return portId;
-      }
-      const portName = String(port?.name || '').trim().toLowerCase().replace(/\s+/g, '-');
-      if (portName && portName === normalizedCandidate) {
+      if (portId && portMatchesFilenameToken(port, candidate)) {
         return portId;
       }
     }

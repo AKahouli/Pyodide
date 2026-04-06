@@ -21,6 +21,7 @@ import { LiteLLMConnectionService } from '../../models/litellm-connection.servic
 import { UsageService } from '../../usage/usage.service';
 import { UsageType } from '../../usage/schemas/usage.schema';
 import type { AxiosResponse } from 'axios';
+import { PlaybookPromptService } from './playbook-prompt.service';
 
 const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
   'You rewrite workflow prompts for a playbook builder.',
@@ -36,6 +37,7 @@ export class PlaybookDesignService {
     private readonly playbookService: PlaybookService,
     private readonly grpcService: PlaybookGrpcService,
     private readonly contextService: PlaybookContextService,
+    private readonly promptService: PlaybookPromptService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
@@ -72,7 +74,11 @@ export class PlaybookDesignService {
       .trim();
   }
 
-  private getPromptRewriteSystemPrompt(): string {
+  private async getPromptRewriteSystemPrompt(): Promise<string> {
+    const prompt = await this.promptService.findByKey('design.prompt_rewrite');
+    if (prompt?.enabled && prompt.systemTemplate?.trim()) {
+      return prompt.systemTemplate.trim();
+    }
     return this.configService.get<string>('playbook.promptRewriteSystemPrompt')?.trim() || FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT;
   }
 
@@ -101,6 +107,7 @@ export class PlaybookDesignService {
     // Build workspace contexts
     const workspaceIds = (dto.workspaces || []).map((id) => id);
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
+    const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     const modelId = defaultModel?.litellmModel || defaultModel?.id || '';
 
@@ -110,6 +117,7 @@ export class PlaybookDesignService {
       workspace_context: workspaceContexts,
       existing_playbook: null,
       model: modelId,
+      prompt_overrides: promptOverrides,
     };
 
     this.logger.log('GeneratePlaybook gRPC request built', {
@@ -188,7 +196,7 @@ export class PlaybookDesignService {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    const systemPrompt = this.getPromptRewriteSystemPrompt();
+    const systemPrompt = await this.getPromptRewriteSystemPrompt();
     const userPrompt = `<original_prompt>\n${sourcePrompt}\n</original_prompt>`;
 
     try {
@@ -250,7 +258,7 @@ export class PlaybookDesignService {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    const systemPrompt = this.getPromptRewriteSystemPrompt();
+    const systemPrompt = await this.getPromptRewriteSystemPrompt();
     const userPrompt = `<original_prompt>\n${sourcePrompt}\n</original_prompt>`;
 
     let pending = '';
@@ -358,6 +366,7 @@ export class PlaybookDesignService {
 
     // Build workspace contexts
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(playbook.workspaces || []);
+    const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     const modelId = defaultModel?.litellmModel || defaultModel?.id || '';
 
@@ -390,6 +399,7 @@ export class PlaybookDesignService {
         })),
       },
       model: modelId,
+      prompt_overrides: promptOverrides,
     };
 
     this.logger.log('Design gRPC request built', {

@@ -21,6 +21,8 @@
   "menu.agentTypes.description": "Manage agent type configurations",
   "menu.agents.label": "Default Agents",
   "menu.agents.description": "Manage default agents",
+  "menu.playbookPrompts.label": "Playbook Prompts",
+  "menu.playbookPrompts.description": "Manage playbook prompt templates",
   "menu.tools.label": "Tools",
   "menu.tools.description": "Manage agent tools",
   "menu.reports.label": "Reports",
