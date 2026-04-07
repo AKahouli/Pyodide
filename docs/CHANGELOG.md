@@ -1,5 +1,86 @@
 # Changelog
 
+## [2026-04-06 18:03] — Add Enter-submit textarea handling for playbook copilot
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Documented that the playbook copilot response textareas in both `PlaybookDesignerPanel` and `InterruptDialog` submit on plain Enter, preserve Shift+Enter newline insertion, and ignore IME composition during key handling.
+- **Why:** The documentation snapshot needs to match the current UI behavior for multiline copilot replies.
+- **Impact:** `docs/playbook/README_2026-04-06_18-03-00.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_18-03-00.md`
+
+## [2026-04-06 13:57] — Fix fallback-only task completion output capture
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Documented that the task completion path now computes `output_text` before fallback artifact generation in `graph_builder`, preventing the `cannot access local variable 'output_text'` failure when a step completes with only fallback text artifacts.
+- **Why:** Fallback-only completions must be able to generate artifacts without a runtime error.
+- **Impact:** `docs/playbook/README_2026-04-06_13-57-00.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_13-57-00.md`
+
+## [2026-04-06 13:55] — Restore HITL resume context from interrupt snapshot
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the playbook snapshot to document that clarification interrupt payloads now include `task_description`, and that `resume_playbook()` / `resume_single_step()` restore transcript and task-description context by resuming with `Command(update=..., resume=...)` from the suspended interrupt snapshot.
+- **Why:** HITL resume paths need the clarified task context to survive suspension and resume consistently.
+- **Impact:** `docs/playbook/README_2026-04-06_13-55-00.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_13-55-00.md`
+
+## [2026-04-06 13:52] — Persist HITL clarification state on resume
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Documented that clarification transcripts and task description overrides are now persisted in playbook state so resumed HITL runs reuse the prior clarification context instead of asking the same clarification again.
+- **Why:** Resume flows need the original clarification state to survive checkpointed restarts.
+- **Impact:** `docs/playbook/README_2026-04-06_13-52-00.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-06_13-52-00.md`
+
+## [2026-04-06 13:50] — Pin docs-maintainer to gpt-5.4-mini
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Assigned the `docs-maintainer` subagent an explicit `model: openai/gpt-5.4-mini` override and refreshed the OpenCode agent snapshot to document the dedicated model selection.
+- **Why:** Documentation maintenance is a bounded, repetitive workflow that benefits from a lighter dedicated model instead of inheriting the active primary-agent model.
+- **Impact:** `.opencode/agents/docs-maintainer.md`, `docs/opencode-agents/README_2026-04-06_13-50-14.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_13-50-14.md`
+
+## [2026-04-06 13:21] — Remove stale Python-first security guidance
+
+- **Feature:** `opencode-agents`
+- **Type:** `docs`
+- **Changed:** Replaced the stale SQLAlchemy-specific injection note in `AGENTS.md` with stack-agnostic injection-safety guidance and refreshed the OpenCode agent snapshot to use a relative cross-reference that matches the repository docs rules.
+- **Why:** The prior instructions still carried a Python/SQLAlchemy assumption that did not fit the documented NestJS/Mongoose stack and the latest snapshot still used an absolute docs link.
+- **Impact:** `AGENTS.md`, `docs/opencode-agents/README_2026-04-06_13-21-09.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_13-21-09.md`
+
+## [2026-04-06 13:19] — Correct plan-vs-build delegation docs
+
+- **Feature:** `opencode-agents`
+- **Type:** `docs`
+- **Changed:** Refreshed the OpenCode agent snapshot to document `build` and `plan` task-permission targets separately, matching the actual `opencode.json`, and recorded the final aligned documentation state.
+- **Why:** The prior snapshot still implied both primary agents could delegate to the same task targets, which overstated `plan` capabilities.
+- **Impact:** `docs/opencode-agents/README_2026-04-06_13-19-23.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_13-19-23.md`
+
+## [2026-04-06 13:17] — Fix OpenCode docs drift after AGENTS alignment
+
+- **Feature:** `opencode-agents`
+- **Type:** `docs`
+- **Changed:** Corrected `AGENTS.md` to reference the actual `docs/` tree instead of `yellowstorm-docs/`, and refreshed the OpenCode agent snapshot so task-permission and approved-skill descriptions match the current `opencode.json`.
+- **Why:** The previous documentation pass left one internal docs-root mismatch and slightly overstated how `permission.task` is restricted.
+- **Impact:** `AGENTS.md`, `docs/opencode-agents/README_2026-04-06_13-17-42.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_13-17-42.md`
+
+## [2026-04-06 13:13] — Align AGENTS.md with OpenCode team and monorepo architecture
+
+- **Feature:** `opencode-agents`
+- **Type:** `docs`
+- **Changed:** Updated `AGENTS.md` to describe the actual monorepo stack, package-specific test workflow, OpenCode primary agents and specialist subagents, and browser validation guidance tied to the project OpenCode setup.
+- **Why:** The repository-wide instructions were still Python-first and no longer matched the current OpenCode team or the NestJS/React/Python split used in this project.
+- **Impact:** `AGENTS.md`, `docs/opencode-agents/README_2026-04-06_13-13-55.md`, `docs/DOC_INDEX.md`
+- **Doc:** `created` `/docs/opencode-agents/README_2026-04-06_13-13-55.md`
+
 ## [2026-04-06 10:20] — Add Chrome DevTools MCP to OpenCode
 
 - **Feature:** `opencode-agents`

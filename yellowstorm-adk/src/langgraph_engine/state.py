@@ -115,6 +115,34 @@ def merge_task_outputs(left: Dict[str, str], right: Dict[str, str]) -> Dict[str,
     return {**left, **right}
 
 
+def merge_clarification_transcripts(
+    left: Dict[str, List[Dict[str, str]]],
+    right: Dict[str, List[Dict[str, str]]],
+) -> Dict[str, List[Dict[str, str]]]:
+    if not left:
+        return right
+    if not right:
+        return left
+
+    merged: Dict[str, List[Dict[str, str]]] = {key: list(value or []) for key, value in left.items()}
+    for key, value in right.items():
+        incoming = value if isinstance(value, list) else [value]
+        valid_turns = [item for item in incoming if isinstance(item, dict)]
+        if key in merged:
+            merged[key].extend(valid_turns)
+        else:
+            merged[key] = valid_turns
+    return merged
+
+
+def merge_task_description_overrides(left: Dict[str, str], right: Dict[str, str]) -> Dict[str, str]:
+    if not left:
+        return right
+    if not right:
+        return left
+    return {**left, **right}
+
+
 def merge_artifacts(
     left: Dict[str, List[Dict[str, Any]]], right: Dict[str, List[Dict[str, Any]]]
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -167,3 +195,5 @@ class ExecutionState(TypedDict):
     prompt_overrides: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
     artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
+    clarification_transcripts_by_task: Annotated[Dict[str, List[Dict[str, str]]], merge_clarification_transcripts]
+    task_description_overrides_by_task: Annotated[Dict[str, str], merge_task_description_overrides]

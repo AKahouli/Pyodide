@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -89,6 +90,33 @@ def _extract_interrupt_from_stream_chunk(chunk: Any, thread_id: str) -> Optional
     first_interrupt = interrupt_candidates[0]
     interrupt_value = getattr(first_interrupt, "value", first_interrupt)
     return _normalize_interrupt_value(interrupt_value, thread_id)
+
+
+def _build_resume_state_update(interrupt_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not interrupt_data or interrupt_data.get("type") != "clarification":
+        return None
+
+    task_id = str(interrupt_data.get("task_id") or "").strip()
+    if not task_id:
+        return None
+
+    conversation_json = interrupt_data.get("conversation_json") or "[]"
+    try:
+        transcript = json.loads(conversation_json)
+    except (TypeError, ValueError):
+        transcript = []
+
+    if not isinstance(transcript, list):
+        transcript = []
+
+    task_description = str(interrupt_data.get("task_description") or "").strip()
+
+    update: Dict[str, Any] = {
+        "clarification_transcripts_by_task": {task_id: transcript},
+    }
+    if task_description:
+        update["task_description_overrides_by_task"] = {task_id: task_description}
+    return update
 
 
 async def _consume_graph_stream(
@@ -211,6 +239,8 @@ async def run_playbook(
         "task_outputs": {},
         "artifacts_by_port": {},
         "prompt_overrides": prompt_overrides or {},
+        "clarification_transcripts_by_task": {},
+        "task_description_overrides_by_task": {},
     }
 
     config = {"configurable": {"thread_id": thread_id}}
@@ -319,9 +349,12 @@ async def resume_playbook(
     logger.info("[resume_playbook] Resuming", thread_id=thread_id, playbook_id=playbook_id)
 
     try:
+        state_snapshot = await graph.aget_state(config)
+        resume_interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, thread_id)
+        resume_state_update = _build_resume_state_update(resume_interrupt_data)
         interrupt_data, result = await _consume_graph_stream(
             graph=graph,
-            graph_input=Command(resume=human_response),
+            graph_input=Command(update=resume_state_update, resume=human_response),
             config=config,
             thread_id=thread_id,
         )
@@ -449,6 +482,8 @@ async def run_single_step_graph(
         "task_outputs": {},
         "artifacts_by_port": artifacts_by_port,
         "prompt_overrides": prompt_overrides or {},
+        "clarification_transcripts_by_task": {},
+        "task_description_overrides_by_task": {},
     }
 
     if context_from_dependencies:
@@ -555,7 +590,10 @@ async def resume_single_step(
     logger.info("[resume_single_step] Resuming", thread_id=thread_id, task_id=task_id)
 
     try:
-        final_state = await graph.ainvoke(Command(resume=human_response), config)
+        state_snapshot = await graph.aget_state(config)
+        resume_interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
+        resume_state_update = _build_resume_state_update(resume_interrupt_data)
+        final_state = await graph.ainvoke(Command(update=resume_state_update, resume=human_response), config)
 
         state_snapshot = await graph.aget_state(config)
         if state_snapshot.next:

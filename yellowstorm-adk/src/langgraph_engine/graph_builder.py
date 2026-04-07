@@ -49,6 +49,59 @@ import json
 
 logger = get_logger(__name__)
 
+
+def _normalize_clarification_turn(turn: Dict[str, Any]) -> Dict[str, str]:
+    return {
+        "role": str(turn.get("role", "user") or "user").strip() or "user",
+        "content": str(turn.get("content", "") or "").strip(),
+    }
+
+
+def _get_clarification_context(
+    state: ExecutionState,
+    task_id: str,
+) -> tuple[List[Dict[str, str]], str]:
+    transcripts_by_task = state.get("clarification_transcripts_by_task") or {}
+    description_overrides_by_task = state.get("task_description_overrides_by_task") or {}
+
+    transcript = [
+        _normalize_clarification_turn(turn)
+        for turn in transcripts_by_task.get(task_id, [])
+        if isinstance(turn, dict)
+    ]
+    task_description_override = str(description_overrides_by_task.get(task_id) or "").strip()
+    return transcript, task_description_override
+
+
+def _store_clarification_context(
+    state: ExecutionState,
+    task_id: str,
+    transcript: List[Dict[str, str]],
+    task_description: str,
+) -> None:
+    # Persist the conversation through LangGraph checkpoints so resumed runs
+    # can rebuild the exact clarification context instead of starting over.
+    transcripts_by_task = dict(state.get("clarification_transcripts_by_task") or {})
+    description_overrides_by_task = dict(state.get("task_description_overrides_by_task") or {})
+    artifacts_by_port = dict(state.get("artifacts_by_port") or {})
+    task_outputs = dict(state.get("task_outputs") or {})
+    transcripts_by_task[task_id] = list(transcript)
+    description_overrides_by_task[task_id] = task_description
+    state["clarification_transcripts_by_task"] = transcripts_by_task
+    state["task_description_overrides_by_task"] = description_overrides_by_task
+
+    normalized_description = str(task_description or "").strip()
+    if normalized_description:
+        artifacts_by_port[f"{task_id}:default"] = [{
+            "port_id": "default",
+            "artifact_kind": "text",
+            "content": normalized_description,
+        }]
+        task_outputs[f"{task_id}_output"] = normalized_description
+
+    state["artifacts_by_port"] = artifacts_by_port
+    state["task_outputs"] = task_outputs
+
 _ARTIFACT_KIND_BY_EXTENSION = {
     ".pdf": "document",
     ".doc": "document",
@@ -377,6 +430,43 @@ def _extract_artifacts_from_components(
     return artifacts
 
 
+def _build_default_text_artifact(
+    task_config: TaskConfig,
+    output_text: str,
+    fallback_text: str = "",
+) -> Dict[str, Any] | None:
+    normalized_output = str(output_text or "").strip()
+    normalized_fallback = str(fallback_text or "").strip()
+    content = normalized_output or normalized_fallback
+    if not content:
+        return None
+
+    output_ports = list(task_config.get("output_ports") or [])
+    selected_port: Dict[str, Any] | None = None
+
+    if len(output_ports) == 1:
+        selected_port = output_ports[0]
+    else:
+        selected_port = next(
+            (
+                port for port in output_ports
+                if _normalize_port_id(port.get("id")) == "default"
+            ),
+            None,
+        )
+
+    port_id = _normalize_port_id(selected_port.get("id")) if selected_port else "default"
+    artifact_kind = str((selected_port or {}).get("artifact_kind") or "text").strip() or "text"
+    if artifact_kind not in {"text", "code"}:
+        return None
+
+    return {
+        "port_id": port_id,
+        "artifact_kind": artifact_kind,
+        "content": content,
+    }
+
+
 class DynamicGraphBuilder:
     """Builds dynamic execution graphs from playbook task definitions."""
 
@@ -499,7 +589,12 @@ class DynamicGraphBuilder:
             try:
                 await _push_step_update("in_progress")
                 task_for_execution = task_config
-                clarification_transcript: List[Dict[str, str]] = []
+                clarification_transcript, task_description_override = _get_clarification_context(state, task_id)
+                if task_description_override:
+                    task_for_execution = {
+                        **task_for_execution,
+                        "description": task_description_override,
+                    }
                 review_transcript: List[Dict[str, str]] = []
 
                 def _build_interrupt_payload(
@@ -560,6 +655,12 @@ class DynamicGraphBuilder:
                         if prior_turns:
                             clarification_prompt += f"\n\nPrior clarification turns:\n{prior_turns}"
 
+                        _store_clarification_context(
+                            state,
+                            task_id,
+                            clarification_transcript,
+                            task_for_execution["description"],
+                        )
                         check_result = await llm.ainvoke([HumanMessage(content=clarification_prompt)])
                         check_text = check_result.content.strip()
 
@@ -571,6 +672,7 @@ class DynamicGraphBuilder:
                         clarification_payload = _build_interrupt_payload(
                             "clarification",
                             check_text,
+                            task_description=task_for_execution.get("description", ""),
                             round_number=round_number,
                             transcript=clarification_transcript,
                             resumable_actions=["reply", "skip"],
@@ -617,10 +719,16 @@ class DynamicGraphBuilder:
                             }
 
                         clarification_transcript.append({"role": "user", "content": user_reply})
+                        task_description = (
+                            f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                        )
                         task_for_execution = {
                             **task_for_execution,
-                            "description": f"{task_for_execution['description']}\n\nClarification from user: {user_reply}",
+                            "description": task_description,
                         }
+                        _store_clarification_context(state, task_id, clarification_transcript, task_description)
+                        clarification_resolved = True
+                        break
 
                     if clarification_limit == 0:
                         clarification_resolved = True
@@ -1010,9 +1118,16 @@ class DynamicGraphBuilder:
                                 "role": "assistant",
                                 "content": task_result.get("output", ""),
                             })
+                            _store_clarification_context(
+                                state,
+                                task_id,
+                                clarification_transcript,
+                                task_for_execution["description"],
+                            )
                             clarification_payload = _build_interrupt_payload(
                                 "clarification",
                                 follow_up_question,
+                                task_description=task_for_execution.get("description", ""),
                                 result_text=task_result.get("output", ""),
                                 round_number=clarification_round,
                                 transcript=clarification_transcript,
@@ -1060,15 +1175,14 @@ class DynamicGraphBuilder:
                                 }
 
                             clarification_transcript.append({"role": "user", "content": user_reply})
+                            task_description = (
+                                f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                            )
                             task_for_execution = {
                                 **task_for_execution,
-                                "description": (
-                                    f"{task_for_execution['description']}\n\n"
-                                    "Continue the discussion with the user.\n\n"
-                                    f"Previous assistant reply:\n{task_result.get('output', '')}\n\n"
-                                    f"User reply:\n{user_reply}"
-                                ),
+                                "description": task_description,
                             }
+                            _store_clarification_context(state, task_id, clarification_transcript, task_description)
                             user_prompt = _build_user_prompt(task_for_execution)
                             continue
 
@@ -1171,12 +1285,21 @@ class DynamicGraphBuilder:
 
                 logger.info(f"[{task_id}] Completed", duration_ms=duration_ms)
 
+                output_text = task_result.get("output", "")
                 task_artifacts = list(task_result.get("artifacts") or [])
                 if not task_artifacts:
                     task_artifacts = _extract_artifacts_from_components(
                         task_result.get("components") or [],
                         task_config,
                     )
+                if not task_artifacts:
+                    default_text_artifact = _build_default_text_artifact(
+                        task_config,
+                        output_text,
+                        task_for_execution.get("description", ""),
+                    )
+                    if default_text_artifact is not None:
+                        task_artifacts = [default_text_artifact]
                 if task_artifacts:
                     task_result["artifacts"] = task_artifacts
 
@@ -1194,7 +1317,6 @@ class DynamicGraphBuilder:
                     "artifacts": task_result.get("artifacts", []),
                 })
 
-                output_text = task_result.get("output", "")
                 output_key = task_config.get("output_key")
 
                 state_update: Dict[str, Any] = {

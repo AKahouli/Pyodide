@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, type FormEvent } from 'react';
+import { useEffect, useRef, useState, useCallback, type FormEvent, type KeyboardEvent } from 'react';
 import { X, Send, RotateCcw, AlertCircle, Sparkles, Undo2, CheckCircle2, XCircle, MessageSquare, ShieldCheck, Eye } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -186,6 +186,22 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       setIsSubmittingInterrupt(false);
     }
   }, [playbookId, currentExecution, activeInterruptEntry, interruptedTask?.taskId, resumeExecution]);
+
+  const handleInterruptResponseKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) {
+      return;
+    }
+
+    e.preventDefault();
+    if (isSubmittingInterrupt || !activeInterruptEntry) {
+      return;
+    }
+
+    void handleInterruptSubmit(
+      'reply',
+      { message: response || undefined, feedback: response || undefined },
+    );
+  }, [activeInterruptEntry, handleInterruptSubmit, isSubmittingInterrupt, response]);
 
   const panelTitle = copilotMode === 'interrupt'
     ? t('copilot.interruptTitle')
@@ -425,6 +441,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
                 onChange={(e) => setResponse(e.target.value)}
                 placeholder={t('interrupt.responsePlaceholder')}
                 rows={3}
+                onKeyDown={handleInterruptResponseKeyDown}
               />
               <div className="flex items-center justify-end gap-2">
                 {activeInterruptEntry.interruptType === 'review_request' && (

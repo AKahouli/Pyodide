@@ -1,6 +1,7 @@
 ---
 description: Designs and implements backend changes with strong contracts, boundaries, and maintainability.
 mode: subagent
+model: azure/gpt-5.4
 temperature: 0.15
 tools:
   write: true
