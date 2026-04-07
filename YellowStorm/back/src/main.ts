@@ -6,8 +6,33 @@ import helmet from 'helmet';
 import * as compression from 'compression';
 import * as cookieParser from 'cookie-parser';
 import { json, urlencoded } from 'express';
+import { inspect } from 'node:util';
 import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
+
+function serializeUnhandledReason(reason: unknown) {
+  if (reason instanceof Error) {
+    return {
+      type: reason.constructor?.name || 'Error',
+      message: reason.message,
+      stack: reason.stack,
+      name: reason.name,
+      cause: reason.cause ? inspect(reason.cause, { depth: 5 }) : undefined,
+    };
+  }
+
+  if (typeof reason === 'object' && reason !== null) {
+    return {
+      type: reason.constructor?.name || 'object',
+      inspected: inspect(reason, { depth: 8, breakLength: 120 }),
+    };
+  }
+
+  return {
+    type: typeof reason,
+    value: String(reason),
+  };
+}
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -155,8 +180,11 @@ async function bootstrap() {
     logger.error('Uncaught Exception', { message: error.message, stack: error.stack });
     void shutdown('uncaughtException');
   });
-  process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled Rejection', { reason });
+  process.on('unhandledRejection', (reason, promise) => {
+    logger.error('Unhandled Rejection', {
+      reason: serializeUnhandledReason(reason),
+      promise: inspect(promise, { depth: 2, breakLength: 120 }),
+    });
     void shutdown('unhandledRejection');
   });
 }

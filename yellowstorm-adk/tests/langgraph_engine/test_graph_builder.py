@@ -8,6 +8,7 @@ from src.langgraph_engine.graph_builder import (
     _build_default_text_artifact,
     _get_clarification_context,
     _store_clarification_context,
+    _resolve_output_port,
 )
 
 
@@ -156,6 +157,136 @@ def test_build_default_text_artifact_falls_back_to_description() -> None:
         "content": "Clarified task description",
     }
 
+
+def test_resolve_output_port_falls_back_to_default_port_when_ambiguous() -> None:
+    port = _resolve_output_port(
+        {"id": "task-1"},
+        [
+            {"id": "default", "artifact_kind": "document"},
+            {"id": "secondary", "artifact_kind": "document"},
+        ],
+        preferred_kind="document",
+        component_label="artifact 'report.pdf'",
+    )
+
+    assert port is not None
+    assert port["id"] == "default"
+
+
+def test_resolve_output_port_falls_back_to_first_port_when_no_default() -> None:
+    port = _resolve_output_port(
+        {"id": "task-1"},
+        [
+            {"id": "out-doc", "artifact_kind": "document"},
+            {"id": "out-data", "artifact_kind": "document"},
+        ],
+        preferred_kind="document",
+        component_label="artifact 'report.pdf'",
+    )
+
+    assert port is not None
+    assert port["id"] == "out-doc"
+
+
+def test_extract_artifacts_from_components_falls_back_on_ambiguous_port() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "artifact_kind": "document",
+                    "file_path": "/tmp/report.pdf",
+                    "filename": "report.pdf",
+                },
+            },
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "default", "artifact_kind": "document"},
+                {"id": "secondary", "artifact_kind": "document"},
+            ],
+        },
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0]["port_id"] == "default"
+    assert artifacts[0]["filename"] == "report.pdf"
+
+
+def test_fuzzy_matching_routes_attestation_to_description_port() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "artifact_kind": "document",
+                    "file_path": "/tmp/attestation_synthese.pdf",
+                    "filename": "attestation_synthese.pdf",
+                },
+            },
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "out-attestation", "artifact_kind": "document", "name": "Attestation", "description": "Synthèse des résultats de l'audit"},
+                {"id": "out-data", "artifact_kind": "document", "name": "Données brutes", "description": "Données de collecte brutes"},
+            ],
+        },
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0]["port_id"] == "out-attestation"
+
+
+def test_fuzzy_matching_routes_synthese_to_description_port() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "artifact_kind": "document",
+                    "file_path": "/tmp/rapport_synthese.pdf",
+                    "filename": "rapport_synthese.pdf",
+                },
+            },
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "out-attestation", "artifact_kind": "document", "name": "Attestation", "description": "Attestation de conformité"},
+                {"id": "out-synthese", "artifact_kind": "document", "name": "Synthèse", "description": "Synthèse des résultats"},
+            ],
+        },
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0]["port_id"] == "out-synthese"
+
+
+def test_fuzzy_matching_falls_back_when_no_description_match() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "artifact_kind": "document",
+                    "file_path": "/tmp/random_file.pdf",
+                    "filename": "random_file.pdf",
+                },
+            },
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "default", "artifact_kind": "document", "name": "Default", "description": "Default output port"},
+                {"id": "secondary", "artifact_kind": "document", "name": "Secondary", "description": "Secondary output port"},
+            ],
+        },
+    )
+
+    assert len(artifacts) == 1
+    assert artifacts[0]["port_id"] == "default"
 
 def test_clarification_context_round_trips_through_state() -> None:
     state = {

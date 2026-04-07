@@ -467,9 +467,12 @@ function resolveOutputPort(
     throw new Error(`Task '${taskId}' produced ${options.componentLabel} with no compatible output port for kind '${preferredKind || 'unknown'}'`);
   }
 
-  throw new Error(
-    `Task '${taskId}' produced ${options.componentLabel} without output_port_id, but ${candidates.length} compatible output ports are declared`,
-  );
+  const defaultPort = candidates.find((port: any) => normalizePortId(port?.id) === 'default');
+  if (defaultPort) {
+    return defaultPort;
+  }
+
+  return candidates[0];
 }
 
 export function extractArtifactsFromResult(

@@ -1905,7 +1905,15 @@ export class PlaybookExecutionService {
           try {
             this.handleStepUpdate(userId, executionId, normalizedUpdate, stepBuffer, taskMap, playbookName, evalEnabled);
           } catch (err) {
-            this.logger.error('handleStepUpdate threw', { executionId, taskId: normalizedUpdate.task_id, error: (err as Error).message, stack: (err as Error).stack });
+            this.logger.error('handleStepUpdate threw', {
+              executionId,
+              taskId: normalizedUpdate.task_id,
+              error: (err as Error).message,
+              stack: (err as Error).stack,
+            });
+            call.cancel();
+            reject(err);
+            return;
           }
           if (normalizedUpdate.status === 'suspended' && normalizedUpdate.interrupt) {
             const interruptTaskId = normalizedUpdate.interrupt.task_id || normalizedUpdate.task_id;
@@ -2024,27 +2032,49 @@ export class PlaybookExecutionService {
         }
       });
 
-      call.on('error', async (err: Error) => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
-        this.grpcService.removeStream(executionId);
+      call.on('error', (err: Error) => {
+        void (async () => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+          this.grpcService.removeStream(executionId);
 
-        const wasCancelled = this.grpcService.wasCancelled(executionId);
-        if (wasCancelled) {
+          const wasCancelled = this.grpcService.wasCancelled(executionId);
+          if (wasCancelled) {
+            await this.flushStepBuffer(executionId, stepBuffer);
+            this.activeStepBuffers.delete(executionId);
+            await this.markExecutionCancelled(userId, executionId, startedAt);
+            resolve();
+            return;
+          }
+
+          this.logger.error('Workflow stream error', {
+            executionId,
+            error: err.message,
+          });
           await this.flushStepBuffer(executionId, stepBuffer);
           this.activeStepBuffers.delete(executionId);
-          await this.markExecutionCancelled(userId, executionId, startedAt);
-          resolve();
-          return;
-        }
-
-        this.logger.error('Workflow stream error', {
-          executionId,
-          error: err.message,
+          await this.markRemainingSkippedAndFail(userId, executionId, err.message, startedAt);
+          reject(err);
+        })().catch(async (handlerErr: unknown) => {
+          this.logger.error('Workflow stream error handler failed', {
+            executionId,
+            error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
+          });
+          try {
+            this.activeStepBuffers.delete(executionId);
+            await this.markRemainingSkippedAndFail(
+              userId,
+              executionId,
+              handlerErr instanceof Error ? handlerErr.message : err.message,
+              startedAt,
+            );
+          } catch (finalizeErr) {
+            this.logger.error('Failed to finalize workflow stream error handler', {
+              executionId,
+              error: finalizeErr instanceof Error ? finalizeErr.message : String(finalizeErr),
+            });
+          }
+          reject(handlerErr instanceof Error ? handlerErr : err);
         });
-        await this.flushStepBuffer(executionId, stepBuffer);
-        this.activeStepBuffers.delete(executionId);
-        await this.markRemainingSkippedAndFail(userId, executionId, err.message, startedAt);
-        reject(err);
       });
     });
   }
@@ -2692,7 +2722,19 @@ export class PlaybookExecutionService {
         }
 
         const normalizedUpdate = this.normalizeStreamStepUpdate(chunk.step_update);
-        this.handleStepUpdate(userId, executionId, normalizedUpdate, sharedBuffer, taskMap, playbookName, runEvaluation, playbookId);
+        try {
+          this.handleStepUpdate(userId, executionId, normalizedUpdate, sharedBuffer, taskMap, playbookName, runEvaluation, playbookId);
+        } catch (err) {
+          this.logger.error('handleStepUpdate threw during step stream', {
+            executionId,
+            taskId: normalizedUpdate.task_id,
+            error: (err as Error).message,
+            stack: (err as Error).stack,
+          });
+          call.cancel();
+          reject(err);
+          return;
+        }
         if (normalizedUpdate.status === 'suspended' && normalizedUpdate.interrupt) {
           interruptPayload = normalizedUpdate.interrupt;
         }
@@ -2783,25 +2825,38 @@ export class PlaybookExecutionService {
         }
       });
 
-      call.on('error', async (err: Error) => {
-        try {
-          const buffered = sharedBuffer.get(taskId);
-          if (buffered) {
-            const execution = await this.executionModel.findById(executionId)
-              .select('taskResults.taskId taskResults.components')
-              .lean()
-              .exec();
-            const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
-              .filter((component: any) => component.type === 'humanFeedback');
-            await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
+      call.on('error', (err: Error) => {
+        void (async () => {
+          try {
+            const buffered = sharedBuffer.get(taskId);
+            if (buffered) {
+              const execution = await this.executionModel.findById(executionId)
+                .select('taskResults.taskId taskResults.components')
+                .lean()
+                .exec();
+              const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
+                .filter((component: any) => component.type === 'humanFeedback');
+              await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
+            }
+          } finally {
+            sharedBuffer.delete(taskId);
+            if (sharedBuffer.size === 0) {
+              this.activeStepBuffers.delete(executionId);
+            }
           }
-        } finally {
+          reject(err);
+        })().catch((handlerErr: unknown) => {
+          this.logger.error('RunStepStream error handler failed', {
+            executionId,
+            taskId,
+            error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
+          });
           sharedBuffer.delete(taskId);
           if (sharedBuffer.size === 0) {
             this.activeStepBuffers.delete(executionId);
           }
-        }
-        reject(err);
+          reject(handlerErr instanceof Error ? handlerErr : err);
+        });
       });
     });
   }

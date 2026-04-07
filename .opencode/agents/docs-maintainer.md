@@ -1,7 +1,7 @@
 ---
 description: Maintains project documentation, changelogs, and developer-facing guidance in sync with code changes.
 mode: subagent
-model: azure/gpt-5.4-mini
+model:  minimax/MiniMax-M2.7
 tools:
   write: true
   edit: true

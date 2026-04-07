@@ -9,6 +9,7 @@ single streaming path (LangGraph ``astream``) is the only mechanism in use.
 """
 
 from typing import Any, Callable, Dict, List, Optional
+from difflib import SequenceMatcher
 from pathlib import Path
 
 from langchain_core.runnables import RunnableConfig
@@ -209,6 +210,42 @@ _FILENAME_PORT_HINTS = {
     ".txt": ["txt", "text"],
 }
 
+_FUZZY_MATCH_THRESHOLD = 0.5
+
+
+def _fuzzy_score(query: str, text: str) -> float:
+    normalized_query = _normalize_port_text(query)
+    normalized_text = _normalize_port_text(text)
+    if not normalized_query or not normalized_text:
+        return 0.0
+    return SequenceMatcher(None, normalized_query, normalized_text).ratio()
+
+
+def _infer_output_port_id_from_filename(filename: str, output_ports: List[Dict[str, Any]]) -> str:
+    for candidate in _filename_tokens(filename):
+        for port in output_ports:
+            port_id = _normalize_port_id(port.get("id"))
+            if port_id and _port_matches_filename_token(port, candidate):
+                return port_id
+
+    stem = _normalize_port_text(Path(str(filename or "").strip()).stem)
+    if stem and output_ports:
+        best_score = 0.0
+        best_port_id = ""
+        for port in output_ports:
+            port_id = _normalize_port_id(port.get("id"))
+            if not port_id:
+                continue
+            for field in ("id", "name", "description"):
+                score = _fuzzy_score(stem, str(port.get(field) or ""))
+                if score > best_score:
+                    best_score = score
+                    best_port_id = port_id
+        if best_port_id and best_score >= _FUZZY_MATCH_THRESHOLD:
+            return best_port_id
+
+    return ""
+
 
 def _filename_tokens(filename: str) -> List[str]:
     normalized_filename = str(filename or "").strip().lower()
@@ -301,15 +338,40 @@ def _resolve_output_port(
             )
             if selected_port is not None:
                 return selected_port
+    if len(candidates) > 1:
+        query = _normalize_port_text(filename) if filename else _normalize_port_text(component_label)
+        if query:
+            ranked = sorted(
+                candidates,
+                key=lambda p: max(_fuzzy_score(query, str(p.get(f) or "")) for f in ("id", "name", "description")),
+                reverse=True,
+            )
+            top_score = max(_fuzzy_score(query, str(ranked[0].get(f) or "")) for f in ("id", "name", "description"))
+            if top_score >= _FUZZY_MATCH_THRESHOLD:
+                return ranked[0]
     if not candidates and skip_if_no_compatible:
         return None
     if not candidates:
         raise ValueError(
-            f"Task '{task_id}' produced {component_label} with no compatible output port for kind '{normalized_kind or 'unknown'}'"
+            f"Task '{task_id}' produced {component_label} with no compatible output port for kind '{normalized_kind or 'unknown'}"
         )
-    raise ValueError(
-        f"Task '{task_id}' produced {component_label} without output_port_id, but {len(candidates)} compatible output ports are declared"
+
+    default_port = next(
+        (port for port in candidates if _normalize_port_id(port.get("id")) == "default"),
+        None,
     )
+    if default_port is not None:
+        logger.warning(
+            f"Task '{task_id}' produced {component_label} without output_port_id; "
+            f"falling back to 'default' port out of {len(candidates)} candidates",
+        )
+        return default_port
+
+    logger.warning(
+        f"Task '{task_id}' produced {component_label} without output_port_id; "
+        f"falling back to first compatible port out of {len(candidates)} candidates",
+    )
+    return candidates[0]
 
 
 def _extract_artifacts_from_components(

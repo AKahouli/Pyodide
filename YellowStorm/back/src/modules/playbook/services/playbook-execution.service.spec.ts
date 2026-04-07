@@ -16,6 +16,7 @@ import { EmailService } from '../../email/email.service';
 import { UserService } from '../../user/user.service';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import {
   PlaybookExecution,
@@ -189,6 +190,7 @@ describe('PlaybookExecutionService', () => {
   let mockUserService: any;
   let mockReplayService: any;
   let mockOutputFormatService: any;
+  let mockPromptService: any;
   let mockSemanticEnrichmentService: any;
   let mockLoggerService: any;
   let mockConfigService: any;
@@ -278,6 +280,11 @@ describe('PlaybookExecutionService', () => {
       applyOutputFormatToTasks: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockPromptService = {
+      getActivePromptTemplates: jest.fn().mockResolvedValue(new Map()),
+      resolvePromptTemplate: jest.fn().mockReturnValue(null),
+    };
+
     mockSemanticEnrichmentService = {
       schedule: jest.fn(),
     };
@@ -317,6 +324,7 @@ describe('PlaybookExecutionService', () => {
         { provide: UserService, useValue: mockUserService },
         { provide: PlaybookReplayService, useValue: mockReplayService },
         { provide: PlaybookOutputFormatService, useValue: mockOutputFormatService },
+        { provide: PlaybookPromptService, useValue: mockPromptService },
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
       ],
     }).compile();

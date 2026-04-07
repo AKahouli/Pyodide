@@ -677,9 +677,11 @@ async def _execute_step_direct(
                 prompt_overrides=prompt_overrides or task.get("prompt_overrides") or {},
             )
             if not structured_outputs and (str(response or "").strip() or _collect_generated_artifacts(components)):
-                raise ValueError(
-                    f"Task '{task_id}' completed without structured output mappings for semantically ambiguous output ports"
+                logger.warning(
+                    f"[{task_id}] Structured output synthesis returned empty for semantically ambiguous output ports; "
+                    f"falling back to component-level artifact extraction",
                 )
+                structured_outputs = []
             artifacts = _build_task_artifacts_from_structured_outputs(
                 task,
                 structured_outputs,

@@ -1,5 +1,41 @@
 # Changelog
 
+## [2026-04-07 22:23] — Add fuzzy artifact-to-port matching in ADK routing
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** ADK `_infer_output_port_id_from_filename` and `_resolve_output_port` now use `difflib.SequenceMatcher` to fuzzy-match artifact filenames against port `id`, `name`, and `description` when exact token matching fails. Multiple candidates are ranked by similarity score with a 0.5 threshold. The LLM routing call in `step_executor` is kept as a final safety net.
+- **Why:** Token-based filename matching was too rigid — `attestation_synthese.pdf` wouldn't match port `out-attestation` because tokenization split on `_`. Fuzzy matching catches semantic overlap that substring checks miss.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`
+- **Tests:** `test_fuzzy_matching_routes_attestation_to_description_port`, `test_fuzzy_matching_routes_synthese_to_description_port`, `test_fuzzy_matching_falls_back_when_no_description_match`
+
+## [2026-04-07 22:02] — Graceful fallback for ambiguous artifact output-port routing
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Both ADK `_resolve_output_port()` and Nest `resolveOutputPort()` now fall back to the `default` port (or first compatible port) instead of throwing when a task produces an artifact without `output_port_id` and multiple compatible output ports exist. ADK structured-output synthesis also warns and continues instead of hard-failing.
+- **Why:** Artifact components from tool-produced files arrive without `output_port_id`. When a task has multiple output ports of the same kind, this ambiguity was crashing the backend or failing the step.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.ts`
+- **Tests:** `test_resolve_output_port_falls_back_to_default_port_when_ambiguous`, `test_resolve_output_port_falls_back_to_first_port_when_no_default`, `test_extract_artifacts_from_components_falls_back_on_ambiguous_port`
+
+## [2026-04-07 21:46] — Fail streamed playbook executions cleanly on step-update exceptions
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Documented that both full-workflow and single-step gRPC `data` handlers now catch `handleStepUpdate()` exceptions, log the error, cancel the stream, and reject the execution promise instead of letting the exception crash the backend process.
+- **Why:** Ambiguous artifact routing during streamed step updates was surfacing as an `unhandledRejection` and shutting down the entire API server.
+- **Impact:** `docs/playbook/README_2026-04-07_21-46-02.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-07_21-46-02.md`
+
+## [2026-04-07 21:41] — Improve backend unhandled rejection diagnostics
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Documented that `YellowStorm/back/src/main.ts` now serializes `unhandledRejection` reasons with `node:util.inspect`, logging `Error` message/stack/name/cause and inspected output for non-Error rejection values.
+- **Why:** Workflow crashes previously surfaced as `Unhandled Rejection { reason: {} }`, which was not actionable enough to isolate the failing backend path.
+- **Impact:** `docs/playbook/README_2026-04-07_21-41-13.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+- **Doc:** `created` `/docs/playbook/README_2026-04-07_21-41-13.md`
+
 ## [2026-04-06 18:03] — Add Enter-submit textarea handling for playbook copilot
 
 - **Feature:** `playbook`
