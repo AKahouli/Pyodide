@@ -5,17 +5,44 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 
-def inject_skill_catalog(prompt: str, skills: Optional[List[Dict[str, Any]]]) -> str:
+def _skill_to_dict(skill: Any) -> Optional[Dict[str, Any]]:
+    """Normalize a skill object or mapping to a plain dictionary."""
+    if skill is None:
+        return None
+    if isinstance(skill, dict):
+        return skill
+    if hasattr(skill, "model_dump"):
+        return skill.model_dump()
+    if hasattr(skill, "dict"):
+        return skill.dict()
+
+    attrs = {}
+    for key in ("id", "name", "description", "instructions", "license", "compatibility", "metadata", "allowed_tools", "files"):
+        if hasattr(skill, key):
+            attrs[key] = getattr(skill, key)
+    return attrs or None
+
+
+def normalize_skills(skills: Optional[List[Any]]) -> List[Dict[str, Any]]:
+    """Return a list of normalized skill dictionaries."""
+    normalized: List[Dict[str, Any]] = []
+    for skill in skills or []:
+        skill_dict = _skill_to_dict(skill)
+        if skill_dict:
+            normalized.append(skill_dict)
+    return normalized
+
+
+def inject_skill_catalog(prompt: str, skills: Optional[List[Any]]) -> str:
     """Append a compact skill catalog to an agent prompt."""
-    if not skills:
+    normalized_skills = normalize_skills(skills)
+    if not normalized_skills:
         return prompt
 
     lines = [
         "<available_skills>",
     ]
-    for skill in skills:
-        if not isinstance(skill, dict):
-            continue
+    for skill in normalized_skills:
         name = str(skill.get("name") or "").strip()
         description = str(skill.get("description") or "").strip()
         if not name or not description:
@@ -37,12 +64,12 @@ def inject_skill_catalog(prompt: str, skills: Optional[List[Dict[str, Any]]]) ->
     return f"{prompt}\n\n{catalog}" if prompt else catalog
 
 
-def make_activate_skill_tool(skills: Optional[List[Dict[str, Any]]]):
+def make_activate_skill_tool(skills: Optional[List[Any]]):
     """Create a lightweight skill activation tool for ADK agents."""
     skill_map = {
         str(skill.get("name") or "").strip(): skill
-        for skill in (skills or [])
-        if isinstance(skill, dict) and str(skill.get("name") or "").strip()
+        for skill in normalize_skills(skills)
+        if str(skill.get("name") or "").strip()
     }
 
     if not skill_map:
