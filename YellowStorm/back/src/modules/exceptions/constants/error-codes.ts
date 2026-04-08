@@ -142,6 +142,10 @@ export enum ErrorCode {
   TOOL_NOT_FOUND = 'ERR_2200',
   TOOL_ALREADY_EXISTS = 'ERR_2201',
 
+  // Skill errors (2250-2299)
+  SKILL_NOT_FOUND = 'ERR_2250',
+  SKILL_ALREADY_EXISTS = 'ERR_2251',
+
   // Agent Type errors (2300-2399)
   AGENT_TYPE_NOT_FOUND = 'ERR_2300',
   AGENT_TYPE_ALREADY_EXISTS = 'ERR_2301',
@@ -293,6 +297,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.TOOL_NOT_FOUND]: 'Tool not found.',
   [ErrorCode.TOOL_ALREADY_EXISTS]: 'A tool with this name already exists.',
+  [ErrorCode.SKILL_NOT_FOUND]: 'Skill not found.',
+  [ErrorCode.SKILL_ALREADY_EXISTS]: 'A skill with this name already exists.',
 
   [ErrorCode.AGENT_TYPE_NOT_FOUND]: 'Agent type not found.',
   [ErrorCode.AGENT_TYPE_ALREADY_EXISTS]: 'An agent type with this name already exists.',

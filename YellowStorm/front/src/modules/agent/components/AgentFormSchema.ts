@@ -23,6 +23,8 @@ export const userAgentFormSchema = z.object({
   ignorePrePrompt: z.boolean().default(false),
   knowledgeBases: z.array(z.string()).default([]),
   tools: z.array(z.string()).default([]),
+  skills: z.array(z.string()).default([]),
+  disabledSkills: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
   isDefaultForType: z.boolean().default(false),
 });
@@ -40,6 +42,8 @@ export const defaultFormValues: UserAgentFormValues = {
   ignorePrePrompt: false,
   knowledgeBases: [],
   tools: [],
+  skills: [],
+  disabledSkills: [],
   isActive: true,
   isDefaultForType: false,
 };

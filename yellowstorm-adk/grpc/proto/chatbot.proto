@@ -53,6 +53,25 @@ message AgentParams {
     map<string, string> params = 1;
 }
 
+message SkillFile {
+    string path = 1;
+    string kind = 2;
+    string mime_type = 3;
+    string content = 4;
+}
+
+message Skill {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string instructions = 4;
+    string license = 5;
+    string compatibility = 6;
+    map<string, string> metadata = 7;
+    repeated string allowed_tools = 8;
+    repeated SkillFile files = 9;
+}
+
 message Document {
     // === Required Core Fields ===
     string _id = 1;                      // Unique document identifier (MongoDB ObjectId)
@@ -100,6 +119,7 @@ message Agent {
     AgentParams agent_params = 8;
     string agent_type = 9;
     bool save_memory = 10;
+    repeated Skill skills = 11;
 }
 
 // ===== V2 REQUEST MESSAGES =====

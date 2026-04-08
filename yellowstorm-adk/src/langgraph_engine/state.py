@@ -25,6 +25,7 @@ class AgentConfig(TypedDict):
     prompt: str
     instructions: str
     tools: Optional[List[Dict[str, Any]]]
+    skills: Optional[List[Dict[str, Any]]]
     model: Optional[str]
     brain_ids: Optional[List[str]]
     brain_documents: Optional[List[Dict[str, Any]]]

@@ -45,6 +45,7 @@ from src.langgraph_engine.port_resolution import (
     load_prompt_registry,
     resolve_prompt_template,
 )
+from src.skills.runtime import inject_skill_catalog
 from datetime import datetime
 import json
 
@@ -882,7 +883,10 @@ class DynamicGraphBuilder:
                         prompt_overrides=state.get("prompt_overrides") or {},
                     )
 
-                agent_instructions = agent.get("instructions") or agent.get("prompt", "")
+                agent_instructions = inject_skill_catalog(
+                    agent.get("instructions") or agent.get("prompt", ""),
+                    agent.get("skills") or [],
+                )
                 system_prompt = resolve_prompt_template(
                     prompt_registry,
                     'task.system',

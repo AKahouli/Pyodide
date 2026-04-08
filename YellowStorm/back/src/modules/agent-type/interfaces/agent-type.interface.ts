@@ -3,6 +3,7 @@ export interface IAgentTypeResponse {
   name: string;
   slug: string;
   defaultPrompt: string;
+  skills?: string[];
   promptCount: number;
   isActive: boolean;
   createdAt: Date;

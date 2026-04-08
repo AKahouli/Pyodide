@@ -20,7 +20,8 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { createAgentFormSchema, defaultFormValues, type AgentFormValues } from './agent-form-schema';
 import type { AgentResponse, AgentTypeResponse } from '../../types';
 import { getActiveAgentTypes } from '../../api';
-import { getActiveTools, type ToolOption } from '@/modules/agent/api';
+import { getActiveSkills, getActiveTools, type ToolOption } from '@/modules/agent/api';
+import type { SkillOption } from '@/modules/agent/types';
 import { useModels } from '@/modules/models/store';
 import { useModelsStore } from '@/modules/models/store';
 import { scrollToFirstError } from '@/lib/form-utils';
@@ -39,6 +40,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   const { t: tCommon } = useModuleTranslation('common');
   const [agentTypes, setAgentTypes] = useState<AgentTypeResponse[]>([]);
   const [availableTools, setAvailableTools] = useState<ToolOption[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<SkillOption[]>([]);
   const models = useModels();
   const [loading, setLoading] = useState(false);
   const loadedAgentTypeId = useRef<string | null>(null);
@@ -68,10 +70,12 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
           .fetchModels()
           .catch(() => {}),
         getActiveTools().catch(() => [] as ToolOption[]),
+        getActiveSkills().catch(() => [] as SkillOption[]),
       ])
-        .then(([types, , tools]) => {
+        .then(([types, , tools, skills]) => {
           setAgentTypes(types || []);
           setAvailableTools(tools || []);
+          setAvailableSkills(skills || []);
 
           if (agent) {
             reset({
@@ -84,6 +88,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               instruction: agent.instruction || '',
               ignorePrePrompt: agent.ignorePrePrompt,
               tools: agent.tools || [],
+              skills: agent.skills || [],
+              disabledSkills: agent.disabledSkills || [],
               isActive: agent.isActive,
               isDefaultForType: agent.isDefaultForType || false,
             });
@@ -112,6 +118,16 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
 
   const temperature = watch('temperature');
   const watchedTools = watch('tools');
+  const watchedSkills = watch('skills');
+  const watchedDisabledSkills = watch('disabledSkills');
+  const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
+
+  useEffect(() => {
+    const validDisabledSkills = watchedDisabledSkills.filter((id) => inheritedSkillIds.includes(id));
+    if (validDisabledSkills.length !== watchedDisabledSkills.length) {
+      setValue('disabledSkills', validDisabledSkills);
+    }
+  }, [inheritedSkillIds, setValue, watchedDisabledSkills]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -132,6 +148,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                 <TabsTrigger value='identity'>{t('defaultAgents.form.tabs.identity')}</TabsTrigger>
                 <TabsTrigger value='behaviour'>{t('defaultAgents.form.tabs.behaviour')}</TabsTrigger>
                 <TabsTrigger value='tools'>{t('defaultAgents.form.tabs.tools')}</TabsTrigger>
+                <TabsTrigger value='skills'>Skills</TabsTrigger>
               </TabsList>
 
               <ScrollArea className='flex-1 min-h-0 mt-4'>
@@ -254,6 +271,46 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                           placeholder={t('defaultAgents.form.tools.selectPlaceholder')}
                           searchPlaceholder={t('defaultAgents.form.tools.searchPlaceholder')}
                           emptyText={t('defaultAgents.form.tools.emptyText')}
+                        />
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value='skills' forceMount className='mt-0 data-[state=inactive]:hidden'>
+                    <div className='grid gap-4'>
+                      <div className='space-y-2'>
+                        <Label>Additional skills</Label>
+                        <p className='text-xs text-muted-foreground'>Attach extra skills directly to this agent.</p>
+                        <MultiSelect
+                          options={availableSkills.map((skill) => ({
+                            value: skill.id,
+                            label: skill.name,
+                            description: skill.description,
+                          }))}
+                          value={watchedSkills}
+                          onValueChange={(val) => setValue('skills', val)}
+                          placeholder='Select skills'
+                          searchPlaceholder='Search skills'
+                          emptyText='No skills found'
+                        />
+                      </div>
+
+                      <div className='space-y-2'>
+                        <Label>Disabled inherited skills</Label>
+                        <p className='text-xs text-muted-foreground'>Disable skills inherited from the selected agent type.</p>
+                        <MultiSelect
+                          options={availableSkills
+                            .filter((skill) => inheritedSkillIds.includes(skill.id))
+                            .map((skill) => ({
+                              value: skill.id,
+                              label: skill.name,
+                              description: skill.description,
+                            }))}
+                          value={watchedDisabledSkills}
+                          onValueChange={(val) => setValue('disabledSkills', val)}
+                          placeholder='Select inherited skills to disable'
+                          searchPlaceholder='Search inherited skills'
+                          emptyText='No inherited skills available'
                         />
                       </div>
                     </div>

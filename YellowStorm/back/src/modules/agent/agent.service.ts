@@ -15,6 +15,8 @@ import { ToolService } from '../tool/tool.service';
 import { IToolResponse } from '../tool/interfaces/tool.interface';
 import { AgentTypeService } from '../agent-type/agent-type.service';
 import { ModelsService } from '../models/models.service';
+import { SkillService } from '../skill/skill.service';
+import { ISkillResponse } from '../skill/interfaces/skill.interface';
 
 @Injectable()
 export class AgentService {
@@ -25,6 +27,7 @@ export class AgentService {
     private readonly toolService: ToolService,
     private readonly agentTypeService: AgentTypeService,
     private readonly modelsService: ModelsService,
+    private readonly skillService: SkillService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -54,6 +57,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(dto.agentType, true, userId);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     const agent = await this.agentModel.create({
       name: dto.name,
       agentType: new Types.ObjectId(dto.agentType),
@@ -65,6 +70,8 @@ export class AgentService {
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
       knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
+      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
+      disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -105,7 +112,7 @@ export class AgentService {
     const [agents, total] = await Promise.all([
       this.agentModel
         .find(filter)
-        .populate('agentType', 'name')
+        .populate('agentType', 'name skills')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -125,7 +132,7 @@ export class AgentService {
   async findUserAgentById(userId: string, agentId: string): Promise<IAgentResponse> {
     const agent = await this.agentModel
       .findById(agentId)
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -184,6 +191,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, true, userId, agentId);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     // Build update object
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.agentType) {
@@ -200,10 +209,16 @@ export class AgentService {
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }
+    if (dto.skills) {
+      updateData.skills = dto.skills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.disabledSkills) {
+      updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -268,6 +283,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(dto.agentType, false);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     const agent = await this.agentModel.create({
       name: dto.name,
       agentType: new Types.ObjectId(dto.agentType),
@@ -279,6 +296,8 @@ export class AgentService {
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
       knowledgeBases: [],
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
+      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
+      disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -315,7 +334,7 @@ export class AgentService {
     const [agents, total] = await Promise.all([
       this.agentModel
         .find(filter)
-        .populate('agentType', 'name')
+        .populate('agentType', 'name skills')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -335,7 +354,7 @@ export class AgentService {
   async findDefaultAgentById(agentId: string): Promise<IAgentResponse> {
     const agent = await this.agentModel
       .findOne({ _id: agentId, isDefault: true })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -375,6 +394,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, false, undefined, agentId);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.agentType) {
       updateData.agentType = new Types.ObjectId(dto.agentType);
@@ -389,10 +410,16 @@ export class AgentService {
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }
+    if (dto.skills) {
+      updateData.skills = dto.skills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.disabledSkills) {
+      updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -436,7 +463,7 @@ export class AgentService {
           { isDefault: true },
         ],
       })
-      .populate('agentType', 'name slug')
+      .populate('agentType', 'name slug skills')
       .lean()
       .exec();
 
@@ -472,7 +499,7 @@ export class AgentService {
             _id: { $in: missingSharedIds.map((id) => new Types.ObjectId(id)) },
             isActive: true,
           })
-          .populate('agentType', 'name slug')
+          .populate('agentType', 'name slug skills')
           .lean()
           .exec();
 
@@ -556,6 +583,15 @@ export class AgentService {
       for (const t of fetched) toolsMap.set(t.id, t);
     }
 
+    const allSkillIds = [
+      ...new Set(filteredAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
+
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
     const allModelIds = [...new Set(
       filteredAgents
@@ -589,6 +625,7 @@ export class AgentService {
 
       const effectiveModelId = agent.model || fallbackModelId || '';
       const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
       // Build prompt using batch-resolved prompts
       let prompt = '';
@@ -631,6 +668,7 @@ export class AgentService {
           }
           return toolObj;
         }),
+        skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
           workspace_documents: [],
@@ -688,7 +726,7 @@ export class AgentService {
         _id: { $in: agentIds.map((id) => new Types.ObjectId(id)) },
         isActive: true,
       })
-      .populate('agentType', 'name slug')
+      .populate('agentType', 'name slug skills')
       .lean()
       .exec();
 
@@ -709,6 +747,15 @@ export class AgentService {
     if (allToolIds.length > 0) {
       const fetched = await this.toolService.findByIds(allToolIds);
       for (const t of fetched) toolsMap.set(t.id, t);
+    }
+
+    const allSkillIds = [
+      ...new Set(streamAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
     }
 
     // Batch-resolve models
@@ -734,6 +781,7 @@ export class AgentService {
 
       const effectiveModelId = agent.model || fallbackModelId || '';
       const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
       let prompt = '';
       if (!agent.ignorePrePrompt && agent.agentTypeId) {
@@ -764,6 +812,7 @@ export class AgentService {
           }
           return toolObj;
         }),
+        skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
           workspace_documents: [],
@@ -805,7 +854,7 @@ export class AgentService {
           { isDefault: true },
         ],
       })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .sort({ isDefault: -1, createdAt: -1 })
       .lean()
       .exec();
@@ -823,7 +872,7 @@ export class AgentService {
           { isDefault: true },
         ],
       })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -946,6 +995,10 @@ export class AgentService {
       tools: ((d.tools as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      skills: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      disabledSkills: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
@@ -970,6 +1023,10 @@ export class AgentService {
       populatedAgentType && typeof populatedAgentType === 'object' && populatedAgentType._id
         ? (populatedAgentType._id as { toString(): string }).toString()
         : '';
+    const agentTypeSkillIds =
+      populatedAgentType && typeof populatedAgentType === 'object' && Array.isArray(populatedAgentType.skills)
+        ? (populatedAgentType.skills as Array<{ toString(): string }>).map((id) => id.toString())
+        : [];
 
     return {
       id: (d._id as { toString(): string }).toString(),
@@ -989,8 +1046,45 @@ export class AgentService {
       toolIds: ((d.tools as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      skillIds: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      disabledSkillIds: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      agentTypeSkillIds,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
+    };
+  }
+
+  private resolveEffectiveSkills(
+    agent: IAgentForStream,
+    skillsMap: Map<string, ISkillResponse>,
+  ): ISkillResponse[] {
+    const disabled = new Set(agent.disabledSkillIds ?? []);
+    const skillIds = [...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? [])])];
+
+    return skillIds
+      .filter((id) => !disabled.has(id))
+      .map((id) => skillsMap.get(id))
+      .filter(Boolean) as ISkillResponse[];
+  }
+
+  private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      instructions: skill.instructions,
+      license: skill.license,
+      compatibility: skill.compatibility,
+      metadata: skill.metadata,
+      allowed_tools: skill.allowedTools,
+      files: skill.files.map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        mime_type: file.mimeType,
+        content: file.content,
+      })),
     };
   }
 }

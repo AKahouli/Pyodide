@@ -41,6 +41,7 @@ import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookModule } from './modules/playbook/playbook.module';
+import { SkillModule } from './modules/skill/skill.module';
 
 @Module({
   imports: [
@@ -80,6 +81,7 @@ import { PlaybookModule } from './modules/playbook/playbook.module';
     ConversationModule,
     ModelsModule,
     ToolModule,
+    SkillModule,
     AgentTypeModule,
     AgentModule,
     PlaybookModule,

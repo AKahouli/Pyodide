@@ -13,6 +13,7 @@ import { PaginatedResponseDto } from '../../common/dto/pagination.dto';
 import { NotFoundException, ConflictException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 import { escapeRegex } from '../../common/utils';
+import { SkillService } from '../skill/skill.service';
 
 @Injectable()
 export class AgentTypeService {
@@ -21,6 +22,7 @@ export class AgentTypeService {
     private readonly agentTypeModel: Model<AgentTypeDocument>,
     @InjectModel(AgentTypePrompt.name)
     private readonly agentTypePromptModel: Model<AgentTypePromptDocument>,
+    private readonly skillService: SkillService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(AgentTypeService.name);
@@ -28,6 +30,13 @@ export class AgentTypeService {
 
   async create(dto: CreateAgentTypeDto): Promise<IAgentTypeResponse> {
     const slug = this.generateSlug(dto.name);
+
+    if ((dto.skills ?? []).length > 0) {
+      const resolvedSkills = await this.skillService.findByIds(dto.skills ?? []);
+      if ((dto.skills ?? []).length !== resolvedSkills.length) {
+        throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND, 'One or more skills were not found.');
+      }
+    }
 
     const existing = await this.agentTypeModel
       .findOne({ $or: [{ name: dto.name }, { slug }] })
@@ -41,6 +50,7 @@ export class AgentTypeService {
       name: dto.name,
       slug,
       defaultPrompt: dto.defaultPrompt ?? '',
+      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       isActive: dto.isActive ?? true,
     });
 
@@ -130,6 +140,13 @@ export class AgentTypeService {
       throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND);
     }
 
+    if ((dto.skills ?? []).length > 0) {
+      const resolvedSkills = await this.skillService.findByIds(dto.skills ?? []);
+      if ((dto.skills ?? []).length !== resolvedSkills.length) {
+        throw new NotFoundException(ErrorCode.AGENT_TYPE_NOT_FOUND, 'One or more skills were not found.');
+      }
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const updatePayload: Record<string, any> = { ...dto };
 
@@ -144,6 +161,10 @@ export class AgentTypeService {
       if (duplicate) {
         throw new ConflictException(ErrorCode.AGENT_TYPE_ALREADY_EXISTS);
       }
+    }
+
+    if (dto.skills) {
+      updatePayload.skills = dto.skills.map((id) => new Types.ObjectId(id));
     }
 
     const agentType = await this.agentTypeModel
@@ -388,6 +409,7 @@ export class AgentTypeService {
       name: d.name as string,
       slug: d.slug as string,
       defaultPrompt: (d.defaultPrompt as string) || '',
+      skills: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
       promptCount,
       isActive: d.isActive as boolean,
       createdAt: d.createdAt as Date,

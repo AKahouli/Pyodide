@@ -548,6 +548,39 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
+    namespace: 'skills',
+    labelKey: 'roles.permissions.groups.skills.label',
+    descriptionKey: 'roles.permissions.groups.skills.description',
+    disabled: false,
+    permissions: [
+      {
+        value: 'skills.read',
+        labelKey: 'roles.permissions.items.skills.read.label',
+        descriptionKey: 'roles.permissions.items.skills.read.description',
+      },
+      {
+        value: 'skills.create',
+        labelKey: 'roles.permissions.items.skills.create.label',
+        descriptionKey: 'roles.permissions.items.skills.create.description',
+      },
+      {
+        value: 'skills.update',
+        labelKey: 'roles.permissions.items.skills.update.label',
+        descriptionKey: 'roles.permissions.items.skills.update.description',
+      },
+      {
+        value: 'skills.delete',
+        labelKey: 'roles.permissions.items.skills.delete.label',
+        descriptionKey: 'roles.permissions.items.skills.delete.description',
+      },
+      {
+        value: 'skills.*',
+        labelKey: 'roles.permissions.items.skills.all.label',
+        descriptionKey: 'roles.permissions.items.skills.all.description',
+      },
+    ],
+  },
+  {
     namespace: 'agent_types',
     labelKey: 'roles.permissions.groups.agent_types.label',
     descriptionKey: 'roles.permissions.groups.agent_types.description',
@@ -903,6 +936,7 @@ export interface AgentTypeResponse {
   name: string;
   slug: string;
   defaultPrompt: string;
+  skills?: string[];
   promptCount: number;
   isActive: boolean;
   createdAt: string;
@@ -922,12 +956,14 @@ export interface AgentTypeListResponse {
 export interface CreateAgentTypeRequest {
   name: string;
   defaultPrompt?: string;
+  skills?: string[];
   isActive?: boolean;
 }
 
 export interface UpdateAgentTypeRequest {
   name?: string;
   defaultPrompt?: string;
+  skills?: string[];
   isActive?: boolean;
 }
 
@@ -965,6 +1001,8 @@ export interface AgentResponse {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   tools: string[];
+  skills?: string[];
+  disabledSkills?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -994,6 +1032,8 @@ export interface CreateAgentRequest {
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1009,6 +1049,8 @@ export interface UpdateAgentRequest {
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1083,5 +1125,78 @@ export interface ToolQueryParams {
   limit?: number;
   search?: string;
   agentType?: string;
+  isActive?: boolean;
+}
+
+export type SkillFileKind = 'reference' | 'asset';
+
+export interface SkillFileResponse {
+  path: string;
+  kind: SkillFileKind;
+  mimeType: string;
+  content: string;
+}
+
+export interface SkillResponse {
+  id: string;
+  name: string;
+  description: string;
+  license: string;
+  compatibility: string;
+  metadata: Record<string, string>;
+  allowedTools: string[];
+  instructions: string;
+  files: SkillFileResponse[];
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillListResponse {
+  data: SkillResponse[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface SkillFileInput {
+  path: string;
+  kind: SkillFileKind;
+  mimeType?: string;
+  content?: string;
+}
+
+export interface CreateSkillRequest {
+  name: string;
+  description: string;
+  license?: string;
+  compatibility?: string;
+  metadata?: Record<string, string>;
+  allowedTools?: string[];
+  instructions?: string;
+  files?: SkillFileInput[];
+  isActive?: boolean;
+}
+
+export interface UpdateSkillRequest {
+  name?: string;
+  description?: string;
+  license?: string;
+  compatibility?: string;
+  metadata?: Record<string, string>;
+  allowedTools?: string[];
+  instructions?: string;
+  files?: SkillFileInput[];
+  isActive?: boolean;
+}
+
+export interface SkillQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
   isActive?: boolean;
 }

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, HydratedDocument } from 'mongoose';
+import { Document, HydratedDocument, Types } from 'mongoose';
 
 export type AgentTypeDocument = HydratedDocument<AgentType>;
 
@@ -16,6 +16,9 @@ export class AgentType extends Document {
 
   @Prop({ default: '', maxlength: 50000 })
   defaultPrompt!: string;
+
+  @Prop({ type: [Types.ObjectId], ref: 'Skill', default: [] })
+  skills!: Types.ObjectId[];
 
   @Prop({ default: true })
   isActive!: boolean;

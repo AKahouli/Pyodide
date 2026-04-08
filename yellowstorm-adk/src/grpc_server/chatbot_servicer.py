@@ -318,6 +318,28 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
                 }
                 for tool in pb_agent.tools
             ] if pb_agent.tools else None,
+            skills=[
+                {
+                    "id": skill.id,
+                    "name": skill.name,
+                    "description": skill.description,
+                    "instructions": skill.instructions,
+                    "license": skill.license,
+                    "compatibility": skill.compatibility,
+                    "metadata": dict(skill.metadata) if skill.metadata else {},
+                    "allowed_tools": list(skill.allowed_tools) if skill.allowed_tools else [],
+                    "files": [
+                        {
+                            "path": file.path,
+                            "kind": file.kind,
+                            "mime_type": file.mime_type,
+                            "content": file.content,
+                        }
+                        for file in skill.files
+                    ] if skill.files else [],
+                }
+                for skill in pb_agent.skills
+            ] if pb_agent.skills else None,
             html=False,  # V2 removed this, default to False
             vectorstore_name=app_settings.QDRANT_COLLECTION_NAME,  # Use environment variable
             brain_ids=brain_ids,
@@ -1718,6 +1740,28 @@ def _proto_agent_to_dict(proto_agent) -> dict:
         "prompt": proto_agent.prompt,
         "instructions": proto_agent.prompt,
         "tools": tools,
+        "skills": [
+            {
+                "id": skill.id,
+                "name": skill.name,
+                "description": skill.description,
+                "instructions": skill.instructions,
+                "license": skill.license,
+                "compatibility": skill.compatibility,
+                "metadata": dict(skill.metadata) if skill.metadata else {},
+                "allowed_tools": list(skill.allowed_tools) if skill.allowed_tools else [],
+                "files": [
+                    {
+                        "path": file.path,
+                        "kind": file.kind,
+                        "mime_type": file.mime_type,
+                        "content": file.content,
+                    }
+                    for file in skill.files
+                ] if skill.files else [],
+            }
+            for skill in proto_agent.skills
+        ] if proto_agent.skills else [],
         "model": proto_agent.chatbot.model if proto_agent.HasField("chatbot") else None,
         "brain_ids": brain_ids or None,
         "brain_documents": brain_documents or None,

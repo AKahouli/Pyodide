@@ -166,6 +166,11 @@ export const API_ENDPOINTS = {
     list: '/admin/tools',
     byId: (id: string) => `/admin/tools/${id}`,
   },
+  adminSkills: {
+    list: '/admin/skills',
+    byId: (id: string) => `/admin/skills/${id}`,
+    import: '/admin/skills/import',
+  },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',
     byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,
@@ -190,6 +195,9 @@ export const API_ENDPOINTS = {
   },
   tools: {
     active: '/tools/active',
+  },
+  skills: {
+    active: '/skills/active',
   },
   playbooks: {
     list: '/playbooks',

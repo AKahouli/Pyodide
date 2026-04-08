@@ -248,6 +248,7 @@ def create_standard_agent_with_tools(helper,agent_factory,config,agent_config: D
         snowflake_tool=True if "snowflake connector" in tools else False,
         dataviz_tool=True if "dataviz" in tools else False,
         formviz_tool=True if "formviz" in tools else False,
+        skills=agent_config.get('skills', []),
         doc_tree=doc_tree,
         brain_tree=brain_tree,
         top_k=top_k,

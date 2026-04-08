@@ -5,6 +5,25 @@ from typing import Dict, List, Optional
 from pydantic import BaseModel
 
 
+class SkillFile(BaseModel):
+    path: str
+    kind: str
+    mime_type: str = ""
+    content: str = ""
+
+
+class Skill(BaseModel):
+    id: str
+    name: str
+    description: str
+    instructions: str = ""
+    license: str = ""
+    compatibility: str = ""
+    metadata: Optional[Dict[str, str]] = None
+    allowed_tools: Optional[List[str]] = None
+    files: Optional[List[SkillFile]] = None
+
+
 class ChatWithADKRequest(BaseModel):
     """Schema for chat requests sent to the ADK."""
     user_id: str
@@ -31,6 +50,7 @@ class AgentSuggestion(BaseModel):
     description: str
     prompt: str
     tools: Optional[List[Dict]] = None
+    skills: Optional[List[Skill]] = None
     #tools example : [{"name": "search_web","prompt":"","description": "Useful for when you need to answer questions about current events or the web. Input should be a search query.", "top_k": 3}]
     html: Optional[bool] = False
     vectorstore_name: Optional[str] = "vectorstorerec"

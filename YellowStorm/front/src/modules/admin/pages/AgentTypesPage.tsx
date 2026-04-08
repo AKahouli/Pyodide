@@ -114,6 +114,7 @@ export function AgentTypesPage() {
         await updateAgentType(editingAgentType.id, {
           name: data.name,
           defaultPrompt: data.defaultPrompt,
+          skills: data.skills,
           isActive: data.isActive,
         });
         toast.success(t("agentTypes.toasts.updated.title"), {
@@ -123,6 +124,7 @@ export function AgentTypesPage() {
         await createAgentType({
           name: data.name,
           defaultPrompt: data.defaultPrompt,
+          skills: data.skills,
           isActive: data.isActive,
         });
         toast.success(t("agentTypes.toasts.created.title"), {

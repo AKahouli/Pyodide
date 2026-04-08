@@ -31,6 +31,7 @@ from src.smart_rag.tools import generate_brain_tree_schema, SearchToolkit, \
 
 from src.logger.logging import get_logger
 from src.smart_rag.tools.utilities import calculator, python_interpreter
+from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
 
 from src.smart_rag.infrastructure.processing.sandbox_callbacks import create_sandbox_callbacks
 from src.config.settings import get_settings
@@ -81,6 +82,7 @@ class AgentFactory:
                      snowflake_tool: bool = False,
                      dataviz_tool: bool = False,
                      formviz_tool: bool = False,
+                     skills: Optional[List[Dict]] = None,
                      doc_tree: Optional[List] = None, brain_tree: Optional[List] = None,
                      brain_ids: Optional[List[str]] = None, top_k: int = 10,
                      vectorstore_name: str = "default", task_order: Optional[str] = None,
@@ -123,6 +125,11 @@ class AgentFactory:
         """
         tools = []
         search_web = "standard" if search_web_tool else "off"
+        prompt = inject_skill_catalog(prompt, skills)
+
+        activate_skill_tool = make_activate_skill_tool(skills)
+        if activate_skill_tool:
+            tools.append(activate_skill_tool)
 
         # Add calculator tool if requested
         if calculator_tool:

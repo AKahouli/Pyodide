@@ -13,6 +13,8 @@ export interface AgentFormValues {
   instruction: string;
   ignorePrePrompt: boolean;
   tools: string[];
+  skills: string[];
+  disabledSkills: string[];
   isActive: boolean;
   isDefaultForType: boolean;
 }
@@ -32,6 +34,8 @@ export function createAgentFormSchema(t: Translator) {
     instruction: z.string().max(50000, t('defaultAgents.form.validation.instructionMax')).optional().default(''),
     ignorePrePrompt: z.boolean().default(false),
     tools: z.array(z.string()).default([]),
+    skills: z.array(z.string()).default([]),
+    disabledSkills: z.array(z.string()).default([]),
     isActive: z.boolean().default(true),
     isDefaultForType: z.boolean().default(false),
   });
@@ -47,6 +51,8 @@ export const defaultFormValues: AgentFormValues = {
   instruction: '',
   ignorePrePrompt: false,
   tools: [],
+  skills: [],
+  disabledSkills: [],
   isActive: true,
   isDefaultForType: false,
 };

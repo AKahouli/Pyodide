@@ -55,6 +55,13 @@ export const Permissions = {
   TOOLS_DELETE: 'tools.delete',
   TOOLS_ALL: 'tools.*',
 
+  // Skill Management
+  SKILLS_READ: 'skills.read',
+  SKILLS_CREATE: 'skills.create',
+  SKILLS_UPDATE: 'skills.update',
+  SKILLS_DELETE: 'skills.delete',
+  SKILLS_ALL: 'skills.*',
+
   // Agent Type Management
   AGENT_TYPES_READ: 'agent_types.read',
   AGENT_TYPES_CREATE: 'agent_types.create',
@@ -137,6 +144,13 @@ const ALL_PERMISSIONS = new Set<string>([
   'tools.update',
   'tools.delete',
   'tools.*',
+
+  // Skill Management
+  'skills.read',
+  'skills.create',
+  'skills.update',
+  'skills.delete',
+  'skills.*',
 
   // Agent Type Management
   'agent_types.read',

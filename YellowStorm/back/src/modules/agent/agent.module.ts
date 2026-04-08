@@ -8,6 +8,7 @@ import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ToolModule } from '../tool/tool.module';
 import { ModelsModule } from '../models/models.module';
+import { SkillModule } from '../skill/skill.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ModelsModule } from '../models/models.module';
     AuthorizationModule,
     ToolModule,
     ModelsModule,
+    SkillModule,
   ],
   controllers: [AgentController, AdminAgentController],
   providers: [AgentService],

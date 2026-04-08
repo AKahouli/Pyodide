@@ -59,6 +59,11 @@ import type {
   CreateToolRequest,
   UpdateToolRequest,
   ToolQueryParams,
+  SkillListResponse,
+  SkillResponse,
+  CreateSkillRequest,
+  UpdateSkillRequest,
+  SkillQueryParams,
 } from './types';
 
 // Helper to build query string
@@ -551,6 +556,67 @@ export async function updateTool(
 
 export async function deleteTool(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminTools.byId(id));
+}
+
+// Skills API
+
+function buildSkillQueryString(params: SkillQueryParams): string {
+  const searchParams = new URLSearchParams();
+  if (params.page) searchParams.set('page', params.page.toString());
+  if (params.limit) searchParams.set('limit', params.limit.toString());
+  if (params.search) searchParams.set('search', params.search);
+  if (params.isActive !== undefined) searchParams.set('isActive', params.isActive.toString());
+  const queryString = searchParams.toString();
+  return queryString ? `?${queryString}` : '';
+}
+
+export async function getSkills(params: SkillQueryParams = {}): Promise<SkillListResponse> {
+  const response = await apiClient.get<ApiResponse<SkillListResponse>>(
+    `${API_ENDPOINTS.adminSkills.list}${buildSkillQueryString(params)}`
+  );
+  return response.data.data;
+}
+
+export async function getSkillById(id: string): Promise<SkillResponse> {
+  const response = await apiClient.get<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.byId(id)
+  );
+  return response.data.data;
+}
+
+export async function createSkill(data: CreateSkillRequest): Promise<SkillResponse> {
+  const response = await apiClient.post<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateSkill(id: string, data: UpdateSkillRequest): Promise<SkillResponse> {
+  const response = await apiClient.patch<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteSkill(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminSkills.byId(id));
+}
+
+export async function importSkill(file: File): Promise<SkillResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiClient.post<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.import,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  );
+  return response.data.data;
 }
 
 // Agent Types API

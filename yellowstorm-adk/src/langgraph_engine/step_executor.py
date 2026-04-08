@@ -24,6 +24,7 @@ from src.langgraph_engine.port_resolution import (
     load_prompt_registry,
     resolve_prompt_template,
 )
+from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
 
@@ -495,7 +496,10 @@ async def _execute_step_direct(
     task_id = task.get("id", "unknown")
     start_time = time.time()
 
-    agent_instructions = agent.get("instructions") or agent.get("prompt", "")
+    agent_instructions = inject_skill_catalog(
+        agent.get("instructions") or agent.get("prompt", ""),
+        agent.get("skills") or [],
+    )
     model_name = agent.get("model") or "gpt-4.1"
     agent_params = agent.get("agent_params") or {}
     temperature = float(agent_params.get("temperature", 0.7))

@@ -125,6 +125,10 @@ class PlanGeneratorInput(BaseModel):
     )
 
 
+class ActivateSkillInput(BaseModel):
+    name: str = Field(description="The exact skill name to activate.")
+
+
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
@@ -226,6 +230,11 @@ def create_langchain_tools(
     if "plan" in tool_names:
         tools.append(_create_plan_tool())
 
+    if agent_config.get("skills"):
+        activate_skill_tool = _create_activate_skill_tool(agent_config.get("skills") or [])
+        if activate_skill_tool:
+            tools.append(activate_skill_tool)
+
     logger.info(
         "Created LangChain tools for playbook agent",
         agent=agent_config.get("name"),
@@ -278,6 +287,32 @@ def _get_tool_description(tool_configs: list, tool_name: str) -> str:
         if isinstance(t, dict) and t.get("name") == tool_name:
             return t.get("description", "")
     return ""
+
+
+def _create_activate_skill_tool(skills: List[Dict[str, Any]]) -> Optional[StructuredTool]:
+    skill_map = {
+        str(skill.get("name") or "").strip(): skill
+        for skill in skills
+        if isinstance(skill, dict) and str(skill.get("name") or "").strip()
+    }
+    if not skill_map:
+        return None
+
+    def _activate_skill(name: str) -> str:
+        skill = skill_map.get((name or "").strip())
+        if not skill:
+            available = ", ".join(sorted(skill_map.keys()))
+            return f"Skill '{name}' is not available. Available skills: {available}"
+
+        instructions = str(skill.get("instructions") or "").strip()
+        return f"<skill_content name=\"{skill['name']}\">\n{instructions}\n</skill_content>"
+
+    return StructuredTool.from_function(
+        func=_activate_skill,
+        name="activate_skill",
+        description="Load the full instructions for a configured skill by name before completing a matching task.",
+        args_schema=ActivateSkillInput,
+    )
 
 
 def _format_available_filenames(brain_documents: list, max_files: int = 12) -> str:

@@ -141,6 +141,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.tools.description',
   },
   {
+    id: 'skills',
+    label: 'Skills',
+    labelKey: 'menu.skills.label',
+    path: '/admin/skills',
+    icon: Wrench,
+    permissions: ['skills.read', 'skills.*', '*'],
+    description: 'Manage agent skills',
+    descriptionKey: 'menu.skills.description',
+  },
+  {
     id: 'analytics',
     label: 'Analytics',
     labelKey: 'menu.analytics.label',

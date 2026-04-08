@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Loader2 } from "lucide-react";
@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
+import { MultiSelect } from '@/components/ui/multi-select';
 
 import {
   createAgentTypeFormSchema,
@@ -23,6 +24,8 @@ import {
   type AgentTypeFormValues,
 } from "./agent-type-form-schema";
 import type { AgentTypeResponse } from "../../types";
+import { getActiveSkills } from '@/modules/agent/api';
+import type { SkillOption } from '@/modules/agent/types';
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
 
@@ -43,6 +46,7 @@ export function CreateEditAgentTypeDialog({
 }: CreateEditAgentTypeDialogProps) {
   const { t } = useModuleTranslation("admin");
   const { t: tCommon } = useModuleTranslation("common");
+  const [availableSkills, setAvailableSkills] = useState<SkillOption[]>([]);
   const schema = useMemo(() => createAgentTypeFormSchema(t), [t]);
   const {
     register,
@@ -58,10 +62,12 @@ export function CreateEditAgentTypeDialog({
 
   useEffect(() => {
     if (open) {
+      getActiveSkills().then(setAvailableSkills).catch(() => setAvailableSkills([]));
       if (agentType) {
         reset({
           name: agentType.name,
           defaultPrompt: agentType.defaultPrompt || "",
+          skills: agentType.skills || [],
           isActive: agentType.isActive,
         });
       } else {
@@ -136,6 +142,23 @@ export function CreateEditAgentTypeDialog({
                     {errors.defaultPrompt.message}
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>Skills</Label>
+                <p className="text-xs text-muted-foreground">Skills inherited by agents of this type by default.</p>
+                <MultiSelect
+                  options={availableSkills.map((skill) => ({
+                    value: skill.id,
+                    label: skill.name,
+                    description: skill.description,
+                  }))}
+                  value={watch('skills')}
+                  onValueChange={(val) => setValue('skills', val)}
+                  placeholder="Select skills"
+                  searchPlaceholder="Search skills"
+                  emptyText="No skills found"
+                />
               </div>
 
               {/* Active Switch */}
