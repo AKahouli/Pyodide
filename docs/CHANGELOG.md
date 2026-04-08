@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-08 07:15] — Document the skills feature implementation
+
+- **Feature:** `skills`
+- **Type:** `docs`
+- **Changed:** Added a dedicated skills documentation snapshot covering the MongoDB skill catalog, admin CRUD/import APIs, frontend management UI, ADK runtime injection/activation, playbook integration, and the separate memory-based skills endpoint.
+- **Why:** The implemented skills feature now spans backend, frontend, and both execution runtimes, so it needs a canonical cross-cutting reference.
+- **Impact:** `docs/skills/README_2026-04-08_07-15-54.md`, `docs/DOC_INDEX.md`
+
 ## [2026-04-07 22:23] — Add fuzzy artifact-to-port matching in ADK routing
 
 - **Feature:** `playbook`
