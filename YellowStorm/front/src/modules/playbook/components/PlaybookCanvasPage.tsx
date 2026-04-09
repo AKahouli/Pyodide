@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, Share2, FolderOpen, Copy } from 'lucide-react';
+import { ArrowLeft, Loader2, Share2, FolderOpen, Copy, PanelRightOpen } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -39,7 +39,6 @@ import {
   useCanUndo,
   useCanRedo,
 } from '../store';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore } from '@/modules/agent/store';
@@ -193,6 +192,7 @@ function PlaybookCanvasInner() {
   const [outputFormatLoading, setOutputFormatLoading] = useState(false);
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
   const [scheduleSheetOpen, setScheduleSheetOpen] = useState(false);
+  const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(false);
 
   useEffect(() => {
     if (id && !isGeneratingRoute) {
@@ -205,6 +205,7 @@ function PlaybookCanvasInner() {
         executionHistory: [],
         pageMode: 'design',
       });
+      setExecutionPanelCollapsed(false);
       fetchPlaybook(id);
       fetchExecutions(id);
     }
@@ -764,6 +765,7 @@ function PlaybookCanvasInner() {
           : execution;
 
       if (executionForSelection) {
+        setExecutionPanelCollapsed(false);
         setExecutionPanelOpen(true);
         viewExecutionInPanel(executionForSelection.id);
         setPageMode('run');
@@ -809,6 +811,7 @@ function PlaybookCanvasInner() {
     const nextOpen = !executionPanelOpen;
     setExecutionPanelOpen(nextOpen);
     if (nextOpen) {
+      setExecutionPanelCollapsed(false);
       setPageMode('run');
     } else if (pageMode !== 'design') {
       setPageMode('design');
@@ -828,6 +831,7 @@ function PlaybookCanvasInner() {
       if (mode === 'design') {
         return;
       }
+      setExecutionPanelCollapsed(false);
       setExecutionPanelOpen(true);
     },
     [setExecutionPanelOpen, setPageMode],
@@ -883,9 +887,7 @@ function PlaybookCanvasInner() {
     );
   }
 
-  const isExecutionPanelVisible = pageMode !== 'design' || executionPanelOpen;
-  const canvasDefaultSize = isExecutionPanelVisible ? 60 : 100;
-  const executionPanelDefaultSize = 40;
+  const isExecutionPanelVisible = !executionPanelCollapsed && (pageMode !== 'design' || executionPanelOpen);
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -1001,12 +1003,11 @@ function PlaybookCanvasInner() {
         <WorkspaceExplorerSidebar />
 
         {/* Canvas + Execution split */}
-        <ResizablePanelGroup orientation="vertical" className="flex-1" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
-          <ResizablePanel defaultSize={canvasDefaultSize} minSize={30}>
-            <div className="relative h-full overflow-hidden">
-              <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-                <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor }}>
-                  <Canvas
+        <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
+          <div className="relative flex-1 min-w-0 overflow-hidden">
+            <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor }}>
+                <Canvas
                   nodes={liveNodes}
                   edges={liveEdges}
                   onNodesChange={onNodesChange}
@@ -1029,32 +1030,45 @@ function PlaybookCanvasInner() {
                 >
                   <Controls />
                 </Canvas>
-                </NodeDataActionsContext.Provider>
-              </NodeContextMenuContext.Provider>
-              {isDesigning && (
-                <PlaybookGeneratingOverlay
-                  title={t('canvas.designing')}
-                  subtitle={t('canvas.designingHint')}
-                />
-              )}
-              <PlaybookDesignerPanel playbookId={id} />
-            </div>
-          </ResizablePanel>
+              </NodeDataActionsContext.Provider>
+            </NodeContextMenuContext.Provider>
+            {isDesigning && (
+              <PlaybookGeneratingOverlay
+                title={t('canvas.designing')}
+                subtitle={t('canvas.designingHint')}
+              />
+            )}
+            <PlaybookDesignerPanel playbookId={id} />
+          </div>
 
           {isExecutionPanelVisible && (
-            <>
-              <ResizableHandle withHandle orientation="vertical" />
-              <ResizablePanel defaultSize={executionPanelDefaultSize} minSize={15}>
-                <ExecutionPanel
-                  pageMode={pageMode}
-                  onOpenOutputFormatEditor={(taskId) => {
-                    void openOutputFormatEditor(taskId);
-                  }}
-                />
-              </ResizablePanel>
-            </>
+            <ExecutionPanel
+              pageMode={pageMode}
+              onCollapse={() => setExecutionPanelCollapsed(true)}
+              onOpenOutputFormatEditor={(taskId) => {
+                void openOutputFormatEditor(taskId);
+              }}
+            />
           )}
-        </ResizablePanelGroup>
+
+          {!isExecutionPanelVisible && (
+            <div className="absolute right-3 top-3 z-20">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shadow-md bg-background"
+                onClick={() => {
+                  setExecutionPanelCollapsed(false);
+                  setExecutionPanelOpen(true);
+                }}
+                title="Open execution sidebar"
+                aria-label="Open execution sidebar"
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Node Editor Sheet */}

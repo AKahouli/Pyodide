@@ -31,8 +31,8 @@ def build_generate_playbook_prompt(
   "nodes": [
     {{
       "id": "step_1",
-      "title": "Titre court de l'etape",
-      "description": "Description detaillee de ce que l'agent doit faire",
+      "title": "Titre court de l'étape",
+      "description": "Description détaillée de ce que l'agent doit faire",
       "assigned_agent_id": "agent_id_here",
       "execution_order": 1,
       "x": 0,
@@ -43,7 +43,25 @@ def build_generate_playbook_prompt(
       "clarification_prompt": "",
       "max_clarifications": 0,
       "input_keys": [],
-      "output_key": "step_1_output"
+      "output_key": "step_1_output",
+      "task_type": "generic",
+      "inputPorts": [
+        {{
+          "id": "default",
+          "name": "Input",
+          "artifactKind": "text",
+          "required": false,
+          "description": ""
+        }}
+      ],
+      "outputPorts": [
+        {{
+          "id": "default",
+          "name": "Output",
+          "artifactKind": "text",
+          "description": ""
+        }}
+      ]
     }}
   ],
   "edges": [
@@ -87,6 +105,30 @@ Le node source est seul, puis les branches paralleles se repartissent sur des co
 Pour N branches paralleles, les positions x sont : 0, 300, 600, 900, ...
 Le node de convergence revient a x=0.
 
+## Regles des ports (inputPorts / outputPorts) — OBLIGATOIRE
+Chaque node DOIT avoir au minimum un inputPort et un outputPort.
+Les ports sont les points de connexion visuels entre les nodes.
+
+### Format des ports
+- inputPorts : tableau avec au moins un port d'entree
+  - id : identifiant unique du port (ex: "default", "in-pdf", "in-data")
+  - name : nom court du port (ex: "Input", "PDF Input", "Data")
+  - artifactKind : type parmi "text", "document", "code", "image", "data", "dashboard"
+  - required : boolean (true si le port doit obligatoirement etre connecte)
+  - description : description optionnelle
+
+- outputPorts : tableau avec au minimum un port de sortie
+  - id : identifiant unique du port (ex: "default", "out-report")
+  - name : nom court du port (ex: "Output", "Report", "Analysis")
+  - artifactKind : type parmi "text", "document", "code", "image", "data", "dashboard"
+  - description : description optionnelle
+
+### Regles
+- Le premier node (sans predecesseur) DOIT avoir un inputPort avec "required": false
+- Tous les nodes DOIVENT avoir au moins un outputPort
+- Par defaut, chaque node a un seul inputPort {{ "id": "default", "name": "Input", "artifactKind": "text", "required": false }} et un seul outputPort {{ "id": "default", "name": "Output", "artifactKind": "text" }}
+- Tu PEUX ajouter des ports supplementaires si l'etape traite des types de donnees distincts (ex: un node qui prend un PDF en entree et produit un rapport en sortie aurait inputPorts: [{{ "id": "in-pdf", "name": "PDF Input", "artifactKind": "document", "required": true }}])
+
 ## Regles d'assignation d'agents
 - Chaque node DOIT avoir un assigned_agent_id correspondant a un agent disponible
 - Choisis l'agent le plus pertinent en fonction de sa description et de ses tools
@@ -98,6 +140,7 @@ Le node de convergence revient a x=0.
 - output_key de chaque node = "<node_id>_output"
 - input_keys d'un node = les output_keys des nodes dont il depend
 - Le premier node n'a pas d'input_keys
+- task_type de chaque node = "generic" par defaut
 
 ## Agents disponibles
 {agents_block}
@@ -117,6 +160,11 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
 - Si tu supprimes un node, tu dois recalculer les coordonnees y des nodes en dessous pour combler le trou (-200 en y).
 - Si tu ajoutes une branche parallele, decale les nouveaux nodes en x (+300 par branche).
 - Retourne TOUJOURS le playbook complet (nodes modifies + non modifies) avec les coordonnees mises a jour.
+
+### Regles de modification des ports
+- Les nodes existants conservent leurs inputPorts et outputPorts tels quels.
+- Les nouveaux nodes DOIVENT avoir au minimum un inputPort et un outputPort par defaut.
+- Ne supprime JAMAIS les ports existants d'un node non modifie.
 
 ### Playbook existant
 {existing_playbook_json}"""

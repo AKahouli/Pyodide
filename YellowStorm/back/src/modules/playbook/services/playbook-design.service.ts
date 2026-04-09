@@ -498,6 +498,26 @@ export class PlaybookDesignService {
       maxClarifications: node.max_clarifications || 3,
       inputKeys: node.input_keys || [],
       outputKey: node.output_key || '',
+      taskType: node.task_type || 'generic',
+      inputPorts:
+        (node.input_ports || []).length > 0
+          ? node.input_ports.map((p: any) => ({
+              id: p.id || `in-${idx}`,
+              name: p.name || 'Input',
+              artifactKind: p.artifact_kind || 'text',
+              required: p.required ?? false,
+              description: p.description || '',
+            }))
+          : [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+      outputPorts:
+        (node.output_ports || []).length > 0
+          ? node.output_ports.map((p: any) => ({
+              id: p.id || `out-${idx}`,
+              name: p.name || 'Output',
+              artifactKind: p.artifact_kind || 'text',
+              description: p.description || '',
+            }))
+          : [{ id: 'default', name: 'Output', artifactKind: 'text' }],
     }));
 
     const edges = grpcEdges.map((edge: any, idx: number) => ({

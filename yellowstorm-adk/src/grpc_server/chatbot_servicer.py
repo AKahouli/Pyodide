@@ -1159,8 +1159,39 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
                 )
 
             # 7. Convert to proto response
+            DEFAULT_INPUT_PORT = chatbot_pb2.TaskInputPort(
+                id="default", name="Input", artifact_kind="text", required=False,
+            )
+            DEFAULT_OUTPUT_PORT = chatbot_pb2.TaskOutputPort(
+                id="default", name="Output", artifact_kind="text",
+            )
+
             nodes = []
             for n in data.get("nodes", []):
+                raw_input_ports = n.get("inputPorts") or n.get("input_ports") or []
+                raw_output_ports = n.get("outputPorts") or n.get("output_ports") or []
+
+                input_ports = [
+                    chatbot_pb2.TaskInputPort(
+                        id=str(p.get("id", "")),
+                        name=p.get("name", "Input"),
+                        artifact_kind=p.get("artifactKind") or p.get("artifact_kind", "text"),
+                        required=bool(p.get("required", False)),
+                        description=p.get("description", ""),
+                    )
+                    for p in raw_input_ports
+                ] or [DEFAULT_INPUT_PORT]
+
+                output_ports = [
+                    chatbot_pb2.TaskOutputPort(
+                        id=str(p.get("id", "")),
+                        name=p.get("name", "Output"),
+                        artifact_kind=p.get("artifactKind") or p.get("artifact_kind", "text"),
+                        description=p.get("description", ""),
+                    )
+                    for p in raw_output_ports
+                ] or [DEFAULT_OUTPUT_PORT]
+
                 nodes.append(chatbot_pb2.PlaybookNodeConfig(
                     id=str(n.get("id", "")),
                     title=n.get("title", ""),
@@ -1176,6 +1207,9 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
                     max_clarifications=int(n.get("max_clarifications", 0)),
                     input_keys=list(n.get("input_keys", [])),
                     output_key=n.get("output_key", ""),
+                    input_ports=input_ports,
+                    output_ports=output_ports,
+                    task_type=n.get("task_type") or n.get("taskType") or "generic",
                 ))
 
             edges = []

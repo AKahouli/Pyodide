@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-04-09 00:00] — Add playbook user stories snapshot
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Added `README_2026-04-09_00-00-00.md` with 20 user stories covering the full playbook lifecycle: workflow execution, cancellation, single-step execution, rerun/resume-from-step, HITL approval/clarification/review, replay (strict/flex/adaptive), semantic evaluation, undo/redo, multi-tab SSE collaboration, prompt registry CRUD, multiline copilot Enter-submit, artifact fuzzy routing, unhandled rejection diagnostics, stream error containment, and stale interrupt detection.
+- **Why:** The existing playbook snapshot describes architecture and requirements but not concrete user-facing stories with acceptance criteria.
+- **Impact:** `docs/playbook/README_2026-04-09_00-00-00.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-09 11:38] — Document skills feature user stories with implementation audit trail
+
+- **Feature:** `skills`
+- **Type:** `docs`
+- **Changed:** Added `USER_STORIES_2026-04-09_11-38-28.md` with 16 user stories covering all skill capabilities (import, CRUD, toggle, inheritance, disable, UI management, ADK injection/activation, playbook injection). Each story includes ACs, concrete file/line references, and an implementation status table.
+- **Why:** The existing skills snapshot describes architecture but not concrete acceptance criteria or which stories are actually built vs. pending.
+- **Impact:** `docs/skills/USER_STORIES_2026-04-09_11-38-28.md`, `docs/DOC_INDEX.md`
+
 ## [2026-04-08 07:15] — Document the skills feature implementation
 
 - **Feature:** `skills`

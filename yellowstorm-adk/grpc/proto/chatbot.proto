@@ -421,6 +421,9 @@ message PlaybookNodeConfig {
     int32 max_clarifications = 12;
     repeated string input_keys = 13;
     string output_key = 14;
+    repeated TaskInputPort input_ports = 15;
+    repeated TaskOutputPort output_ports = 16;
+    string task_type = 17;
 }
 
 message ExistingPlaybook {

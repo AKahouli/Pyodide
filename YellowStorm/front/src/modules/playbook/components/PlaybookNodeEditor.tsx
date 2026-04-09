@@ -321,7 +321,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const id = `in-${crypto.randomUUID().slice(0, 8)}`;
-                  setInputPorts((prev) => [...prev, { id, name: 'New Input', artifactKind: 'text', required: false }]);
+                  setInputPorts((prev) => [...prev, { id, name: 'Input', artifactKind: 'text', required: false }]);
                 }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />
@@ -394,7 +394,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const id = `out-${crypto.randomUUID().slice(0, 8)}`;
-                  setOutputPorts((prev) => [...prev, { id, name: 'New Output', artifactKind: 'text' }]);
+                  setOutputPorts((prev) => [...prev, { id, name: 'Output', artifactKind: 'text' }]);
                 }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />

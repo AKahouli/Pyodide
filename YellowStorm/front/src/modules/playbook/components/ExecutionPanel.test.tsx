@@ -81,6 +81,33 @@ describe('ExecutionPanel', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(false);
   });
 
+  it('renders a collapse sidebar icon that hides the execution panel', async () => {
+    const execution = makeExecution({ status: 'completed' });
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+    });
+
+    render(<ExecutionPanel />);
+    await userEvent.click(screen.getByTitle('Collapse sidebar'));
+
+    expect(usePlaybookStore.getState().executionPanelOpen).toBe(false);
+  });
+
+  it('notifies the page when collapsing the sidebar', async () => {
+    const execution = makeExecution({ status: 'completed' });
+    const onCollapse = vi.fn();
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+    });
+
+    render(<ExecutionPanel onCollapse={onCollapse} />);
+    await userEvent.click(screen.getByTitle('Collapse sidebar'));
+
+    expect(onCollapse).toHaveBeenCalledTimes(1);
+  });
+
   it('auto-follows running step during live execution', () => {
     const execution = makeExecution({
       status: 'running',

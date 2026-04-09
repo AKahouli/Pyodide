@@ -655,7 +655,7 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.singleStepTaskId).toBe('task-1');
     });
 
-  it('should store playbookSnapshot on execution record', async () => {
+    it('should store playbookSnapshot on execution record', async () => {
       const playbook = createMockPlaybook();
       mockPlaybookService.findRawById.mockResolvedValue(playbook);
       mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
@@ -1384,7 +1384,7 @@ describe('PlaybookExecutionService', () => {
         buffer.set('task-1', {
           taskId: 'task-1',
           status: StepStatus.COMPLETED,
-          output: 'new output',
+          output: 'output',
           durationMs: 2000,
           completedAt: new Date('2026-03-10T10:02:00Z'),
           inputTokens: 100,
@@ -1399,7 +1399,7 @@ describe('PlaybookExecutionService', () => {
         const tr = result[0].taskResults[0];
         // Buffer wins (same weight = 2)
         expect(tr.status).toBe(StepStatus.COMPLETED);
-        expect(tr.output).toBe('new output');
+        expect(tr.output).toBe('output');
         expect(tr.durationMs).toBe(2000);
         expect(tr.inputTokens).toBe(100);
         expect(tr.outputTokens).toBe(50);

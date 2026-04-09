@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from src.grpc_generated import chatbot_pb2 as chatbot__pb2
+from . import chatbot_pb2 as chatbot__pb2
 
 GRPC_GENERATED_VERSION = '1.71.2'
 GRPC_VERSION = grpc.__version__
