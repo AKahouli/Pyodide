@@ -76,7 +76,7 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, se
             {selectable && <Checkbox checked={selected} onCheckedChange={(checked) => onSelect?.(playbook.id, checked === true)} onClick={(e) => e.stopPropagation()} className='mt-0.5 shrink-0' />}
             <div className='min-w-0 flex-1'>
               <div className='flex min-w-0 items-center gap-1.5'>
-                <CardTitle className='text-base truncate'>{playbook.name}</CardTitle>
+                <CardTitle className='text-base line-clamp-2' title={playbook.name}>{playbook.name}</CardTitle>
                 {playbook.scheduleEnabled ? (
                   playbook.executionSchedule ? (
                     <PlaybookScheduleBadge schedule={playbook.executionSchedule} className="shrink-0" />

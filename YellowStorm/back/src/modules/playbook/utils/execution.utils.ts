@@ -497,8 +497,10 @@ export function extractArtifactsFromResult(
         preferredKind,
         explicitPortId: (data as any)?.output_port_id || (data as any)?.outputPortId,
         filename,
+        skipIfNoCompatible: true,
         componentLabel: `artifact '${filename || (data as any)?.file_path || (data as any)?.filePath || 'unnamed'}'`,
-      }) || { id: 'default' };
+      });
+      if (!port) continue;
       const artifactKind = (port as any).artifactKind || preferredKind || 'document';
       artifacts.push({
         portId: (port as any).id || 'default',
