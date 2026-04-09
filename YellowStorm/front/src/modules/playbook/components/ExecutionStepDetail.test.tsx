@@ -171,7 +171,6 @@ describe('ExecutionStepDetail', () => {
     );
 
     expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
-    expect(screen.getByText('detail.results.executionHint')).toBeInTheDocument();
   });
 
   it('prefers the live current attempt over persisted history for the same attempt number', () => {

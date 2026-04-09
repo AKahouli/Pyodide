@@ -1,5 +1,37 @@
 # Changelog
 
+## [2026-04-09 20:18] — Use task badge number in playbook step list
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Added `README_2026-04-09_20-18-11.md` noting that the execution step list now shows only the task badge number and status icon, without the duration.
+- **Why:** The step list needed to match the canvas badge pattern and free up the remaining width.
+- **Impact:** `docs/playbook/README_2026-04-09_20-18-11.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-09 20:13] — Simplify playbook execution detail layout
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Added `README_2026-04-09_20-13-31.md` noting that the execution step list is now compact, the step execution picker sits beside step mode, and the results pane no longer shows the output heading or the helper hint.
+- **Why:** The execution sidebar needed more horizontal room for the details panel while keeping the important step metadata visible.
+- **Impact:** `docs/playbook/README_2026-04-09_20-13-31.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-09 20:00] — Narrow playbook step list with hover details
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Added `README_2026-04-09_20-00-34.md` noting that the execution step list is narrower, truncates long titles with an ellipsis, and shows the full title plus agent name in a hover tooltip.
+- **Why:** The execution sidebar needs less horizontal space while keeping the step identity visible on hover.
+- **Impact:** `docs/playbook/README_2026-04-09_20-00-34.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-09 19:55] — Compact playbook execution step list
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Added `README_2026-04-09_19-55-34.md` noting that the execution sidebar step list now shows compact step-number badges instead of step titles while preserving the status icon, agent name, and duration.
+- **Why:** The playbook execution sidebar needs to use less horizontal space without losing the core step metadata.
+- **Impact:** `docs/playbook/README_2026-04-09_19-55-34.md`, `docs/DOC_INDEX.md`
+
 ## [2026-04-09 00:00] — Add playbook user stories snapshot
 
 - **Feature:** `playbook`

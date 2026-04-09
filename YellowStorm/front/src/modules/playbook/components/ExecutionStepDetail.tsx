@@ -439,27 +439,96 @@ export function ExecutionStepDetail({
                 {getExecutionModeLabel(execution?.executionMode, t)}
               </span>
             )}
-            <div className="ml-auto flex items-center gap-1.5">
-              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
-              <Select
-                value={currentTask?.stepReplayMode ?? 'live'}
-                onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
-                disabled={!currentTask?.hasValidatedReplay}
-              >
-                <SelectTrigger className="h-7 w-[130px] text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
-                  <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
-                  <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
-                  <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
-                </SelectContent>
-              </Select>
-              {!currentTask?.hasValidatedReplay && (
-                <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
-                  {t('detail.noBaseline')}
-                </span>
+            <div className="ml-auto flex flex-col items-end gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
+                <Select
+                  value={currentTask?.stepReplayMode ?? 'live'}
+                  onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
+                  disabled={!currentTask?.hasValidatedReplay}
+                >
+                  <SelectTrigger className="h-7 w-[130px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
+                    <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
+                    <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
+                    <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!currentTask?.hasValidatedReplay && (
+                  <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
+                    {t('detail.noBaseline')}
+                  </span>
+                )}
+              </div>
+              {stepExecutions.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                    {t('detail.results.stepExecutionLabel')}
+                  </span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="h-7 w-[220px] justify-between text-xs">
+                        <span className="truncate text-left">
+                          {selectedStepExecution
+                            ? `${t('detail.evaluation.attempt')} ${selectedStepExecution.attemptNumber ?? '-'} | ${new Date(selectedStepExecution.completedAt || selectedStepExecution.startedAt || Date.now()).toLocaleString()}`
+                            : t('detail.results.stepExecutionPlaceholder')}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-[380px] p-1">
+                      {stepExecutions.map((entry) => {
+                        const isSelected = entry.id === selectedStepExecution?.id;
+                        const canDeleteEntry = Boolean(
+                          execution
+                          && entry.attemptNumber !== (step.attemptNumber ?? null)
+                          && !entry.id.startsWith('current:'),
+                        );
+                        return (
+                          <div
+                            key={entry.id}
+                            className={cn(
+                              'flex items-center gap-2 rounded-sm px-2 py-1.5',
+                              isSelected ? 'bg-accent' : 'hover:bg-muted/60',
+                            )}
+                          >
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 text-left"
+                              onClick={() => setSelectedStepExecutionId(entry.id)}
+                            >
+                              <div className="truncate text-sm">
+                                {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {new Date(entry.completedAt || entry.startedAt || Date.now()).toLocaleString()}
+                              </div>
+                              <div className="text-xs text-muted-foreground">{entry.status}</div>
+                            </button>
+                            {canDeleteEntry && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                title={t('detail.results.deleteStepExecution')}
+                                onClick={async (event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
+                                    return;
+                                  }
+                                  await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               )}
             </div>
             <DropdownMenu>
@@ -540,75 +609,6 @@ export function ExecutionStepDetail({
             </TabsList>
 
         <TabsContent value="results" className="space-y-4">
-          {stepExecutions.length > 0 && (
-            <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border bg-muted/20 p-4">
-              <div className="min-w-[260px] flex-1 space-y-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.results.stepExecutionLabel')}</div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="h-9 w-full justify-between">
-                      <span className="truncate text-left">
-                        {selectedStepExecution
-                          ? `${t('detail.evaluation.attempt')} ${selectedStepExecution.attemptNumber ?? '-'} | ${new Date(selectedStepExecution.completedAt || selectedStepExecution.startedAt || Date.now()).toLocaleString()}`
-                          : t('detail.results.stepExecutionPlaceholder')}
-                      </span>
-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-[380px] p-1">
-                    {stepExecutions.map((entry) => {
-                      const isSelected = entry.id === selectedStepExecution?.id;
-                      const canDeleteEntry = Boolean(
-                        execution
-                        && entry.attemptNumber !== (step.attemptNumber ?? null)
-                        && !entry.id.startsWith('current:'),
-                      );
-                      return (
-                        <div
-                          key={entry.id}
-                          className={cn(
-                            'flex items-center gap-2 rounded-sm px-2 py-1.5',
-                            isSelected ? 'bg-accent' : 'hover:bg-muted/60',
-                          )}
-                        >
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 text-left"
-                            onClick={() => setSelectedStepExecutionId(entry.id)}
-                          >
-                            <div className="truncate text-sm">
-                              {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {new Date(entry.completedAt || entry.startedAt || Date.now()).toLocaleString()}
-                            </div>
-                            <div className="text-xs text-muted-foreground">{entry.status}</div>
-                          </button>
-                          {canDeleteEntry && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 shrink-0"
-                              title={t('detail.results.deleteStepExecution')}
-                              onClick={async (event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
-                                  return;
-                                }
-                                await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              <div className="text-xs text-muted-foreground">{t('detail.results.executionHint')}</div>
-            </div>
-          )}
-
           {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
             <div className="rounded-lg border bg-muted/30 p-4 text-sm">
               <div className="font-medium">{t('detail.provenance.title')}</div>
@@ -638,18 +638,14 @@ export function ExecutionStepDetail({
 
           {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <h3 className="mb-2 text-sm font-medium">{t('execution.output')}</h3>
               <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
             </div>
           ) : selectedStepExecution?.output ? (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <h3 className="mb-2 text-sm font-medium">{t('execution.output')}</h3>
               <div className="rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
                 {selectedStepExecution.output}
               </div>
             </div>
-          ) : selectedStepExecution && selectedStepExecution.status !== 'pending' && selectedStepExecution.status !== 'running' && !selectedStepExecution.error ? (
-            <p className="text-sm text-muted-foreground">{t('execution.noOutput')}</p>
           ) : null}
 
           {selectedStepExecution?.status === 'running' && (

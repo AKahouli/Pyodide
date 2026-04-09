@@ -18,15 +18,15 @@ const baseResult: TaskResult = {
 };
 
 describe('ExecutionStepList', () => {
-  it('renders step titles sorted by order', () => {
+  it('renders step numbers sorted by order', () => {
     const results: TaskResult[] = [
       { ...baseResult, taskId: 't2', nodeTitle: 'Step B', order: 2 },
       { ...baseResult, taskId: 't1', nodeTitle: 'Step A', order: 1 },
     ];
     render(<ExecutionStepList taskResults={results} selectedStepId={null} onSelectStep={vi.fn()} />);
     const buttons = screen.getAllByRole('button');
-    expect(buttons[0]).toHaveTextContent('Step A');
-    expect(buttons[1]).toHaveTextContent('Step B');
+    expect(buttons[0]).toHaveTextContent('1');
+    expect(buttons[1]).toHaveTextContent('2');
   });
 
   it('highlights the selected step', () => {
@@ -43,15 +43,8 @@ describe('ExecutionStepList', () => {
     expect(onSelect).toHaveBeenCalledWith('t1');
   });
 
-  it('shows agent name and duration', () => {
+  it('shows badge number', () => {
     render(<ExecutionStepList taskResults={[baseResult]} selectedStepId={null} onSelectStep={vi.fn()} />);
-    expect(screen.getByText('Analyzer')).toBeInTheDocument();
-    expect(screen.getByText('1.2s')).toBeInTheDocument();
-  });
-
-  it('shows error text for failed steps', () => {
-    const failed: TaskResult = { ...baseResult, status: 'failed', error: 'Connection timeout' };
-    render(<ExecutionStepList taskResults={[failed]} selectedStepId={null} onSelectStep={vi.fn()} />);
-    expect(screen.getByText('Connection timeout')).toBeInTheDocument();
+    expect(screen.getByText('1')).toBeInTheDocument();
   });
 });
