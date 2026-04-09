@@ -14,8 +14,22 @@ from typing import Dict, Any, Optional, List, Union, Tuple
 
 
 
-from google.adk import Runner, Agent
-from google.adk.sessions import DatabaseSessionService, InMemorySessionService
+# Delayed imports for google.adk to speed up startup
+def get_adk_runner():
+    from google.adk import Runner
+    return Runner
+
+def get_adk_agent():
+    from google.adk import Agent
+    return Agent
+
+def get_database_session_service():
+    from google.adk.sessions import DatabaseSessionService
+    return DatabaseSessionService
+
+def get_in_memory_session_service():
+    from google.adk.sessions import InMemorySessionService
+    return InMemorySessionService
 
 from src.smart_rag.infrastructure.processing.plugin import CleanSessionPlugin
 
@@ -504,7 +518,7 @@ class AutoAgentGenerationTeam:
             session_init_start = time.time()
             logger.info(f"[FREEZE DEBUG] Creating DatabaseSessionService for session {session_id}, user {self.config.user_id}")
             db_service_start = time.time()
-            data_base_session=DatabaseSessionService(db_url=settings.DATABASE_URL)
+            data_base_session=get_database_session_service()(db_url=settings.DATABASE_URL)
             db_service_duration = time.time() - db_service_start
             logger.info(f"[FREEZE DEBUG] DatabaseSessionService created in {db_service_duration:.3f}s")
 
@@ -518,7 +532,7 @@ class AutoAgentGenerationTeam:
             else:
                 logger.info(f"[FREEZE DEBUG] No existing session found in {get_session_duration:.3f}s for session {session_id}")
 
-            def extract_tools_info( agent: Agent) -> List[Dict[str, str]]:
+            def extract_tools_info( agent: Any) -> List[Dict[str, str]]:
                 """Extract tools information from agent.
 
                 Args:
@@ -579,7 +593,7 @@ class AutoAgentGenerationTeam:
 
             runner_start = time.time()
             logger.info(f"[FREEZE DEBUG] Creating Runner for session {session_id}")
-            agent_runner=Runner(
+            agent_runner=get_adk_runner()(
                 agent=manager_agent,
                 app_name=f"Agent_mode_{self.config.user_id}",
                 session_service=data_base_session,
@@ -766,7 +780,7 @@ class AutoAgentGenerationTeam:
         message_transformer=MessageTransformer()
 
         runner = AgentRunner(self.event_extractor,message_transformer,self.streaming_formatter,self.prompt_processor)
-        session_helper = InMemorySessionService()
+        session_helper = get_in_memory_session_service()()
 
         result = await runner.run_agent_tool(agent, task, session_helper, queue)
         return result

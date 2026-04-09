@@ -172,7 +172,7 @@ class DynamicGraphBuilder:
 
                 # === STEP 1: Clarification check ===
                 if task_config.get("allow_clarification", False):
-                    model_name = agent.get("model") or "gpt-4.1"
+                    model_name = agent.get("model") or "gpt-5.4-mini"
                     llm = ChatOpenAI(
                         base_url=settings.LITELLM_API_BASE_URL,
                         api_key=settings.LITELLM_API_SECRET_KEY,
@@ -384,7 +384,7 @@ class DynamicGraphBuilder:
                     current_task_for_execution: Dict[str, Any],
                     current_user_prompt: str,
                 ) -> tuple[Dict[str, Any], str]:
-                    model_name = agent.get("model") or "gpt-4.1"
+                    model_name = agent.get("model") or "gpt-5.4-mini"
                     agent_params = agent.get("agent_params") or {}
                     temperature = float(agent_params.get("temperature", 0.7))
 

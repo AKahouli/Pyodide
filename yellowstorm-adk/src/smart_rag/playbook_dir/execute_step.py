@@ -26,7 +26,7 @@ from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamC
 from src.smart_rag.playbook_dir.execute_manager import PlaybookManagerExecutor
 
 # Constants
-DEFAULT_MODEL = 'gpt-4'
+DEFAULT_MODEL = 'gpt-5.4-mini'
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_TOP_K = 3
 MAX_LLM_CALLS = 50

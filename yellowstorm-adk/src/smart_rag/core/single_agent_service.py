@@ -257,7 +257,7 @@ class SingleAgentService:
             chatbot_name_raw = agent_config.chatbot_name
             if isinstance(chatbot_name_raw, dict):
                 # Extract the name from dict
-                chatbot_name = chatbot_name_raw.get('name', chatbot_name_raw.get('provider', 'gpt-4.1'))
+                chatbot_name = chatbot_name_raw.get('name', chatbot_name_raw.get('provider', 'gpt-5.4-mini'))
             else:
                 chatbot_name = chatbot_name_raw
 

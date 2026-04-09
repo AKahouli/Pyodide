@@ -41,6 +41,7 @@ import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookModule } from './modules/playbook/playbook.module';
+import { EvaluationModule } from './modules/evaluation/evaluation.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { PlaybookModule } from './modules/playbook/playbook.module';
     PlaybookModule,
     AnalyticsModule,
     HealthModule,
+    EvaluationModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default
@@ -95,4 +97,4 @@ import { PlaybookModule } from './modules/playbook/playbook.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }

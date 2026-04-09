@@ -35,6 +35,8 @@ async function bootstrap() {
       'X-Requested-With',
       'X-Correlation-ID',
       'X-Request-ID',
+      'Cache-Control',
+      'Connection',
     ],
     exposedHeaders: ['Set-Cookie'],
     preflightContinue: false,
@@ -56,8 +58,8 @@ async function bootstrap() {
     }),
   );
 
-  // Compression
-  app.use(compression({ threshold: 1024 }));
+  // Compression - Disabled temporarily to ensure SSE streaming is not buffered
+  // app.use(compression({ threshold: 1024 }));
 
   // Body Size Limits
   app.use(json({ limit: '10mb' }));

@@ -2,12 +2,22 @@ import logging
 import os
 
 from logging import Filter, LogRecord
-from elasticsearch import Elasticsearch
 from pydantic import parse_obj_as
 
 from src.config.settings import get_settings
-from src.logger.elastic_search import elastic_search_logging
-from src.logger.setup_logging import setup_logging
+
+# Delayed imports to speed up startup
+def get_elasticsearch():
+    from elasticsearch import Elasticsearch
+    return Elasticsearch
+
+def get_elastic_search_logging():
+    from src.logger.elastic_search import elastic_search_logging
+    return elastic_search_logging
+
+def get_setup_logging():
+    from src.logger.setup_logging import setup_logging
+    return setup_logging
 
 class CorrelationIdFilter(Filter):
     """
@@ -156,6 +166,6 @@ def get_logger(name: str, setup_logger: bool = False) -> logging.Logger:
         LOG_JSON_FORMAT = parse_obj_as(bool, os.getenv("LOG_JSON_FORMAT", False))
         COLOR_LOGS = parse_obj_as(bool, os.getenv("COLOR_LOGS", True))
         LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
-        setup_logging(json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS)
+        get_setup_logging()(json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS)
     logger = logging.getLogger(name)
     return logger

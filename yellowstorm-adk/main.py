@@ -9,7 +9,7 @@ from src.logger.logging import get_logger
 from os import getenv
 from fastapi.exceptions import RequestValidationError
 from starlette.responses import JSONResponse
-from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
+from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
 from src.middleware import add_middleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.requests import Request
@@ -26,8 +26,9 @@ from src.routers.similarity_search import router as similarity_search_router
 from src.routers.authentification import router as auth_router
 from src.routers.playbook import playbook_router
 from src.routers.evaluation import router as evaluation_router
-from src.smart_rag.infrastructure.session.manager import get_shared_engine, dispose_shared_engine
+from src.routers.evaluation_batch import router as evaluation_batch_router
 from google.adk.sessions.database_session_service import Base
+from src.evaluation.repository import EvaluationRepository, dispose_evaluation_engine
 
 # Import gRPC server
 from src.grpc_server.server import start_grpc_server
@@ -57,6 +58,21 @@ async def lifespan(app: FastAPI):
         COLOR_LOGS = TypeAdapter(bool).validate_python(getenv("COLOR_LOGS", True))
         LOG_LEVEL = getenv("LOG_LEVEL", "INFO")
         setup_logging(json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS)
+
+    # Apply global LLM patches (mapping, timeouts, and logging)
+    try:
+        from src.evaluation.agent_evaluator import apply_litellm_debug_patch
+        apply_litellm_debug_patch()
+        logger.info("✅ Global LLM patches applied successfully at startup")
+    except Exception as e:
+        logger.error(f"Failed to apply global LLM patches: {e}")
+
+    # Initialize evaluation database if configured
+    try:
+        logger.info("Initializing evaluation repository...")
+        await EvaluationRepository.initialize()
+    except Exception as e:
+        logger.error(f"Failed to initialize evaluation repository: {e}")
 
     # Pre-initialize shared database engine for parallel access
     logger.info("Pre-initializing shared database engine...")
@@ -120,7 +136,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Error stopping gRPC server: {str(e)}")
 
-    await dispose_shared_engine()
+    await dispose_evaluation_engine()
     logger.info("Finished router chatbot (DOWN)")
     logger.info("Exiting...")
 
@@ -139,7 +155,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         "Validation error on request"
     )
     return JSONResponse(
-        status_code=HTTP_422_UNPROCESSABLE_CONTENT,
+        status_code=HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": exc.errors()},
     )
 
@@ -158,6 +174,7 @@ app.include_router(similarity_search_router)
 app.include_router(auth_router)
 app.include_router(playbook_router)
 app.include_router(evaluation_router)
+app.include_router(evaluation_batch_router)
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
