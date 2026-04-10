@@ -4,13 +4,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
 import type { PlaybookExecution, TaskResult } from '../types';
 
+const navigateMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   currentPlaybook: null as any,
   deleteExecution: vi.fn(),
   deleteStepExecution: vi.fn(),
+  updatePlaybookFromJudge: vi.fn(),
+  generatePlaybookFromJudge: vi.fn(),
+  optimizeStepFromJudge: vi.fn(),
   validateTaskReplay: vi.fn(),
   fetchTaskReplays: vi.fn().mockResolvedValue([]),
 }));
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => navigateMock };
+});
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -117,6 +126,62 @@ describe('ExecutionStepDetail', () => {
   it('renders step title and status badge', () => {
     render(<ExecutionStepDetail step={baseStep} />);
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
+  });
+
+  it('navigates to the newly generated playbook from the judge CTA', async () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1' }],
+    };
+    storeState.generatePlaybookFromJudge.mockResolvedValueOnce({ id: 'p2' });
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          judgeResult: {
+            accuracyScore: 80,
+            completenessScore: 90,
+            overallScore: 85,
+            missingFacts: [],
+            incoherences: [],
+            unsupportedClaims: [],
+            handoffRisks: [],
+            rewriteHints: [],
+            recommendation: 'generate_new_optimized_playbook',
+            reason: 'Create a new playbook.',
+          },
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Generate new optimized playbook' }));
+
+    expect(storeState.generatePlaybookFromJudge).toHaveBeenCalledWith('p1', 'exec-1');
+    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p2');
+
+    storeState.currentPlaybook = null;
   });
 
   it('shows a step execution picker in the results tab when history exists', () => {

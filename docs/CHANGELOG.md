@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-10 10:16] — Open generated playbook directly from judge CTA
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The Judge LLM "Generate new optimized playbook" CTA now navigates directly to the newly created playbook after the API call completes.
+- **Why:** Users should land on the generated playbook immediately instead of remaining on the execution page.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `docs/playbook/README_2026-04-10_10-16-33.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
 ## [2026-04-10 08:03] — Document playbook recommendation pane and step optimization
 
 - **Feature:** `playbook`

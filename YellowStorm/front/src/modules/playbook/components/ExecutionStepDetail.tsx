@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { Button } from '@/components/ui/button';
@@ -207,6 +208,7 @@ export function ExecutionStepDetail({
   onActiveTabChange,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
+  const navigate = useNavigate();
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
@@ -354,11 +356,12 @@ export function ExecutionStepDetail({
     if (!execution || !currentPlaybook) return;
     setJudgeActionLoading('generate');
     try {
-      await generatePlaybookFromJudge(currentPlaybook.id, execution.id);
+      const created = await generatePlaybookFromJudge(currentPlaybook.id, execution.id);
+      navigate(`/playbooks/${created.id}`);
     } finally {
       setJudgeActionLoading(null);
     }
-  }, [currentPlaybook, execution, generatePlaybookFromJudge]);
+  }, [currentPlaybook, execution, generatePlaybookFromJudge, navigate]);
 
   const handleOptimizeJudgeStep = useCallback(async () => {
     if (!execution || !currentPlaybook || !step) return;
