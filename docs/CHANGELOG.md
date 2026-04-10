@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-10 12:18] — Guard generated playbook workspaces before cloning
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The judge-generated playbook flow now filters invalid `workspaces` values and falls back to the source playbook's workspaces instead of crashing with a BSONError.
+- **Why:** The generated JSON can omit or corrupt workspace IDs, and the create path should not fail on invalid ObjectId strings.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.spec.ts`, `docs/playbook/README_2026-04-10_12-18-28.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
 ## [2026-04-10 10:16] — Open generated playbook directly from judge CTA
 
 - **Feature:** `playbook`

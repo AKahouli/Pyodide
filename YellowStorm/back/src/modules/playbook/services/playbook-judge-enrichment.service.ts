@@ -114,9 +114,10 @@ export class PlaybookJudgeEnrichmentService {
     const payload = await this.buildRewritePayload('judge.generate_optimized_playbook', executionId);
     const tasks = this.preserveInputMappings(sourcePlaybook.tasks || [], Array.isArray(payload.tasks) ? payload.tasks : []);
     const edges = Array.isArray(payload.edges) && payload.edges.length > 0 ? payload.edges : sourcePlaybook.edges;
-    const workspaces = Array.isArray(payload.workspaces) && payload.workspaces.length > 0
-      ? payload.workspaces
-      : (sourcePlaybook.workspaces || []).map((item: any) => item.toString());
+    const workspaces = this.normalizeWorkspaceIds(
+      sourcePlaybook.workspaces || [],
+      Array.isArray(payload.workspaces) ? payload.workspaces : [],
+    );
 
     return this.playbookService.createWithTasksAndEdges(
       userId,
@@ -126,6 +127,20 @@ export class PlaybookJudgeEnrichmentService {
       edges,
       workspaces,
     );
+  }
+
+  private normalizeWorkspaceIds(sourceWorkspaces: any[], candidateWorkspaces: any[]): string[] {
+    const normalized = candidateWorkspaces
+      .map((item) => String(item))
+      .filter((item) => Types.ObjectId.isValid(item));
+
+    if (normalized.length > 0) {
+      return [...new Set(normalized)];
+    }
+
+    return (sourceWorkspaces || [])
+      .map((item) => String(item))
+      .filter((item) => Types.ObjectId.isValid(item));
   }
 
   async optimizeStep(userId: string, playbookId: string, executionId: string, taskId: string): Promise<any> {
