@@ -606,7 +606,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
                 <div className='flex-1 flex flex-col gap-1'>
                   <Label htmlFor='dataset-name'>Nom du fichier</Label>
-                  <Input id='dataset-name' value={manualDatasetName} onChange={(e) => setManualDatasetName(e.target.value)} placeholder='dataset_reference.xlsx' className='border-none h-10 focus-visible:ring-0 text-sm' />
+                  <Input id='dataset-name' value={manualDatasetName} onChange={(e) => setManualDatasetName(e.target.value)} placeholder='dataset_reference.xlsx' className='h-9 text-sm' />
                 </div>
                 {manualItems.length > 0 && (
                   <div className='flex items-end h-full px-1 gap-1'>
