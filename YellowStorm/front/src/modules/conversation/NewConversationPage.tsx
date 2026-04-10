@@ -5,7 +5,7 @@ import { StarsBackground } from '@/modules/conversation/effects/stars-background
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore } from './store';
+import { useConversationStore, useSelectedWorkspaceIds, useResetSelectedWorkspaceIds } from './store';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
@@ -13,17 +13,22 @@ import { GroupChatButton } from './components/GroupChatButton';
  
 export function NewConversationPage() {
   const createConversation = useConversationStore((s) => s.createConversation);
+  const updateConversation = useConversationStore((s) => s.updateConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
+  const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
   const navigate = useNavigate();
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
   const { t } = useModuleTranslation('conversation');
 
   const createConversationForUpload = useCallback(async () => {
-    const conv = await createConversation();
+    // Create conversation with currently selected workspaces if any
+    const data = selectedWorkspaceIds?.length ? { workspaces: selectedWorkspaceIds } : undefined;
+    const conv = await createConversation(data);
     setSilentConvId(conv.id);
     return conv;
-  }, [createConversation]);
+  }, [createConversation, selectedWorkspaceIds]);
 
   const {
     files: uploadFiles,
@@ -53,13 +58,23 @@ export function NewConversationPage() {
     [removeFile],
   );
 
-  const handleSubmit = async (message: PromptInputMessage, modelId: string, agentIds?: string[]) => {
+  const handleSubmit = async (message: PromptInputMessage, modelId: string, agentIds?: string[], workspaceIds?: string[]) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
 
     try {
       // Use existing conversation (from file upload) or create new one
-      const convId = resolvedConvId || silentConvId || (await createConversation()).id;
+      let convId = resolvedConvId || silentConvId;
+
+      if (!convId) {
+        // Create new conversation with workspaces if provided
+        const conv = await createConversation(workspaceIds?.length ? { workspaces: workspaceIds } : undefined);
+        convId = conv.id;
+      } else if (workspaceIds?.length && workspaceIds.join() !== selectedWorkspaceIds.join()) {
+        // Update existing conversation with workspaces only if they changed
+        await updateConversation(convId, { workspaces: workspaceIds });
+      }
+
       navigate(`/conversation/${convId}`);
 
       // Build optimistic attachedFiles
@@ -82,6 +97,7 @@ export function NewConversationPage() {
       });
 
       clearAll();
+      resetSelectedWorkspaceIds();
     } catch {
       toast.error(t('toasts.conversation.createError'));
     } finally {
@@ -99,7 +115,7 @@ export function NewConversationPage() {
           </Shimmer>
         </div>
         <div className='w-full max-w-3xl px-4'>
-          <Input onSubmit={handleSubmit} status={isSending ? 'submitted' : 'ready'} disabled={isSending} submitDisabled={isUploading} onFilesAdded={handleFilesAdded} onFileRemoved={handleFileRemoved} uploadingFiles={uploadFiles} accept={ACCEPT_EXTENSIONS} maxFiles={5} />
+          <Input onSubmit={handleSubmit} status={isSending ? 'submitted' : 'ready'} disabled={isSending} submitDisabled={isUploading} onFilesAdded={handleFilesAdded} onFileRemoved={handleFileRemoved} uploadingFiles={uploadFiles} accept={ACCEPT_EXTENSIONS} maxFiles={5} showWorkspaceSelect={true} />
         </div>
         <GroupChatButton />
       </div>
