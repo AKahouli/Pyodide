@@ -177,6 +177,9 @@ export interface PlaybookExecutionResponse {
   status: string;
   executionMode: string;
   executionTrigger: 'manual' | 'scheduled';
+  reflectionEnabled: boolean;
+  judgeSummaryStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeSummary: PlaybookJudgeSummary | null;
   replaySourceByTask: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults: TaskResultData[];
   threadId: string | null;
@@ -244,6 +247,37 @@ export interface TaskResultData {
     model: string;
     judgeUsed: boolean;
   } | null;
+  judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeResult?: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  } | null;
+  judgeError?: string | null;
+  judgeHistory?: Array<{
+    id: string;
+    createdAt: string;
+    model: string | null;
+    judgeResult: {
+      accuracyScore: number;
+      completenessScore: number;
+      overallScore: number;
+      missingFacts: string[];
+      incoherences: string[];
+      unsupportedClaims: string[];
+      handoffRisks: string[];
+      rewriteHints: string[];
+      recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+      reason: string;
+    };
+  }>;
   evaluationHistory?: Array<{
     id: string;
     createdAt: string;
@@ -316,6 +350,16 @@ export interface PlaybookExecutionSummaryResponse {
   singleStepTaskId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PlaybookJudgeSummary {
+  overallScore: number;
+  structuralIssues: string[];
+  promptIssues: string[];
+  contractIssues: string[];
+  handoffIssues: string[];
+  recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
+  reason: string;
 }
 
 export interface PaginatedExecutions {

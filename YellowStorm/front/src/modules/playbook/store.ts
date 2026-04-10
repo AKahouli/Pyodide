@@ -25,6 +25,9 @@ import type {
   PlaybookStepUpdateEvent,
   PlaybookStepCompleteEvent,
   PlaybookStepEvaluationUpdatedEvent,
+  PlaybookStepJudgeStartedEvent,
+  PlaybookStepJudgeUpdatedEvent,
+  PlaybookJudgeSummaryUpdatedEvent,
   PlaybookReplayFormatGuideUpdatedEvent,
   PlaybookOutputFormatTemplateUpdatedEvent,
   PlaybookExecutionCompleteEvent,
@@ -57,6 +60,8 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
 
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
+const JUDGE_REFRESH_INTERVAL_MS = 1500;
+const JUDGE_REFRESH_MAX_ATTEMPTS = 12;
 
 function persistPanelOpen(open: boolean) {
   try { localStorage.setItem(EXEC_PANEL_KEY, open ? '1' : '0'); } catch { /* noop */ }
@@ -124,6 +129,49 @@ const EMPTY_PLAYBOOKS: PlaybookSummary[] = [];
 const EMPTY_EXECUTIONS: PlaybookExecutionSummary[] = [];
 const EMPTY_DESIGN_MESSAGES: DesignMessage[] = [];
 const MAX_EXECUTION_HISTORY = 50;
+
+const judgeRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearJudgeRefreshTimer(executionId: string): void {
+  const timer = judgeRefreshTimers.get(executionId);
+  if (timer) {
+    clearTimeout(timer);
+    judgeRefreshTimers.delete(executionId);
+  }
+}
+
+function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
+  clearJudgeRefreshTimer(executionId);
+
+  let attempt = 0;
+  const tick = () => {
+    attempt += 1;
+    void usePlaybookStore.getState().fetchExecution(playbookId, executionId)
+      .then(() => {
+        const execution = usePlaybookStore.getState().executionCache[executionId];
+        const hasJudgeResult = Boolean(
+          execution?.judgeSummaryStatus === 'evaluated'
+          || execution?.taskResults?.some((task) => task.judgeStatus === 'evaluated' && task.judgeResult),
+        );
+
+        if (hasJudgeResult || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
+          clearJudgeRefreshTimer(executionId);
+          return;
+        }
+
+        judgeRefreshTimers.set(executionId, setTimeout(tick, JUDGE_REFRESH_INTERVAL_MS));
+      })
+      .catch(() => {
+        if (attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
+          clearJudgeRefreshTimer(executionId);
+          return;
+        }
+        judgeRefreshTimers.set(executionId, setTimeout(tick, JUDGE_REFRESH_INTERVAL_MS));
+      });
+  };
+
+  judgeRefreshTimers.set(executionId, setTimeout(tick, JUDGE_REFRESH_INTERVAL_MS));
+}
 const MAX_EXECUTION_CACHE = 20;
 const MAX_UNDO_HISTORY = 50;
 
@@ -234,6 +282,30 @@ function shouldKeepRunningExecution(
   return cachedUpdatedAt > 0 && cachedUpdatedAt > incomingAttemptTimestamp;
 }
 
+const JUDGE_STATUS_PRIORITY: Record<string, number> = {
+  idle: 0,
+  evaluating: 1,
+  evaluated: 2,
+  failed: 2,
+};
+
+function hasRicherJudgeState(
+  cachedTaskResult: PlaybookExecution['taskResults'][number],
+  incomingTaskResult: PlaybookExecution['taskResults'][number],
+): boolean {
+  const cachedJudgePriority = JUDGE_STATUS_PRIORITY[cachedTaskResult.judgeStatus || 'idle'] ?? 0;
+  const incomingJudgePriority = JUDGE_STATUS_PRIORITY[incomingTaskResult.judgeStatus || 'idle'] ?? 0;
+  if (cachedJudgePriority > incomingJudgePriority) {
+    return true;
+  }
+
+  if (cachedTaskResult.judgeResult && !incomingTaskResult.judgeResult) {
+    return true;
+  }
+
+  return (cachedTaskResult.judgeHistory?.length || 0) > (incomingTaskResult.judgeHistory?.length || 0);
+}
+
 function shouldKeepCachedTaskResult(
   cachedTaskResult: PlaybookExecution['taskResults'][number],
   incomingTaskResult: PlaybookExecution['taskResults'][number],
@@ -249,6 +321,13 @@ function shouldKeepCachedTaskResult(
   if (
     incomingTaskResult.isStale
     && (cachedTaskResult.status === 'running' || cachedTaskResult.status === 'pending')
+  ) {
+    return true;
+  }
+
+  if (
+    cachedTaskResult.status === incomingTaskResult.status
+    && hasRicherJudgeState(cachedTaskResult, incomingTaskResult)
   ) {
     return true;
   }
@@ -293,6 +372,10 @@ function buildResumeFromStepTaskResults(taskResults: PlaybookExecution['taskResu
       startedAt: null,
       completedAt: null,
       semanticMatch: null,
+      judgeStatus: 'idle' as const,
+      judgeResult: null,
+      judgeError: null,
+      judgeHistory: taskResult.judgeHistory || [],
       evaluationHistory: taskResult.evaluationHistory || [],
       stepExecutions: taskResult.stepExecutions || [],
     };
@@ -321,9 +404,13 @@ function buildExecutionTaskResultsFromTasks(
     staleReason: null,
     invalidatedByTaskId: null,
     semanticMatch: null,
+    judgeStatus: 'idle' as const,
+    judgeResult: null,
+    judgeError: null,
+    judgeHistory: [],
     evaluationHistory: [],
     stepExecutions: [],
-  }));
+  } as PlaybookExecution['taskResults'][number]));
 }
 
 // ===== Store Implementation =====
@@ -662,6 +749,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
               status: 'running',
               executionMode: data?.executionMode || 'live',
               executionTrigger: 'manual',
+              reflectionEnabled: data?.runNodeReflection !== false,
+              judgeSummaryStatus: 'idle',
+              judgeSummary: null,
               replaySourceByTask: null,
               taskResults,
               threadId: null,
@@ -1084,6 +1174,74 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      updatePlaybookFromJudge: async (playbookId, executionId) => {
+        try {
+          const updated = await api.updatePlaybookFromJudge(playbookId, executionId);
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId ? updated : state.currentPlaybook,
+          }));
+          toast.success('Playbook updated from reflection');
+          return updated;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      generatePlaybookFromJudge: async (playbookId, executionId) => {
+        try {
+          const created = await api.generatePlaybookFromJudge(playbookId, executionId);
+          const summary: PlaybookSummary = {
+            id: created.id,
+            name: created.name,
+            description: created.description,
+            taskCount: created.tasks.length,
+            isFavorite: created.isFavorite,
+            scheduleEnabled: created.executionSchedule?.enabled === true,
+            executionStatus: null,
+            lastExecutionAt: null,
+            createdAt: created.createdAt,
+            updatedAt: created.updatedAt,
+          };
+          set((state) => ({
+            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== created.id)],
+            currentPlaybook: created,
+          }));
+          toast.success('Optimized playbook generated');
+          return created;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      optimizeStepFromJudge: async (playbookId, executionId, taskId) => {
+        try {
+          const updated = await api.optimizeStepFromJudge(playbookId, executionId, taskId);
+          const summary: PlaybookSummary = {
+            id: updated.id,
+            name: updated.name,
+            description: updated.description,
+            taskCount: updated.tasks.length,
+            isFavorite: updated.isFavorite,
+            scheduleEnabled: updated.executionSchedule?.enabled === true,
+            executionStatus: null,
+            lastExecutionAt: null,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+          };
+          set((state) => ({
+            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
+            currentPlaybook: updated,
+          }));
+          toast.success('Step optimized');
+          return updated;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       resumeExecution: async (id, data) => {
         const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');
         const message = data.message || data.feedback || data.reason || '';
@@ -1233,6 +1391,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
           status: data.status as any,
           executionMode: data.executionMode || 'live',
           executionTrigger: 'manual',
+          reflectionEnabled: true,
+          judgeSummaryStatus: 'idle',
+          judgeSummary: null,
           replaySourceByTask: data.replaySourceByTask || null,
           taskResults,
           threadId: null,
@@ -1320,7 +1481,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   durationMs: null,
                   startedAt: new Date().toISOString(),
                   completedAt: null,
-                },
+                  isStale: false,
+                  staleReason: null,
+                  invalidatedByTaskId: null,
+                  semanticMatch: null,
+                  judgeStatus: 'idle' as const,
+                  judgeResult: null,
+                  judgeError: null,
+                  judgeHistory: [],
+                  evaluationHistory: [],
+                  stepExecutions: [],
+                } as PlaybookExecution['taskResults'][number],
               ];
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
@@ -1383,12 +1554,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   toolTrace: data.toolTrace ?? [],
                   llmPromptTrace: data.llmPromptTrace ?? [],
                   artifacts: data.artifacts,
+                  judgeStatus: 'idle' as const,
+                  judgeResult: null,
+                  judgeError: null,
+                  judgeHistory: [],
                   evaluationHistory: [],
                   stepExecutions: [],
                   isStale: false,
                   staleReason: null,
                   invalidatedByTaskId: null,
-                },
+                } as PlaybookExecution['taskResults'][number],
               ];
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
@@ -1407,32 +1582,36 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const existing = cached.taskResults;
           const found = existing.some((tr) => tr.taskId === data.taskId);
-          const update = {
-            status: data.status as any,
-            output: data.output || null,
-            error: data.error || null,
-            durationMs: data.durationMs || null,
-            completedAt: new Date().toISOString(),
-            toolTrace: data.toolTrace ?? [],
-            llmPromptTrace: data.llmPromptTrace ?? [],
-            inputTokens: data.inputTokens ?? null,
-            outputTokens: data.outputTokens ?? null,
-            totalTokens: data.totalTokens ?? null,
-            modelName: data.modelName ?? null,
-            semanticMatch: data.semanticMatch ?? null,
-            artifacts: data.artifacts ?? undefined,
-            isStale: false,
-            staleReason: null,
-            invalidatedByTaskId: null,
-          };
           const taskResults = found
             ? existing.map((tr) => {
                 if (tr.taskId !== data.taskId) return tr;
                 const merged = mergeComponents(tr.components, data.components || []);
+                const update = {
+                  status: data.status as any,
+                  output: data.output || null,
+                  error: data.error || null,
+                  durationMs: data.durationMs || null,
+                  completedAt: new Date().toISOString(),
+                  toolTrace: data.toolTrace ?? [],
+                  llmPromptTrace: data.llmPromptTrace ?? [],
+                  inputTokens: data.inputTokens ?? null,
+                  outputTokens: data.outputTokens ?? null,
+                  totalTokens: data.totalTokens ?? null,
+                  modelName: data.modelName ?? null,
+                  semanticMatch: data.semanticMatch ?? null,
+                  judgeStatus: 'idle' as const,
+                  judgeResult: null,
+                  judgeError: null,
+                  artifacts: data.artifacts ?? undefined,
+                  isStale: false,
+                  staleReason: null,
+                  invalidatedByTaskId: null,
+                };
                 return {
                   ...tr,
                   ...update,
                   components: merged,
+                  judgeHistory: tr.judgeHistory || [],
                   evaluationHistory: tr.evaluationHistory || [],
                   stepExecutions: tr.stepExecutions || [],
                 };
@@ -1444,12 +1623,31 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   nodeTitle: '',
                   agentName: '',
                   order: existing.length,
+                  status: data.status as any,
+                  output: data.output || null,
+                  error: data.error || null,
+                  durationMs: data.durationMs || null,
                   startedAt: null,
+                  completedAt: new Date().toISOString(),
                   components: data.components || undefined,
+                  toolTrace: data.toolTrace ?? [],
+                  llmPromptTrace: data.llmPromptTrace ?? [],
+                  inputTokens: data.inputTokens ?? null,
+                  outputTokens: data.outputTokens ?? null,
+                  totalTokens: data.totalTokens ?? null,
+                  modelName: data.modelName ?? null,
+                  semanticMatch: data.semanticMatch ?? null,
+                  judgeStatus: 'idle' as const,
+                  judgeResult: null,
+                  judgeError: null,
+                  judgeHistory: [],
                   evaluationHistory: [],
                   stepExecutions: [],
-                  ...update,
-                },
+                  artifacts: data.artifacts ?? undefined,
+                  isStale: false,
+                  staleReason: null,
+                  invalidatedByTaskId: null,
+                } as PlaybookExecution['taskResults'][number],
               ];
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
@@ -1488,6 +1686,70 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
           const currentExecution =
             state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = cached.taskResults.map((tr) =>
+            tr.taskId === data.taskId
+              ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
+              : tr,
+          );
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = cached.taskResults.map((tr) =>
+            tr.taskId === data.taskId
+              ? {
+                  ...tr,
+                  judgeStatus: data.judgeStatus,
+                  judgeResult: data.judgeResult ?? null,
+                  judgeError: data.judgeError ?? null,
+                  judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
+                }
+              : tr,
+          );
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onJudgeSummaryUpdated: (data: PlaybookJudgeSummaryUpdatedEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const updatedExec = {
+            ...cached,
+            judgeSummaryStatus: 'evaluated' as const,
+            judgeSummary: data.judgeSummary,
+            updatedAt: new Date().toISOString(),
+          };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+
+          clearJudgeRefreshTimer(data.executionId);
 
           return { executionCache, currentExecution };
         });
@@ -1625,6 +1887,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
               : state.playbooks,
           };
         });
+
+        if (status === 'completed' && playbookId) {
+          scheduleJudgeRefresh(data.executionId, playbookId);
+        } else {
+          clearJudgeRefreshTimer(data.executionId);
+        }
       },
 
       onInterrupt: (data: PlaybookInterruptEvent) => {

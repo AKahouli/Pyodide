@@ -54,7 +54,7 @@ import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -186,6 +186,7 @@ function PlaybookCanvasInner() {
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'live' | 'inherit'>('live');
+  const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
   const [editingOutputFormatVersion, setEditingOutputFormatVersion] = useState<number | null>(null);
   const [outputFormatDraft, setOutputFormatDraft] = useState('');
@@ -335,21 +336,45 @@ function PlaybookCanvasInner() {
     return map;
   }, [executionTaskResults]);
 
+  const stepJudgeStatusMap = useMemo(() => {
+    const map = new Map<string, NonNullable<PlaybookExecution['taskResults'][number]['judgeStatus']>>();
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
+      map.set(tr.taskId, tr.judgeStatus || 'idle');
+    }
+    return map;
+  }, [executionTaskResults]);
+
+  const stepJudgeResultMap = useMemo(() => {
+    const map = new Map<string, PlaybookExecution['taskResults'][number]['judgeResult']>();
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
+      map.set(tr.taskId, tr.judgeResult || null);
+    }
+    return map;
+  }, [executionTaskResults]);
+
   // Overlay step statuses onto nodes
   const liveNodes = useMemo(() => {
     return nodes.map((node) => {
       const status = stepStatusMap.get(node.id);
       const semanticMatch = stepSemanticMatchMap.get(node.id);
+      const judgeStatus = stepJudgeStatusMap.get(node.id);
+      const judgeResult = stepJudgeResultMap.get(node.id);
       const currentData = node.data as PlaybookNodeData;
       const nextSelected = node.id === selectedStepId;
       const nextData = {
         ...currentData,
         ...(status !== undefined ? { stepStatus: status } : {}),
         ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
+        ...(judgeStatus !== undefined ? { stepJudgeStatus: judgeStatus } : {}),
+        ...(judgeResult !== undefined ? { stepJudgeResult: judgeResult } : {}),
       } as PlaybookNodeData;
 
       const dataChanged = currentData.stepStatus !== nextData.stepStatus
-        || currentData.stepSemanticMatch !== nextData.stepSemanticMatch;
+        || currentData.stepSemanticMatch !== nextData.stepSemanticMatch
+        || (currentData as any).stepJudgeStatus !== (nextData as any).stepJudgeStatus
+        || (currentData as any).stepJudgeResult !== (nextData as any).stepJudgeResult;
 
       if (!dataChanged && node.selected === nextSelected) {
         return node;
@@ -361,7 +386,7 @@ function PlaybookCanvasInner() {
         data: nextData,
       };
     });
-  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap]);
+  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap]);
 
   // Style edges based on source node status
   const liveEdges = useMemo(() => {
@@ -718,10 +743,10 @@ function PlaybookCanvasInner() {
       toast.error('Select a default playbook workspace before running this playbook.');
       return;
     }
-    if (isDirty) await saveNow();
+      if (isDirty) await saveNow();
       setPageMode('run');
       if (executionMode === 'live') {
-      await executePlaybook(id, { executionMode: 'live', streaming: true });
+      await executePlaybook(id, { executionMode: 'live', streaming: true, runNodeReflection: nodeReflectionEnabled });
       } else {
       const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
       for (const task of playbook.tasks) {
@@ -730,9 +755,9 @@ function PlaybookCanvasInner() {
           stepExecutionModes[task.id] = mode;
         }
       }
-      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes, streaming: true });
+      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes, streaming: true, runNodeReflection: nodeReflectionEnabled });
       }
-  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, setPageMode]);
+  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, nodeReflectionEnabled, setPageMode]);
 
   const handleAutoLayout = useCallback(() => {
     if (!playbook) return;
@@ -977,6 +1002,8 @@ function PlaybookCanvasInner() {
             canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
             executionMode={executionMode}
             onExecutionModeChange={setExecutionMode}
+            nodeReflectionEnabled={nodeReflectionEnabled}
+            onNodeReflectionChange={setNodeReflectionEnabled}
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={undo}

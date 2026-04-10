@@ -187,6 +187,30 @@ export async function updatePlaybook(
   return response.data.data;
 }
 
+export async function updatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(id)}/judge/update-current`,
+    { executionId },
+  );
+  return response.data.data;
+}
+
+export async function generatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(id)}/judge/generate-new`,
+    { executionId },
+  );
+  return response.data.data;
+}
+
+export async function optimizeStepFromJudge(id: string, executionId: string, taskId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(id)}/judge/optimize-step`,
+    { executionId, taskId },
+  );
+  return response.data.data;
+}
+
 export async function deletePlaybook(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.playbooks.byId(id));
 }

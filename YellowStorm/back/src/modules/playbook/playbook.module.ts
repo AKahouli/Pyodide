@@ -43,6 +43,7 @@ import { PlaybookOutputFormatService } from './services/playbook-output-format.s
 import { PlaybookPromptService } from './services/playbook-prompt.service';
 import { PlaybookEvaluationService } from './services/playbook-evaluation.service';
 import { PlaybookSemanticEnrichmentService } from './services/playbook-semantic-enrichment.service';
+import { PlaybookJudgeEnrichmentService } from './services/playbook-judge-enrichment.service';
 import { PlaybookStreamGatewayService } from './services/playbook-stream-gateway.service';
 import { PlaybookScheduleRunnerService } from './services/playbook-schedule-runner.service';
 
@@ -99,6 +100,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookPromptService,
     PlaybookEvaluationService,
     PlaybookSemanticEnrichmentService,
+    PlaybookJudgeEnrichmentService,
     PlaybookStreamGatewayService,
     PlaybookScheduleRunnerService,
     PlaybookOwnerGuard,
@@ -113,6 +115,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookPromptService,
     PlaybookEvaluationService,
     PlaybookSemanticEnrichmentService,
+    PlaybookJudgeEnrichmentService,
     PlaybookStreamGatewayService,
   ],
 })

@@ -29,6 +29,11 @@ export class ExecutePlaybookDto {
   @IsBoolean()
   runEvaluation?: boolean;
 
+  @ApiPropertyOptional({ description: 'Run non-blocking node reflection after each completed step' })
+  @IsOptional()
+  @IsBoolean()
+  runNodeReflection?: boolean;
+
   @ApiPropertyOptional({ description: 'Enable realtime step streaming for interactive runs' })
   @IsOptional()
   @IsBoolean()

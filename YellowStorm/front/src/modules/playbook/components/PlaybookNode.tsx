@@ -172,6 +172,51 @@ function SemanticScoreBadge({
   );
 }
 
+function JudgeScoreBadge({
+  score,
+  accuracy,
+  completeness,
+}: {
+  score: number;
+  accuracy: number;
+  completeness: number;
+}) {
+  const tone = getSemanticScoreTone(score);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
+          <span>{Math.round(score)}%</span>
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        <div className="font-medium">Reflection score</div>
+        <div>Accuracy: {Math.round(accuracy)}%</div>
+        <div>Completeness: {Math.round(completeness)}%</div>
+        <div>Overall: {Math.round(score)}%</div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function JudgeStateBadge({ status }: { status?: string }) {
+  if (!status || status === 'idle') return null;
+  const isRunning = status === 'evaluating';
+  const label = isRunning ? 'Evaluating' : 'Evaluated';
+  const tone = isRunning
+    ? 'border-sky-500/30 bg-sky-100 text-sky-700'
+    : status === 'failed'
+      ? 'border-red-500/30 bg-red-50 text-red-700'
+      : 'border-emerald-500/30 bg-emerald-100 text-emerald-700';
+
+  return (
+    <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone)}>
+      {isRunning && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+      <span>{status === 'failed' ? 'Failed' : label}</span>
+    </Badge>
+  );
+}
+
 function NodeMetaBadge({
   label,
   toneClassName,
@@ -265,6 +310,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isConfigured = !!data.assignedAgentId;
   const status = data.stepStatus as StepStatus | undefined;
   const semanticMatch = data.stepSemanticMatch;
+  const judgeStatus = data.stepJudgeStatus;
+  const judgeResult = data.stepJudgeResult;
   const ringClass = status ? STATUS_RING[status] : '';
   const headerBgClass = status ? STATUS_HEADER_BG[status] : '';
   const isStepRunning = status === 'running';
@@ -522,6 +569,19 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 )}
               </div>
             )}
+
+            {(judgeStatus && judgeStatus !== 'idle') || judgeResult ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <JudgeStateBadge status={judgeStatus} />
+                {judgeResult && (
+                  <JudgeScoreBadge
+                    score={judgeResult.overallScore}
+                    accuracy={judgeResult.accuracyScore}
+                    completeness={judgeResult.completenessScore}
+                  />
+                )}
+              </div>
+            ) : null}
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <div className="flex min-w-0 items-center gap-2">

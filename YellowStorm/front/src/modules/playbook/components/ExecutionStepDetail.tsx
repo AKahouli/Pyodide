@@ -3,6 +3,7 @@ import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, 
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -211,13 +212,21 @@ export function ExecutionStepDetail({
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
   const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
   const deleteStepExecution = usePlaybookStore((s) => s.deleteStepExecution);
+  const updatePlaybookFromJudge = usePlaybookStore((s) => s.updatePlaybookFromJudge);
+  const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
+  const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [selectedStepExecutionId, setSelectedStepExecutionId] = useState<string | null>(null);
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
+  const [judgeActionLoading, setJudgeActionLoading] = useState<'update' | 'generate' | 'optimize' | null>(null);
   const currentTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
   const evaluationHistory = step?.evaluationHistory || [];
+  const stepJudgeResult = step?.judgeResult || null;
+  const stepJudgeStatus = step?.judgeStatus || 'idle';
+  const stepJudgeError = step?.judgeError || null;
+  const judgeSummary = execution?.judgeSummary || null;
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
     if (baselineReplay?.llmPromptTrace?.length) {
@@ -330,6 +339,36 @@ export function ExecutionStepDetail({
   const handleDownloadPdf = useCallback(() => {
     if (step) downloadStepResultPdf(step);
   }, [step]);
+
+  const handleApplyJudgeUpdate = useCallback(async () => {
+    if (!execution || !currentPlaybook) return;
+    setJudgeActionLoading('update');
+    try {
+      await updatePlaybookFromJudge(currentPlaybook.id, execution.id);
+    } finally {
+      setJudgeActionLoading(null);
+    }
+  }, [currentPlaybook, execution, updatePlaybookFromJudge]);
+
+  const handleGenerateJudgePlaybook = useCallback(async () => {
+    if (!execution || !currentPlaybook) return;
+    setJudgeActionLoading('generate');
+    try {
+      await generatePlaybookFromJudge(currentPlaybook.id, execution.id);
+    } finally {
+      setJudgeActionLoading(null);
+    }
+  }, [currentPlaybook, execution, generatePlaybookFromJudge]);
+
+  const handleOptimizeJudgeStep = useCallback(async () => {
+    if (!execution || !currentPlaybook || !step) return;
+    setJudgeActionLoading('optimize');
+    try {
+      await optimizeStepFromJudge(currentPlaybook.id, execution.id, step.taskId);
+    } finally {
+      setJudgeActionLoading(null);
+    }
+  }, [currentPlaybook, execution, optimizeStepFromJudge, step]);
 
   useEffect(() => {
     setSelectedStepExecutionId((current) => {
@@ -600,9 +639,10 @@ export function ExecutionStepDetail({
           )}
 
           <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
-            <TabsList className="grid w-full grid-cols-5">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
               <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+              <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
               <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
               <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
               <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
@@ -919,6 +959,122 @@ export function ExecutionStepDetail({
               <div className="mt-1 text-muted-foreground">
                 {t('detail.evaluation.runningMessage')}
               </div>
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="judge" className="space-y-4">
+          {stepJudgeResult ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                    <div className="text-3xl font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
+                  </div>
+                  <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                    {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
+                  </div>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => void handleApplyJudgeUpdate()} disabled={judgeActionLoading !== null}>
+                      {judgeActionLoading === 'update' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      Update current playbook
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => void handleOptimizeJudgeStep()} disabled={judgeActionLoading !== null}>
+                      {judgeActionLoading === 'optimize' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.optimizeThisStep')}
+                    </Button>
+                    <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null}>
+                      {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      Generate new optimized playbook
+                    </Button>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
+              </div>
+
+              <div className="rounded-lg border bg-background p-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
+                <div className="mt-2 space-y-2 text-sm">
+                  {stepJudgeResult.rewriteHints.length > 0 ? (
+                    stepJudgeResult.rewriteHints.map((hint) => <div key={hint} className="rounded border bg-muted/20 px-3 py-2">{hint}</div>)
+                  ) : (
+                    <div className="text-muted-foreground">{t('detail.judge.none')}</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="rounded-lg border bg-background p-3">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.structuralIssues')}</div>
+                  <div className="mt-2 space-y-1 text-sm">
+                    {stepJudgeResult.missingFacts.length > 0 ? stepJudgeResult.missingFacts.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-background p-3">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.promptIssues')}</div>
+                  <div className="mt-2 space-y-1 text-sm">
+                    {stepJudgeResult.incoherences.length > 0 ? stepJudgeResult.incoherences.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-background p-3">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.contractIssues')}</div>
+                  <div className="mt-2 space-y-1 text-sm">
+                    {stepJudgeResult.unsupportedClaims.length > 0 ? stepJudgeResult.unsupportedClaims.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
+                  </div>
+                </div>
+                <div className="rounded-lg border bg-background p-3">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.handoffIssues')}</div>
+                  <div className="mt-2 space-y-1 text-sm">
+                    {stepJudgeResult.handoffRisks.length > 0 ? stepJudgeResult.handoffRisks.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : stepJudgeStatus === 'failed' ? (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+              <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                {t('detail.judge.failed')}
+              </div>
+              <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                {stepJudgeError || t('detail.judge.failedUnknown')}
+              </pre>
+            </div>
+          ) : (
+            <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+              {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
+                ? t('detail.judge.evaluating')
+                : t('detail.judge.empty')}
+            </div>
+          )}
+
+          {judgeSummary && !stepJudgeResult && (
+            <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                  {Math.round(judgeSummary.overallScore)}%
+                </Badge>
+                <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                  {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
+                </div>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => void handleApplyJudgeUpdate()} disabled={judgeActionLoading !== null}>
+                    {judgeActionLoading === 'update' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Update current playbook
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => void handleOptimizeJudgeStep()} disabled={judgeActionLoading !== null}>
+                    {judgeActionLoading === 'optimize' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.optimizeThisStep')}
+                  </Button>
+                  <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null}>
+                    {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    Generate new optimized playbook
+                  </Button>
+                </div>
+              </div>
+              <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
             </div>
           )}
         </TabsContent>

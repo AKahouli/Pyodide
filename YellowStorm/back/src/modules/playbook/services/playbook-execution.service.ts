@@ -29,6 +29,7 @@ import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
+import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
 import {
   extractTextFromComponents,
   mapGrpcComponents,
@@ -69,6 +70,7 @@ export class PlaybookExecutionService {
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly promptService: PlaybookPromptService,
     private readonly semanticEnrichmentService: PlaybookSemanticEnrichmentService,
+    private readonly judgeEnrichmentService: PlaybookJudgeEnrichmentService,
   ) {
     this.logger.setContext('PlaybookExecutionService');
     this.maxComponentsPerTask = this.configService.get<number>('playbook.maxComponentsPerTask') || MAX_COMPONENTS_PER_TASK_DEFAULT;
@@ -302,6 +304,41 @@ export class PlaybookExecutionService {
       return;
     }
     this.semanticEnrichmentService.schedule(userId, executionId, taskId);
+  }
+
+  private scheduleNodeReflection(userId: string, executionId: string, taskId: string, status: string, reflectionEnabled: boolean): void {
+    if (status !== 'completed' || !reflectionEnabled) {
+      return;
+    }
+    this.judgeEnrichmentService.schedule(userId, executionId, taskId);
+  }
+
+  private persistBufferedCompletionAndScheduleEnrichment(
+    userId: string,
+    executionId: string,
+    taskId: string,
+    buffered: BufferedStepResult,
+    evalEnabled: boolean,
+    reflectionEnabled: boolean,
+  ): void {
+    void (async () => {
+      const execution = await this.executionModel.findById(executionId)
+        .select('taskResults.taskId taskResults.components')
+        .lean()
+        .exec();
+      const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
+        .filter((component: any) => component.type === 'humanFeedback');
+
+      await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
+      this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
+      this.scheduleNodeReflection(userId, executionId, taskId, 'completed', reflectionEnabled);
+    })().catch((error) => {
+      this.logger.warn('Failed to persist completed workflow step before enrichment', {
+        executionId,
+        taskId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+    });
   }
 
   private isSkipStepReason(reason?: string | null): boolean {
@@ -1012,6 +1049,9 @@ export class PlaybookExecutionService {
       durationMs: null,
       startedAt: null,
       completedAt: null,
+      judgeStatus: 'idle',
+      judgeResult: null,
+      judgeHistory: [],
     }));
 
     const stepExecutionModes = dto.stepExecutionModes || {};
@@ -1043,6 +1083,9 @@ export class PlaybookExecutionService {
       executionMode: globalExecutionMode,
       executionTrigger,
       runEvaluation: dto.runEvaluation === true,
+      reflectionEnabled: dto.runNodeReflection !== false,
+      judgeSummaryStatus: 'idle',
+      judgeSummary: null,
       replaySourceByTask: hasReplaySteps
         ? this.buildReplaySourceMap(activeReplayMap)
         : null,
@@ -1393,6 +1436,7 @@ export class PlaybookExecutionService {
     taskMap: Map<string, any> = new Map(),
     playbookName: string = '',
     evalEnabled: boolean = false,
+    reflectionEnabled: boolean = true,
     playbookId: string = '',
   ): void {
     const normalizedUpdate = this.normalizeStreamStepUpdate(update);
@@ -1487,12 +1531,12 @@ export class PlaybookExecutionService {
           artifacts,
           ...usageFields,
         });
+        this.persistBufferedCompletionAndScheduleEnrichment(userId, executionId, taskId, stepBuffer.get(taskId)!, evalEnabled, reflectionEnabled);
           this.streamGateway.sendToUser(userId, {
             type: 'playbook_step_complete',
             data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
           });
           this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'completed' });
-          this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
         if (completedTask) this.sendStepNotificationEmail(completedTask, 'completed', playbookName, { output });
         break;
       }
@@ -1872,9 +1916,11 @@ export class PlaybookExecutionService {
     let streamThreadId = '';
 
     let evalEnabled = false;
+    let reflectionEnabled = true;
     try {
-      const execRecord = await this.executionModel.findById(executionId).select('runEvaluation').lean().exec();
+      const execRecord = await this.executionModel.findById(executionId).select('runEvaluation reflectionEnabled').lean().exec();
       evalEnabled = execRecord?.runEvaluation === true;
+      reflectionEnabled = execRecord?.reflectionEnabled !== false;
     } catch {
       // Default to false on error
     }
@@ -1903,7 +1949,7 @@ export class PlaybookExecutionService {
         if (chunk.step_update) {
           const normalizedUpdate = this.normalizeStreamStepUpdate(chunk.step_update);
           try {
-            this.handleStepUpdate(userId, executionId, normalizedUpdate, stepBuffer, taskMap, playbookName, evalEnabled);
+            this.handleStepUpdate(userId, executionId, normalizedUpdate, stepBuffer, taskMap, playbookName, evalEnabled, reflectionEnabled);
           } catch (err) {
             this.logger.error('handleStepUpdate threw', {
               executionId,
@@ -2139,7 +2185,7 @@ export class PlaybookExecutionService {
       const limiter = pLimit(this.maxConcurrentSteps);
       const results = await Promise.allSettled(
         runnableTasks.map((task) =>
-          limiter(() => this.executeStep(userId, executionId, playbookId, task, grpcAgentMap, taskOutputs, snapshot, workspaceContexts, userEmail, playbookName, effectiveModes.get(task.id) || 'live', activeReplayMap.get(task.id) || null, (execution as any).runEvaluation === true, streamingEnabled)),
+          limiter(() => this.executeStep(userId, executionId, playbookId, task, grpcAgentMap, taskOutputs, snapshot, workspaceContexts, userEmail, playbookName, effectiveModes.get(task.id) || 'live', activeReplayMap.get(task.id) || null, (execution as any).runEvaluation === true, (execution as any).reflectionEnabled !== false, streamingEnabled)),
         ),
       );
 
@@ -2251,6 +2297,7 @@ export class PlaybookExecutionService {
     executionMode: string = 'live',
     validatedReplay: any = null,
     runEvaluation: boolean = false,
+    runNodeReflection: boolean = true,
     streamingEnabled: boolean = false,
   ): Promise<{ outcome: 'completed' | 'failed' | 'interrupted' | 'skipped'; error?: string; response?: any }> {
     const taskId = task.id;
@@ -2419,6 +2466,7 @@ export class PlaybookExecutionService {
         taskOutputs,
         playbookName,
         runEvaluation,
+        runNodeReflection,
       );
     }
 
@@ -2501,6 +2549,7 @@ export class PlaybookExecutionService {
           });
           this.logger.log('Step completed', { executionId, taskId, componentCount: components.length, durationMs });
           this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', runEvaluation);
+          this.scheduleNodeReflection(userId, executionId, taskId, 'completed', runNodeReflection);
           this.sendStepNotificationEmail(task, 'completed', playbookName, {
             output,
             playbookId,
@@ -2699,6 +2748,7 @@ export class PlaybookExecutionService {
     taskOutputs: Map<string, string>,
     playbookName: string,
     runEvaluation: boolean,
+    runNodeReflection: boolean,
   ): Promise<{ outcome: 'completed' | 'failed' | 'interrupted' | 'skipped'; error?: string; response?: any }> {
     const taskId = task.id;
     const startedAt = new Date();
@@ -2723,7 +2773,7 @@ export class PlaybookExecutionService {
 
         const normalizedUpdate = this.normalizeStreamStepUpdate(chunk.step_update);
         try {
-          this.handleStepUpdate(userId, executionId, normalizedUpdate, sharedBuffer, taskMap, playbookName, runEvaluation, playbookId);
+          this.handleStepUpdate(userId, executionId, normalizedUpdate, sharedBuffer, taskMap, playbookName, runEvaluation, runNodeReflection, playbookId);
         } catch (err) {
           this.logger.error('handleStepUpdate threw during step stream', {
             executionId,
@@ -3321,6 +3371,7 @@ ${
       data: { executionId, status: ExecutionStatus.COMPLETED, durationMs },
     });
     this.logger.log('SSE playbook_execution_complete sent (COMPLETED)', { executionId, userId, durationMs });
+    this.judgeEnrichmentService.scheduleExecutionSweep(userId, executionId);
     this.notifyScheduledRunFinished(userId, executionId, 'completed');
   }
 
@@ -3447,6 +3498,7 @@ ${
       selectedExecutionMode,
       validatedReplay,
       runEvaluation,
+      (execution as any).reflectionEnabled !== false,
       streamingEnabled,
     ).then(async (outcome) => {
       if (outcome.outcome === 'completed' || outcome.outcome === 'skipped') {
@@ -3455,6 +3507,17 @@ ${
             await this.semanticEnrichmentService.evaluateNow(userId, executionId, taskId);
           } catch (error) {
             this.logger.warn('Manual semantic evaluation failed after step completion', {
+              executionId,
+              taskId,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+          }
+        }
+        if (outcome.outcome === 'completed' && (execution as any).reflectionEnabled !== false) {
+          try {
+            this.judgeEnrichmentService.schedule(userId, executionId, taskId);
+          } catch (error) {
+            this.logger.warn('Manual node reflection scheduling failed after step completion', {
               executionId,
               taskId,
               error: error instanceof Error ? error.message : 'Unknown error',
@@ -3715,6 +3778,7 @@ ${
     const startedAt = execution.startedAt!;
     const isSingleStep = !!execution.singleStepTaskId;
     const evalEnabled = (execution as any).runEvaluation === true;
+    const reflectionEnabled = (execution as any).reflectionEnabled !== false;
 
     // Build structured HumanResponse for gRPC
     const grpcRequest = {
@@ -3812,6 +3876,7 @@ ${
                 data: { executionId, taskId, status: 'completed', output, components: mergedComponents, toolTrace, llmPromptTrace, semanticMatch, durationMs },
               });
           this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
+          this.scheduleNodeReflection(userId, executionId, taskId, 'completed', reflectionEnabled);
             } else if (result.status === 'skipped') {
             this.streamGateway.sendToUser(userId, {
               type: 'playbook_step_start',
@@ -3965,6 +4030,9 @@ ${
       totalTokens: buffered.totalTokens !== undefined ? buffered.totalTokens : dbTr.totalTokens,
       modelName: buffered.modelName !== undefined ? buffered.modelName : dbTr.modelName,
       semanticMatch: buffered.semanticMatch !== undefined ? buffered.semanticMatch : dbTr.semanticMatch,
+      judgeStatus: buffered.judgeStatus !== undefined ? buffered.judgeStatus : dbTr.judgeStatus,
+      judgeResult: buffered.judgeResult !== undefined ? buffered.judgeResult : dbTr.judgeResult,
+      judgeHistory: buffered.judgeHistory !== undefined ? buffered.judgeHistory : dbTr.judgeHistory,
       evaluationHistory: buffered.evaluationHistory !== undefined ? buffered.evaluationHistory : dbTr.evaluationHistory,
       stepExecutions: dbTr.stepExecutions || [],
       artifacts: (buffered as any).artifacts !== undefined ? (buffered as any).artifacts : dbTr.artifacts,
@@ -3994,6 +4062,9 @@ ${
           currentAttemptNumber: e.currentAttemptNumber ?? 1,
           status: e.status,
           executionMode: e.executionMode || 'live',
+          reflectionEnabled: e.reflectionEnabled !== false,
+          judgeSummaryStatus: e.judgeSummaryStatus || 'idle',
+          judgeSummary: e.judgeSummary || null,
           replaySourceByTask: e.replaySourceByTask || null,
           attemptHistory: e.attemptHistory || [],
           taskResults: (e.taskResults || []).map((tr: any) => {
@@ -4018,9 +4089,16 @@ ${
             inputTokens: merged.inputTokens ?? null,
               outputTokens: merged.outputTokens ?? null,
               totalTokens: merged.totalTokens ?? null,
-              modelName: merged.modelName ?? null,
-              semanticMatch: merged.semanticMatch ?? null,
-              evaluationHistory: (merged.evaluationHistory || []).map((entry: any) => ({
+            modelName: merged.modelName ?? null,
+            semanticMatch: merged.semanticMatch ?? null,
+            judgeStatus: merged.judgeStatus || 'idle',
+            judgeResult: merged.judgeResult ?? null,
+            judgeError: merged.judgeError ?? null,
+            judgeHistory: (merged.judgeHistory || []).map((entry: any) => ({
+              ...entry,
+              createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+            })),
+            evaluationHistory: (merged.evaluationHistory || []).map((entry: any) => ({
                 ...entry,
                 createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
               })),

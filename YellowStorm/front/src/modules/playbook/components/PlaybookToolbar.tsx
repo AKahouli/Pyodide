@@ -1,5 +1,6 @@
 import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown, CalendarClock, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
@@ -32,6 +33,8 @@ interface Props {
   canRun: boolean;
   executionMode: 'live' | 'inherit';
   onExecutionModeChange: (mode: 'live' | 'inherit') => void;
+  nodeReflectionEnabled: boolean;
+  onNodeReflectionChange: (enabled: boolean) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -61,6 +64,8 @@ export function PlaybookToolbar({
   canRun,
   executionMode,
   onExecutionModeChange,
+  nodeReflectionEnabled,
+  onNodeReflectionChange,
   canUndo,
   canRedo,
   onUndo,
@@ -118,6 +123,10 @@ export function PlaybookToolbar({
           <SelectItem value="inherit">{t('toolbar.executionMode.inherit')}</SelectItem>
         </SelectContent>
       </Select>
+      <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
+        <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />
+        <span>Reflection</span>
+      </div>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <div className="flex">

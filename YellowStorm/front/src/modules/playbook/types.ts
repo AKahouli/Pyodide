@@ -304,6 +304,37 @@ export interface TaskResult {
   totalTokens?: number | null;
   modelName?: string | null;
   semanticMatch?: SemanticMatchResult | null;
+  judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeResult?: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  } | null;
+  judgeError?: string | null;
+  judgeHistory?: Array<{
+    id: string;
+    createdAt: string;
+    model: string | null;
+    judgeResult: {
+      accuracyScore: number;
+      completenessScore: number;
+      overallScore: number;
+      missingFacts: string[];
+      incoherences: string[];
+      unsupportedClaims: string[];
+      handoffRisks: string[];
+      rewriteHints: string[];
+      recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+      reason: string;
+    };
+  }>;
   evaluationHistory?: StepEvaluationHistoryEntry[];
   stepExecutions?: StepExecutionHistoryEntry[];
   attemptNumber?: number | null;
@@ -322,6 +353,17 @@ export interface PlaybookExecution {
   status: ExecutionStatus;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   executionTrigger?: 'manual' | 'scheduled';
+  reflectionEnabled?: boolean;
+  judgeSummaryStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeSummary?: {
+    overallScore: number;
+    structuralIssues: string[];
+    promptIssues: string[];
+    contractIssues: string[];
+    handoffIssues: string[];
+    recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  } | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults: TaskResult[];
   attemptHistory?: Array<{
@@ -465,6 +507,8 @@ export interface HumanFeedbackData {
 export interface PlaybookNodeData extends PlaybookTask {
   stepStatus?: StepStatus;
   stepSemanticMatch?: SemanticMatchResult | null;
+  stepJudgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  stepJudgeResult?: TaskResult['judgeResult'];
   [key: string]: unknown;
 }
 
@@ -520,6 +564,34 @@ export interface PlaybookStepEvaluationUpdatedEvent {
   taskId: string;
   semanticMatch: SemanticMatchResult | null;
   evaluationEntry?: StepEvaluationHistoryEntry | null;
+}
+
+export interface PlaybookStepJudgeStartedEvent {
+  executionId: string;
+  taskId: string;
+  judgeStatus: 'evaluating';
+}
+
+export interface PlaybookStepJudgeUpdatedEvent {
+  executionId: string;
+  taskId: string;
+  judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeResult?: TaskResult['judgeResult'];
+  judgeError?: string | null;
+  judgeHistoryEntry?: TaskResult['judgeHistory'] extends Array<infer T> ? T : never;
+}
+
+export interface PlaybookJudgeSummaryUpdatedEvent {
+  executionId: string;
+  judgeSummary: {
+    overallScore: number;
+    structuralIssues: string[];
+    promptIssues: string[];
+    contractIssues: string[];
+    handoffIssues: string[];
+    recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  };
 }
 
 export interface PlaybookReplayFormatGuideUpdatedEvent {
@@ -625,6 +697,7 @@ export interface ExecutePlaybookData {
   stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   runEvaluation?: boolean;
   streaming?: boolean;
+  runNodeReflection?: boolean;
 }
 
 export interface ValidateTaskReplayData {
@@ -780,6 +853,9 @@ export interface PlaybookActions {
     taskId: string,
     data: UpdateOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
+  updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
+  generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
+  optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
 
   // SSE handlers
   onExecutionStart: (data: PlaybookExecutionStartEvent) => void;
@@ -787,6 +863,9 @@ export interface PlaybookActions {
   onStepUpdate: (data: PlaybookStepUpdateEvent) => void;
   onStepComplete: (data: PlaybookStepCompleteEvent) => void;
   onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => void;
+  onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => void;
+  onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => void;
+  onJudgeSummaryUpdated: (data: PlaybookJudgeSummaryUpdatedEvent) => void;
   onReplayFormatGuideUpdated: (data: PlaybookReplayFormatGuideUpdatedEvent) => void;
   onOutputFormatTemplateUpdated: (data: PlaybookOutputFormatTemplateUpdatedEvent) => void;
   onExecutionComplete: (data: PlaybookExecutionCompleteEvent) => void;

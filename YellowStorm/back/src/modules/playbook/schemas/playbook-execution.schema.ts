@@ -20,6 +20,13 @@ export enum StepStatus {
   SKIPPED = 'skipped',
 }
 
+export enum JudgeStatus {
+  IDLE = 'idle',
+  EVALUATING = 'evaluating',
+  EVALUATED = 'evaluated',
+  FAILED = 'failed',
+}
+
 @Schema({ _id: false })
 export class TaskEvaluationHistoryEntry {
   @Prop({ type: String, required: true })
@@ -55,6 +62,34 @@ export class TaskEvaluationHistoryEntry {
 }
 
 export const TaskEvaluationHistoryEntrySchema = SchemaFactory.createForClass(TaskEvaluationHistoryEntry);
+
+@Schema({ _id: false })
+export class TaskJudgeHistoryEntry {
+  @Prop({ type: String, required: true })
+  id!: string;
+
+  @Prop({ type: Date, required: true })
+  createdAt!: Date;
+
+  @Prop({ type: String, default: null })
+  model!: string | null;
+
+  @Prop({ type: Object, required: true })
+  judgeResult!: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  };
+}
+
+export const TaskJudgeHistoryEntrySchema = SchemaFactory.createForClass(TaskJudgeHistoryEntry);
 
 @Schema({ _id: false })
 export class TaskStepExecutionEntry {
@@ -202,6 +237,29 @@ export class TaskResult {
     judgeUsed: boolean;
   } | null;
 
+  @Prop({ type: String, enum: JudgeStatus, default: JudgeStatus.IDLE })
+  judgeStatus!: JudgeStatus;
+
+  @Prop({ type: Object, default: null })
+  judgeResult!: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  } | null;
+
+  @Prop({ type: String, default: null })
+  judgeError!: string | null;
+
+  @Prop({ type: [TaskJudgeHistoryEntrySchema], default: [] })
+  judgeHistory!: TaskJudgeHistoryEntry[];
+
   @Prop({ type: [TaskEvaluationHistoryEntrySchema], default: [] })
   evaluationHistory!: TaskEvaluationHistoryEntry[];
 
@@ -235,6 +293,32 @@ export class TaskResult {
 
 export const TaskResultSchema = SchemaFactory.createForClass(TaskResult);
 
+@Schema({ _id: false })
+export class PlaybookJudgeSummary {
+  @Prop({ type: Number, default: 0 })
+  overallScore!: number;
+
+  @Prop({ type: [String], default: [] })
+  structuralIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  promptIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  contractIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  handoffIssues!: string[];
+
+  @Prop({ type: String, enum: ['update_current_playbook', 'generate_new_optimized_playbook'], default: 'update_current_playbook' })
+  recommendation!: 'update_current_playbook' | 'generate_new_optimized_playbook';
+
+  @Prop({ type: String, default: '' })
+  reason!: string;
+}
+
+export const PlaybookJudgeSummarySchema = SchemaFactory.createForClass(PlaybookJudgeSummary);
+
 @Schema({ timestamps: true, collection: 'playbook_executions' })
 export class PlaybookExecution extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Playbook', required: true, index: true })
@@ -260,6 +344,15 @@ export class PlaybookExecution extends Document {
 
   @Prop({ type: Object, default: null })
   interruptPayload!: Record<string, unknown> | null;
+
+  @Prop({ type: Boolean, default: true })
+  reflectionEnabled!: boolean;
+
+  @Prop({ type: String, enum: ['idle', 'evaluating', 'evaluated', 'failed'], default: 'idle' })
+  judgeSummaryStatus!: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+
+  @Prop({ type: PlaybookJudgeSummarySchema, default: null })
+  judgeSummary!: PlaybookJudgeSummary | null;
 
   @Prop({ type: String, default: null })
   error!: string | null;

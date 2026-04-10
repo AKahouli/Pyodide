@@ -1,5 +1,77 @@
 # Changelog
 
+## [2026-04-10 08:03] — Document playbook recommendation pane and step optimization
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Reflected the Judge LLM recommendation pane, the step-scoped `Optimize this step` action, and the explicit 200000ms rewrite timeout in the latest playbook snapshot.
+- **Why:** The playbook docs needed to catch up with the implemented judge/reflection UX and timeout behavior.
+- **Impact:** `docs/playbook/README_2026-04-10_08-03-20.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-10 07:41] — Increase playbook judge LLM timeouts
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added explicit, longer LiteLLM request timeouts for node judge, execution summary, and playbook rewrite calls.
+- **Why:** Judge requests were inheriting the shared 10-second LiteLLM client timeout, causing intermittent reflection failures on slower model responses.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `docs/playbook/README_2026-04-10_07-41-34.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-10 07:33] — Start node judge after step persistence and expose judge errors
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The workflow stream path now persists each completed step before scheduling node reflection, and judge failures are stored and shown directly in the Judge LLM tab. The Judge LLM UI now keeps the execution-level recommendation CTA in a single summary block.
+- **Why:** Node reflection was effectively delayed until workflow completion because the judge service read persisted task results, while workflow completions were still only buffered in memory. Judge failures also needed to be visible to the user.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/schemas/playbook-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/services/playbook.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, `docs/playbook/README_2026-04-10_07-33-23.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-10 07:14] — Preserve live judge state during execution refresh
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated frontend execution merging so cached judge progress and results win over stale fetched task rows when the step status is unchanged.
+- **Why:** A post-step execution fetch could overwrite live SSE judge updates, delaying the `Evaluating` badge until the workflow completed.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `docs/playbook/README_2026-04-10_07-14-20.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-10 07:02] — Enqueue playbook judge jobs in parallel
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Changed the execution sweep to enqueue pending node judges instead of awaiting each one serially.
+- **Why:** Judge work was still running one step at a time inside the sweep path, which prevented the limiter from doing real concurrent reflection work.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `docs/playbook/README_2026-04-10_07-02-01.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-10 06:56] — Poll for late playbook judge results
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added a short client-side refresh loop after execution completion so judge results are reloaded even if the SSE stream closes before the backend reflection finishes.
+- **Why:** Judge work can start after the execution-complete event, which left the UI showing no result despite the backend sweep beginning.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `docs/playbook/README_2026-04-10_06-56-01.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-10 06:48] — Judge completed steps with evidence
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Relaxed node reflection gating so completed steps with components, artifacts, or traces can still be judged even when the streamed text output is empty. Added explicit judge lifecycle logs and an execution sweep before summary finalization.
+- **Why:** Some completed runs were never producing judge results, leaving the Judge LLM tab empty and the backend silent.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `docs/playbook/README_2026-04-10_06-48-24.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-09 21:55] — Recover missing playbook judge results
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Added a backend completion sweep so missed node reflections are retried and the execution summary can still be emitted after the workflow finishes.
+- **Why:** Some runs were reaching the completed state without persisting a judge result, leaving the Judge LLM tab empty.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `docs/playbook/README_2026-04-09_21-55-26.md`, `docs/DOC_INDEX.md`
+
+## [2026-04-09 21:32] — Add async playbook judge reflection
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Added `README_2026-04-09_21-32-12.md` describing the new asynchronous node reflection flow, execution-level judge summary, reflection toggle, and the update/generate rewrite actions.
+- **Why:** The playbook runtime now evaluates completed nodes off the critical path and exposes judge-driven rewrite actions in the UI.
+- **Impact:** `docs/playbook/README_2026-04-09_21-32-12.md`, `docs/DOC_INDEX.md`
+
 ## [2026-04-09 20:18] — Use task badge number in playbook step list
 
 - **Feature:** `playbook`

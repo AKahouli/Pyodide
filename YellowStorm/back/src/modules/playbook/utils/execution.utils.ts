@@ -43,6 +43,36 @@ export interface BufferedStepResult {
     model: string;
     judgeUsed: boolean;
   } | null;
+  judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeResult?: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  } | null;
+  judgeHistory?: Array<{
+    id: string;
+    createdAt: Date | string;
+    model: string | null;
+    judgeResult: {
+      accuracyScore: number;
+      completenessScore: number;
+      overallScore: number;
+      missingFacts: string[];
+      incoherences: string[];
+      unsupportedClaims: string[];
+      handoffRisks: string[];
+      rewriteHints: string[];
+      recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+      reason: string;
+    };
+  }>;
   evaluationHistory?: Array<{
     id: string;
     createdAt: Date | string;

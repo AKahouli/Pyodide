@@ -69,11 +69,6 @@ Before writing code, verify internally:
 
 ---
 
-### ✍️ Post-Coding Protocol (MANDATORY)
-
-After completing **any** coding operation, must always confirm with the user before calling the docs-maintainer agent.
-
----
 
 ### ⚙️ Behavioral Rules
 

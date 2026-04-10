@@ -813,6 +813,9 @@ export class PlaybookService {
       status: execution.status,
       executionMode: execution.executionMode || 'live',
       executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      reflectionEnabled: execution.reflectionEnabled !== false,
+      judgeSummaryStatus: execution.judgeSummaryStatus || 'idle',
+      judgeSummary: execution.judgeSummary || null,
       replaySourceByTask: execution.replaySourceByTask || null,
       taskResults: (execution.taskResults || []).map((tr: any) => ({
         taskId: tr.taskId,
@@ -837,6 +840,15 @@ export class PlaybookService {
         staleReason: tr.staleReason ?? null,
         invalidatedByTaskId: tr.invalidatedByTaskId ?? null,
         semanticMatch: tr.semanticMatch ?? null,
+        judgeStatus: tr.judgeStatus || 'idle',
+        judgeResult: tr.judgeResult ?? null,
+        judgeError: tr.judgeError ?? null,
+        judgeHistory: (tr.judgeHistory || []).map((entry: any) => ({
+          id: entry.id,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+          model: entry.model ?? null,
+          judgeResult: entry.judgeResult,
+        })),
         artifacts: tr.artifacts || [],
         evaluationHistory: (tr.evaluationHistory || []).map((entry: any) => ({
           id: entry.id,

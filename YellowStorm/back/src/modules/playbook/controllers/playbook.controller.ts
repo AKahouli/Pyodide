@@ -17,6 +17,7 @@ import { Public } from '../../auth/decorators/public.decorator';
 import { PlaybookService } from '../services/playbook.service';
 import { PlaybookExecutionService } from '../services/playbook-execution.service';
 import { PlaybookDesignService } from '../services/playbook-design.service';
+import { PlaybookJudgeEnrichmentService } from '../services/playbook-judge-enrichment.service';
 import { PlaybookReplayService } from '../services/playbook-replay.service';
 import { PlaybookOutputFormatService } from '../services/playbook-output-format.service';
 import { PlaybookStreamGatewayService } from '../services/playbook-stream-gateway.service';
@@ -57,6 +58,7 @@ export class PlaybookController {
     private readonly playbookService: PlaybookService,
     private readonly executionService: PlaybookExecutionService,
     private readonly designService: PlaybookDesignService,
+    private readonly judgeService: PlaybookJudgeEnrichmentService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly streamGateway: PlaybookStreamGatewayService,
@@ -206,6 +208,39 @@ export class PlaybookController {
     @Body() dto: DesignPlaybookDto,
   ) {
     return this.designService.designPlaybook(user._id.toString(), id, dto, user.email);
+  }
+
+  @Post(':id/judge/update-current')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async updateFromJudge(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() body: { executionId: string },
+  ) {
+    return this.judgeService.applyCurrentPlaybook(user._id.toString(), id, body.executionId);
+  }
+
+  @Post(':id/judge/generate-new')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async generateFromJudge(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() body: { executionId: string },
+  ) {
+    return this.judgeService.generateNewPlaybook(user._id.toString(), id, body.executionId);
+  }
+
+  @Post(':id/judge/optimize-step')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async optimizeStepFromJudge(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() body: { executionId: string; taskId: string },
+  ) {
+    return this.judgeService.optimizeStep(user._id.toString(), id, body.executionId, body.taskId);
   }
 
   @Get(':id/design-messages')

@@ -35,6 +35,8 @@ const defaultProps = {
   canRun: true,
   executionMode: 'live' as const,
   onExecutionModeChange: vi.fn(),
+  nodeReflectionEnabled: true,
+  onNodeReflectionChange: vi.fn(),
   canUndo: false,
   canRedo: false,
   onUndo: vi.fn(),

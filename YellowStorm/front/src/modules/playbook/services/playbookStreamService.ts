@@ -59,7 +59,10 @@ const SSE_EVENT_TYPES = [
   'playbook_step_start',
   'playbook_step_update',
   'playbook_step_complete',
+  'playbook_step_judge_started',
+  'playbook_step_judge_updated',
   'playbook_step_evaluation_updated',
+  'playbook_judge_summary_updated',
   'playbook_replay_format_guide_updated',
   'playbook_output_format_template_updated',
   'playbook_execution_complete',
@@ -166,8 +169,17 @@ function handleSsePayload(raw: string) {
       case 'playbook_step_complete':
         store.onStepComplete(eventData);
         break;
+      case 'playbook_step_judge_started':
+        store.onStepJudgeStarted(eventData);
+        break;
+      case 'playbook_step_judge_updated':
+        store.onStepJudgeUpdated(eventData);
+        break;
       case 'playbook_step_evaluation_updated':
         store.onStepEvaluationUpdated(eventData);
+        break;
+      case 'playbook_judge_summary_updated':
+        store.onJudgeSummaryUpdated(eventData);
         break;
       case 'playbook_replay_format_guide_updated':
         store.onReplayFormatGuideUpdated(eventData);
