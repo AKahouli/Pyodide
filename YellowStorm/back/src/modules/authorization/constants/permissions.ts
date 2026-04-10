@@ -76,12 +76,26 @@ export const Permissions = {
   AGENTS_DELETE: 'agents.delete',
   AGENTS_ALL: 'agents.*',
 
+  // Auth Providers
+  AUTH_PROVIDERS_READ: 'auth_providers.read',
+  AUTH_PROVIDERS_CREATE: 'auth_providers.create',
+  AUTH_PROVIDERS_UPDATE: 'auth_providers.update',
+  AUTH_PROVIDERS_DELETE: 'auth_providers.delete',
+  AUTH_PROVIDERS_ALL: 'auth_providers.*',
+
   // Admin UI (separate namespace)
   ADMIN_ROLES_READ: 'admin.roles.read',
   ADMIN_ROLES_MANAGE: 'admin.roles.manage',
   ADMIN_AUDIT_READ: 'admin.audit.read',
   ADMIN_LOGS_READ: 'admin.logs.read',
   ADMIN_ALL: 'admin.*',
+
+  // Connected App Management
+  CONNECTED_APPS_READ: 'connected_apps.read',
+  CONNECTED_APPS_CREATE: 'connected_apps.create',
+  CONNECTED_APPS_UPDATE: 'connected_apps.update',
+  CONNECTED_APPS_DELETE: 'connected_apps.delete',
+  CONNECTED_APPS_ALL: 'connected_apps.*',
 
   // Super Admin
   SUPER_ADMIN: '*',
@@ -166,12 +180,26 @@ const ALL_PERMISSIONS = new Set<string>([
   'agents.delete',
   'agents.*',
 
+  // Auth Providers
+  'auth_providers.read',
+  'auth_providers.create',
+  'auth_providers.update',
+  'auth_providers.delete',
+  'auth_providers.*',
+
   // Admin UI
   'admin.roles.read',
   'admin.roles.manage',
   'admin.audit.read',
   'admin.logs.read',
   'admin.*',
+
+  // Connected App Management
+  'connected_apps.read',
+  'connected_apps.create',
+  'connected_apps.update',
+  'connected_apps.delete',
+  'connected_apps.*',
 
   // Super Admin
   '*',

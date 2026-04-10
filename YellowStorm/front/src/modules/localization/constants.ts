@@ -17,7 +17,7 @@ export const SUPPORTED_LANGUAGES = Array.from(languageSet);
 
 export const DEFAULT_LANGUAGE = FALLBACK_LANGUAGE;
 
-export const NAMESPACES = ['common', 'errors', 'admin', 'agent', 'auth', 'conversation', 'file-viewer', 'models', 'notifications', 'playbook', 'profile', 'sidebar', 'usage', 'workspace'] as const;
+export const NAMESPACES = ['common', 'errors', 'admin', 'agent', 'auth', 'connected-app', 'conversation', 'file-viewer', 'models', 'notifications', 'playbook', 'profile', 'sidebar', 'usage', 'workspace'] as const;
 
 /**
  * Core namespaces loaded at startup.

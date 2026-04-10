@@ -10,6 +10,13 @@ export const configValidationSchema = Joi.object({
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug', 'verbose').default('info'),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
+  // Encryption
+  ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+
   // AI Service
   AI_SERVICE_URL: Joi.string().uri().optional(),
   AI_API_KEY: Joi.string().optional(),

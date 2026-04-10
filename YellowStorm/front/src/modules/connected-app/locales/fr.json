@@ -1,0 +1,73 @@
+{
+  "page": {
+    "title": "Applications connect\u00e9es",
+    "description": "Connectez vos applications externes pour activer l'acc\u00e8s aux fichiers, l'int\u00e9gration email, et plus.",
+    "empty": "Aucune application disponible."
+  },
+  "card": {
+    "connected": "Connect\u00e9",
+    "notConnected": "Non connect\u00e9",
+    "connect": "Connecter",
+    "disconnect": "D\u00e9connecter",
+    "connectedAs": "Connect\u00e9 en tant que {{email}}",
+    "confirmDisconnect": "\u00cates-vous s\u00fbr de vouloir d\u00e9connecter {{appName}} ?"
+  },
+  "button": {
+    "label": "Applications",
+    "tooltip": "Applications connect\u00e9es"
+  },
+  "store": {
+    "connected": "Application connect\u00e9e avec succ\u00e8s",
+    "disconnected": "Application d\u00e9connect\u00e9e",
+    "errors": {
+      "fetchFailed": "Impossible de charger les applications",
+      "connectFailed": "\u00c9chec du d\u00e9marrage de la connexion",
+      "disconnectFailed": "\u00c9chec de la d\u00e9connexion",
+      "oauthFailed": "La connexion a \u00e9chou\u00e9. Veuillez r\u00e9essayer.",
+      "connectIncomplete": "La connexion ne s'est pas termin\u00e9e. Veuillez r\u00e9essayer.",
+      "popupBlocked": "Le popup a \u00e9t\u00e9 bloqu\u00e9. Veuillez autoriser les popups pour ce site."
+    }
+  },
+  "admin": {
+    "title": "Applications connect\u00e9es",
+    "description": "G\u00e9rer les d\u00e9finitions d'applications externes pour les connexions OAuth des utilisateurs.",
+    "create": "Ajouter une application",
+    "edit": "Modifier l'application",
+    "delete": "Supprimer l'application",
+    "confirmDelete": "Cela supprimera la d\u00e9finition de l'application et d\u00e9connectera tous les utilisateurs. Continuer ?",
+    "fields": {
+      "appKey": "Cl\u00e9 de l'application",
+      "displayName": "Nom d'affichage",
+      "description": "Description",
+      "iconKey": "Cl\u00e9 d'ic\u00f4ne",
+      "authorizationUrl": "URL d'autorisation",
+      "tokenUrl": "URL du jeton",
+      "revokeUrl": "URL de r\u00e9vocation",
+      "clientId": "ID Client",
+      "clientSecret": "Secret Client",
+      "tenantId": "ID du locataire",
+      "scopes": "Permissions",
+      "pkceEnabled": "PKCE activ\u00e9",
+      "enabled": "Activ\u00e9",
+      "sortOrder": "Ordre d'affichage",
+      "connectedUsers": "Utilisateurs connect\u00e9s"
+    },
+    "toasts": {
+      "created": "Application cr\u00e9\u00e9e",
+      "updated": "Application mise \u00e0 jour",
+      "deleted": "Application supprim\u00e9e",
+      "enabled": "Application activ\u00e9e",
+      "disabled": "Application d\u00e9sactiv\u00e9e",
+      "errors": {
+        "load": "\u00c9chec du chargement des applications",
+        "create": "\u00c9chec de la cr\u00e9ation de l'application",
+        "update": "\u00c9chec de la mise \u00e0 jour de l'application",
+        "delete": "\u00c9chec de la suppression de l'application",
+        "toggle": "\u00c9chec du basculement de l'application"
+      }
+    },
+    "errors": {
+      "load": "\u00c9chec du chargement des applications connect\u00e9es"
+    }
+  }
+}

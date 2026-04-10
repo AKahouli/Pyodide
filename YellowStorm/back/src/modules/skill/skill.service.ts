@@ -187,8 +187,8 @@ export class SkillService {
     }
 
     const zip = new AdmZip(file.buffer);
-    const entries = zip.getEntries().filter((entry) => !entry.isDirectory);
-    const skillEntry = entries.find((entry) => /(^|\/)SKILL\.md$/i.test(entry.entryName));
+    const entries = zip.getEntries().filter((entry: any) => !entry.isDirectory);
+    const skillEntry = entries.find((entry: any) => /(^|\/)SKILL\.md$/i.test(entry.entryName));
     if (!skillEntry) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'The uploaded zip does not contain a SKILL.md file.');
     }
@@ -198,12 +198,12 @@ export class SkillService {
       skillMdContent: zip.readAsText(skillEntry, 'utf8'),
       packageName: file.originalname,
       files: entries
-        .filter((entry) => entry.entryName !== skillEntry.entryName)
-        .map((entry) => ({
+        .filter((entry: any) => entry.entryName !== skillEntry.entryName)
+        .map((entry: any) => ({
           path: this.normalizeImportedPath(entry.entryName, skillRoot),
           content: zip.readAsText(entry, 'utf8'),
         }))
-        .filter((entry) => entry.path),
+        .filter((entry: any) => entry.path),
     });
 
     return this.create(createdBy, parsed);

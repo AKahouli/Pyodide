@@ -42,6 +42,8 @@ import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookModule } from './modules/playbook/playbook.module';
 import { SkillModule } from './modules/skill/skill.module';
+import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
+import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
 
 @Module({
   imports: [
@@ -85,7 +87,9 @@ import { SkillModule } from './modules/skill/skill.module';
     AgentTypeModule,
     AgentModule,
     PlaybookModule,
+    AuthProviderModule,
     AnalyticsModule,
+    ConnectedAppModule,
     HealthModule,
   ],
   providers: [

@@ -1,13 +1,17 @@
-import React, { Suspense } from "react";
-import { createHashRouter } from "react-router-dom";
+import React, { Suspense } from 'react';
+import { createHashRouter } from 'react-router-dom';
 
-import NoMatch from "./pages/NoMatch";
-import MaintenancePage from "./pages/MaintenancePage";
-import { SharedConversationPage } from "./pages/SharedConversationPage";
-import { ConversationPage } from "./modules/conversation";
-import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from "./modules/auth";
-import { UpgradePage } from "./modules/usage";
-import { RootGuard } from "./modules/auth/components/RootGuard";
+import NoMatch from './pages/NoMatch';
+import MaintenancePage from './pages/MaintenancePage';
+import { SharedConversationPage } from './pages/SharedConversationPage';
+import { ConversationPage } from './modules/conversation';
+import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
+import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
+import { UpgradePage } from './modules/usage';
+import { RootGuard } from './modules/auth/components/RootGuard';
+
+// Lazy-loaded connected apps
+const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/components/ConnectedAppsPage').then((m) => ({ default: m.ConnectedAppsPage })));
 
 // Lazy-loaded playbook routes
 const PlaybookListPage = React.lazy(() =>
@@ -43,6 +47,9 @@ import {
   AgentTypesPage,
   DefaultAgentsPage,
   PlaybookPromptsPage,
+  PermissionGuard,
+  AuthProvidersPage,
+  ConnectedAppsAdminPage,
 } from "./modules/admin";
 
 function RouteErrorFallback() {
@@ -62,7 +69,7 @@ function RouteErrorFallback() {
 export const router = createHashRouter([
   // Root route - shows landing or app based on auth state
   {
-    path: "/",
+    path: '/',
     element: <RootGuard />,
     children: [
       // These will be rendered inside RootGuard based on auth state
@@ -71,38 +78,66 @@ export const router = createHashRouter([
         element: null, // RootGuard handles this
       },
       {
-        path: "conversation/:id",
+        path: 'conversation/:id',
         element: <ConversationPage />,
       },
       {
-        path: "playbooks",
-        element: <Suspense fallback={null}><PlaybookListPage /></Suspense>,
+        path: 'apps',
+        element: (
+          <Suspense fallback={null}>
+            <ConnectedAppsPage />
+          </Suspense>
+        ),
       },
       {
-        path: "playbooks/:id",
-        element: <Suspense fallback={null}><PlaybookCanvasPage /></Suspense>,
+        path: 'playbooks',
+        element: (
+          <Suspense fallback={null}>
+            <PlaybookListPage />
+          </Suspense>
+        ),
       },
       {
-        path: "playbooks/:id/executions",
-        element: <Suspense fallback={null}><PlaybookExecutionListPage /></Suspense>,
+        path: 'playbooks/:id',
+        element: (
+          <Suspense fallback={null}>
+            <PlaybookCanvasPage />
+          </Suspense>
+        ),
       },
       {
-        path: "playbooks/:id/executions/compare",
-        element: <Suspense fallback={null}><PlaybookExecutionComparePage /></Suspense>,
+        path: 'playbooks/:id/executions',
+        element: (
+          <Suspense fallback={null}>
+            <PlaybookExecutionListPage />
+          </Suspense>
+        ),
       },
       {
-        path: "playbooks/:id/executions/:executionId",
-        element: <Suspense fallback={null}><PlaybookExecutionPage /></Suspense>,
+        path: 'playbooks/:id/executions/compare',
+        element: (
+          <Suspense fallback={null}>
+            <PlaybookExecutionComparePage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'playbooks/:id/executions/:executionId',
+        element: (
+          <Suspense fallback={null}>
+            <PlaybookExecutionPage />
+          </Suspense>
+        ),
       },
     ],
   },
   {
-    path: "upgrade",
+    path: 'upgrade',
     element: <UpgradePage />,
   },
   // Admin routes - protected by AdminGuard
   {
-    path: "/admin",
+    path: '/admin',
     element: <AdminGuard />,
     children: [
       {
@@ -123,45 +158,164 @@ export const router = createHashRouter([
           { path: "playbook-prompts", element: <PlaybookPromptsPage /> },
           { path: "analytics", element: <AnalyticsPage /> },
           { path: "system", element: <SystemPage /> },
+          {
+            path: 'users',
+            element: (
+              <PermissionGuard permissions={['users.read', 'users.*', '*']}>
+                <UsersPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'roles',
+            element: (
+              <PermissionGuard permissions={['admin.roles.read', 'admin.*', '*']}>
+                <RolesPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'audit',
+            element: (
+              <PermissionGuard permissions={['admin.audit.read', 'admin.*', '*']}>
+                <AuditLogsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'logs',
+            element: (
+              <PermissionGuard permissions={['admin.logs.read', 'admin.*', '*']}>
+                <LogsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'plans',
+            element: (
+              <PermissionGuard permissions={['plans.read_all', 'plans.*', '*']}>
+                <PlansPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'reports',
+            element: (
+              <PermissionGuard permissions={['reports.read', 'reports.*', '*']}>
+                <ReportsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'models',
+            element: (
+              <PermissionGuard permissions={['models.read_all', 'models.*', '*']}>
+                <ModelsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'tools',
+            element: (
+              <PermissionGuard permissions={['tools.read', 'tools.*', '*']}>
+                <ToolsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'auth-providers',
+            element: (
+              <PermissionGuard permissions={['auth_providers.read', 'auth_providers.*', '*']}>
+                <AuthProvidersPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'connected-apps',
+            element: (
+              <PermissionGuard permissions={['connected_apps.read', 'connected_apps.*', '*']}>
+                <ConnectedAppsAdminPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'agent-types',
+            element: (
+              <PermissionGuard permissions={['agent_types.read', 'agent_types.*', '*']}>
+                <AgentTypesPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'agents',
+            element: (
+              <PermissionGuard permissions={['agents.read', 'agents.*', '*']}>
+                <DefaultAgentsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'analytics',
+            element: (
+              <PermissionGuard permissions={['analytics.read', 'analytics.*', '*']}>
+                <AnalyticsPage />
+              </PermissionGuard>
+            ),
+          },
+          {
+            path: 'system',
+            element: (
+              <PermissionGuard permissions={['system.maintenance', 'system.registration', 'system.*', '*']}>
+                <SystemPage />
+              </PermissionGuard>
+            ),
+          },
         ],
       },
     ],
   },
   // Profile completion - requires auth but not profile completion
   {
-    path: "/complete-profile",
+    path: '/complete-profile',
     element: <ProfileCompletionPage />,
   },
 
   // Email verification - accessible by anyone (magic link)
   {
-    path: "/verify-email",
+    path: '/verify-email',
     element: <EmailVerificationPage />,
+    errorElement: <RouteErrorFallback />,
+  },
+
+  // OAuth callback - handles OAuth redirect
+  {
+    path: '/oauth-callback',
+    element: <OAuthCallbackPage />,
     errorElement: <RouteErrorFallback />,
   },
 
   // Password reset - accessible by anyone (from email link)
   {
-    path: "/reset-password",
+    path: '/reset-password',
     element: <ResetPasswordPage />,
     errorElement: <RouteErrorFallback />,
   },
 
   // Maintenance page - shown when system is under maintenance
   {
-    path: "/maintenance",
+    path: '/maintenance',
     element: <MaintenancePage />,
   },
 
   // Public share view - accessible by anyone (no auth required)
   {
-    path: "/share/:accessToken",
+    path: '/share/:accessToken',
     element: <SharedConversationPage />,
   },
 
   // Catch-all for 404
   {
-    path: "*",
+    path: '*',
     element: <NoMatch />,
   },
 ]);

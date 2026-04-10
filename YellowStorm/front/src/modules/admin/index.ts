@@ -6,6 +6,7 @@ export {
   AdminSidebar,
   AdminButton,
   AdminDashboard,
+  PermissionGuard,
 } from './components';
 export {
   UsersPage,
@@ -22,6 +23,8 @@ export {
   AgentTypesPage,
   DefaultAgentsPage,
   PlaybookPromptsPage,
+  AuthProvidersPage,
+  ConnectedAppsAdminPage,
 } from './pages';
 export { ADMIN_ACCESS_PERMISSIONS, ADMIN_MENU_ITEMS } from './constants';
 export type {

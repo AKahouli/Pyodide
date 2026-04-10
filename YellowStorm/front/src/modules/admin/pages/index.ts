@@ -12,3 +12,5 @@ export { SkillsPage } from './SkillsPage';
 export { AgentTypesPage } from './AgentTypesPage';
 export { DefaultAgentsPage } from './DefaultAgentsPage';
 export { PlaybookPromptsPage } from './PlaybookPromptsPage';
+export { AuthProvidersPage } from './AuthProvidersPage';
+export { ConnectedAppsAdminPage } from './ConnectedAppsAdminPage';
