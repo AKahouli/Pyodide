@@ -465,7 +465,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
   if (!agent) {
     return (
-      <div className='flex flex-col items-center justify-center p-12 text-center border-2 border-dashed rounded-xl border-primary/20 bg-primary/5'>
+      <div className='flex flex-col items-center justify-center p-12 text-center border-2 border-dashed rounded-xl border-border bg-primary/5'>
         <div className='w-16 h-16 mb-4 rounded-full bg-primary/10 flex items-center justify-center'>
           <Save className='w-8 h-8 text-primary' />
         </div>
@@ -551,10 +551,26 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                     <div className='flex w-full items-center justify-between gap-2'>
                       <div className='font-semibold text-foreground'>{sc.name}</div>
                       <div className='flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
-                        <Button type='button' variant='ghost' size='icon' className='h-6 w-6' onClick={(e) => { e.stopPropagation(); handleEditScenario(sc, e); }}>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          className='h-6 w-6'
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditScenario(sc, e);
+                          }}>
                           <Pencil className='h-3 w-3' />
                         </Button>
-                        <Button type='button' variant='ghost' size='icon' className='h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10' onClick={(e) => { e.stopPropagation(); handleDeleteScenario(sc.id, e); }}>
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon'
+                          className='h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10'
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteScenario(sc.id, e);
+                          }}>
                           <Trash2 className='h-3 w-3' />
                         </Button>
                       </div>
@@ -570,41 +586,42 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
       {/* Accordion Sections */}
       <Accordion type='multiple' defaultValue={['dataset', 'evaluations', 'results']} className='space-y-4'>
         <AccordionItem value='dataset' className='border rounded-xl overflow-hidden bg-card shadow-sm'>
-          <AccordionTrigger className='px-4 py-6 hover:no-underline bg-background/50 border-b border-border group transition-all'>
+          <AccordionTrigger className='px-4 py-[0.8rem] hover:no-underline bg-background/50 border-b border-border group transition-all'>
             <div className='flex items-center gap-4 text-left'>
-              <div className='flex items-center justify-center w-10 h-10 rounded-xl bg-primary text-primary-foreground font-bold shrink-0 shadow-[0_0_20px_rgba(var(--chart-1),0.4)] transition-transform group-hover:scale-110'>1</div>
+              <div className='flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>1</div>
               <div>
-                <h4 className='font-bold text-lg text-foreground group-hover:text-primary transition-colors'>Dataset Q/R</h4>
-                <p className='text-sm text-muted-foreground font-medium'>Préparez votre tableau question / réponse de référence.</p>
+                <h4 className='font-semibold text-[14px] text-foreground group-hover:text-primary transition-colors'>Dataset Q/R</h4>
+                <p className='text-xs text-muted-foreground font-medium'>Préparez votre tableau question / réponse de référence.</p>
               </div>
             </div>
           </AccordionTrigger>
           <AccordionContent className='px-4 py-6 space-y-6'>
-            <div className='flex items-center justify-between gap-4'>
-              <div className='flex items-center gap-2 flex-1 max-w-xl'>
+            <div className='flex items-end justify-between gap-4'>
+              <div className='flex items-end gap-2 flex-1 max-w-xl'>
                 <input type='file' ref={fileInputRef} className='hidden' accept='.xlsx,.csv' onChange={handleFileUpload} />
-                <Button type='button' variant='outline' size='sm' className='h-10 text-primary border-primary font-bold hover:bg-primary/10 shrink-0 rounded-lg px-4' onClick={() => fileInputRef.current?.click()}>
+                <Button type='button' size='sm' onClick={() => fileInputRef.current?.click()}>
                   <FileDown className='mr-2 h-4 w-4' />
                   Exporter en Excel
                 </Button>
 
-                <div className='flex-1 flex items-center h-10 border border-border rounded-lg overflow-hidden bg-muted/20 focus-within:border-primary transition-colors'>
-                  <Input value={manualDatasetName} onChange={(e) => setManualDatasetName(e.target.value)} placeholder='dataset_reference.xlsx' className='border-none h-full focus-visible:ring-0 text-sm bg-transparent' />
-                  {manualItems.length > 0 && (
-                    <div className='flex items-center h-full px-1 gap-1'>
-                      <button type='button' onClick={handleSaveManualDataset} className='w-8 h-8 rounded flex items-center justify-center bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm' title='Sauvegarder'>
-                        <Save className='h-4 w-4' />
-                      </button>
-                      <button type='button' onClick={handleCancelManual} className='w-8 h-8 rounded flex items-center justify-center bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors' title='Annuler'>
-                        <Trash2 className='h-4 w-4' />
-                      </button>
-                    </div>
-                  )}
+                <div className='flex-1 flex flex-col gap-1'>
+                  <Label htmlFor='dataset-name'>Nom du fichier</Label>
+                  <Input id='dataset-name' value={manualDatasetName} onChange={(e) => setManualDatasetName(e.target.value)} placeholder='dataset_reference.xlsx' className='border-none h-10 focus-visible:ring-0 text-sm' />
                 </div>
+                {manualItems.length > 0 && (
+                  <div className='flex items-end h-full px-1 gap-1'>
+                    <button type='button' onClick={handleSaveManualDataset} className='w-8 h-8 rounded flex items-center justify-center bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm' title='Sauvegarder'>
+                      <Save className='h-4 w-4' />
+                    </button>
+                    <button type='button' onClick={handleCancelManual} className='w-8 h-8 rounded flex items-center justify-center bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors' title='Annuler'>
+                      <Trash2 className='h-4 w-4' />
+                    </button>
+                  </div>
+                )}
               </div>
 
-              <div className='relative w-[320px] group'>
-                <label className='absolute -top-2 left-3 bg-background px-2 text-[10px] text-primary uppercase font-black tracking-widest z-20'>Datasets enregistrés</label>
+              <div className='relative w-[230px] group'>
+                <label>Datasets enregistrés</label>
                 <Select
                   value={selectedDatasetId}
                   onValueChange={(val) => {
@@ -615,19 +632,24 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                       toast.info(`Dataset "${ds.name}" chargé pour édition`);
                     }
                   }}>
-                  <SelectTrigger className='w-full h-12 border-primary/30 rounded-xl bg-primary/5 backdrop-blur-md pt-4 hover:border-primary transition-colors'>
-                    <div className='flex flex-col items-start text-left'>
-                      <SelectValue placeholder='Choisir un dataset...' />
-                    </div>
+                  <SelectTrigger className='w-full h-10'>
+                    <SelectValue placeholder={datasets.length === 0 ? 'Aucun dataset disponible' : 'Sélectionner un dataset...'} />
                   </SelectTrigger>
-                  <SelectContent className='bg-card border-primary/20'>
-                    {datasets.map((ds) => (
-                      <SelectItem key={ds.id} value={ds.id} className='flex items-center justify-between group py-3'>
-                        <div className='flex items-center justify-between w-full'>
-                          <span>{ds.name}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
+                  <SelectContent className='bg-card border-border'>
+                    {datasets.length === 0 ? (
+                      <div className='py-4 px-3 text-sm text-muted-foreground'>Aucun dataset disponible</div>
+                    ) : (
+                      datasets.map((ds) => (
+                        <SelectItem key={ds.id} value={ds.id} className='flex items-center justify-between group py-3'>
+                          <div className='flex items-center justify-between w-full'>
+                            <span className='text-foreground'>{ds.name}</span>
+                            <Badge variant='secondary' className='ml-2'>
+                              {ds.items.length} questions
+                            </Badge>
+                          </div>
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -635,31 +657,31 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
             <div className='space-y-0 relative pb-12'>
               {manualItems.length > 0 ? (
-                <div className='rounded-xl overflow-hidden border border-primary/20 bg-background/60 backdrop-blur-md overflow-x-hidden shadow-2xl'>
-                  <div className='flex w-full bg-gradient-to-r from-primary to-primary/80 text-primary-foreground font-bold text-[11px] uppercase tracking-widest sticky top-0 z-20 shadow-lg border-b border-white/10'>
-                    <div className='flex-1 py-4 px-6 text-center border-r border-white/10 uppercase font-black'>Question</div>
-                    <div className='flex-1 py-4 px-6 text-center uppercase font-black'>Réponse</div>
+                <div className='rounded-xl overflow-hidden border border-border bg-background/60 backdrop-blur-md overflow-x-hidden shadow-2xl'>
+                  <div className='flex w-full bg-muted/30 text-muted-foreground font-bold text-[11px] uppercase tracking-wider sticky top-0 z-20 shadow-lg border-b border-border'>
+                    <div className='flex-1 py-4 px-6 text-center border-r border-border uppercase'>Question</div>
+                    <div className='flex-1 py-4 px-6 text-center uppercase'>Réponse</div>
                     <div className='w-15'></div>
                   </div>
 
-                  <div className='divide-y divide-primary/10 max-h-[500px] overflow-y-auto custom-scrollbar p-2 space-y-2'>
+                  <div className='divide-y divide-primary/10 max-h-96 overflow-y-auto custom-scrollbar p-2 space-y-2'>
                     {/* Manual items */}
                     {manualItems.map((item, i) => (
-                      <div key={`manual-${i}`} className='flex gap-3 items-center animate-in fade-in slide-in-from-top-2 duration-300 p-2 bg-primary/5 rounded-lg border border-primary/10 group relative pr-14'>
+                      <div key={`manual-${i}`} className='flex gap-3 items-center animate-in fade-in slide-in-from-top-2 duration-300 p-2 bg-primary/5 rounded-lg border border-border/50 group relative pr-14'>
                         <div className='flex-1 relative'>
-                          <div className='bg-card border border-white/10 rounded-lg p-3 shadow-inner group-hover:border-primary/30 transition-all'>
-                            <textarea value={item?.question || ''} onChange={(e) => handleUpdateManualRow(i, 'question', e.target.value)} placeholder='Saisissez votre question ici...' className='w-full min-h-20 bg-transparent border-none outline-none text-sm resize-none focus:ring-0 placeholder:text-muted-foreground/20 text-slate-200' />
+                          <div className='bg-card border border-border rounded-lg p-3 shadow-inner group-hover:border-primary/30 transition-all'>
+                            <textarea value={item?.question || ''} onChange={(e) => handleUpdateManualRow(i, 'question', e.target.value)} placeholder='Saisissez votre question ici...' className='w-full min-h-20 bg-transparent border-none outline-none text-sm resize-none focus:ring-0 placeholder:text-muted-foreground/20 text-foreground' />
                             <Pencil className='absolute top-2 right-2 h-3 w-3 opacity-0 group-hover:opacity-40 transition-opacity text-primary' />
                           </div>
                         </div>
                         <div className='flex-1 relative'>
-                          <div className='bg-card border border-white/10 rounded-lg p-3 shadow-inner group-hover:border-primary/30 transition-all'>
-                            <textarea value={item?.reference_answer || ''} onChange={(e) => handleUpdateManualRow(i, 'reference_answer', e.target.value)} placeholder='Saisissez la réponse attendue...' className='w-full min-h-20 bg-transparent border-none outline-none text-sm resize-none focus:ring-0 placeholder:text-muted-foreground/20 text-slate-200' />
+                          <div className='bg-card border border-border rounded-lg p-3 shadow-inner group-hover:border-primary/30 transition-all'>
+                            <textarea value={item?.reference_answer || ''} onChange={(e) => handleUpdateManualRow(i, 'reference_answer', e.target.value)} placeholder='Saisissez la réponse attendue...' className='w-full min-h-20 bg-transparent border-none outline-none text-sm resize-none focus:ring-0 placeholder:text-muted-foreground/20 text-foreground' />
                             <Pencil className='absolute top-2 right-2 h-3 w-3 opacity-0 group-hover:opacity-40 transition-opacity text-primary' />
                           </div>
                         </div>
                         <div className='absolute right-3 top-1/2 -translate-y-1/2'>
-                          <Button type='button' variant='ghost' size='icon' className='h-10 w-10 text-muted-foreground/40 hover:text-white hover:bg-destructive rounded-full transition-all border border-transparent hover:border-destructive/20 shadow-sm' onClick={() => handleRemoveManualRow(i)}>
+                          <Button type='button' variant='ghost' size='icon' className='h-10 w-10 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-full transition-all border-border shadow-sm' onClick={() => handleRemoveManualRow(i)}>
                             <Trash2 className='h-5 w-5' />
                           </Button>
                         </div>
@@ -668,7 +690,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   </div>
                 </div>
               ) : (
-                <div className='text-center py-12 flex flex-col items-center gap-4 border-2 border-dashed rounded-xl bg-muted/5 border-primary/10'>
+                <div className='text-center py-12 flex flex-col items-center gap-4 border-2 border-dashed rounded-xl bg-muted/5 border-border/50'>
                   <p className='text-muted-foreground italic'>Préparez votre tableau question / réponse de référence.</p>
                 </div>
               )}
@@ -684,13 +706,12 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
         </AccordionItem>
 
         <AccordionItem value='evaluations' className='border rounded-xl overflow-hidden bg-card shadow-sm'>
-          <AccordionTrigger className='px-4 py-6 hover:no-underline bg-background/50 border-b border-border group transition-all'>
+          <AccordionTrigger className='px-4 py-[0.8rem] hover:no-underline bg-background/50 border-b border-border group transition-all'>
             <div className='flex items-center gap-4 text-left'>
-              <div className='flex items-center justify-center w-10 h-10 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>2</div>
-              <div>
-                <h4 className='font-bold text-lg text-foreground'>{t('evaluation.evaluations.title')}</h4>
-                <p className='text-sm text-muted-foreground font-medium'>{t('evaluation.evaluations.description')}</p>
-              </div>
+              <div className='flex items-center justify-center w-8 h-8 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>2</div>
+              <div></div>
+              <h4 className='font-semibold text-base text-foreground'>{t('evaluation.evaluations.title')}</h4>
+              <p className='text-xs text-muted-foreground font-medium'>{t('evaluation.evaluations.description')}</p>
             </div>
           </AccordionTrigger>
           <AccordionContent className='px-4 py-6'>
@@ -727,7 +748,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   <SelectTrigger className='w-full bg-card border-primary/30'>
                     <SelectValue placeholder='Sélectionner le modèle du juge' />
                   </SelectTrigger>
-                  <SelectContent className='bg-card border-primary/20'>
+                  <SelectContent className='bg-card border-border'>
                     {models.map((m) => (
                       <SelectItem key={m.id} value={m.id}>
                         {m.name}
@@ -756,7 +777,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
         </AccordionItem>
 
         <AccordionItem value='results' className='border rounded-xl overflow-hidden bg-card shadow-sm'>
-          <AccordionTrigger className='px-4 py-6 hover:no-underline bg-background/50 border-b border-border group transition-all'>
+          <AccordionTrigger className='px-4 py-[0.8rem] hover:no-underline bg-background/50 border-b border-border group transition-all'>
             <div className='flex items-center justify-between w-full pr-4'>
               <div className='flex items-center gap-4 text-left'>
                 <div className='flex items-center justify-center w-10 h-10 rounded-lg bg-primary text-primary-foreground font-bold shrink-0'>3</div>
@@ -804,17 +825,17 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                             </td>
                             <td className='px-4 py-3 text-xs text-muted-foreground'>{new Date(ev.createdAt).toLocaleString()}</td>
                             <td className='px-4 py-3 text-center'>
-                              <Badge variant='outline' className='text-primary border-primary/20'>
+                              <Badge variant='outline' className='text-primary border-border'>
                                 {Math.round(avgResp * 100)}%
                               </Badge>
                             </td>
                             <td className='px-4 py-3 text-center'>
-                              <Badge variant='outline' className='text-primary border-primary/20'>
+                              <Badge variant='outline' className='text-primary border-border'>
                                 {Math.round(avgFinal * 100)}%
                               </Badge>
                             </td>
                             <td className='px-4 py-3 text-center'>
-                              <Badge variant='outline' className='text-primary border-primary/20'>
+                              <Badge variant='outline' className='text-primary border-border'>
                                 {Math.round(avgHallu * 100)}%
                               </Badge>
                             </td>
@@ -876,13 +897,13 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
           <div className='flex-1 overflow-auto mt-4 pr-1'>
             <Table>
               <TableHeader>
-                <TableRow className='bg-muted/50 border-primary/20'>
+                <TableRow className='bg-muted/50 border-border'>
                   <TableHead className='w-10 text-[10px] font-black uppercase tracking-tighter'>#</TableHead>
                   <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Question</TableHead>
                   <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Réponse Attendue</TableHead>
                   <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Réponse Obtenue</TableHead>
                   <TableHead className='w-25 text-center text-[10px] font-black uppercase tracking-widest text-primary'>Scores</TableHead>
-                  <TableHead className='min-w-[250px] text-[10px] font-black uppercase tracking-widest text-primary'>Raisonnement / Détails</TableHead>
+                  <TableHead className='min-w-62.5 text-[10px] font-black uppercase tracking-widest text-primary'>Raisonnement / Détails</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -905,7 +926,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   }
 
                   return resultsToDisplay.map((res) => (
-                    <TableRow key={`${selectedEvalForDetail?.id}-${res.iterationIndex}`} className='group hover:bg-primary/5 transition-colors border-primary/10'>
+                    <TableRow key={`${selectedEvalForDetail?.id}-${res.iterationIndex}`} className='group hover:bg-primary/5 transition-colors border-border/50'>
                       <TableCell className='font-mono text-[10px] py-4'>{res.iterationIndex}</TableCell>
                       <TableCell className='py-4'>
                         <div className='text-xs leading-relaxed max-w-75 whitespace-pre-wrap'>{res.question || <span className='text-muted-foreground/30 italic'>N/A</span>}</div>
