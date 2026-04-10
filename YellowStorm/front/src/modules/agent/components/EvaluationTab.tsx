@@ -659,8 +659,8 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
               {manualItems.length > 0 ? (
                 <div className='rounded-xl overflow-hidden border border-border bg-background/60 backdrop-blur-md overflow-x-hidden shadow-2xl'>
                   <div className='flex w-full bg-muted/30 text-muted-foreground font-bold text-[11px] uppercase tracking-wider sticky top-0 z-20 shadow-lg border-b border-border'>
-                    <div className='flex-1 py-4 px-6 text-center border-r border-border uppercase'>Question</div>
-                    <div className='flex-1 py-4 px-6 text-center uppercase'>Réponse</div>
+                    <div className='flex-1 py-[0.8rem] px-[0.8rem] text-center border-r border-border uppercase'>Question</div>
+                    <div className='flex-1 py-[0.8rem] px-[0.8rem] text-center uppercase'>Réponse</div>
                     <div className='w-15'></div>
                   </div>
 
@@ -696,9 +696,9 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
               )}
 
               {/* Floating add button */}
-              <div className='absolute -bottom-6 left-1/2 -translate-x-1/2 z-20'>
-                <button type='button' onClick={handleAddManualRow} className='w-12 h-12 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 hover:scale-110 active:scale-95 transition-all flex items-center justify-center group'>
-                  <Plus className='h-6 w-6 group-hover:rotate-90 transition-transform duration-300' />
+              <div className='absolute -bottom-3 left-1/2 -translate-x-1/2 z-20 cursor-pointer'>
+                <button type='button' onClick={handleAddManualRow} className='w-7 h-7 rounded-full bg-primary text-primary-foreground shadow-lg hover:bg-primary/90 hover:scale-110 active:scale-95 transition-all flex items-center justify-center group'>
+                  <Plus className='h-4 w-4 group-hover:rotate-90 transition-transform duration-300' />
                 </button>
               </div>
             </div>
