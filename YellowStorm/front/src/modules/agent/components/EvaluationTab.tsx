@@ -509,15 +509,15 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
         {isScenarioInlineOpen ? (
           <div className='space-y-2 max-w-md animate-in fade-in slide-in-from-top-1 duration-200'>
-            <Label className='text-sm font-bold text-slate-800'>Nom du scénario</Label>
+            <Label className='text-sm font-bold text-foreground'>Nom du scénario</Label>
             <div className='flex items-center'>
               <div className='relative flex-1'>
                 <Input value={scenarioForm.name} onChange={(e) => setScenarioForm({ ...scenarioForm, name: e.target.value })} placeholder="Ex. Parcours d'onboarding" className='border-primary focus-visible:ring-primary h-10 pr-20 rounded-r-none' autoFocus />
                 <div className='absolute right-0 top-0 h-full flex border-l border-primary'>
-                  <button type='button' onClick={handleSaveScenario} className='h-full px-3 flex items-center justify-center bg-slate-200 hover:bg-slate-300 transition-colors text-slate-600'>
+                  <button type='button' onClick={handleSaveScenario} className='h-full px-3 flex items-center justify-center bg-muted hover:bg-muted/70 transition-colors text-foreground'>
                     <Save className='h-4 w-4' />
                   </button>
-                  <button type='button' onClick={() => setIsScenarioInlineOpen(false)} className='h-full px-3 flex items-center justify-center bg-slate-200 hover:bg-slate-300 transition-colors text-slate-600 border-l border-slate-300 rounded-r-md'>
+                  <button type='button' onClick={() => setIsScenarioInlineOpen(false)} className='h-full px-3 flex items-center justify-center bg-muted hover:bg-muted/70 transition-colors text-foreground border-l border-border rounded-r-md'>
                     <X className='h-4 w-4' />
                   </button>
                 </div>
@@ -528,30 +528,12 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
           <div className='relative group'>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <div className='flex items-center gap-2 p-3 border border-primary rounded-lg bg-primary/5 cursor-pointer hover:bg-primary/10 transition-colors w-full max-w-sm'>
+                <div className='flex items-center justify-between gap-3 px-3 py-2 border border-border rounded-md bg-muted/30 hover:bg-muted/50 transition-colors w-full max-w-sm cursor-pointer'>
                   <div className='flex-1'>
-                    <p className='text-[10px] text-primary font-bold uppercase tracking-wider'>{t('evaluation.scenarios.active')}</p>
-                    <p className='font-bold text-sm'>{activeScenario?.name || 'Select Scenario'}</p>
-                    <div className='flex gap-2 mt-1'>
-                      <Badge variant='outline' className='text-[10px] font-normal px-1 py-0 h-4 bg-background/50'>
-                        {datasets.find((d) => d.id === activeScenario?.datasetId)?.items.length || 0} questions
-                      </Badge>
-                      <Badge variant='outline' className='text-[10px] font-normal px-1 py-0 h-4 bg-background/50'>
-                        {activeScenario?.numRuns || 1} configuration
-                      </Badge>
-                    </div>
+                    <p className='text-[10px] text-muted-foreground font-bold uppercase tracking-wider'>{t('evaluation.scenarios.active')}</p>
+                    <p className='font-semibold text-sm text-foreground'>{activeScenario?.name || 'Sélectionner un scénario'}</p>
                   </div>
-                  <div className='flex gap-1 items-center'>
-                    <Button type='button' variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground hover:bg-primary/20' onClick={(e) => activeScenario && handleEditScenario(activeScenario, e)}>
-                      <Pencil className='h-4 w-4' />
-                    </Button>
-                    <Button type='button' variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10' onClick={(e) => activeScenario && handleDeleteScenario(activeScenario.id, e)}>
-                      <Trash2 className='h-4 w-4' />
-                    </Button>
-                    <div className='h-8 w-8 flex items-center justify-center text-muted-foreground border-l ml-1 pl-1'>
-                      <ChevronDown className='h-4 w-4' />
-                    </div>
-                  </div>
+                  <ChevronDown className='h-4 w-4 text-muted-foreground' />
                 </div>
               </DropdownMenuTrigger>
               <DropdownMenuContent align='start' className='w-[384px] p-1'>
@@ -561,19 +543,21 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                 {scenarios.map((sc) => (
                   <DropdownMenuItem
                     key={sc.id}
-                    className='flex flex-col items-start gap-1 py-2 cursor-pointer'
+                    className='flex flex-col items-start gap-1 py-2 cursor-pointer group'
                     onClick={() => {
                       setActiveScenario(sc);
                       applyScenario(sc);
                     }}>
-                    <div className='font-semibold'>{sc.name}</div>
-                    <div className='flex gap-1'>
-                      <Badge variant='outline' className='text-[10px] px-1 py-0 scale-90 origin-left'>
-                        {datasets.find((d) => d.id === sc.datasetId)?.items.length || 0} question
-                      </Badge>
-                      <Badge variant='outline' className='text-[10px] px-1 py-0 scale-90 origin-left'>
-                        1 configuration
-                      </Badge>
+                    <div className='flex w-full items-center justify-between gap-2'>
+                      <div className='font-semibold text-foreground'>{sc.name}</div>
+                      <div className='flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity'>
+                        <Button type='button' variant='ghost' size='icon' className='h-6 w-6' onClick={(e) => { e.stopPropagation(); handleEditScenario(sc, e); }}>
+                          <Pencil className='h-3 w-3' />
+                        </Button>
+                        <Button type='button' variant='ghost' size='icon' className='h-6 w-6 text-destructive hover:text-destructive hover:bg-destructive/10' onClick={(e) => { e.stopPropagation(); handleDeleteScenario(sc.id, e); }}>
+                          <Trash2 className='h-3 w-3' />
+                        </Button>
+                      </div>
                     </div>
                   </DropdownMenuItem>
                 ))}
