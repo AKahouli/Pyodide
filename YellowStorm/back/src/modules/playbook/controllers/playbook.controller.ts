@@ -44,6 +44,7 @@ import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto'
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
 import { UpdateOutputFormatTemplateDto } from '../dto/update-output-format-template.dto';
 import { RerunStepDto } from '../dto/rerun-step.dto';
+import { GetAdvisorRemediationsDto, ApplyAdvisorRemediationsDto } from '../dto/advisor-remediation.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
 import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
 import type { Response } from 'express';
@@ -243,6 +244,34 @@ export class PlaybookController {
     return this.judgeService.optimizeStep(user._id.toString(), id, body.executionId, body.taskId);
   }
 
+  @Get(':id/executions/:executionId/advisor-remediations')
+  @UseGuards(PlaybookOwnerGuard)
+  async getAdvisorRemediations(
+    @Param('id') id: string,
+    @Param('executionId') executionId: string,
+    @Query() dto: GetAdvisorRemediationsDto,
+  ) {
+    return this.judgeService.getRemediations(executionId, dto.taskId);
+  }
+
+  @Post(':id/executions/:executionId/advisor-remediations/apply')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async applyAdvisorRemediations(
+    @CurrentUser() user: { _id: string; email: string },
+    @Param('id') id: string,
+    @Param('executionId') executionId: string,
+    @Body() dto: ApplyAdvisorRemediationsDto,
+  ) {
+    return this.judgeService.applyRemediations(
+      user._id.toString(),
+      id,
+      executionId,
+      dto.selectedIds || [],
+      dto.mode === 'generate-new' ? 'generate-new' : 'update-current',
+    );
+  }
+
   @Get(':id/design-messages')
   @UseGuards(PlaybookOwnerGuard)
   async getDesignMessages(@Param('id') id: string) {
@@ -419,7 +448,11 @@ export class PlaybookController {
       dto.runEvaluation === true,
       dto.executionMode,
       dto.streaming === true,
+      dto.runNodeReflection !== false,
       user.email,
+      dto.advisorAutopilotEnabled === true,
+      dto.advisorAutopilotTargetScore,
+      dto.advisorAutopilotMaxTurns,
     );
   }
 

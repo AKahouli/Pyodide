@@ -1,0 +1,13 @@
+uid=3_0 RootWebArea "POC" url="http://localhost:5173/"
+  uid=3_15 region "Notifications alt+T" live="polite" relevant="additions text"
+  uid=5_0 dialog "Check your email" description="We've sent a verification link to oc-debug-20260411-0833@yellowsys.local" focusable focused
+    uid=8_0 heading "Check your email" level="2"
+    uid=8_1 StaticText "We've sent a verification link to"
+    uid=8_2 StaticText " "
+    uid=8_3 StaticText "oc-debug-20260411-0833@yellowsys.local"
+    uid=8_4 alert atomic live="assertive" relevant="additions text"
+      uid=8_5 StaticText "Click the link in the email to verify your account and get started."
+    uid=8_6 StaticText "Didn't receive the email? Check your spam folder or"
+    uid=8_7 button "try again"
+    uid=8_8 button "Close"
+    uid=5_12 button "Close"

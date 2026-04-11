@@ -118,6 +118,7 @@ function SemanticScoreBadge({
   evidence: number;
   judge: number;
 }) {
+  const { t } = useModuleTranslation('playbook');
   const radius = 14;
   const circumference = 2 * Math.PI * radius;
   const normalized = Math.max(0, Math.min(100, score));
@@ -157,16 +158,16 @@ function SemanticScoreBadge({
             </div>
           </div>
           <div className="min-w-0">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Match</div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t('node.match')}</div>
           </div>
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="space-y-1 text-xs">
-        <div className="font-medium">Evaluation score</div>
-        <div>Overall: {normalized}%</div>
-        <div>Semantic: {Math.round(semantic)}%</div>
-        <div>Evidence: {Math.round(evidence)}%</div>
-        <div>Judge: {Math.round(judge)}%</div>
+        <div className="font-medium">{t('node.evaluationScore')}</div>
+        <div>{t('node.scoreLabel.overall')} {normalized}%</div>
+        <div>{t('node.scoreLabel.semantic')} {Math.round(semantic)}%</div>
+        <div>{t('node.scoreLabel.evidence')} {Math.round(evidence)}%</div>
+        <div>{t('node.scoreLabel.judge')} {Math.round(judge)}%</div>
       </TooltipContent>
     </Tooltip>
   );
@@ -181,6 +182,7 @@ function JudgeScoreBadge({
   accuracy: number;
   completeness: number;
 }) {
+  const { t } = useModuleTranslation('playbook');
   const tone = getSemanticScoreTone(score);
   return (
     <Tooltip>
@@ -190,19 +192,20 @@ function JudgeScoreBadge({
         </Badge>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="text-xs">
-        <div className="font-medium">Reflection score</div>
-        <div>Accuracy: {Math.round(accuracy)}%</div>
-        <div>Completeness: {Math.round(completeness)}%</div>
-        <div>Overall: {Math.round(score)}%</div>
+        <div className="font-medium">{t('node.advisorScore')}</div>
+        <div>{t('node.scoreLabel.accuracy')} {Math.round(accuracy)}%</div>
+        <div>{t('node.scoreLabel.completeness')} {Math.round(completeness)}%</div>
+        <div>{t('node.scoreLabel.overall')} {Math.round(score)}%</div>
       </TooltipContent>
     </Tooltip>
   );
 }
 
 function JudgeStateBadge({ status }: { status?: string }) {
+  const { t } = useModuleTranslation('playbook');
   if (!status || status === 'idle') return null;
   const isRunning = status === 'evaluating';
-  const label = isRunning ? 'Evaluating' : 'Evaluated';
+  const label = isRunning ? t('node.advisorState.evaluating') : t('node.advisorState.evaluated');
   const tone = isRunning
     ? 'border-sky-500/30 bg-sky-100 text-sky-700'
     : status === 'failed'
@@ -212,7 +215,7 @@ function JudgeStateBadge({ status }: { status?: string }) {
   return (
     <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone)}>
       {isRunning && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
-      <span>{status === 'failed' ? 'Failed' : label}</span>
+      <span>{status === 'failed' ? t('node.advisorState.failed') : label}</span>
     </Badge>
   );
 }

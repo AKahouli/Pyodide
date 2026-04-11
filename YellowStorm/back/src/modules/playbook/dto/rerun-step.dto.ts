@@ -1,4 +1,4 @@
-import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class RerunStepDto {
   @IsString()
@@ -16,4 +16,20 @@ export class RerunStepDto {
   @IsOptional()
   @IsBoolean()
   streaming?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  runNodeReflection?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  advisorAutopilotEnabled?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotTargetScore?: number;
+
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotMaxTurns?: number;
 }

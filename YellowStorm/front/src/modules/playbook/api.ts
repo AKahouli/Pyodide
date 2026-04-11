@@ -28,6 +28,8 @@ import type {
   GrabOutputFormatTemplateData,
   UpdateOutputFormatTemplateData,
   OutputFormatTemplate,
+  AdvisorRemediationItem,
+  ApplyRemediationsData,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -207,6 +209,31 @@ export async function optimizeStepFromJudge(id: string, executionId: string, tas
   const response = await apiClient.post<ApiResponse<Playbook>>(
     `${API_ENDPOINTS.playbooks.byId(id)}/judge/optimize-step`,
     { executionId, taskId },
+  );
+  return response.data.data;
+}
+
+export async function fetchAdvisorRemediations(
+  playbookId: string,
+  executionId: string,
+  taskId?: string,
+): Promise<AdvisorRemediationItem[]> {
+  const params = taskId ? { taskId } : {};
+  const response = await apiClient.get<ApiResponse<AdvisorRemediationItem[]>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations`,
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function applyAdvisorRemediations(
+  playbookId: string,
+  executionId: string,
+  data: ApplyRemediationsData,
+): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations/apply`,
+    data,
   );
   return response.data.data;
 }

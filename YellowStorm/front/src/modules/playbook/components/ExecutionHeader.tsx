@@ -30,14 +30,25 @@ function formatDuration(ms: number | null): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
+function getVisibleExecutionStatus(execution: PlaybookExecution): PlaybookExecution['status'] {
+  if (execution.taskResults.some((taskResult) => taskResult.status === 'running')) {
+    return 'running';
+  }
+  if (execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')) {
+    return 'interrupted';
+  }
+  return execution.status;
+}
+
 export function ExecutionHeader({ execution, playbook }: Props) {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
   const { t } = useModuleTranslation('playbook');
   const isStopping = useIsStopping();
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
+  const visibleStatus = execution ? getVisibleExecutionStatus(execution) : null;
 
-  const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
+  const canStop = execution && (visibleStatus === 'running' || visibleStatus === 'interrupted');
   return (
     <div className="flex items-center justify-between px-4 py-2 border-b bg-background">
       <div className="flex items-center gap-3">
@@ -47,7 +58,7 @@ export function ExecutionHeader({ execution, playbook }: Props) {
         <span className="font-semibold">{playbook?.name || t('execution.playbook')}</span>
         {execution && (
           <>
-            <PlaybookStatusBadge status={execution.status} size="md" />
+            <PlaybookStatusBadge status={visibleStatus || execution.status} size="md" />
             <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
               {getExecutionModeLabel(execution.executionMode)}
             </span>
@@ -66,7 +77,7 @@ export function ExecutionHeader({ execution, playbook }: Props) {
                 {isStopping ? t('execution.stopping') : t('execution.stop')}
               </Button>
             )}
-            {execution.status === 'failed' && execution.error && (
+            {visibleStatus === 'failed' && execution.error && (
               <div className="flex items-center gap-1 text-sm text-destructive">
                 <AlertCircle className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate max-w-[300px]" title={execution.error}>

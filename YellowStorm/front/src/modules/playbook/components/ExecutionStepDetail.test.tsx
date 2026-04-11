@@ -143,11 +143,21 @@ describe('ExecutionStepDetail', () => {
             accuracyScore: 80,
             completenessScore: 90,
             overallScore: 85,
+            confidence: 0.84,
+            toolUsageScore: 78,
             missingFacts: [],
             incoherences: [],
             unsupportedClaims: [],
             handoffRisks: [],
             rewriteHints: [],
+            toolSelectionIssues: [],
+            missingToolCalls: [],
+            redundantToolCalls: [],
+            toolOutputUseIssues: [],
+            toolSequencingIssues: [],
+            toolUsageStrengths: [],
+            toolUsageRecommendation: '',
+            safeAutoFixType: 'none',
             recommendation: 'generate_new_optimized_playbook',
             reason: 'Create a new playbook.',
           },
@@ -176,7 +186,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate new optimized playbook' }));
+    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateNewOptimizedPlaybook' }));
 
     expect(storeState.generatePlaybookFromJudge).toHaveBeenCalledWith('p1', 'exec-1');
     expect(navigateMock).toHaveBeenCalledWith('/playbooks/p2');
@@ -273,6 +283,78 @@ describe('ExecutionStepDetail', () => {
     );
 
     expect(screen.getByText('Streaming output')).toBeInTheDocument();
+    expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
+    expect(screen.getByText('execution.running')).toBeInTheDocument();
+  });
+
+  it('clears a stale completed result when the step goes back to running', () => {
+    const { rerender } = render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          status: 'completed',
+          attemptNumber: 3,
+          output: 'Persisted final snapshot',
+          completedAt: '2025-01-01T00:00:04.100Z',
+          stepExecutions: [
+            {
+              id: 'step-exec-3',
+              attemptNumber: 3,
+              status: 'completed',
+              output: 'Persisted final snapshot',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Persisted final snapshot')).toBeInTheDocument();
+
+    rerender(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          status: 'running',
+          attemptNumber: 3,
+          output: null,
+          completedAt: null,
+          durationMs: null,
+          stepExecutions: [
+            {
+              id: 'step-exec-3',
+              attemptNumber: 3,
+              status: 'completed',
+              output: 'Persisted final snapshot',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
     expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
     expect(screen.getByText('execution.running')).toBeInTheDocument();
   });
@@ -624,6 +706,105 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('detail.evaluation.comparedExecution')).toBeInTheDocument();
   });
 
+  it('renders a selector for persisted advisor evaluations', () => {
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'completed',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [baseStep],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:00:05.200Z',
+      singleStepTaskId: null,
+      playbookSnapshot: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          judgeResult: null,
+          judgeHistory: [
+            {
+              id: 'judge-1',
+              createdAt: '2025-01-01T00:01:00.000Z',
+              attemptNumber: 1,
+              model: 'advisor-model-v1',
+              judgeResult: {
+                accuracyScore: 70,
+                completenessScore: 72,
+                overallScore: 71,
+                confidence: 0.7,
+                toolUsageScore: 68,
+                missingFacts: [],
+                incoherences: [],
+                unsupportedClaims: [],
+                handoffRisks: [],
+                rewriteHints: [],
+                toolSelectionIssues: [],
+                missingToolCalls: [],
+                redundantToolCalls: [],
+                toolOutputUseIssues: [],
+                toolSequencingIssues: [],
+                toolUsageStrengths: [],
+                toolUsageRecommendation: 'Use the validated source first.',
+                safeAutoFixType: 'none',
+                recommendation: 'none',
+                reason: 'Earlier advisor result.',
+              },
+            },
+            {
+              id: 'judge-2',
+              createdAt: '2025-01-01T00:02:00.000Z',
+              attemptNumber: 2,
+              model: 'advisor-model-v2',
+              judgeResult: {
+                accuracyScore: 81,
+                completenessScore: 83,
+                overallScore: 82,
+                confidence: 0.8,
+                toolUsageScore: 75,
+                missingFacts: ['Missing control check'],
+                incoherences: [],
+                unsupportedClaims: [],
+                handoffRisks: [],
+                rewriteHints: [],
+                toolSelectionIssues: [],
+                missingToolCalls: [],
+                redundantToolCalls: [],
+                toolOutputUseIssues: [],
+                toolSequencingIssues: [],
+                toolUsageStrengths: [],
+                toolUsageRecommendation: 'Earlier advisor result.',
+                safeAutoFixType: 'none',
+                recommendation: 'none',
+                reason: 'Latest advisor result.',
+              },
+            },
+          ],
+        }}
+        execution={execution}
+      />,
+    );
+
+    expect(screen.getByText('detail.judge.stepExecutionLabel')).toBeInTheDocument();
+    expect(screen.getByText(/detail.evaluation.attempt: 2/)).toBeInTheDocument();
+    expect(screen.getByText(/detail.evaluation.judgeModel/)).toBeInTheDocument();
+    expect(screen.getByText('Latest advisor result.')).toBeInTheDocument();
+  });
+
   it('shows an in-progress message while evaluation is running', () => {
     const execution: PlaybookExecution = {
       id: 'e1',
@@ -692,6 +873,24 @@ describe('ExecutionStepDetail', () => {
           ...baseStep,
           semanticMatch: null,
           evaluationHistory: [{
+            id: 'hist-1',
+            createdAt: '2025-01-01T00:01:00.000Z',
+            attemptNumber: 2,
+            trigger: 'manual',
+            baselineReplayId: 'r1',
+            baselineValidationVersion: 3,
+            semanticMatch: {
+              matchScore: 91,
+              semanticSimilarityScore: 88,
+              evidenceConsistencyScore: 93,
+              judgeScore: 90,
+              reason: 'Earlier history-only evaluation payload.',
+              missingPoints: ['One item'],
+              changedPoints: ['One changed item'],
+              model: 'test-evaluation-model',
+              judgeUsed: true,
+            },
+          }, {
             id: 'hist-2',
             createdAt: '2025-01-01T00:02:00.000Z',
             attemptNumber: 3,

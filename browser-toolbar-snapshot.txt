@@ -1,0 +1,203 @@
+uid=28_0 RootWebArea "POC" url="http://localhost:5173/#/playbooks/69d8e70899808c34a665ffe7"
+  uid=32_0 link url="http://localhost:5173/#/"
+  uid=32_1 button "New Chat"
+  uid=32_2 button "Projects" disableable disabled
+  uid=32_3 button "Workspace"
+  uid=32_4 button expandable haspopup="menu"
+  uid=32_5 button "Agents"
+  uid=32_6 button expandable haspopup="menu"
+  uid=32_7 button "Playbooks BETA"
+  uid=32_8 button "Apps"
+  uid=32_9 link "Admin" url="http://localhost:5173/#/admin"
+    uid=32_10 StaticText "Admin"
+  uid=32_11 button "History" expandable
+  uid=32_12 navigation
+    uid=32_13 button "AG" expandable haspopup="menu"
+  uid=32_14 button "Toggle sidebar"
+  uid=28_16 main
+    uid=32_15 button
+    uid=32_16 heading "IFRS 15 Revenue Recognition Playbook - Optimized V1" level="1"
+    uid=32_18 button "Clone playbook"
+    uid=32_19 button "Share"
+    uid=32_20 combobox expandable haspopup="dialog" value="Contracts"
+    uid=32_21 StaticText "Unlimited"
+    uid=32_22 button "Explorer" description="Workspace Explorer"
+    uid=32_23 button "Design"
+    uid=32_24 button "Run"
+    uid=32_25 button "Undo (Ctrl+Z)" disableable disabled
+    uid=32_26 button "Redo (Ctrl+Shift+Z)" disableable disabled
+    uid=32_27 combobox expandable haspopup="listbox" value="Live Mode"
+    uid=32_28 switch checked
+    uid=32_29 StaticText "Advisor"
+    uid=32_30 switch
+    uid=32_31 StaticText "Step Autopilot"
+    uid=32_32 button "Blank Step"
+    uid=32_33 button
+    uid=32_34 button "Auto Layout"
+    uid=32_35 button "Download all results"
+    uid=32_36 button "Executions"
+    uid=32_37 button "Schedule"
+    uid=32_38 button "Saved" disableable disabled
+    uid=32_39 button "Run"
+    uid=32_40 group "Edge from step_1 to step_2" description="Press enter or space to select an edge. You can then press delete to remove it or escape to cancel." roledescription="edge"
+    uid=32_41 group "Edge from step_2 to step_4" description="Press enter or space to select an edge. You can then press delete to remove it or escape to cancel." roledescription="edge"
+    uid=32_42 group "Edge from step_4 to step_5" description="Press enter or space to select an edge. You can then press delete to remove it or escape to cancel." roledescription="edge"
+    uid=32_43 group "Edge from step_5 to step_6" description="Press enter or space to select an edge. You can then press delete to remove it or escape to cancel." roledescription="edge"
+    uid=32_44 group "Edge from step_7 to step_1" description="Press enter or space to select an edge. You can then press delete to remove it or escape to cancel." roledescription="edge"
+    uid=32_45 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=32_46 StaticText "contract_caterpilar_mairie_de_paris.docx"
+      uid=32_47 StaticText "Output"
+      uid=32_48 StaticText "2"
+      uid=32_49 StaticText "Cadrage et extraction structurée des données contractuelles"
+      uid=32_50 StaticText "Completed"
+      uid=32_51 StaticText "Search agent"
+      uid=32_52 StaticText "Analyser le contrat source et extraire, de façon structurée et fidèle, toutes les informations nécessaires à une modélisation IFRS 15 en aval. Produire un livrable exploitable pour les étapes suivantes, incluant au minimum : parties au contrat, objet et périmètre, livrables et services, obligations de performance distinctes potentielles, prix contractuel et modalités de paiement, contreparties variables ou ajustables, clauses de révision de prix, pénalités, garanties, transfert de propriété, transfert des risques, acceptation, jalons, échéancier de livraison/exécution, et tout élément pouvant influencer le moment ou le montant du revenu reconnu. Distinguer clairement les faits contractuels des interprétations comptables, et signaler les points nécessitant jugement IFRS 15. Format attendu : synthèse structurée avec sections et puces, prête à alimenter l’identification des obligations de performance, l’allocation du prix de transaction et le calendrier de reconnaissance du revenu."
+      uid=32_53 StaticText "Evaluated"
+      uid=32_54 StaticText "94"
+      uid=32_55 StaticText "%"
+      uid=32_56 button
+      uid=32_57 StaticText "1"
+      uid=32_58 button
+      uid=32_59 button
+      uid=32_60 button
+      uid=32_61 button
+    uid=32_62 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=32_63 StaticText "Input"
+      uid=32_64 StaticText "Output"
+      uid=32_65 StaticText "3"
+      uid=32_66 StaticText "Identification des obligations de performance"
+      uid=32_67 StaticText "Completed"
+      uid=32_68 StaticText "Search agent"
+      uid=32_69 StaticText "À partir des données contractuelles extraites, identifier toutes les obligations de performance distinctes, les regrouper par nature de bien/service, et préciser pour chacune : description, critères de distinctivité, moment probable de satisfaction, dépendances contractuelles, et points de jugement IFRS 15. Produire une liste structurée directement exploitable pour l’allocation du prix de transaction."
+      uid=33_0 StaticText "Evaluated"
+      uid=33_1 StaticText "90"
+      uid=33_2 StaticText "%"
+      uid=32_70 button
+      uid=32_71 button
+      uid=32_72 button
+      uid=32_73 button
+      uid=32_74 button
+    uid=32_75 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=32_76 StaticText "Input"
+      uid=32_77 StaticText "Output"
+      uid=32_78 StaticText "5"
+      uid=32_79 StaticText "Allocation du prix de transaction selon les SSP relatifs"
+      uid=32_80 StaticText "Pending"
+      uid=32_81 StaticText "Auditor"
+      uid=32_82 StaticText "Allouer le prix de transaction aux obligations de performance identifiées en appliquant strictement le principe IFRS 15 de répartition au prorata des prix de vente autonomes relatifs (SSP) de toutes les obligations distinctes. Pour chaque obligation, indiquer clairement si le SSP est observable, estimé ou non isolable, et préciser la méthode retenue lorsque le SSP n’est pas directement observable. Produire un tableau exhaustif couvrant toutes les obligations identifiées en amont, avec au minimum : obligation de performance, nature (bien/service), SSP retenu, statut du SSP (observable / estimé / non isolable), méthode d’estimation le cas échéant, poids relatif, montant alloué, justification IFRS 15, et éventuel traitement en bundle si l’élément ne peut pas être isolé de manière fiable. Inclure un contrôle de cohérence explicite montrant le prix total de transaction, la somme des SSP retenus, le facteur de proratisation, la somme des montants alloués et l’écart résiduel éventuel. Si un poste est mis à zéro ou absorbé dans un bundle, justifier explicitement cette décision au regard des données contractuelles et du jugement IFRS 15, sans utiliser de poste résiduel arbitraire comme variable d’ajustement."
+      uid=33_3 StaticText "Evaluated"
+      uid=33_4 StaticText "31"
+      uid=33_5 StaticText "%"
+      uid=32_83 button
+      uid=32_84 button
+      uid=32_85 button
+      uid=32_86 button
+      uid=32_87 button
+    uid=32_88 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=32_89 StaticText "Input"
+      uid=32_90 StaticText "Output"
+      uid=32_91 StaticText "6"
+      uid=32_92 StaticText "Calcul du revenu reconnu par obligation"
+      uid=32_93 StaticText "Pending"
+      uid=32_94 StaticText "Auditor"
+      uid=32_95 StaticText "Pour chaque obligation de performance, déterminer le revenu à reconnaître sur la période considérée en appliquant les principes IFRS 15 : satisfaction au fil du temps ou à un moment donné, mesure de l’avancement le cas échéant, traitement des modifications de contrat, et prise en compte des contraintes sur la contrepartie variable. Produire un calcul détaillé, traçable et justifié."
+      uid=33_6 StaticText "Evaluated"
+      uid=33_7 StaticText "28"
+      uid=33_8 StaticText "%"
+      uid=32_96 button
+      uid=32_97 button
+      uid=32_98 button
+      uid=32_99 button
+      uid=32_100 button
+    uid=32_101 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=32_102 StaticText "Input"
+      uid=32_103 StaticText "Output"
+      uid=32_104 StaticText "7"
+      uid=32_105 StaticText "Visualisation et contrôle du revenu reconnu"
+      uid=32_106 StaticText "Pending"
+      uid=32_107 StaticText "No agent assigned"
+      uid=32_108 StaticText "Créer une visualisation claire du revenu reconnu par obligation de performance et sur la période, sous forme de tableau ou graphique, avec totaux, écarts éventuels, hypothèses clés et points de contrôle pour revue et validation. Le livrable doit permettre une vérification rapide de la cohérence entre contrat, allocation et reconnaissance du revenu."
+      uid=33_9 StaticText "Evaluated"
+      uid=33_10 StaticText "94"
+      uid=33_11 StaticText "%"
+      uid=32_109 button
+      uid=32_110 button
+      uid=32_111 button
+      uid=32_112 button
+      uid=32_113 button
+    uid=32_114 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=32_115 StaticText "Input"
+      uid=32_116 StaticText "Output"
+      uid=32_117 StaticText "1"
+      uid=32_118 StaticText "Gabarit d’entrée contractuelle et validation des données manquantes"
+      uid=32_119 StaticText "Completed"
+      uid=32_120 StaticText "Search agent"
+      uid=32_121 StaticText "Structurer les données contractuelles attendues sous forme de gabarit opérationnel afin de sécuriser le calcul du revenu reconnu lorsque le contrat source est incomplet ou non exploitable. Identifier les champs obligatoires, les champs optionnels, les valeurs manquantes, les hypothèses de repli et les questions de clarification à adresser avant calcul. Produire un schéma de données ou une checklist directement réutilisable pour alimenter les étapes IFRS 15."
+      uid=32_122 StaticText "Evaluated"
+      uid=32_123 StaticText "94"
+      uid=32_124 StaticText "%"
+      uid=32_125 button
+      uid=32_126 button
+      uid=32_127 button
+      uid=32_128 button
+      uid=32_129 button
+    uid=32_130 button "Zoom In" description="Zoom In" disableable disabled
+    uid=32_131 button "Zoom Out" description="Zoom Out"
+    uid=32_132 button "Fit View" description="Fit View"
+    uid=32_133 button "Toggle Interactivity" description="Toggle Interactivity"
+    uid=28_147 generic atomic live="assertive" relevant="additions text"
+    uid=32_134 heading "Designer Assistant" level="3"
+    uid=32_135 button
+    uid=32_136 StaticText "Ask the AI to modify your playbook"
+    uid=32_137 StaticText "Describe changes you'd like to make to this workflow."
+    uid=32_138 textbox "Describe your changes..."
+    uid=32_139 button disableable disabled
+    uid=32_140 StaticText "Execution"
+    uid=33_12 StaticText "Completed"
+    uid=33_13 StaticText "Live"
+    uid=33_14 StaticText "30s"
+    uid=32_145 button "Compare"
+    uid=32_146 button "Delete All" description="Delete all executions"
+    uid=33_15 button "Delete" description="Delete selected execution"
+    uid=32_147 button "#38" expandable haspopup="menu"
+    uid=32_148 button "Collapse sidebar" description="Collapse sidebar"
+    uid=33_16 heading "Steps" level="3"
+    uid=33_17 button "Step 0"
+    uid=33_18 button "Step 1"
+    uid=33_19 button "Step 2"
+    uid=33_20 button "Step 3"
+    uid=33_21 button "Step 4"
+    uid=33_22 button "Step 5"
+    uid=33_23 button "Step 6"
+    uid=33_24 heading "Détermination du prix de transaction" level="2"
+    uid=33_25 StaticText "Replay baseline v1"
+    uid=33_26 StaticText "Step mode:"
+    uid=33_27 combobox disableable disabled expandable haspopup="listbox" value="Live"
+    uid=33_28 StaticText "(no baseline)"
+    uid=33_29 StaticText "Step executions"
+    uid=33_30 button "Attempt 3 | 4/11/2026, 1:58:34 PM" expandable haspopup="menu"
+    uid=33_31 button "Actions" expandable haspopup="menu"
+    uid=33_32 StaticText "Agent"
+    uid=33_33 StaticText ": "
+    uid=33_34 StaticText "Search agent"
+    uid=33_35 StaticText "Started"
+    uid=33_36 StaticText ": "
+    uid=33_37 StaticText "1:58:13 PM"
+    uid=33_38 StaticText "Completed"
+    uid=33_39 StaticText ": "
+    uid=33_40 StaticText "1:58:34 PM"
+    uid=33_41 StaticText "Duration"
+    uid=33_42 StaticText ": "
+    uid=33_43 StaticText "24.9s"
+    uid=33_44 tablist orientation="horizontal"
+      uid=33_45 tab "Step Results" selectable
+      uid=33_46 tab "Evaluation" selectable selected
+      uid=33_47 tab "Playbook Advisor" selectable
+      uid=33_48 tab "Tool Trace" selectable
+      uid=33_49 tab "Replay Args Diff" selectable
+      uid=33_50 tab "LLM Prompts" selectable
+    uid=33_51 tabpanel "Evaluation"
+      uid=33_52 button "Run evaluation"
+      uid=33_53 StaticText "No evaluation available for this step."
+  uid=32_185 button "Toggle theme" expandable haspopup="menu"
+  uid=28_203 region "Notifications alt+T" live="polite" relevant="additions text"

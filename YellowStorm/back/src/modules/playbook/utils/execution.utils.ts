@@ -59,6 +59,7 @@ export interface BufferedStepResult {
   judgeHistory?: Array<{
     id: string;
     createdAt: Date | string;
+    attemptNumber: number | null;
     model: string | null;
     judgeResult: {
       accuracyScore: number;

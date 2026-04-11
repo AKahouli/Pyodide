@@ -1,5 +1,157 @@
 # Changelog
 
+## [2026-04-11 16:10:04] — Group advisor issues into badge-based panels
+
+- **Feature:** `playbook-advisor`
+- **Type:** `feat`
+- **Changed:** The issue panels under the Advisor tab now render as grouped badge-based sections instead of dense multi-column boxes. Structural, prompt, contract, handoff, tooling, and strength findings are displayed in a consistent row style matching the remediation suggestions.
+- **Why:** The advisor output was hard to scan because the issue sections used small dense grids while remediation suggestions already had a clearer badge-row layout.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `doc/playbook-advisor/README_2026-04-11_16-10-04.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 14:30:56] — Add actionable remediations with category badges, review modal, and per-item edit
+
+- **Feature:** `playbook-advisor`
+- **Type:** `feat`
+- **Changed:** Advisor findings are now classified into structured change proposals with category badges (structure, prompt, contract, handoff, tooling, evidence, output-format). The three CTA buttons open a shared review modal where users can exclude or edit individual suggestions before applying. Each remediation item shows an inline Apply button.
+- **Why:** Advisor findings were plain text strings with no way to progressively apply granular changes or exclude unwanted suggestions.
+- **Impact:** `YellowStorm/back/src/modules/playbook/dto/advisor-remediation.dto.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook.controller.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/api.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/components/AdvisorChangeReviewDialog.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, `doc/playbook-advisor/README_2026-04-11_14-30-56.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 13:35:41] — Continue single-step autopilot on step-scoped advisor rewrites
+
+- **Feature:** `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Single-step Advisor Autopilot now treats `recommendation: update_current_playbook` with non-empty `rewriteHints` as a safe `optimize_step` fallback inside the autopilot loop instead of stopping immediately as `no_safe_fix_available`.
+- **Why:** The advisor can return a very low score with concrete step rewrite hints while still classifying the recommendation as `update_current_playbook`, which previously caused autopilot to stop after the first evaluation even though a safe step optimization was available.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `doc/playbook-advisor/README_2026-04-11_13-35-41.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 12:27:13] — Show the newest advisor and evaluation history entry by default
+
+- **Feature:** `playbook`, `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** The step detail view now defaults both the evaluation selector and the Playbook Advisor selector to the newest persisted history entry instead of preserving an older attempt.
+- **Why:** After a new advisor evaluation completed, the detail pane could keep showing a stale earlier attempt even though a fresher result had just been generated.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `docs/playbook/README_2026-04-11_12-27-13.md`, `doc/playbook-advisor/README_2026-04-11_12-27-13.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 12:11:57] — Reset stale advisor state before rerunning a step
+
+- **Feature:** `playbook`, `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Step reruns now clear the current task’s persisted judge/advisor status, result, and error before the next attempt starts, and the rerun path refreshes `reflectionEnabled` from the current request.
+- **Why:** A specific-step rerun could keep the previous attempt’s `evaluated` advisor state, causing the next synchronous advisor pass to exit early even when the toolbar Advisor switch was enabled.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `docs/playbook/README_2026-04-11_12-11-57.md`, `doc/playbook-advisor/README_2026-04-11_12-11-57.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 11:24:46] — Forward advisor mode when rerunning a step evaluation
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The step evaluation rerun action now forwards advisor autopilot settings into the rerun request, so a specific-step evaluation still uses the advisor branch when advisor mode is enabled.
+- **Why:** The UI switch could be on, but the evaluation rerun path dropped the advisor flags before the request reached the backend.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.test.tsx`, `docs/playbook/README_2026-04-11_11-24-46.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 10:37:57] — Keep rerun headers aligned with live task status
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The canvas page, execution header, and execution panel now derive a visible execution status from task results, so rerunning or resuming a step shows `Running` immediately even if the persisted execution shell still says `Completed`.
+- **Why:** A rerun could appear active in the step list while the surrounding execution chrome still reported the run as completed.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionHeader.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.test.tsx`, `docs/playbook/README_2026-04-11_10-37-57.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 10:27:16] — Clear stale step payloads when rerunning a step
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Rerun/resume now clear the current step’s output, artifacts, tool trace, prompt trace, semantic match, and judge data immediately, and the panel no longer eagerly refetches the same execution after a rerun/resume API call.
+- **Why:** The step pane could keep rendering the previous completed payload for several seconds while the execution header and the new attempt were already supposed to be live.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `docs/playbook/README_2026-04-11_10-27-16.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 08:29:32] — Prevent stale completion refresh from overriding a rerun
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Rerun and resume now cancel the old judge-refresh timer for that execution, and the execution merge preserves a newer optimistic `running` attempt over an older fetched `completed` snapshot.
+- **Why:** A post-completion refresh from the previous attempt could briefly push the execution header back to `completed` while the rerun step itself was already shown as `running`.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `docs/playbook/README_2026-04-11_08-29-32.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 08:24:01] — Focus relaunched execution immediately on rerun and resume
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Step rerun and resume actions now optimistically move the visible execution panel onto the relaunched execution, update its history row to `running`, and mark the playbook as actively executing immediately.
+- **Why:** The canvas could switch to `running` while the execution header and panel still showed an older completed execution for several seconds until the next fetch finished.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `docs/playbook/README_2026-04-11_08-24-01.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 08:08:00] — Reset step-result pane on rerun and reconcile live step status
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Terminal execution completion now coerces any lingering running task rows to terminal state immediately, and the step-result pane now resets to the live in-flight attempt when a step goes back to `running`.
+- **Why:** The canvas could still show a running node or the step pane could keep displaying the previous completed attempt even after the backend had already moved on to the new run.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `docs/playbook/README_2026-04-11_08-08-00.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 07:58:47] — Refresh terminal execution state after completion
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The frontend now refetches an execution after the terminal completion event so the persisted backend task states replace any stale optimistic or missed stream state.
+- **Why:** A completed execution could still render a node as running if the browser missed or partially merged the final stream update.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `docs/playbook/README_2026-04-11_07-58-47.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 07:48:48] — Terminalize running tasks when workflow failure ends unexpectedly
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Unexpected workflow failures now mark any still-running task rows as `FAILED` before skipping the remaining pending rows.
+- **Why:** A failed execution could keep a node in `RUNNING` state even after the execution itself had already failed, which made the run look incoherent and blocked normal follow-up actions.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `docs/playbook/README_2026-04-11_07-48-48.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 07:31:47] — Fail fast on rerun when playbook gRPC is unavailable
+
+- **Feature:** `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Step reruns now reject immediately with `ServiceUnavailableException` when the playbook gRPC client is unavailable, instead of trying to call `RunStepStream` on an uninitialized client.
+- **Why:** A rerun could reach `RunStepStream` with an undefined gRPC client and crash the execution path instead of failing cleanly.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `doc/playbook-advisor/README_2026-04-11_07-31-47.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 07:04:01] — Honor toolbar Advisor toggle for single-step reruns
+
+- **Feature:** `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Step rerun requests now carry `runNodeReflection`, the backend rerun route forwards it, and the single-step execute action sends the current toolbar Advisor toggle for both fresh single-step runs and reruns.
+- **Why:** Executing a step from an existing execution could ignore the current `Advisor` toggle and reuse stale reflection settings from the old execution.
+- **Impact:** `YellowStorm/back/src/modules/playbook/dto/rerun-step.dto.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook.controller.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `doc/playbook-advisor/README_2026-04-11_07-04-01.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-11 06:40:26] — Sync single-step Advisor evaluation and advisor history selection
+
+- **Feature:** `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Single-step executions and step reruns now run Playbook Advisor synchronously even when Step Autopilot is off, advisor history entries now persist the originating attempt number, and the Playbook Advisor tab now exposes a selector for historical advisor evaluations.
+- **Why:** Advisor mode on single-step runs was not reliably surfacing an immediate advisor result, and users could not inspect earlier advisor outputs per attempt from the Advisor tab.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `YellowStorm/back/src/modules/playbook/services/playbook.service.ts`, `YellowStorm/back/src/modules/playbook/utils/execution.utils.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, `doc/playbook-advisor/README_2026-04-11_06-40-26.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-10 21:14] — Add single-step Advisor Autopilot execution loop
+
+- **Feature:** `playbook-advisor`
+- **Type:** `feat`
+- **Changed:** Added bounded single-step Advisor Autopilot execution support, including execution/task autopilot metadata, synchronous advisor evaluation in the single-step path, safe optimize-and-rerun control flow, SSE updates, and a frontend Step Autopilot toggle/status surface.
+- **Why:** The previous Playbook Advisor implementation could explain issues after a run, but it could not apply safe automatic remediation within the same single-step execution.
+- **Impact:** `YellowStorm/back/src/modules/playbook/dto/execute-playbook.dto.ts`, `YellowStorm/back/src/modules/playbook/dto/rerun-step.dto.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook.controller.ts`, `YellowStorm/back/src/modules/playbook/schemas/playbook-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/services/playbookStreamService.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookToolbar.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, `doc/playbook-advisor/README_2026-04-10_21-14-33.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-10 20:34] — Align playbook rerun endpoints with backend routes
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the frontend playbook API to call the backend's `rerun-step` and `resume-from-step` execution routes, and added a regression test for both endpoint builders.
+- **Why:** The frontend was posting to `/rerun` and `/resume`, which did not exist on the controller and produced 404s for rerun actions.
+- **Impact:** `YellowStorm/front/src/lib/api/config.ts`, `YellowStorm/front/src/modules/playbook/api.test.ts`, `docs/playbook/README_2026-04-10_20-34-52.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-10 20:31] — Rebrand judge flows as Playbook Advisor and add tool-aware findings
+
+- **Feature:** `playbook-advisor`
+- **Type:** `feat`
+- **Changed:** Rebranded the playbook judge/reflection UX as Playbook Advisor, extended step and execution advisor payloads with tool-usage analysis fields, and added defensive normalization so malformed advisor JSON falls back safely.
+- **Why:** The existing workflow already persisted tool traces, but the advisor contract did not explicitly score or explain tool behavior and the product naming no longer matched the feature direction.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.spec.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-prompt.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookNode.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookToolbar.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, `doc/playbook-advisor/README_2026-04-10_20-31-49.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
 ## [2026-04-10 12:18] — Guard generated playbook workspaces before cloning
 
 - **Feature:** `playbook`

@@ -41,7 +41,11 @@ describe('ExecutionPanel', () => {
   });
 
   it('renders execution header with status and duration', () => {
-    const execution = makeExecution({ status: 'completed', durationMs: 4500 });
+    const execution = makeExecution({
+      status: 'completed',
+      durationMs: 4500,
+      taskResults: [{ ...makeExecution().taskResults[0], status: 'completed' }],
+    });
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
@@ -53,7 +57,10 @@ describe('ExecutionPanel', () => {
   });
 
   it('shows the selected execution delete action when the workflow execution is deletable', async () => {
-    const execution = makeExecution({ status: 'completed' });
+    const execution = makeExecution({
+      status: 'completed',
+      taskResults: [{ ...makeExecution().taskResults[0], status: 'completed' }],
+    });
     usePlaybookStore.setState({
       executionPanelOpen: true,
       currentExecution: execution,
@@ -73,6 +80,64 @@ describe('ExecutionPanel', () => {
     });
     render(<ExecutionPanel />);
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
+  });
+
+  it('shows running header when a step is running even if the execution status is completed', () => {
+    const execution = makeExecution({
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 't1', status: 'running' },
+      ],
+    });
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+    });
+    render(<ExecutionPanel />);
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('execution.stop')).toBeInTheDocument();
+  });
+
+  it('forwards advisor settings when running evaluation for a step', async () => {
+    const execution = makeExecution({
+      status: 'completed',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 92,
+      advisorAutopilotMaxTurns: 4,
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed' }],
+    });
+    const playbook = makePlaybook({
+      id: 'playbook-1',
+      tasks: [{ ...makePlaybook().tasks[0], id: 't1', stepReplayMode: 'live' }],
+    });
+    const rerunSpy = vi.spyOn(usePlaybookStore.getState(), 'rerunStepInExecution').mockResolvedValue(undefined as never);
+
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+      currentPlaybook: playbook,
+      executionHistory: [makeExecutionSummary({ id: execution.id, playbookId: execution.playbookId, status: 'completed' })],
+      selectedStepId: 't1',
+    });
+
+    const user = userEvent.setup();
+    render(<ExecutionPanel />);
+
+    await user.click(screen.getByRole('tab', { name: 'detail.tabs.evaluation' }));
+    await user.click(screen.getByText('detail.actions.runEvaluation'));
+
+    expect(rerunSpy).toHaveBeenCalledWith(
+      execution.playbookId,
+      execution.id,
+      't1',
+      true,
+      'live',
+      false,
+      true,
+      true,
+      92,
+      4,
+    );
   });
 
   it('closes panel via setExecutionPanelOpen(false)', () => {
@@ -172,7 +237,7 @@ describe('ExecutionPanel', () => {
       selectedStepId: null,
     });
     render(<ExecutionPanel pageMode="run" />);
-    await userEvent.click(screen.getByText('Step 1'));
+    await userEvent.click(screen.getByLabelText('Step 1'));
     expect(usePlaybookStore.getState().selectedStepId).toBe('t1');
   });
 

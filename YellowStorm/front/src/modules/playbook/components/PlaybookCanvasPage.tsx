@@ -112,6 +112,13 @@ function canReuseExecutionForTask(
   return JSON.stringify(normalizeTaskForExecutionReuse(snapshotTask)) === JSON.stringify(normalizeTaskForExecutionReuse(task));
 }
 
+function getVisibleExecutionStatus(execution?: PlaybookExecution | null): PlaybookExecution['status'] | null {
+  if (!execution) return null;
+  if (execution.taskResults.some((taskResult) => taskResult.status === 'running')) return 'running';
+  if (execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')) return 'interrupted';
+  return execution.status;
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -187,6 +194,7 @@ function PlaybookCanvasInner() {
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'live' | 'inherit'>('live');
   const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
+  const [advisorAutopilotEnabled, setAdvisorAutopilotEnabled] = useState(false);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
   const [editingOutputFormatVersion, setEditingOutputFormatVersion] = useState<number | null>(null);
   const [outputFormatDraft, setOutputFormatDraft] = useState('');
@@ -227,11 +235,12 @@ function PlaybookCanvasInner() {
     if (!id || isGeneratingRoute) return;
 
     const selectedExecution = currentExecution?.playbookId === id ? currentExecution : null;
+    const selectedVisibleStatus = getVisibleExecutionStatus(selectedExecution);
     const activeExecution = selectedExecution
-      ? (selectedExecution.status === 'running' || selectedExecution.status === 'interrupted'
+      ? (selectedVisibleStatus === 'running' || selectedVisibleStatus === 'interrupted'
         ? selectedExecution
         : null)
-      : execution && (execution.status === 'running' || execution.status === 'interrupted')
+      : execution && (getVisibleExecutionStatus(execution) === 'running' || getVisibleExecutionStatus(execution) === 'interrupted')
         ? execution
         : null;
 
@@ -290,7 +299,8 @@ function PlaybookCanvasInner() {
   const prevIsGenerating = useRef(isGenerating);
   const prevIsDesigning = useRef(isDesigning);
   useEffect(() => {
-    if (execution && (execution.status === 'completed' || execution.status === 'failed')) {
+    const visibleStatus = getVisibleExecutionStatus(currentExecution?.playbookId === id ? currentExecution : execution);
+    if (visibleStatus === 'completed' || visibleStatus === 'failed') {
       refreshUsage();
     }
     if (prevIsGenerating.current && !isGenerating) {
@@ -301,7 +311,7 @@ function PlaybookCanvasInner() {
     }
     prevIsGenerating.current = isGenerating;
     prevIsDesigning.current = isDesigning;
-  }, [execution?.status, isGenerating, isDesigning, refreshUsage]);
+  }, [currentExecution?.id, currentExecution?.status, currentExecution?.taskResults, execution?.id, execution?.status, execution?.taskResults, id, isGenerating, isDesigning, refreshUsage]);
 
   const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode }), []);
   const edgeTypes = useMemo(() => ({
@@ -313,10 +323,11 @@ function PlaybookCanvasInner() {
       ? currentExecution
       : execution;
   const executionTaskResults = executionForCanvas?.taskResults;
+  const visibleExecutionStatus = getVisibleExecutionStatus(executionForCanvas);
 
   // Build step status map from the selected execution for this playbook
   const isLiveExecution = executionForCanvas &&
-    (executionForCanvas.status === 'running' || executionForCanvas.status === 'interrupted');
+    (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
 
   const stepStatusMap = useMemo(() => {
     const map = new Map<string, StepStatus>();
@@ -522,15 +533,22 @@ function PlaybookCanvasInner() {
         || null;
       try {
         if (targetExecution) {
-          await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true);
+        await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
           return;
         }
-        await executePlaybook(id, { singleStepTaskId: nodeId, executionMode: 'live', stepExecutionModes: { [nodeId]: selectedStepMode }, streaming: true });
+        await executePlaybook(id, {
+          singleStepTaskId: nodeId,
+          executionMode: 'live',
+          stepExecutionModes: { [nodeId]: selectedStepMode },
+          streaming: true,
+          runNodeReflection: nodeReflectionEnabled,
+          advisorAutopilotEnabled,
+        });
       } catch {
         // handled in store
       }
     },
-    [id, isDirty, saveNow, currentExecution, execution, rerunStepInExecution, executePlaybook, nodes],
+    [id, isDirty, saveNow, currentExecution, execution, rerunStepInExecution, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled],
   );
 
   const handleResumeFromStep = useCallback(
@@ -658,7 +676,7 @@ function PlaybookCanvasInner() {
   const canSkipStep = useCallback(
     (nodeId: string) => {
       if (!currentExecution || currentExecution.playbookId !== id) return false;
-      return currentExecution.status === 'interrupted'
+      return getVisibleExecutionStatus(currentExecution) === 'interrupted'
         && currentExecution.interruptPayload?.taskId === nodeId;
     },
     [currentExecution, id],
@@ -677,7 +695,7 @@ function PlaybookCanvasInner() {
       const snapshotTask = snapshotTasks.find((candidate) => candidate.id === task?.id);
       if (!snapshotTask) return false;
       if (!canReuseExecutionForTask(targetExecution, task)) return false;
-      return targetExecution.status !== 'running';
+      return getVisibleExecutionStatus(targetExecution) !== 'running';
     },
     [currentExecution, execution, id, nodes],
   );
@@ -1004,6 +1022,8 @@ function PlaybookCanvasInner() {
             onExecutionModeChange={setExecutionMode}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={setNodeReflectionEnabled}
+            advisorAutopilotEnabled={advisorAutopilotEnabled}
+            onAdvisorAutopilotChange={setAdvisorAutopilotEnabled}
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={undo}

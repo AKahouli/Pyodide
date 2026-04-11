@@ -14,6 +14,25 @@ import { pLimit } from '../utils/execution.utils';
 
 type JudgeRecommendation = 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
 
+export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'output-format';
+
+export interface AdvisorRemediationItem {
+  id: string;
+  category: RemediationCategory;
+  scope: 'task' | 'playbook';
+  targetTaskId: string | null;
+  title: string;
+  description: string;
+  rationale?: string;
+  editable: boolean;
+  defaultSelected: boolean;
+  source: {
+    kind: string;
+    field: string;
+    index: number;
+  };
+}
+
 const NODE_JUDGE_TIMEOUT_MS = 60000;
 const EXECUTION_SUMMARY_TIMEOUT_MS = 60000;
 const PLAYBOOK_REWRITE_TIMEOUT_MS = 200000;
@@ -22,11 +41,21 @@ interface NodeJudgeResult {
   accuracyScore: number;
   completenessScore: number;
   overallScore: number;
+  confidence: number;
+  toolUsageScore: number;
   missingFacts: string[];
   incoherences: string[];
   unsupportedClaims: string[];
   handoffRisks: string[];
   rewriteHints: string[];
+  toolSelectionIssues: string[];
+  missingToolCalls: string[];
+  redundantToolCalls: string[];
+  toolOutputUseIssues: string[];
+  toolSequencingIssues: string[];
+  toolUsageStrengths: string[];
+  toolUsageRecommendation: string;
+  safeAutoFixType: 'optimize_step' | 'none';
   recommendation: JudgeRecommendation;
   reason: string;
   _model?: string;
@@ -34,13 +63,26 @@ interface NodeJudgeResult {
 
 interface ExecutionSummaryResult {
   overallScore: number;
+  confidence: number;
   structuralIssues: string[];
   promptIssues: string[];
   contractIssues: string[];
   handoffIssues: string[];
+  toolUsageIssues: string[];
+  crossStepToolPatterns: string[];
+  rootCauseTaskIds: string[];
+  highImpactRecommendations: string[];
   recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
   reason: string;
   _model?: string;
+}
+
+interface NormalizedNodeJudgePayload extends NodeJudgeResult {
+  _model: string | undefined;
+}
+
+interface NormalizedExecutionSummaryPayload extends ExecutionSummaryResult {
+  _model: string | undefined;
 }
 
 @Injectable()
@@ -97,6 +139,14 @@ export class PlaybookJudgeEnrichmentService {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
     });
+  }
+
+  async evaluateNodeNow(userId: string, executionId: string, taskId: string): Promise<void> {
+    await this.evaluateNodeAndPersist(userId, executionId, taskId);
+  }
+
+  async evaluateExecutionSummaryNowIfReady(userId: string, executionId: string): Promise<void> {
+    await this.evaluateExecutionSummaryIfReady(userId, executionId);
   }
 
   async applyCurrentPlaybook(userId: string, playbookId: string, executionId: string): Promise<any> {
@@ -330,16 +380,27 @@ export class PlaybookJudgeEnrichmentService {
       const judgeHistoryEntry = {
         id: new Types.ObjectId().toString(),
         createdAt: new Date(),
+        attemptNumber: taskResult.attemptNumber ?? null,
         model: payload._model || null,
         judgeResult: {
           accuracyScore: payload.accuracyScore,
           completenessScore: payload.completenessScore,
           overallScore: payload.overallScore,
+          confidence: payload.confidence,
+          toolUsageScore: payload.toolUsageScore,
           missingFacts: payload.missingFacts || [],
           incoherences: payload.incoherences || [],
           unsupportedClaims: payload.unsupportedClaims || [],
           handoffRisks: payload.handoffRisks || [],
           rewriteHints: payload.rewriteHints || [],
+          toolSelectionIssues: payload.toolSelectionIssues || [],
+          missingToolCalls: payload.missingToolCalls || [],
+          redundantToolCalls: payload.redundantToolCalls || [],
+          toolOutputUseIssues: payload.toolOutputUseIssues || [],
+          toolSequencingIssues: payload.toolSequencingIssues || [],
+          toolUsageStrengths: payload.toolUsageStrengths || [],
+          toolUsageRecommendation: payload.toolUsageRecommendation || '',
+          safeAutoFixType: payload.safeAutoFixType || 'none',
           recommendation: payload.recommendation || 'none',
           reason: payload.reason || '',
         },
@@ -428,6 +489,8 @@ export class PlaybookJudgeEnrichmentService {
       taskTitle: item.nodeTitle,
       judgeStatus: item.judgeStatus,
       judgeResult: item.judgeResult,
+      toolTrace: item.toolTrace || [],
+      llmPromptTrace: item.llmPromptTrace || [],
     }));
 
     const httpClient = this.liteLLMConnectionService.getHttpClient();
@@ -459,13 +522,22 @@ export class PlaybookJudgeEnrichmentService {
       ],
     }, { timeout: EXECUTION_SUMMARY_TIMEOUT_MS });
 
-    const payload = this.extractJsonPayload(response.data?.choices?.[0]?.message?.content) as ExecutionSummaryResult;
+    const usage = response.data?.usage;
+    const payload = this.normalizeExecutionSummaryPayload(
+      this.extractJsonPayload(response.data?.choices?.[0]?.message?.content),
+      usage?.model || model,
+    );
     const judgeSummary = {
-      overallScore: Number(payload.overallScore ?? 0),
+      overallScore: payload.overallScore,
+      confidence: payload.confidence,
       structuralIssues: payload.structuralIssues || [],
       promptIssues: payload.promptIssues || [],
       contractIssues: payload.contractIssues || [],
       handoffIssues: payload.handoffIssues || [],
+      toolUsageIssues: payload.toolUsageIssues || [],
+      crossStepToolPatterns: payload.crossStepToolPatterns || [],
+      rootCauseTaskIds: payload.rootCauseTaskIds || [],
+      highImpactRecommendations: payload.highImpactRecommendations || [],
       recommendation: payload.recommendation || 'update_current_playbook',
       reason: payload.reason || '',
     };
@@ -527,8 +599,11 @@ export class PlaybookJudgeEnrichmentService {
       ],
     }, { timeout: NODE_JUDGE_TIMEOUT_MS });
 
-    const payload = this.extractJsonPayload(response.data?.choices?.[0]?.message?.content) as NodeJudgeResult;
     const usage = response.data?.usage;
+    const payload = this.normalizeNodeJudgePayload(
+      this.extractJsonPayload(response.data?.choices?.[0]?.message?.content),
+      usage?.model || model,
+    );
     if (usage) {
       this.usageService.recordUsage({
         userId: String(execution.executedBy || 'playbook-judge'),
@@ -540,7 +615,7 @@ export class PlaybookJudgeEnrichmentService {
       }).catch((err) => this.logger.warn('Failed to record node reflection usage', { error: (err as Error).message }));
     }
 
-    return { ...payload, _model: payload._model || usage?.model || model };
+    return payload;
   }
 
   private buildUpstreamContext(execution: any, taskId: string): Record<string, unknown> {
@@ -567,6 +642,91 @@ export class PlaybookJudgeEnrichmentService {
     });
 
     return { upstreamTasks };
+  }
+
+  private normalizeNodeJudgePayload(payload: unknown, modelName?: string): NormalizedNodeJudgePayload {
+    const source = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+
+    // Keep advisor parsing defensive because these prompt contracts evolve often and malformed payloads must degrade safely.
+    return {
+      accuracyScore: this.normalizeScore(source.accuracyScore),
+      completenessScore: this.normalizeScore(source.completenessScore),
+      overallScore: this.normalizeScore(source.overallScore),
+      confidence: this.normalizeConfidence(source.confidence),
+      toolUsageScore: this.normalizeScore(source.toolUsageScore),
+      missingFacts: this.normalizeStringList(source.missingFacts),
+      incoherences: this.normalizeStringList(source.incoherences),
+      unsupportedClaims: this.normalizeStringList(source.unsupportedClaims),
+      handoffRisks: this.normalizeStringList(source.handoffRisks),
+      rewriteHints: this.normalizeStringList(source.rewriteHints),
+      toolSelectionIssues: this.normalizeStringList(source.toolSelectionIssues),
+      missingToolCalls: this.normalizeStringList(source.missingToolCalls),
+      redundantToolCalls: this.normalizeStringList(source.redundantToolCalls),
+      toolOutputUseIssues: this.normalizeStringList(source.toolOutputUseIssues),
+      toolSequencingIssues: this.normalizeStringList(source.toolSequencingIssues),
+      toolUsageStrengths: this.normalizeStringList(source.toolUsageStrengths),
+      toolUsageRecommendation: this.normalizeText(source.toolUsageRecommendation),
+      safeAutoFixType: source.safeAutoFixType === 'optimize_step' ? 'optimize_step' : 'none',
+      recommendation: this.normalizeNodeRecommendation(source.recommendation),
+      reason: this.normalizeText(source.reason),
+      _model: this.normalizeText(source._model) || modelName,
+    };
+  }
+
+  private normalizeExecutionSummaryPayload(payload: unknown, modelName?: string): NormalizedExecutionSummaryPayload {
+    const source = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+
+    return {
+      overallScore: this.normalizeScore(source.overallScore),
+      confidence: this.normalizeConfidence(source.confidence),
+      structuralIssues: this.normalizeStringList(source.structuralIssues),
+      promptIssues: this.normalizeStringList(source.promptIssues),
+      contractIssues: this.normalizeStringList(source.contractIssues),
+      handoffIssues: this.normalizeStringList(source.handoffIssues),
+      toolUsageIssues: this.normalizeStringList(source.toolUsageIssues),
+      crossStepToolPatterns: this.normalizeStringList(source.crossStepToolPatterns),
+      rootCauseTaskIds: this.normalizeStringList(source.rootCauseTaskIds),
+      highImpactRecommendations: this.normalizeStringList(source.highImpactRecommendations),
+      recommendation: this.normalizeExecutionRecommendation(source.recommendation),
+      reason: this.normalizeText(source.reason),
+      _model: this.normalizeText(source._model) || modelName,
+    };
+  }
+
+  private normalizeScore(value: unknown): number {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    return Math.max(0, Math.min(100, parsed));
+  }
+
+  private normalizeConfidence(value: unknown): number {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed)) return 0;
+    if (parsed <= 1) {
+      return Math.max(0, Math.min(1, parsed));
+    }
+    return Math.max(0, Math.min(1, parsed / 100));
+  }
+
+  private normalizeStringList(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => this.normalizeText(item))
+      .filter((item) => item.length > 0);
+  }
+
+  private normalizeText(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private normalizeNodeRecommendation(value: unknown): JudgeRecommendation {
+    return value === 'update_current_playbook' || value === 'generate_new_optimized_playbook' || value === 'none'
+      ? value
+      : 'none';
+  }
+
+  private normalizeExecutionRecommendation(value: unknown): 'update_current_playbook' | 'generate_new_optimized_playbook' {
+    return value === 'generate_new_optimized_playbook' ? 'generate_new_optimized_playbook' : 'update_current_playbook';
   }
 
   private preserveInputMappings(originalTasks: any[], rewrittenTasks: any[]): any[] {
@@ -613,5 +773,170 @@ export class PlaybookJudgeEnrichmentService {
       }
       return {};
     }
+  }
+
+  async getRemediations(executionId: string, taskId?: string): Promise<AdvisorRemediationItem[]> {
+    const execution = await this.executionModel.findById(executionId).lean().exec();
+    if (!execution) return [];
+
+    const items: AdvisorRemediationItem[] = [];
+
+    const taskResultsFilter = taskId
+      ? (execution.taskResults || []).filter((tr: any) => tr.taskId === taskId)
+      : (execution.taskResults || []);
+
+    for (const tr of taskResultsFilter) {
+      const jr = tr.judgeResult;
+      if (!jr) continue;
+
+      items.push(...this.classifyStringList(jr.rewriteHints, tr.taskId, 'rewriteHints', 'prompt', true));
+      items.push(...this.classifyStringList(jr.missingFacts, tr.taskId, 'missingFacts', 'evidence', false));
+      items.push(...this.classifyStringList(jr.incoherences, tr.taskId, 'incoherences', 'prompt', false));
+      items.push(...this.classifyStringList(jr.unsupportedClaims, tr.taskId, 'unsupportedClaims', 'contract', false));
+      items.push(...this.classifyStringList(jr.handoffRisks, tr.taskId, 'handoffRisks', 'handoff', false));
+      items.push(...this.classifyStringList(jr.toolSelectionIssues, tr.taskId, 'toolSelectionIssues', 'tooling', false));
+      items.push(...this.classifyStringList(jr.missingToolCalls, tr.taskId, 'missingToolCalls', 'tooling', false));
+      items.push(...this.classifyStringList(jr.redundantToolCalls, tr.taskId, 'redundantToolCalls', 'tooling', false));
+      items.push(...this.classifyStringList(jr.toolOutputUseIssues, tr.taskId, 'toolOutputUseIssues', 'tooling', false));
+      items.push(...this.classifyStringList(jr.toolSequencingIssues, tr.taskId, 'toolSequencingIssues', 'tooling', false));
+    }
+
+    if (execution.judgeSummary) {
+      const js = execution.judgeSummary as any;
+      items.push(...this.classifyStringList(js.toolUsageIssues || [], null, 'summary.toolUsageIssues', 'tooling', false, true));
+      items.push(...this.classifyStringList(js.crossStepToolPatterns || [], null, 'summary.crossStepToolPatterns', 'structure', false, true));
+      items.push(...this.classifyStringList(js.highImpactRecommendations || [], null, 'summary.highImpactRecommendations', 'structure', true, true));
+    }
+
+    return items;
+  }
+
+  async applyRemediations(
+    userId: string,
+    playbookId: string,
+    executionId: string,
+    selectedIds: string[],
+    mode: 'update-current' | 'generate-new' = 'update-current',
+  ): Promise<any> {
+    const allItems = await this.getRemediations(executionId);
+    const selected = allItems.filter((item) => selectedIds.includes(item.id));
+
+    if (selected.length === 0) {
+      return mode === 'update-current'
+        ? this.playbookService.findById(playbookId)
+        : null;
+    }
+
+    const playbook = await this.playbookService.findById(playbookId);
+    if (!playbook) throw new Error('Playbook not found');
+
+    const execution = await this.executionModel.findById(executionId).lean().exec();
+    if (!execution) throw new Error('Execution not found');
+
+    const httpClient = this.liteLLMConnectionService.getHttpClient();
+    if (!httpClient) throw new Error('LiteLLM is not available');
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    if (!model) throw new Error('No default model configured');
+
+    const prompt = await this.promptService.findByKey('judge.rewrite_current_playbook');
+    const systemPrompt = prompt?.systemTemplate?.trim() || 'Return strict JSON only.';
+
+    const userPrompt = this.renderTemplate(prompt?.userTemplate || '', {
+      playbookJson: JSON.stringify(execution.playbookSnapshot || playbook || {}, null, 2),
+      judgeSummaryJson: JSON.stringify(execution.judgeSummary || {}, null, 2),
+    });
+
+    const response = await httpClient.post('/v1/chat/completions', {
+      model,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: `${userPrompt}\n\nApply only the following remediation hints (exclude all others):\n${selected.map((item) => `[${item.category.toUpperCase()}] ${item.description}`).join('\n')}`,
+        },
+      ],
+    }, { timeout: PLAYBOOK_REWRITE_TIMEOUT_MS });
+
+    const parsed = this.extractJsonPayload(response.data?.choices?.[0]?.message?.content);
+    const usage = response.data?.usage;
+    if (usage) {
+      this.usageService.recordUsage({
+        userId: String(execution.executedBy || 'playbook-judge'),
+        inputTokens: usage.prompt_tokens || usage.input_tokens || 0,
+        outputTokens: usage.completion_tokens || usage.output_tokens || 0,
+        usageType: UsageType.PLAYBOOK,
+        modelName: usage.model || model,
+        endpoint: 'judge.apply_remediations',
+      }).catch((err) => this.logger.warn('Failed to record advisor usage', { error: (err as Error).message }));
+    }
+
+    if (mode === 'generate-new') {
+      const tasks = this.normalizeWorkspaceIds(
+        playbook.workspaces || [],
+        Array.isArray(parsed.workspaces) ? parsed.workspaces : [],
+      );
+      return this.playbookService.createWithTasksAndEdges(
+        userId,
+        parsed.name || `${playbook.name} (optimized)`,
+        parsed.description || playbook.description || '',
+        this.preserveInputMappings(playbook.tasks || [], Array.isArray(parsed.tasks) ? parsed.tasks : []),
+        Array.isArray(parsed.edges) && parsed.edges.length > 0 ? parsed.edges : playbook.edges,
+        tasks,
+      );
+    }
+
+    return this.playbookService.update(playbookId, {
+      name: parsed.name || undefined,
+      description: parsed.description || undefined,
+      tasks: parsed.tasks || undefined,
+      edges: parsed.edges || undefined,
+    } as any);
+  }
+
+  private classifyStringList(
+    items: string[] | undefined | null,
+    taskId: string | null,
+    field: string,
+    defaultCategory: RemediationCategory,
+    editable: boolean,
+    playbookScope = false,
+  ): AdvisorRemediationItem[] {
+    if (!Array.isArray(items) || items.length === 0) return [];
+
+    return items.map((text, index) => ({
+      id: `${field}:${taskId || 'playbook'}:${index}`,
+      category: this.inferCategory(text, defaultCategory),
+      scope: playbookScope ? ('playbook' as const) : ('task' as const),
+      targetTaskId: taskId,
+      title: this.extractTitle(text),
+      description: text,
+      rationale: undefined,
+      editable,
+      defaultSelected: editable,
+      source: { kind: field, field, index },
+    }));
+  }
+
+  private inferCategory(text: string, fallback: RemediationCategory): RemediationCategory {
+    const lower = text.toLowerCase();
+    if (/prompt|instruction|system message|context/i.test(lower)) return 'prompt';
+    if (/tool|function|api call|search|retriev/i.test(lower)) return 'tooling';
+    if (/contract|output format|schema|structure|json/i.test(lower)) return 'contract';
+    if (/handoff|transition|upstream|downstream|edge/i.test(lower)) return 'handoff';
+    if (/fact|evidence|source|citation|reference|data/i.test(lower)) return 'evidence';
+    if (/format|template|output guide/i.test(lower)) return 'output-format';
+    return fallback;
+  }
+
+  private extractTitle(text: string): string {
+    const maxLen = 80;
+    if (text.length <= maxLen) return text;
+    const truncated = text.slice(0, maxLen);
+    const lastSpace = truncated.lastIndexOf(' ');
+    return lastSpace > maxLen / 2 ? truncated.slice(0, lastSpace) + '…' : truncated + '…';
   }
 }

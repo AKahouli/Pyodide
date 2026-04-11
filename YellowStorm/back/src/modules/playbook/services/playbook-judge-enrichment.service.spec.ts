@@ -46,4 +46,70 @@ describe('PlaybookJudgeEnrichmentService', () => {
       [sourceWorkspace],
     );
   });
+
+  it('normalizes malformed advisor step payloads defensively', () => {
+    const service = new PlaybookJudgeEnrichmentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    const normalized = (service as any).normalizeNodeJudgePayload({
+      overallScore: '87',
+      confidence: 82,
+      toolUsageScore: 'bad',
+      missingFacts: ['fact', 1, null],
+      toolSelectionIssues: 'wrong-shape',
+      safeAutoFixType: 'delete_everything',
+      recommendation: 'generate_new_optimized_playbook',
+      reason: '  Needs workflow cleanup  ',
+    }, 'model-a');
+
+    expect(normalized).toEqual(expect.objectContaining({
+      overallScore: 87,
+      confidence: 0.82,
+      toolUsageScore: 0,
+      missingFacts: ['fact'],
+      toolSelectionIssues: [],
+      safeAutoFixType: 'none',
+      recommendation: 'generate_new_optimized_playbook',
+      reason: 'Needs workflow cleanup',
+      _model: 'model-a',
+    }));
+  });
+
+  it('normalizes malformed advisor execution summary payloads defensively', () => {
+    const service = new PlaybookJudgeEnrichmentService(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    const normalized = (service as any).normalizeExecutionSummaryPayload({
+      overallScore: 101,
+      confidence: '0.5',
+      toolUsageIssues: ['duplicate calls', null],
+      crossStepToolPatterns: 'invalid',
+      recommendation: 'not-allowed',
+    }, 'model-b');
+
+    expect(normalized).toEqual(expect.objectContaining({
+      overallScore: 100,
+      confidence: 0.5,
+      toolUsageIssues: ['duplicate calls'],
+      crossStepToolPatterns: [],
+      recommendation: 'update_current_playbook',
+      _model: 'model-b',
+    }));
+  });
 });

@@ -1,0 +1,4 @@
+uid=1_0 RootWebArea url="http://localhost:3000/"
+  uid=1_1 StaticText "{"success":false,"error":{"timestamp":"2026-04-11T08:33:08.027Z","path":"/","method":"GET","requestId":"46f24ea4-8393-46ea-b15c-ad6c59a0abe4","code":"ERR_1002","message":"Cannot GET /","statusCode":404}}"
+  uid=1_2 StaticText "Pretty-print"
+  uid=1_3 checkbox "Pretty-print"

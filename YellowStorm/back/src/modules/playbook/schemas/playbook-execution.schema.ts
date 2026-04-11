@@ -71,6 +71,9 @@ export class TaskJudgeHistoryEntry {
   @Prop({ type: Date, required: true })
   createdAt!: Date;
 
+  @Prop({ type: Number, default: null })
+  attemptNumber!: number | null;
+
   @Prop({ type: String, default: null })
   model!: string | null;
 
@@ -79,11 +82,21 @@ export class TaskJudgeHistoryEntry {
     accuracyScore: number;
     completenessScore: number;
     overallScore: number;
+    confidence: number;
+    toolUsageScore: number;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];
     handoffRisks: string[];
     rewriteHints: string[];
+    toolSelectionIssues: string[];
+    missingToolCalls: string[];
+    redundantToolCalls: string[];
+    toolOutputUseIssues: string[];
+    toolSequencingIssues: string[];
+    toolUsageStrengths: string[];
+    toolUsageRecommendation: string;
+    safeAutoFixType: 'optimize_step' | 'none';
     recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
   };
@@ -245,11 +258,21 @@ export class TaskResult {
     accuracyScore: number;
     completenessScore: number;
     overallScore: number;
+    confidence: number;
+    toolUsageScore: number;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];
     handoffRisks: string[];
     rewriteHints: string[];
+    toolSelectionIssues: string[];
+    missingToolCalls: string[];
+    redundantToolCalls: string[];
+    toolOutputUseIssues: string[];
+    toolSequencingIssues: string[];
+    toolUsageStrengths: string[];
+    toolUsageRecommendation: string;
+    safeAutoFixType: 'optimize_step' | 'none';
     recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
   } | null;
@@ -265,6 +288,29 @@ export class TaskResult {
 
   @Prop({ type: [TaskStepExecutionEntrySchema], default: [] })
   stepExecutions!: TaskStepExecutionEntry[];
+
+  @Prop({ type: Number, default: 0 })
+  advisorTurnCount!: number;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  advisorTurnHistory!: Array<{
+    turn: number;
+    createdAt: Date;
+    score: number | null;
+    recommendation: string | null;
+    safeAutoFixType: string | null;
+    actionType: 'evaluate' | 'optimize_step' | 'stop';
+    stopReason?: string | null;
+  }>;
+
+  @Prop({ type: String, default: null })
+  lastAdvisorAction!: string | null;
+
+  @Prop({ type: Number, default: null })
+  lastAdvisorScoreDelta!: number | null;
+
+  @Prop({ type: String, default: null })
+  advisorStopReason!: string | null;
 
   @Prop({ type: Number, default: 1 })
   attemptNumber!: number;
@@ -298,6 +344,9 @@ export class PlaybookJudgeSummary {
   @Prop({ type: Number, default: 0 })
   overallScore!: number;
 
+  @Prop({ type: Number, default: 0 })
+  confidence!: number;
+
   @Prop({ type: [String], default: [] })
   structuralIssues!: string[];
 
@@ -309,6 +358,18 @@ export class PlaybookJudgeSummary {
 
   @Prop({ type: [String], default: [] })
   handoffIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  toolUsageIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  crossStepToolPatterns!: string[];
+
+  @Prop({ type: [String], default: [] })
+  rootCauseTaskIds!: string[];
+
+  @Prop({ type: [String], default: [] })
+  highImpactRecommendations!: string[];
 
   @Prop({ type: String, enum: ['update_current_playbook', 'generate_new_optimized_playbook'], default: 'update_current_playbook' })
   recommendation!: 'update_current_playbook' | 'generate_new_optimized_playbook';
@@ -347,6 +408,27 @@ export class PlaybookExecution extends Document {
 
   @Prop({ type: Boolean, default: true })
   reflectionEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  advisorAutopilotEnabled!: boolean;
+
+  @Prop({ type: Number, default: 80 })
+  advisorAutopilotTargetScore!: number;
+
+  @Prop({ type: Number, default: 2 })
+  advisorAutopilotMaxTurns!: number;
+
+  @Prop({ type: String, enum: ['idle', 'running', 'judging', 'optimizing', 'rerunning', 'completed', 'stopped', 'failed'], default: 'idle' })
+  advisorAutopilotStatus!: 'idle' | 'running' | 'judging' | 'optimizing' | 'rerunning' | 'completed' | 'stopped' | 'failed';
+
+  @Prop({ type: String, default: null })
+  advisorAutopilotTaskId!: string | null;
+
+  @Prop({ type: Number, default: 0 })
+  advisorAutopilotAttemptCount!: number;
+
+  @Prop({ type: String, default: null })
+  advisorAutopilotLastError!: string | null;
 
   @Prop({ type: String, enum: ['idle', 'evaluating', 'evaluated', 'failed'], default: 'idle' })
   judgeSummaryStatus!: 'idle' | 'evaluating' | 'evaluated' | 'failed';

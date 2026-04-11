@@ -8,6 +8,7 @@ import {
   PlaybookExecutionDocument,
   ExecutionStatus,
   StepStatus,
+  JudgeStatus,
 } from '../schemas/playbook-execution.schema';
 import { PlaybookService } from './playbook.service';
 import { PlaybookGrpcService } from './playbook-grpc.service';
@@ -44,6 +45,23 @@ import {
 import type { BufferedStepResult } from '../utils/execution.utils';
 
 const SKIP_STEP_REASON = '__SKIP_STEP__';
+const ADVISOR_AUTOPILOT_DEFAULT_TARGET_SCORE = 80;
+const ADVISOR_AUTOPILOT_DEFAULT_MAX_TURNS = 2;
+
+type AdvisorAutopilotStatus = 'idle' | 'running' | 'judging' | 'optimizing' | 'rerunning' | 'completed' | 'stopped' | 'failed';
+
+interface AdvisorAutopilotConfig {
+  enabled: boolean;
+  targetScore: number;
+  maxTurns: number;
+}
+
+type AdvisorAutopilotStopReason =
+  | 'target_reached'
+  | 'max_turns_reached'
+  | 'advisor_abstained'
+  | 'no_safe_fix_available'
+  | 'advisor_evaluation_failed';
 
 @Injectable()
 export class PlaybookExecutionService {
@@ -769,6 +787,11 @@ export class PlaybookExecutionService {
           semanticMatch: null,
           evaluationHistory: [],
           stepExecutions: [],
+          advisorTurnCount: 0,
+          advisorTurnHistory: [],
+          lastAdvisorAction: null,
+          lastAdvisorScoreDelta: null,
+          advisorStopReason: null,
         },
       },
     });
@@ -790,10 +813,18 @@ export class PlaybookExecutionService {
       totalTokens: null,
       modelName: null,
       semanticMatch: null,
+      judgeStatus: JudgeStatus.IDLE,
+      judgeResult: null,
+      judgeError: null,
       attemptNumber,
       isStale: false,
       staleReason: null,
       invalidatedByTaskId: null,
+      advisorTurnCount: 0,
+      advisorTurnHistory: [],
+      lastAdvisorAction: null,
+      lastAdvisorScoreDelta: null,
+      advisorStopReason: null,
     });
   }
 
@@ -912,12 +943,20 @@ export class PlaybookExecutionService {
       options?.executionTrigger === 'scheduled' ? 'scheduled' : 'manual';
     const mode = dto.singleStepTaskId ? 'single-step' : 'full-workflow';
     const globalExecutionMode = dto.executionMode || 'live';
+    const advisorAutopilot = this.normalizeAdvisorAutopilotConfig(
+      dto.singleStepTaskId ? dto.advisorAutopilotEnabled === true : false,
+      dto.advisorAutopilotTargetScore,
+      dto.advisorAutopilotMaxTurns,
+    );
     this.logger.log('executePlaybook called', {
       userId,
       playbookId,
       mode,
       executionMode: globalExecutionMode,
       singleStepTaskId: dto.singleStepTaskId || null,
+      advisorAutopilotEnabled: advisorAutopilot.enabled,
+      advisorAutopilotTargetScore: advisorAutopilot.targetScore,
+      advisorAutopilotMaxTurns: advisorAutopilot.maxTurns,
       query: dto.query || null,
     });
 
@@ -1052,6 +1091,11 @@ export class PlaybookExecutionService {
       judgeStatus: 'idle',
       judgeResult: null,
       judgeHistory: [],
+      advisorTurnCount: 0,
+      advisorTurnHistory: [],
+      lastAdvisorAction: null,
+      lastAdvisorScoreDelta: null,
+      advisorStopReason: null,
     }));
 
     const stepExecutionModes = dto.stepExecutionModes || {};
@@ -1084,6 +1128,13 @@ export class PlaybookExecutionService {
       executionTrigger,
       runEvaluation: dto.runEvaluation === true,
       reflectionEnabled: dto.runNodeReflection !== false,
+      advisorAutopilotEnabled: advisorAutopilot.enabled,
+      advisorAutopilotTargetScore: advisorAutopilot.targetScore,
+      advisorAutopilotMaxTurns: advisorAutopilot.maxTurns,
+      advisorAutopilotStatus: advisorAutopilot.enabled ? 'running' : 'idle',
+      advisorAutopilotTaskId: dto.singleStepTaskId || null,
+      advisorAutopilotAttemptCount: 0,
+      advisorAutopilotLastError: null,
       judgeSummaryStatus: 'idle',
       judgeSummary: null,
       replaySourceByTask: hasReplaySteps
@@ -1133,6 +1184,15 @@ export class PlaybookExecutionService {
         status: ExecutionStatus.RUNNING,
         executionMode: globalExecutionMode,
         executionTrigger,
+        reflectionEnabled: dto.runNodeReflection !== false,
+        advisorAutopilotEnabled: advisorAutopilot.enabled,
+        advisorAutopilotTargetScore: advisorAutopilot.targetScore,
+        advisorAutopilotMaxTurns: advisorAutopilot.maxTurns,
+        advisorAutopilotStatus: advisorAutopilot.enabled ? 'running' : 'idle',
+        advisorAutopilotTaskId: dto.singleStepTaskId || null,
+        advisorAutopilotAttemptCount: 0,
+        advisorAutopilotLastError: null,
+        singleStepTaskId: dto.singleStepTaskId || null,
         replaySourceByTask: hasReplaySteps
           ? this.buildReplaySourceMap(activeReplayMap)
           : null,
@@ -1148,7 +1208,68 @@ export class PlaybookExecutionService {
     if (dto.singleStepTaskId) {
       // Single-step mode: use RunStep gRPC for just the one task
       this.logger.log('Starting single-step execution loop', { executionId, taskId: dto.singleStepTaskId });
-      this.runExecutionLoop(userId, executionId, orderedLevels, grpcAgentMap, dto, effectiveModes, dto.streaming === true, workspaceContexts, userEmail, playbook.name, activeReplayMap).catch(
+      const singleStepTask = orderedTasks.find((task: any) => task.id === dto.singleStepTaskId);
+      const selectedExecutionMode = effectiveModes.get(dto.singleStepTaskId) || 'live';
+      const validatedReplay = activeReplayMap.get(dto.singleStepTaskId) || null;
+      if (!singleStepTask) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Selected step does not exist in the execution order');
+      }
+      if (advisorAutopilot.enabled) {
+        this.runSingleStepAdvisorAutopilot(
+          userId,
+          executionId,
+          playbook,
+          singleStepTask,
+          grpcAgentMap,
+          workspaceContexts,
+          userEmail,
+          selectedExecutionMode,
+          validatedReplay,
+          dto.streaming === true,
+          advisorAutopilot,
+        ).catch(
+          async (err) => {
+            this.logger.error('Advisor Autopilot loop failed', {
+              executionId,
+              taskId: dto.singleStepTaskId,
+              error: (err as Error).message,
+            });
+            try {
+              await this.updateAdvisorAutopilotState(userId, executionId, {
+                status: 'failed',
+                taskId: dto.singleStepTaskId || null,
+                lastError: (err as Error).message,
+              });
+              const exec = await this.executionModel.findById(executionId).select('startedAt status').lean().exec();
+              const startedAt = exec?.startedAt ? new Date(exec.startedAt) : new Date();
+              const isTerminal = exec?.status && ['completed', 'failed', 'cancelled'].includes(exec.status as string);
+              if (!isTerminal) {
+                await this.markRemainingSkippedAndFail(userId, executionId, (err as Error).message, startedAt);
+              }
+            } catch (finalizeErr) {
+              this.logger.error('Failed to finalize execution after Advisor Autopilot error', {
+                executionId,
+                error: (finalizeErr as Error).message,
+              });
+            }
+          },
+        );
+        return { executionId };
+      }
+      this.runSingleStepExecution(
+        userId,
+        executionId,
+        playbook,
+        singleStepTask,
+        grpcAgentMap,
+        workspaceContexts,
+        userEmail,
+        selectedExecutionMode,
+        validatedReplay,
+        dto.streaming === true,
+        dto.runEvaluation === true,
+        dto.runNodeReflection !== false,
+      ).catch(
         async (err) => {
           this.logger.error('Execution loop failed', {
             executionId,
@@ -2279,6 +2400,350 @@ export class PlaybookExecutionService {
     await this.markExecutionCompleted(userId, executionId, startedAt);
   }
 
+  private async runSingleStepAdvisorAutopilot(
+    userId: string,
+    executionId: string,
+    playbook: any,
+    initialTask: any,
+    grpcAgentMap: Map<string, IGrpcAgent>,
+    workspaceContexts: Array<{ workspace_id: string; workspace_documents: any[] }> = [],
+    userEmail: string,
+    initialExecutionMode: string,
+    initialValidatedReplay: any,
+    streamingEnabled: boolean,
+    autopilot: AdvisorAutopilotConfig,
+  ): Promise<void> {
+    const taskId = initialTask.id;
+    let task = initialTask;
+    let selectedExecutionMode = initialExecutionMode;
+    let validatedReplay = initialValidatedReplay;
+    let remediationTurn = 0;
+    let previousScore: number | null = null;
+
+    const initialExecution = await this.executionModel.findById(executionId)
+      .select('playbookId playbookSnapshot startedAt runEvaluation reflectionEnabled currentAttemptNumber')
+      .lean()
+      .exec();
+    if (!initialExecution) {
+      return;
+    }
+
+    let snapshot = initialExecution.playbookSnapshot as any;
+    let taskOutputs = new Map<string, string>();
+    const startedAt = initialExecution.startedAt ? new Date(initialExecution.startedAt) : new Date();
+
+    while (true) {
+      const outcome = await this.executeStep(
+        userId,
+        executionId,
+        playbook._id.toString(),
+        task,
+        grpcAgentMap,
+        taskOutputs,
+        snapshot,
+        workspaceContexts,
+        userEmail,
+        playbook.name,
+        selectedExecutionMode,
+        validatedReplay,
+        initialExecution.runEvaluation === true,
+        false,
+        streamingEnabled,
+      );
+
+      if (outcome.outcome === 'interrupted') {
+        const interrupt = outcome.response?.interrupt;
+        await this.executionModel.findByIdAndUpdate(executionId, {
+          $set: {
+            status: ExecutionStatus.INTERRUPTED,
+            threadId: outcome.response?.thread_id || null,
+            interruptPayload: interrupt
+              ? {
+                  type: interrupt.type,
+                  taskId: interrupt.task_id,
+                  taskTitle: interrupt.task_title,
+                  message: interrupt.message,
+                  threadId: interrupt.thread_id,
+                  payloadJson: interrupt.payload_json,
+                }
+              : null,
+          },
+        }).exec();
+        this.streamGateway.sendToUser(userId, {
+          type: 'playbook_interrupt',
+          data: {
+            executionId,
+            taskId,
+            type: interrupt?.type || 'unknown',
+            message: interrupt?.message || '',
+            threadId: outcome.response?.thread_id || '',
+          },
+        });
+        await this.updateAdvisorAutopilotState(userId, executionId, {
+          status: 'stopped',
+          taskId,
+          attemptCount: remediationTurn,
+          lastError: null,
+        });
+        return;
+      }
+
+      if (outcome.outcome === 'failed') {
+        await this.updateAdvisorAutopilotState(userId, executionId, {
+          status: 'failed',
+          taskId,
+          attemptCount: remediationTurn,
+          lastError: outcome.error || 'Step failed',
+        });
+        await this.markRemainingSkippedAndFail(userId, executionId, outcome.error || 'Step failed', startedAt);
+        return;
+      }
+
+      await this.updateAdvisorAutopilotState(userId, executionId, {
+        status: 'judging',
+        taskId,
+        attemptCount: remediationTurn,
+        lastError: null,
+      });
+
+      try {
+        await this.judgeEnrichmentService.evaluateNodeNow(userId, executionId, taskId);
+        await this.judgeEnrichmentService.evaluateExecutionSummaryNowIfReady(userId, executionId);
+      } catch (error) {
+        await this.updateAdvisorAutopilotState(userId, executionId, {
+          status: 'failed',
+          taskId,
+          attemptCount: remediationTurn,
+          lastError: error instanceof Error ? error.message : 'Advisor evaluation failed',
+        });
+        await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+          turn: remediationTurn,
+          score: previousScore,
+          recommendation: null,
+          safeAutoFixType: null,
+          actionType: 'stop',
+          stopReason: 'advisor_evaluation_failed',
+          scoreDelta: null,
+        });
+        await this.markExecutionCompleted(userId, executionId, startedAt);
+        return;
+      }
+
+      const taskResult = await this.getExecutionTaskResult(executionId, taskId);
+      const judgeResult = taskResult?.judgeResult || null;
+      const currentScore = judgeResult?.overallScore ?? null;
+      const scoreDelta = previousScore !== null && currentScore !== null ? currentScore - previousScore : null;
+      const effectiveSafeAutoFixType = this.resolveAdvisorAutopilotFixType(judgeResult);
+
+      await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+        turn: remediationTurn,
+        score: currentScore,
+        recommendation: judgeResult?.recommendation ?? null,
+        safeAutoFixType: effectiveSafeAutoFixType,
+        actionType: 'evaluate',
+        scoreDelta,
+      });
+
+      if (!judgeResult) {
+        await this.updateAdvisorAutopilotState(userId, executionId, {
+          status: 'failed',
+          taskId,
+          attemptCount: remediationTurn,
+          lastError: 'Advisor evaluation did not produce a result',
+        });
+        await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+          turn: remediationTurn,
+          score: currentScore,
+          recommendation: null,
+          safeAutoFixType: null,
+          actionType: 'stop',
+          stopReason: 'advisor_evaluation_failed',
+          scoreDelta,
+        });
+        await this.markExecutionCompleted(userId, executionId, startedAt);
+        return;
+      }
+
+      const stopReason =
+        judgeResult.overallScore > autopilot.targetScore
+          ? 'target_reached'
+          : remediationTurn >= autopilot.maxTurns
+            ? 'max_turns_reached'
+            : effectiveSafeAutoFixType !== 'optimize_step'
+              ? (judgeResult.recommendation === 'none' ? 'advisor_abstained' : 'no_safe_fix_available')
+              : null;
+
+      if (stopReason) {
+        await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+          turn: remediationTurn,
+          score: currentScore,
+          recommendation: judgeResult.recommendation,
+          safeAutoFixType: effectiveSafeAutoFixType,
+          actionType: 'stop',
+          stopReason,
+          scoreDelta,
+        });
+        await this.updateAdvisorAutopilotState(userId, executionId, {
+          status: stopReason === 'target_reached' ? 'completed' : 'stopped',
+          taskId,
+          attemptCount: remediationTurn,
+          lastError: null,
+        });
+        await this.markExecutionCompleted(userId, executionId, startedAt);
+        return;
+      }
+
+      remediationTurn += 1;
+      await this.updateAdvisorAutopilotState(userId, executionId, {
+        status: 'optimizing',
+        taskId,
+        attemptCount: remediationTurn,
+        lastError: null,
+      });
+      await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+        turn: remediationTurn,
+        score: currentScore,
+        recommendation: judgeResult.recommendation,
+        safeAutoFixType: effectiveSafeAutoFixType,
+        actionType: 'optimize_step',
+        scoreDelta,
+      });
+
+      await this.judgeEnrichmentService.optimizeStep(userId, playbook._id.toString(), executionId, taskId);
+      const latestPlaybook = await this.playbookService.findRawById(playbook._id.toString());
+      if (!latestPlaybook) {
+        throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+      }
+
+      const executionForRetry = await this.executionModel.findById(executionId)
+        .select('playbookSnapshot currentAttemptNumber')
+        .lean()
+        .exec();
+      if (!executionForRetry) {
+        throw new NotFoundException(ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND);
+      }
+      snapshot = this.refreshSnapshotTask(executionForRetry.playbookSnapshot as any, latestPlaybook, taskId);
+      await this.executionModel.findByIdAndUpdate(executionId, { $set: { playbookSnapshot: snapshot } }).exec();
+
+      const nextAttemptNumber = (executionForRetry.currentAttemptNumber ?? 1) + 1;
+      await this.prepareExecutionForRerun(executionId, taskId, nextAttemptNumber);
+      await this.resetTaskForAttempt(executionId, taskId, nextAttemptNumber);
+      await this.appendAttemptHistory(executionId, nextAttemptNumber, 'rerun_step', taskId, null);
+      await this.updateAdvisorAutopilotState(userId, executionId, {
+        status: 'rerunning',
+        taskId,
+        attemptCount: remediationTurn,
+        lastError: null,
+      });
+
+      const taskMap = this.buildTaskMapFromSnapshot(snapshot);
+      task = taskMap.get(taskId);
+      selectedExecutionMode = (task as any)?.stepReplayMode || selectedExecutionMode;
+      validatedReplay = selectedExecutionMode !== 'live'
+        ? await this.replayService.getActiveReplay(playbook._id.toString(), taskId)
+        : null;
+      previousScore = currentScore;
+      taskOutputs = new Map<string, string>();
+    }
+  }
+
+  private async runSingleStepExecution(
+    userId: string,
+    executionId: string,
+    playbook: any,
+    task: any,
+    grpcAgentMap: Map<string, IGrpcAgent>,
+    workspaceContexts: Array<{ workspace_id: string; workspace_documents: any[] }> = [],
+    userEmail: string,
+    executionMode: string,
+    validatedReplay: any,
+    streamingEnabled: boolean,
+    runEvaluation: boolean,
+    runNodeReflection: boolean,
+  ): Promise<void> {
+    const execution = await this.executionModel.findById(executionId)
+      .select('playbookSnapshot startedAt')
+      .lean()
+      .exec();
+    if (!execution) {
+      return;
+    }
+
+    const startedAt = execution.startedAt ? new Date(execution.startedAt) : new Date();
+    const outcome = await this.executeStep(
+      userId,
+      executionId,
+      playbook._id.toString(),
+      task,
+      grpcAgentMap,
+      new Map<string, string>(),
+      execution.playbookSnapshot as any,
+      workspaceContexts,
+      userEmail,
+      playbook.name,
+      executionMode,
+      validatedReplay,
+      runEvaluation,
+      false,
+      streamingEnabled,
+    );
+
+    if (outcome.outcome === 'completed') {
+      if (runNodeReflection) {
+        try {
+          await this.judgeEnrichmentService.evaluateNodeNow(userId, executionId, task.id);
+          await this.judgeEnrichmentService.evaluateExecutionSummaryNowIfReady(userId, executionId);
+        } catch (error) {
+          this.logger.warn('Single-step advisor evaluation failed after step completion', {
+            executionId,
+            taskId: task.id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
+      }
+      await this.markExecutionCompleted(userId, executionId, startedAt);
+      return;
+    }
+
+    if (outcome.outcome === 'skipped') {
+      await this.markExecutionCompleted(userId, executionId, startedAt);
+      return;
+    }
+
+    if (outcome.outcome === 'interrupted') {
+      const interrupt = outcome.response?.interrupt;
+      await this.executionModel.findByIdAndUpdate(executionId, {
+        $set: {
+          status: ExecutionStatus.INTERRUPTED,
+          threadId: outcome.response?.thread_id || null,
+          interruptPayload: interrupt
+            ? {
+                type: interrupt.type,
+                taskId: interrupt.task_id,
+                taskTitle: interrupt.task_title,
+                message: interrupt.message,
+                threadId: interrupt.thread_id,
+                payloadJson: interrupt.payload_json,
+              }
+            : null,
+        },
+      }).exec();
+      this.streamGateway.sendToUser(userId, {
+        type: 'playbook_interrupt',
+        data: {
+          executionId,
+          taskId: task.id,
+          type: interrupt?.type || 'unknown',
+          message: interrupt?.message || '',
+          threadId: outcome.response?.thread_id || '',
+        },
+      });
+      return;
+    }
+
+    await this.markRemainingSkippedAndFail(userId, executionId, outcome.error || 'Step failed', startedAt);
+  }
+
   /**
    * Execute a single step: SSE start -> DB update -> gather context -> gRPC -> SSE complete.
    * Returns the outcome so the caller can decide what to do.
@@ -3315,6 +3780,9 @@ ${
     const skippedTaskIds: string[] = (currentExecution?.taskResults || [])
       .filter((tr: any) => tr.status === StepStatus.PENDING)
       .map((tr: any) => tr.taskId);
+    const failedTaskIds: string[] = (currentExecution?.taskResults || [])
+      .filter((tr: any) => tr.status === StepStatus.RUNNING)
+      .map((tr: any) => tr.taskId);
 
     await this.executionModel.findByIdAndUpdate(executionId, {
       $set: {
@@ -3325,7 +3793,13 @@ ${
       },
     });
 
-    // Bulk skip all PENDING taskResults
+    // Terminalize any still-running task and skip the remaining pending tasks.
+    await this.executionModel.updateOne(
+      { _id: executionId },
+      { $set: { 'taskResults.$[elem].status': StepStatus.FAILED } },
+      { arrayFilters: [{ 'elem.status': StepStatus.RUNNING }] },
+    );
+
     const skipResult = await this.executionModel.updateOne(
       { _id: executionId },
       { $set: { 'taskResults.$[elem].status': StepStatus.SKIPPED } },
@@ -3336,11 +3810,12 @@ ${
       executionId,
       modifiedCount: skipResult.modifiedCount,
       skippedTaskIds,
+      failedTaskIds,
     });
 
     this.streamGateway.sendToUser(userId, {
       type: 'playbook_execution_complete',
-      data: { executionId, status: ExecutionStatus.FAILED, error, durationMs, skippedTaskIds },
+      data: { executionId, status: ExecutionStatus.FAILED, error, durationMs, skippedTaskIds, failedTaskIds },
     });
     this.logger.log('SSE playbook_execution_complete sent (FAILED)', { executionId, userId });
     this.notifyScheduledRunFinished(userId, executionId, 'failed', error);
@@ -3424,9 +3899,19 @@ ${
     runEvaluation: boolean = false,
     executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive',
     streamingEnabled: boolean = false,
+    runNodeReflection: boolean = true,
     userEmail: string = '',
+    advisorAutopilotEnabled: boolean = false,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
   ): Promise<{ status: string; executionId: string }> {
+    if (!this.grpcService.isAvailable) {
+      this.logger.warn('gRPC unavailable, rejecting rerunStepInExecution', { userId, playbookId, executionId });
+      throw new ServiceUnavailableException(ErrorCode.PLAYBOOK_GRPC_UNAVAILABLE);
+    }
+
     const execution = await this.getExecutionForReuse(userId, playbookId, executionId);
+
     const playbook = await this.playbookService.findRawById(playbookId);
     if (!playbook) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
@@ -3448,7 +3933,6 @@ ${
     });
 
     const descendants = this.findDescendantTaskIds(snapshot, taskId);
-    const ancestors = this.findAncestorTaskIds(snapshot, taskId);
     const attemptNumber = (execution.currentAttemptNumber ?? 1) + 1;
 
     const workspaceIds = (playbook.workspaces || []).map((w: any) => w.toString());
@@ -3458,7 +3942,10 @@ ${
     await this.ensureTaskResultExists(executionId, task, snapshot, grpcAgentMap, attemptNumber);
 
     await this.executionModel.findByIdAndUpdate(executionId, {
-      $set: { runEvaluation },
+      $set: {
+        runEvaluation,
+        reflectionEnabled: runNodeReflection,
+      },
     });
 
     await this.prepareExecutionForRerun(executionId, taskId, attemptNumber);
@@ -3466,12 +3953,28 @@ ${
     await this.resetTasksForRecompute(executionId, descendants, taskId, attemptNumber);
     await this.appendAttemptHistory(executionId, attemptNumber, 'rerun_step', taskId, null);
 
-    const taskOutputs = this.seedTaskOutputsFromExecution(execution, snapshot, ancestors);
     const startedAt = new Date();
     const selectedExecutionMode = executionMode || (task as any).stepReplayMode || 'live';
     const validatedReplay = selectedExecutionMode !== 'live'
       ? await this.replayService.getActiveReplay(playbookId, taskId)
       : null;
+    const advisorAutopilot = this.normalizeAdvisorAutopilotConfig(
+      advisorAutopilotEnabled,
+      advisorAutopilotTargetScore,
+      advisorAutopilotMaxTurns,
+    );
+
+    await this.executionModel.findByIdAndUpdate(executionId, {
+      $set: {
+        advisorAutopilotEnabled: advisorAutopilot.enabled,
+        advisorAutopilotTargetScore: advisorAutopilot.targetScore,
+        advisorAutopilotMaxTurns: advisorAutopilot.maxTurns,
+        advisorAutopilotStatus: advisorAutopilot.enabled ? 'running' : 'idle',
+        advisorAutopilotTaskId: taskId,
+        advisorAutopilotAttemptCount: 0,
+        advisorAutopilotLastError: null,
+      },
+    }).exec();
 
     // Merge current playbook task inputFiles into the snapshot task for rerun
     const taskForExecution = { ...task };
@@ -3484,81 +3987,51 @@ ${
       });
     }
 
-    this.executeStep(
+    if (advisorAutopilot.enabled) {
+      this.runSingleStepAdvisorAutopilot(
+        userId,
+        executionId,
+        playbook,
+        taskForExecution,
+        grpcAgentMap,
+        workspaceContexts,
+        userEmail,
+        selectedExecutionMode,
+        validatedReplay,
+        streamingEnabled,
+        advisorAutopilot,
+      ).catch(async (err) => {
+        this.logger.error('rerunStepInExecution Advisor Autopilot failed', {
+          executionId,
+          taskId,
+          error: (err as Error).message,
+        });
+        await this.updateAdvisorAutopilotState(userId, executionId, {
+          status: 'failed',
+          taskId,
+          attemptCount: 0,
+          lastError: (err as Error).message,
+        });
+        await this.markRemainingSkippedAndFail(userId, executionId, (err as Error).message, startedAt);
+      });
+
+      return { status: 'rerun_started', executionId };
+    }
+
+    this.runSingleStepExecution(
       userId,
       executionId,
-      playbookId,
+      playbook,
       taskForExecution,
       grpcAgentMap,
-      taskOutputs,
-      snapshot,
       workspaceContexts,
       userEmail,
-      playbook.name,
       selectedExecutionMode,
       validatedReplay,
-      runEvaluation,
-      (execution as any).reflectionEnabled !== false,
       streamingEnabled,
-    ).then(async (outcome) => {
-      if (outcome.outcome === 'completed' || outcome.outcome === 'skipped') {
-        if (outcome.outcome === 'completed' && runEvaluation) {
-          try {
-            await this.semanticEnrichmentService.evaluateNow(userId, executionId, taskId);
-          } catch (error) {
-            this.logger.warn('Manual semantic evaluation failed after step completion', {
-              executionId,
-              taskId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            });
-          }
-        }
-        if (outcome.outcome === 'completed' && (execution as any).reflectionEnabled !== false) {
-          try {
-            this.judgeEnrichmentService.schedule(userId, executionId, taskId);
-          } catch (error) {
-            this.logger.warn('Manual node reflection scheduling failed after step completion', {
-              executionId,
-              taskId,
-              error: error instanceof Error ? error.message : 'Unknown error',
-            });
-          }
-        }
-        await this.markExecutionCompleted(userId, executionId, startedAt);
-        return;
-      }
-      if (outcome.outcome === 'interrupted') {
-        const interrupt = outcome.response?.interrupt;
-        await this.executionModel.findByIdAndUpdate(executionId, {
-          $set: {
-            status: ExecutionStatus.INTERRUPTED,
-            threadId: outcome.response?.thread_id || null,
-            interruptPayload: interrupt
-              ? {
-                  type: interrupt.type,
-                  taskId: interrupt.task_id,
-                  taskTitle: interrupt.task_title,
-                  message: interrupt.message,
-                  threadId: interrupt.thread_id,
-                  payloadJson: interrupt.payload_json,
-                }
-              : null,
-          },
-        });
-        this.streamGateway.sendToUser(userId, {
-          type: 'playbook_interrupt',
-          data: {
-            executionId,
-            taskId,
-            type: interrupt?.type || 'unknown',
-            message: interrupt?.message || '',
-            threadId: outcome.response?.thread_id || '',
-          },
-        });
-        return;
-      }
-      await this.markRemainingSkippedAndFail(userId, executionId, outcome.error || 'Step failed', startedAt);
-    }).catch(async (err) => {
+      runEvaluation,
+      runNodeReflection,
+    ).catch(async (err) => {
       this.logger.error('rerunStepInExecution failed', {
         executionId,
         taskId,
@@ -4039,6 +4512,138 @@ ${
     };
   }
 
+  private normalizeAdvisorAutopilotConfig(
+    enabled: boolean,
+    targetScore?: number | null,
+    maxTurns?: number | null,
+  ): AdvisorAutopilotConfig {
+    const normalizedTarget = Number.isFinite(Number(targetScore))
+      ? Math.max(1, Math.min(100, Number(targetScore)))
+      : ADVISOR_AUTOPILOT_DEFAULT_TARGET_SCORE;
+    const normalizedMaxTurns = Number.isFinite(Number(maxTurns))
+      ? Math.max(0, Math.min(5, Math.floor(Number(maxTurns))))
+      : ADVISOR_AUTOPILOT_DEFAULT_MAX_TURNS;
+
+    return {
+      enabled,
+      targetScore: normalizedTarget,
+      maxTurns: normalizedMaxTurns,
+    };
+  }
+
+  private resolveAdvisorAutopilotFixType(judgeResult: any): 'optimize_step' | 'none' {
+    if (judgeResult?.safeAutoFixType === 'optimize_step') {
+      return 'optimize_step';
+    }
+
+    const hasRewriteHints = Array.isArray(judgeResult?.rewriteHints) && judgeResult.rewriteHints.length > 0;
+    if (judgeResult?.recommendation === 'update_current_playbook' && hasRewriteHints) {
+      return 'optimize_step';
+    }
+
+    return 'none';
+  }
+
+  private async updateAdvisorAutopilotState(
+    userId: string,
+    executionId: string,
+    patch: {
+      status?: AdvisorAutopilotStatus;
+      attemptCount?: number;
+      lastError?: string | null;
+      taskId?: string | null;
+    },
+  ): Promise<void> {
+    await this.executionModel.findByIdAndUpdate(executionId, {
+      $set: {
+        ...(patch.status !== undefined ? { advisorAutopilotStatus: patch.status } : {}),
+        ...(patch.attemptCount !== undefined ? { advisorAutopilotAttemptCount: patch.attemptCount } : {}),
+        ...(patch.lastError !== undefined ? { advisorAutopilotLastError: patch.lastError } : {}),
+        ...(patch.taskId !== undefined ? { advisorAutopilotTaskId: patch.taskId } : {}),
+        updatedAt: new Date(),
+      },
+    }).exec();
+
+    this.streamGateway.sendToUser(userId, {
+      type: 'playbook_advisor_autopilot_updated',
+      data: {
+        executionId,
+        advisorAutopilotStatus: patch.status,
+        advisorAutopilotAttemptCount: patch.attemptCount,
+        advisorAutopilotLastError: patch.lastError,
+        advisorAutopilotTaskId: patch.taskId,
+      },
+    });
+  }
+
+  private async appendAdvisorTurnHistory(
+    userId: string,
+    executionId: string,
+    taskId: string,
+    entry: {
+      turn: number;
+      score: number | null;
+      recommendation: string | null;
+      safeAutoFixType: string | null;
+      actionType: 'evaluate' | 'optimize_step' | 'stop';
+      stopReason?: string | null;
+      scoreDelta?: number | null;
+    },
+  ): Promise<void> {
+    const historyEntry = {
+      turn: entry.turn,
+      createdAt: new Date(),
+      score: entry.score,
+      recommendation: entry.recommendation,
+      safeAutoFixType: entry.safeAutoFixType,
+      actionType: entry.actionType,
+      stopReason: entry.stopReason ?? null,
+    };
+
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
+      {
+        $set: {
+          'taskResults.$.advisorTurnCount': entry.turn,
+          'taskResults.$.lastAdvisorAction': entry.actionType,
+          'taskResults.$.lastAdvisorScoreDelta': entry.scoreDelta ?? null,
+          'taskResults.$.advisorStopReason': entry.stopReason ?? null,
+          updatedAt: new Date(),
+        },
+        $push: {
+          'taskResults.$.advisorTurnHistory': {
+            $each: [historyEntry],
+            $slice: -25,
+          },
+        },
+      },
+    ).exec();
+
+    this.streamGateway.sendToUser(userId, {
+      type: 'playbook_advisor_autopilot_updated',
+      data: {
+        executionId,
+        taskId,
+        advisorTurnCount: entry.turn,
+        lastAdvisorAction: entry.actionType,
+        lastAdvisorScoreDelta: entry.scoreDelta ?? null,
+        advisorStopReason: entry.stopReason ?? null,
+        advisorTurnHistoryEntry: {
+          ...historyEntry,
+          createdAt: historyEntry.createdAt.toISOString(),
+        },
+      },
+    });
+  }
+
+  private async getExecutionTaskResult(executionId: string, taskId: string): Promise<any | null> {
+    const execution = await this.executionModel.findById(executionId)
+      .select('taskResults.taskId taskResults.judgeResult taskResults.advisorTurnCount taskResults.advisorTurnHistory taskResults.lastAdvisorAction taskResults.lastAdvisorScoreDelta taskResults.advisorStopReason')
+      .lean()
+      .exec();
+    return (execution?.taskResults || []).find((item: any) => item.taskId === taskId) || null;
+  }
+
   /**
    * Find all active (running or interrupted) executions for a given user.
    * Merges in-memory step buffers so catch-up reads (F5, new tab) are fresh
@@ -4063,6 +4668,13 @@ ${
           status: e.status,
           executionMode: e.executionMode || 'live',
           reflectionEnabled: e.reflectionEnabled !== false,
+          advisorAutopilotEnabled: e.advisorAutopilotEnabled === true,
+          advisorAutopilotTargetScore: e.advisorAutopilotTargetScore ?? 80,
+          advisorAutopilotMaxTurns: e.advisorAutopilotMaxTurns ?? 2,
+          advisorAutopilotStatus: e.advisorAutopilotStatus || 'idle',
+          advisorAutopilotTaskId: e.advisorAutopilotTaskId ?? null,
+          advisorAutopilotAttemptCount: e.advisorAutopilotAttemptCount ?? 0,
+          advisorAutopilotLastError: e.advisorAutopilotLastError ?? null,
           judgeSummaryStatus: e.judgeSummaryStatus || 'idle',
           judgeSummary: e.judgeSummary || null,
           replaySourceByTask: e.replaySourceByTask || null,
@@ -4094,6 +4706,19 @@ ${
             judgeStatus: merged.judgeStatus || 'idle',
             judgeResult: merged.judgeResult ?? null,
             judgeError: merged.judgeError ?? null,
+            advisorTurnCount: merged.advisorTurnCount ?? 0,
+            advisorTurnHistory: (merged.advisorTurnHistory || []).map((entry: any) => ({
+              turn: entry.turn,
+              createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+              score: entry.score ?? null,
+              recommendation: entry.recommendation ?? null,
+              safeAutoFixType: entry.safeAutoFixType ?? null,
+              actionType: entry.actionType,
+              stopReason: entry.stopReason ?? null,
+            })),
+            lastAdvisorAction: merged.lastAdvisorAction ?? null,
+            lastAdvisorScoreDelta: merged.lastAdvisorScoreDelta ?? null,
+            advisorStopReason: merged.advisorStopReason ?? null,
             judgeHistory: (merged.judgeHistory || []).map((entry: any) => ({
               ...entry,
               createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,

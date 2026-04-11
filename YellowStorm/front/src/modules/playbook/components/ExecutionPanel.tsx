@@ -250,6 +250,13 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
   const sidebarDragStartX = useRef(0);
   const sidebarDragStartWidth = useRef(0);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidthFallback);
+  const visibleExecutionStatus = execution
+    ? (execution.taskResults.some((taskResult) => taskResult.status === 'running')
+      ? 'running'
+      : execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')
+        ? 'interrupted'
+        : execution.status)
+    : null;
 
   useEffect(() => {
     const clampWidth = () => {
@@ -305,7 +312,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
   // Auto-follow running/interrupted steps during a live execution
   useEffect(() => {
     if (!execution) return;
-    const isLive = execution.status === 'running' || execution.status === 'interrupted';
+    const isLive = visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted';
     if (!isLive) return;
     if (selectedStepId && execution.taskResults.some((tr) => tr.taskId === selectedStepId)) return;
 
@@ -323,7 +330,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
     if (running) {
       selectStep(running.taskId);
     }
-  }, [execution?.status, execution?.taskResults, selectedStepId, selectStep]);
+  }, [execution?.taskResults, selectedStepId, selectStep, visibleExecutionStatus]);
 
   const handleSelectStep = useCallback(
     (taskId: string) => {
@@ -393,13 +400,18 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
         taskId,
         true,
         task?.stepReplayMode || 'live',
+        false,
+        true,
+        execution.advisorAutopilotEnabled === true,
+        execution.advisorAutopilotTargetScore,
+        execution.advisorAutopilotMaxTurns,
       );
     },
     [execution, playbook, rerunStepInExecution],
   );
 
-  const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
-  const canDeleteCurrentExecution = Boolean(execution && execution.status !== 'running' && execution.status !== 'interrupted');
+  const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
+  const canDeleteCurrentExecution = Boolean(execution && visibleExecutionStatus !== 'running' && visibleExecutionStatus !== 'interrupted');
 
   const selectedResult = execution?.taskResults.find(
     (tr) => tr.taskId === selectedStepId,
@@ -533,7 +545,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
       <div className="flex items-center justify-between px-4 py-1.5 border-b bg-background shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium">{t('execution.title')}</span>
-          <PlaybookStatusBadge status={execution.status} size="md" />
+          <PlaybookStatusBadge status={visibleExecutionStatus || execution.status} size="md" />
           <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
             {getExecutionModeLabel(execution.executionMode, t)}
           </span>
@@ -553,7 +565,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
               {isStopping ? t('execution.stopping') : t('execution.stop')}
             </Button>
           )}
-          {execution.status === 'failed' && execution.error && (
+          {visibleExecutionStatus === 'failed' && execution.error && (
             <div className="flex items-center gap-1 text-xs text-destructive">
               <AlertCircle className="h-3 w-3 shrink-0" />
               <span className="truncate max-w-[200px]" title={execution.error}>

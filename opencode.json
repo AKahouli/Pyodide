@@ -12,10 +12,10 @@
           "name": "MiniMax-M2.7"
         },
         "gpt-5.4-medium-oc": {
-          "name": "GPT-5.4 Medium OC "
+          "name": "GPT-5.4 Medium OC"
         },
         "gpt-5.4": {
-          "name": "GPT-5.4 OC "
+          "name": "GPT-5.4 OC"
         },
         "gpt-5.4-low-oc": {
           "name": "GPT-5.4 Low OC"
@@ -61,6 +61,7 @@
           "pnpm run build*": "allow",
           "pnpm run lint*": "allow",
           "poetry run pytest*": "allow",
+          "npx ctx7*": "allow",
           "git push*": "ask",
           "git reset*": "ask",
           "git rebase*": "ask",
@@ -73,17 +74,11 @@
           "*": "deny",
           "general": "allow",
           "explore": "allow",
-          "backend-architect": "allow",
-          "frontend-ui-ux-designer": "allow",
-          "browser-qa-engineer": "allow",
-          "code-reviewer": "allow",
-          "test-engineer": "allow",
-          "security-auditor": "allow",
-          "performance-engineer": "allow",
-          "debugger-root-cause": "allow",
-          "ai-systems-engineer": "allow",
-          "refactoring-maintainer": "allow",
-          "docs-maintainer": "allow"
+          "plan": "allow",
+          "reviewer": "allow",
+          "diagnostics": "allow",
+          "frontend-qa": "allow",
+          "maintainer": "allow"
         }
       }
     },
@@ -94,17 +89,14 @@
           "*": "ask",
           "git status*": "allow",
           "git diff*": "allow",
-          "git log*": "allow"
+          "git log*": "allow",
+          "npx ctx7*": "allow"
         },
         "task": {
           "*": "deny",
           "explore": "allow",
-          "browser-qa-engineer": "allow",
-          "code-reviewer": "allow",
-          "security-auditor": "allow",
-          "performance-engineer": "allow",
-          "debugger-root-cause": "allow",
-          "docs-maintainer": "allow"
+          "reviewer": "allow",
+          "diagnostics": "allow"
         }
       }
     }

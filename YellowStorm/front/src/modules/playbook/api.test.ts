@@ -14,6 +14,8 @@ import {
   updatePlaybook,
   upsertPlaybookSchedule,
   clearPlaybookSchedule,
+  rerunPlaybookStep,
+  resumePlaybookFromStep,
 } from './api';
 
 const apiClientMock = vi.hoisted(() => ({
@@ -173,5 +175,21 @@ describe('playbook api', () => {
     const result = await deleteAllExecutions('p1');
     expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.deleteAllExecutions('p1'));
     expect(result).toEqual({ deleted: 3, kept: 1 });
+  });
+
+  it('targets the rerun and resume-from-step routes', async () => {
+    apiClientMock.post.mockResolvedValue({ data: { data: { status: 'running', executionId: 'e1' } } });
+
+    await rerunPlaybookStep('p1', 'e1', { taskId: 't1', runEvaluation: true, executionMode: 'live', streaming: false });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.rerunStep('p1', 'e1'),
+      { taskId: 't1', runEvaluation: true, executionMode: 'live', streaming: false },
+    );
+
+    await resumePlaybookFromStep('p1', 'e1', { taskId: 't2', streaming: true });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.resumeFromStep('p1', 'e1'),
+      { taskId: 't2', streaming: true },
+    );
   });
 });

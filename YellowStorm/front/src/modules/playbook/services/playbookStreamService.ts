@@ -63,6 +63,7 @@ const SSE_EVENT_TYPES = [
   'playbook_step_judge_updated',
   'playbook_step_evaluation_updated',
   'playbook_judge_summary_updated',
+  'playbook_advisor_autopilot_updated',
   'playbook_replay_format_guide_updated',
   'playbook_output_format_template_updated',
   'playbook_execution_complete',
@@ -180,6 +181,9 @@ function handleSsePayload(raw: string) {
         break;
       case 'playbook_judge_summary_updated':
         store.onJudgeSummaryUpdated(eventData);
+        break;
+      case 'playbook_advisor_autopilot_updated':
+        store.onAdvisorAutopilotUpdated(eventData);
         break;
       case 'playbook_replay_format_guide_updated':
         store.onReplayFormatGuideUpdated(eventData);

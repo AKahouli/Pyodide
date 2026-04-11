@@ -309,11 +309,21 @@ export interface TaskResult {
     accuracyScore: number;
     completenessScore: number;
     overallScore: number;
+    confidence: number;
+    toolUsageScore: number;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];
     handoffRisks: string[];
     rewriteHints: string[];
+    toolSelectionIssues: string[];
+    missingToolCalls: string[];
+    redundantToolCalls: string[];
+    toolOutputUseIssues: string[];
+    toolSequencingIssues: string[];
+    toolUsageStrengths: string[];
+    toolUsageRecommendation: string;
+    safeAutoFixType: 'optimize_step' | 'none';
     recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
   } | null;
@@ -321,22 +331,46 @@ export interface TaskResult {
   judgeHistory?: Array<{
     id: string;
     createdAt: string;
+    attemptNumber: number | null;
     model: string | null;
     judgeResult: {
       accuracyScore: number;
       completenessScore: number;
       overallScore: number;
+      confidence: number;
+      toolUsageScore: number;
       missingFacts: string[];
       incoherences: string[];
       unsupportedClaims: string[];
       handoffRisks: string[];
       rewriteHints: string[];
+      toolSelectionIssues: string[];
+      missingToolCalls: string[];
+      redundantToolCalls: string[];
+      toolOutputUseIssues: string[];
+      toolSequencingIssues: string[];
+      toolUsageStrengths: string[];
+      toolUsageRecommendation: string;
+      safeAutoFixType: 'optimize_step' | 'none';
       recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
       reason: string;
     };
   }>;
   evaluationHistory?: StepEvaluationHistoryEntry[];
   stepExecutions?: StepExecutionHistoryEntry[];
+  advisorTurnCount?: number;
+  advisorTurnHistory?: Array<{
+    turn: number;
+    createdAt: string;
+    score: number | null;
+    recommendation: string | null;
+    safeAutoFixType: string | null;
+    actionType: 'evaluate' | 'optimize_step' | 'stop';
+    stopReason?: string | null;
+  }>;
+  lastAdvisorAction?: string | null;
+  lastAdvisorScoreDelta?: number | null;
+  advisorStopReason?: string | null;
   attemptNumber?: number | null;
   isStale?: boolean;
   staleReason?: string | null;
@@ -354,13 +388,25 @@ export interface PlaybookExecution {
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   executionTrigger?: 'manual' | 'scheduled';
   reflectionEnabled?: boolean;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
+  advisorAutopilotStatus?: 'idle' | 'running' | 'judging' | 'optimizing' | 'rerunning' | 'completed' | 'stopped' | 'failed';
+  advisorAutopilotTaskId?: string | null;
+  advisorAutopilotAttemptCount?: number;
+  advisorAutopilotLastError?: string | null;
   judgeSummaryStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   judgeSummary?: {
     overallScore: number;
+    confidence: number;
     structuralIssues: string[];
     promptIssues: string[];
     contractIssues: string[];
     handoffIssues: string[];
+    toolUsageIssues: string[];
+    crossStepToolPatterns: string[];
+    rootCauseTaskIds: string[];
+    highImpactRecommendations: string[];
     recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
     reason: string;
   } | null;
@@ -520,8 +566,31 @@ export interface PlaybookExecutionStartEvent {
   executionNumber: number;
   status: string;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  reflectionEnabled?: boolean;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
+  advisorAutopilotStatus?: 'idle' | 'running' | 'judging' | 'optimizing' | 'rerunning' | 'completed' | 'stopped' | 'failed';
+  advisorAutopilotTaskId?: string | null;
+  advisorAutopilotAttemptCount?: number;
+  advisorAutopilotLastError?: string | null;
+  singleStepTaskId?: string | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults?: TaskResult[];
+}
+
+export interface PlaybookAdvisorAutopilotUpdatedEvent {
+  executionId: string;
+  taskId?: string;
+  advisorAutopilotStatus?: PlaybookExecution['advisorAutopilotStatus'];
+  advisorAutopilotAttemptCount?: number;
+  advisorAutopilotTaskId?: string | null;
+  advisorAutopilotLastError?: string | null;
+  advisorTurnCount?: number;
+  lastAdvisorAction?: string | null;
+  lastAdvisorScoreDelta?: number | null;
+  advisorStopReason?: string | null;
+  advisorTurnHistoryEntry?: TaskResult['advisorTurnHistory'] extends Array<infer T> ? T : never;
 }
 
 export interface PlaybookStepStartEvent {
@@ -583,15 +652,7 @@ export interface PlaybookStepJudgeUpdatedEvent {
 
 export interface PlaybookJudgeSummaryUpdatedEvent {
   executionId: string;
-  judgeSummary: {
-    overallScore: number;
-    structuralIssues: string[];
-    promptIssues: string[];
-    contractIssues: string[];
-    handoffIssues: string[];
-    recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
-    reason: string;
-  };
+  judgeSummary: NonNullable<PlaybookExecution['judgeSummary']>;
 }
 
 export interface PlaybookReplayFormatGuideUpdatedEvent {
@@ -698,6 +759,9 @@ export interface ExecutePlaybookData {
   runEvaluation?: boolean;
   streaming?: boolean;
   runNodeReflection?: boolean;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
 }
 
 export interface ValidateTaskReplayData {
@@ -733,11 +797,39 @@ export interface RerunStepData {
   runEvaluation?: boolean;
   executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   streaming?: boolean;
+  runNodeReflection?: boolean;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
 }
 
 export interface ResumeFromStepData {
   taskId: string;
   streaming?: boolean;
+}
+
+export type RemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat';
+
+export interface AdvisorRemediationItem {
+  id: string;
+  category: RemediationCategory;
+  scope: 'task' | 'playbook';
+  targetTaskId: string | null;
+  title: string;
+  description: string;
+  rationale?: string;
+  editable: boolean;
+  defaultSelected: boolean;
+  source: {
+    kind: string;
+    field: string;
+    index: number;
+  };
+}
+
+export interface ApplyRemediationsData {
+  mode?: 'update-current' | 'generate-new';
+  selectedIds?: string[];
 }
 
 // ===== Store =====
@@ -821,6 +913,10 @@ export interface PlaybookActions {
     runEvaluation?: boolean,
     executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive',
     streaming?: boolean,
+    runNodeReflection?: boolean,
+    advisorAutopilotEnabled?: boolean,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
   ) => Promise<void>;
   resumeFromStep: (playbookId: string, executionId: string, taskId: string, streaming?: boolean) => Promise<void>;
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
@@ -856,6 +952,8 @@ export interface PlaybookActions {
   updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
+  fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
+  applyAdvisorRemediations: (playbookId: string, executionId: string, data: ApplyRemediationsData) => Promise<Playbook>;
 
   // SSE handlers
   onExecutionStart: (data: PlaybookExecutionStartEvent) => void;
@@ -866,6 +964,7 @@ export interface PlaybookActions {
   onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => void;
   onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => void;
   onJudgeSummaryUpdated: (data: PlaybookJudgeSummaryUpdatedEvent) => void;
+  onAdvisorAutopilotUpdated: (data: PlaybookAdvisorAutopilotUpdatedEvent) => void;
   onReplayFormatGuideUpdated: (data: PlaybookReplayFormatGuideUpdatedEvent) => void;
   onOutputFormatTemplateUpdated: (data: PlaybookOutputFormatTemplateUpdatedEvent) => void;
   onExecutionComplete: (data: PlaybookExecutionCompleteEvent) => void;

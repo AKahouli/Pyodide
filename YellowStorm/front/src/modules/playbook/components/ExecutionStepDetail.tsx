@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
+import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -13,8 +14,46 @@ import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
-import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact } from '../types';
+import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
+
+const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
+  structure: 'bg-purple-100 text-purple-700 border-purple-200',
+  prompt: 'bg-blue-100 text-blue-700 border-blue-200',
+  contract: 'bg-amber-100 text-amber-700 border-amber-200',
+  handoff: 'bg-rose-100 text-rose-700 border-rose-200',
+  tooling: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  evidence: 'bg-sky-100 text-sky-700 border-sky-200',
+  outputFormat: 'bg-orange-100 text-orange-700 border-orange-200',
+};
+
+function RemediationItemRow({
+  text,
+  category,
+  onApply,
+}: {
+  text: string;
+  category: RemediationCategory;
+  onApply: () => void;
+}) {
+  const { t } = useModuleTranslation('playbook');
+  return (
+    <div className="rounded border bg-muted/20 px-3 py-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Badge variant="outline" className={cn('text-[10px] border', REMEDIATION_CATEGORY_COLORS[category])}>
+          {t(`detail.remediation.category.${category}`)}
+        </Badge>
+      </div>
+      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{text}</p>
+      <div className="mt-2 flex justify-end">
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply}>
+          <CheckSquare className="mr-1 h-3 w-3" />
+          {t('detail.remediation.apply')}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function ArtifactListItem({
   artifact,
@@ -125,6 +164,12 @@ function formatSignedPercentDelta(value: number): string {
   return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
+function formatConfidence(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-';
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.round(normalized)}%`;
+}
+
 function formatToolArgs(args: Record<string, unknown> | undefined): string {
   if (!args) return '{}';
   try {
@@ -217,18 +262,94 @@ export function ExecutionStepDetail({
   const updatePlaybookFromJudge = usePlaybookStore((s) => s.updatePlaybookFromJudge);
   const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
   const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
+  const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
+  const applyAdvisorRemediations = usePlaybookStore((s) => s.applyAdvisorRemediations);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [selectedStepExecutionId, setSelectedStepExecutionId] = useState<string | null>(null);
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
+  const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
   const [judgeActionLoading, setJudgeActionLoading] = useState<'update' | 'generate' | 'optimize' | null>(null);
+  const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
+  const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
+  const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
+  const [remediationLoading, setRemediationLoading] = useState(false);
   const currentTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
   const evaluationHistory = step?.evaluationHistory || [];
-  const stepJudgeResult = step?.judgeResult || null;
+  const judgeHistory = step?.judgeHistory || [];
   const stepJudgeStatus = step?.judgeStatus || 'idle';
   const stepJudgeError = step?.judgeError || null;
   const judgeSummary = execution?.judgeSummary || null;
+  const advisorAutopilotActive = execution?.advisorAutopilotEnabled === true;
+  const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
+  const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
+  const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const issueSections = useMemo(() => {
+    if (!stepJudgeResult) return [];
+    return [
+      {
+        title: t('detail.judge.structuralIssues'),
+        badge: t('detail.remediation.category.structure'),
+        badgeClassName: 'bg-purple-100 text-purple-700 border-purple-200',
+        items: stepJudgeResult.missingFacts || [],
+      },
+      {
+        title: t('detail.judge.promptIssues'),
+        badge: t('detail.remediation.category.prompt'),
+        badgeClassName: 'bg-blue-100 text-blue-700 border-blue-200',
+        items: stepJudgeResult.incoherences || [],
+      },
+      {
+        title: t('detail.judge.contractIssues'),
+        badge: t('detail.remediation.category.contract'),
+        badgeClassName: 'bg-amber-100 text-amber-700 border-amber-200',
+        items: stepJudgeResult.unsupportedClaims || [],
+      },
+      {
+        title: t('detail.judge.handoffIssues'),
+        badge: t('detail.remediation.category.handoff'),
+        badgeClassName: 'bg-rose-100 text-rose-700 border-rose-200',
+        items: stepJudgeResult.handoffRisks || [],
+      },
+      {
+        title: t('detail.judge.toolSelectionIssues'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.toolSelectionIssues || [],
+      },
+      {
+        title: t('detail.judge.missingToolCalls'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.missingToolCalls || [],
+      },
+      {
+        title: t('detail.judge.redundantToolCalls'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.redundantToolCalls || [],
+      },
+      {
+        title: t('detail.judge.toolOutputUseIssues'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.toolOutputUseIssues || [],
+      },
+      {
+        title: t('detail.judge.toolSequencingIssues'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.toolSequencingIssues || [],
+      },
+      {
+        title: t('detail.judge.toolUsageStrengths'),
+        badge: t('detail.remediation.category.evidence'),
+        badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
+        items: stepJudgeResult.toolUsageStrengths || [],
+      },
+    ];
+  }, [stepJudgeResult, t]);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
     if (baselineReplay?.llmPromptTrace?.length) {
@@ -334,6 +455,8 @@ export function ExecutionStepDetail({
     });
   }, [step]);
 
+  const currentStepExecutionId = step ? `current:${step.taskId}:${step.attemptNumber ?? 'latest'}` : null;
+
   const handleDownloadHtml = useCallback(() => {
     if (step) downloadStepResultHtml(step);
   }, [step]);
@@ -373,23 +496,53 @@ export function ExecutionStepDetail({
     }
   }, [currentPlaybook, execution, optimizeStepFromJudge, step]);
 
+  const openRemediationDialog = useCallback(async (mode: 'optimize-step' | 'update-current' | 'generate-new') => {
+    if (!execution || !currentPlaybook) return;
+    setRemediationLoading(true);
+    setRemediationDialogMode(mode);
+    try {
+      const taskId = mode === 'optimize-step' ? step?.taskId : undefined;
+      const items = await fetchAdvisorRemediations(currentPlaybook.id, execution.id, taskId);
+      setRemediationItems(items);
+      setRemediationDialogOpen(true);
+    } finally {
+      setRemediationLoading(false);
+    }
+  }, [execution, currentPlaybook, step, fetchAdvisorRemediations]);
+
+  const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
+    if (!currentPlaybook || !execution) return;
+    return applyAdvisorRemediations(currentPlaybook.id, execution.id, {
+      mode: remediationDialogMode === 'generate-new' ? 'generate-new' : 'update-current',
+      selectedIds,
+    });
+  }, [currentPlaybook, execution, remediationDialogMode, applyAdvisorRemediations]);
+
   useEffect(() => {
     setSelectedStepExecutionId((current) => {
       if (!stepExecutions.length) return null;
+      const liveExecution = currentStepExecutionId
+        ? stepExecutions.find((entry) => entry.id === currentStepExecutionId) || stepExecutions[0]
+        : stepExecutions[0];
+
+      if (step?.status === 'running' || step?.status === 'interrupted') {
+        return liveExecution?.id ?? null;
+      }
+
       if (current && stepExecutions.some((entry) => entry.id === current)) {
         return current;
       }
-      return stepExecutions[0].id;
+
+      return liveExecution?.id ?? null;
     });
-  }, [stepExecutions, step?.taskId]);
+  }, [currentStepExecutionId, step?.status, stepExecutions]);
 
   useEffect(() => {
     setSelectedEvaluationId((current) => {
       if (!evaluationHistory.length) return null;
-      if (current && evaluationHistory.some((entry) => entry.id === current)) {
-        return current;
-      }
-      return evaluationHistory[0].id;
+      const latestEvaluationId = evaluationHistory[0].id;
+      if (current === latestEvaluationId) return current;
+      return latestEvaluationId;
     });
   }, [evaluationHistory, step?.taskId]);
 
@@ -403,6 +556,15 @@ export function ExecutionStepDetail({
       return comparisonCandidates[0].id;
     });
   }, [evaluationHistory, selectedEvaluationId, step?.taskId]);
+
+  useEffect(() => {
+    setSelectedJudgeHistoryId((current) => {
+      if (!judgeHistory.length) return null;
+      const latestJudgeHistoryId = judgeHistory[judgeHistory.length - 1].id;
+      if (current === latestJudgeHistoryId) return current;
+      return latestJudgeHistoryId;
+    });
+  }, [judgeHistory, step?.taskId]);
 
   if (!step) {
     return (
@@ -967,6 +1129,70 @@ export function ExecutionStepDetail({
         </TabsContent>
 
         <TabsContent value="judge" className="space-y-4">
+          {advisorAutopilotActive && (
+            <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.title')}</div>
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                  {t(`detail.autopilot.status.${execution?.advisorAutopilotStatus || 'idle'}` as any)}
+                </Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.targetScore')}</div>
+                  <div className="mt-1 font-medium">{formatPercent(execution?.advisorAutopilotTargetScore)}</div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.maxTurns')}</div>
+                  <div className="mt-1 font-medium">{execution?.advisorAutopilotMaxTurns ?? 0}</div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.attemptCount')}</div>
+                  <div className="mt-1 font-medium">{execution?.advisorAutopilotAttemptCount ?? 0}</div>
+                </div>
+              </div>
+              {step?.advisorStopReason && (
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.stopReason')}</div>
+                  <div className="mt-1 text-muted-foreground">{t(`detail.autopilot.stopReasonValue.${step.advisorStopReason}` as any)}</div>
+                </div>
+              )}
+              {execution?.advisorAutopilotLastError && (
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.lastError')}</div>
+                  <div className="mt-1 text-destructive whitespace-pre-wrap">{execution.advisorAutopilotLastError}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {judgeHistory.length > 0 && (
+            <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
+              <div className="min-w-[260px] flex-1 space-y-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.stepExecutionLabel')}</div>
+                <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {judgeHistory.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id}>
+                        {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.judgeResult.overallScore)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedJudgeHistory && (
+                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  <span>{t('detail.evaluation.recorded')}: {new Date(selectedJudgeHistory.createdAt).toLocaleString()}</span>
+                  <span>{t('detail.evaluation.attempt')}: {selectedJudgeHistory.attemptNumber ?? '-'}</span>
+                  <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
+                </div>
+              )}
+            </div>
+          )}
+
           {stepJudgeResult ? (
             <div className="space-y-4">
               <div className="rounded-lg border bg-muted/20 p-4">
@@ -975,63 +1201,74 @@ export function ExecutionStepDetail({
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
                     <div className="text-3xl font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
                   </div>
+                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                    {t('detail.judge.confidence')} {formatConfidence(stepJudgeResult.confidence)}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                    {t('detail.judge.toolUsageScore')} {formatPercent(stepJudgeResult.toolUsageScore)}
+                  </Badge>
                   <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                     {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
                   </div>
                   <div className="ml-auto flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => void handleApplyJudgeUpdate()} disabled={judgeActionLoading !== null}>
-                      {judgeActionLoading === 'update' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      Update current playbook
+                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.updateCurrentPlaybook')}
                     </Button>
-                    <Button size="sm" variant="outline" onClick={() => void handleOptimizeJudgeStep()} disabled={judgeActionLoading !== null}>
-                      {judgeActionLoading === 'optimize' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                       {t('detail.judge.optimizeThisStep')}
                     </Button>
-                    <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null}>
-                      {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      Generate new optimized playbook
+                    <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.generateNewOptimizedPlaybook')}
                     </Button>
                   </div>
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
+
+                <AdvisorChangeReviewDialog
+                  open={remediationDialogOpen}
+                  onOpenChange={setRemediationDialogOpen}
+                  items={remediationItems}
+                  tasks={currentPlaybook?.tasks || []}
+                  mode={remediationDialogMode}
+                  loading={remediationLoading}
+                  onApply={handleApplyRemediations}
+                />
+              </div>
+
+              <div className="rounded-lg border bg-background p-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
+                <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
+                  {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
+                </p>
               </div>
 
               <div className="rounded-lg border bg-background p-4">
                 <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
                 <div className="mt-2 space-y-2 text-sm">
                   {stepJudgeResult.rewriteHints.length > 0 ? (
-                    stepJudgeResult.rewriteHints.map((hint) => <div key={hint} className="rounded border bg-muted/20 px-3 py-2">{hint}</div>)
+                    stepJudgeResult.rewriteHints.map((hint, idx) => (
+                      <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
+                    ))
                   ) : (
                     <div className="text-muted-foreground">{t('detail.judge.none')}</div>
                   )}
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-4">
-                <div className="rounded-lg border bg-background p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.structuralIssues')}</div>
-                  <div className="mt-2 space-y-1 text-sm">
-                    {stepJudgeResult.missingFacts.length > 0 ? stepJudgeResult.missingFacts.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
-                  </div>
-                </div>
-                <div className="rounded-lg border bg-background p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.promptIssues')}</div>
-                  <div className="mt-2 space-y-1 text-sm">
-                    {stepJudgeResult.incoherences.length > 0 ? stepJudgeResult.incoherences.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
-                  </div>
-                </div>
-                <div className="rounded-lg border bg-background p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.contractIssues')}</div>
-                  <div className="mt-2 space-y-1 text-sm">
-                    {stepJudgeResult.unsupportedClaims.length > 0 ? stepJudgeResult.unsupportedClaims.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
-                  </div>
-                </div>
-                <div className="rounded-lg border bg-background p-3">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.handoffIssues')}</div>
-                  <div className="mt-2 space-y-1 text-sm">
-                    {stepJudgeResult.handoffRisks.length > 0 ? stepJudgeResult.handoffRisks.map((item) => <div key={item}>{item}</div>) : <div className="text-muted-foreground">{t('detail.judge.none')}</div>}
-                  </div>
-                </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {issueSections.map((section) => (
+                  <IssueSection
+                    key={section.title}
+                    title={section.title}
+                    badge={section.badge}
+                    badgeClassName={section.badgeClassName}
+                    items={section.items}
+                    emptyLabel={t('detail.judge.none')}
+                  />
+                ))}
               </div>
             </div>
           ) : stepJudgeStatus === 'failed' ? (
@@ -1059,25 +1296,69 @@ export function ExecutionStepDetail({
                 <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
                   {Math.round(judgeSummary.overallScore)}%
                 </Badge>
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                  {t('detail.judge.confidence')} {formatConfidence(judgeSummary.confidence)}
+                </Badge>
                 <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                   {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
                 </div>
                 <div className="ml-auto flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => void handleApplyJudgeUpdate()} disabled={judgeActionLoading !== null}>
-                    {judgeActionLoading === 'update' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    Update current playbook
+                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.updateCurrentPlaybook')}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={() => void handleOptimizeJudgeStep()} disabled={judgeActionLoading !== null}>
-                    {judgeActionLoading === 'optimize' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                     {t('detail.judge.optimizeThisStep')}
                   </Button>
-                  <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null}>
-                    {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    Generate new optimized playbook
+                  <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.generateNewOptimizedPlaybook')}
                   </Button>
                 </div>
               </div>
               <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
+
+              <AdvisorChangeReviewDialog
+                open={remediationDialogOpen}
+                onOpenChange={setRemediationDialogOpen}
+                items={remediationItems}
+                tasks={currentPlaybook?.tasks || []}
+                mode={remediationDialogMode}
+                loading={remediationLoading}
+                onApply={handleApplyRemediations}
+              />
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
+                <IssueSection
+                  title={t('detail.judge.toolUsageIssues')}
+                  badge={t('detail.remediation.category.tooling')}
+                  badgeClassName="bg-emerald-100 text-emerald-700 border-emerald-200"
+                  items={judgeSummary.toolUsageIssues || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+                <IssueSection
+                  title={t('detail.judge.crossStepToolPatterns')}
+                  badge={t('detail.remediation.category.structure')}
+                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                  items={judgeSummary.crossStepToolPatterns || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+                <IssueSection
+                  title={t('detail.judge.rootCauseTaskIds')}
+                  badge={t('detail.remediation.category.structure')}
+                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                  items={judgeSummary.rootCauseTaskIds || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+                <IssueSection
+                  title={t('detail.judge.highImpactRecommendations')}
+                  badge={t('detail.remediation.category.structure')}
+                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                  items={judgeSummary.highImpactRecommendations || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+              </div>
             </div>
           )}
         </TabsContent>
@@ -1232,6 +1513,42 @@ export function ExecutionStepDetail({
           Jump to bottom
         </Button>
       )}
+    </div>
+  );
+}
+
+function IssueSection({
+  title,
+  badge,
+  badgeClassName,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  badge: string;
+  badgeClassName: string;
+  items: string[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <div className="flex items-center gap-2">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">{title}</div>
+        <Badge variant="outline" className={cn('text-[10px] border', badgeClassName)}>
+          {badge}
+        </Badge>
+      </div>
+      <div className="mt-2 space-y-2 text-sm">
+        {items.length > 0 ? (
+          items.map((item, index) => (
+            <div key={`${title}-${index}`} className="rounded border bg-muted/20 px-3 py-2">
+              <p className="whitespace-pre-wrap text-muted-foreground">{item}</p>
+            </div>
+          ))
+        ) : (
+          <div className="text-muted-foreground">{emptyLabel}</div>
+        )}
+      </div>
     </div>
   );
 }

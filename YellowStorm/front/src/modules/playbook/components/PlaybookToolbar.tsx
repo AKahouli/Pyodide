@@ -35,6 +35,8 @@ interface Props {
   onExecutionModeChange: (mode: 'live' | 'inherit') => void;
   nodeReflectionEnabled: boolean;
   onNodeReflectionChange: (enabled: boolean) => void;
+  advisorAutopilotEnabled?: boolean;
+  onAdvisorAutopilotChange?: (enabled: boolean) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
@@ -66,6 +68,8 @@ export function PlaybookToolbar({
   onExecutionModeChange,
   nodeReflectionEnabled,
   onNodeReflectionChange,
+  advisorAutopilotEnabled = false,
+  onAdvisorAutopilotChange,
   canUndo,
   canRedo,
   onUndo,
@@ -125,8 +129,14 @@ export function PlaybookToolbar({
       </Select>
       <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
         <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />
-        <span>Reflection</span>
+        <span>{t('toolbar.advisor')}</span>
       </div>
+      {onAdvisorAutopilotChange && (
+        <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
+          <Switch checked={advisorAutopilotEnabled} onCheckedChange={onAdvisorAutopilotChange} />
+          <span>{t('toolbar.stepAutopilot')}</span>
+        </div>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <div className="flex">
