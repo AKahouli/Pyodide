@@ -12,6 +12,8 @@ async def call_mcp_tool(
     server_config: Optional[Dict[str, Any]],
     action_key: str,
     params: Dict[str, Any],
+    auth_headers: Optional[Dict[str, str]] = None,
+    auth_env: Optional[Dict[str, str]] = None,
 ) -> str:
     """Call an MCP tool and return the text result.
 
@@ -23,42 +25,72 @@ async def call_mcp_tool(
         server_config: Extra config (args, env, headers, etc.).
         action_key: The tool name to call.
         params: Parameters to pass to the tool.
+        auth_headers: HTTP headers to inject (for sse/streamable_http).
+        auth_env: Environment variables to inject (for stdio).
 
     Returns:
         Text result from the tool, or an error string.
     """
-    try:
-        from mcp import ClientSession
+    merged_headers = _build_headers(server_config, auth_headers)
+    merged_env = _build_env(server_config, auth_env)
 
+    try:
         if transport_type == "stdio":
-            from mcp.client.stdio import stdio_client
+            from mcp.client.stdio import stdio_client, StdioServerParameters
 
             args = (server_config or {}).get("commandArgs", [])
             if isinstance(args, str):
                 args = [args]
-            env = (server_config or {}).get("env", {})
 
-            async with stdio_client(command=server_url, args=args, env=env) as streams:
+            server_params = StdioServerParameters(
+                command=server_url,
+                args=args,
+                env=merged_env,
+            )
+
+            async with stdio_client(server_params) as streams:
                 read_stream, write_stream = streams
+                from mcp import ClientSession
+
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.call_tool(action_key, arguments=params)
+
         elif transport_type == "sse":
             from mcp.client.sse import sse_client
 
-            async with sse_client(url=server_url) as streams:
+            async with sse_client(url=server_url, headers=merged_headers) as streams:
                 read_stream, write_stream = streams
-                async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
-                    result = await session.call_tool(action_key, arguments=params)
-        elif transport_type == "streamable_http":
-            from mcp.client.streamable_http import streamablehttp_client
+                from mcp import ClientSession
 
-            async with streamablehttp_client(url=server_url) as streams:
-                read_stream, write_stream = streams
                 async with ClientSession(read_stream, write_stream) as session:
                     await session.initialize()
                     result = await session.call_tool(action_key, arguments=params)
+
+        elif transport_type == "streamable_http":
+            from mcp.client.streamable_http import streamable_http_client
+            import httpx
+
+            if merged_headers:
+                http_client = httpx.AsyncClient(headers=merged_headers)
+                async with streamable_http_client(
+                    url=server_url, http_client=http_client
+                ) as streams:
+                    read_stream, write_stream, _ = streams
+                    from mcp import ClientSession
+
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        result = await session.call_tool(action_key, arguments=params)
+            else:
+                async with streamable_http_client(url=server_url) as streams:
+                    read_stream, write_stream, _ = streams
+                    from mcp import ClientSession
+
+                    async with ClientSession(read_stream, write_stream) as session:
+                        await session.initialize()
+                        result = await session.call_tool(action_key, arguments=params)
+
         else:
             raise ValueError(
                 f"Unsupported MCP transport type: {transport_type}. "
@@ -83,3 +115,33 @@ async def call_mcp_tool(
     except Exception as e:
         logger.error("MCP tool call failed", action=action_key, error=str(e))
         return f"Connector action '{action_key}' failed: {str(e)}"
+
+
+def _build_headers(
+    server_config: Optional[Dict[str, Any]],
+    auth_headers: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    config_headers = (server_config or {}).get("headers", {})
+    if not config_headers and not auth_headers:
+        return None
+    merged = {}
+    if config_headers:
+        merged.update(config_headers)
+    if auth_headers:
+        merged.update(auth_headers)
+    return merged
+
+
+def _build_env(
+    server_config: Optional[Dict[str, Any]],
+    auth_env: Optional[Dict[str, str]],
+) -> Optional[Dict[str, str]]:
+    config_env = (server_config or {}).get("env", {})
+    if not config_env and not auth_env:
+        return None
+    merged = {}
+    if config_env:
+        merged.update(config_env)
+    if auth_env:
+        merged.update(auth_env)
+    return merged

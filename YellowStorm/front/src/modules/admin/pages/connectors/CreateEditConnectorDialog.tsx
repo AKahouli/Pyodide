@@ -21,8 +21,15 @@ import {
 import type { ConnectorResponse, ConnectorActionResponse } from '../../types';
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
-import { Loader2 } from 'lucide-react';
+import { Loader2, TestTube2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { inspectMcp } from '../../api';
+
+const AUTH_SOURCE_TYPES = [
+  { value: 'credential', label: 'Credential' },
+  { value: 'connected_app', label: 'Connected App' },
+  { value: 'none', label: 'None' },
+];
 
 const TRANSPORT_TYPES = [
   { value: 'streamable_http', label: 'Streamable HTTP' },
@@ -42,9 +49,14 @@ export function CreateEditConnectorDialog({
   onSave: (data: ConnectorFormValues) => void;
 }) {
   const [form, setForm] = useState<ConnectorFormValues>({ ...defaultConnectorFormValues });
+  const [inspecting, setInspecting] = useState(false);
+  const [inspectError, setInspectError] = useState<string | null>(null);
+  const [inspectTools, setInspectTools] = useState<Array<{ name: string; description?: string }>>([]);
 
   useEffect(() => {
     if (open) {
+      setInspectError(null);
+      setInspectTools([]);
       if (connector) {
         setForm({
           slug: connector.slug,
@@ -53,6 +65,11 @@ export function CreateEditConnectorDialog({
           icon: connector.icon || '',
           color: connector.color || '',
           authType: connector.authType || 'none',
+          authSourceType: connector.authSourceType || 'credential',
+          connectedAppKey: connector.connectedAppKey || '',
+          runtimeAuthConfig: connector.runtimeAuthConfig
+            ? JSON.stringify(connector.runtimeAuthConfig, null, 2)
+            : '',
           mcpTransportType: connector.mcpTransportType || 'streamable_http',
           mcpServerUrl: connector.mcpServerUrl || '',
           mcpServerConfig: connector.mcpServerConfig ? JSON.stringify(connector.mcpServerConfig, null, 2) : '',
@@ -98,11 +115,52 @@ export function CreateEditConnectorDialog({
       }
     }
 
+    let runtimeAuthConfig: Record<string, unknown> | undefined;
+    if (form.runtimeAuthConfig.trim()) {
+      try {
+        runtimeAuthConfig = JSON.parse(form.runtimeAuthConfig);
+      } catch {
+        toast.error('Invalid runtime auth config JSON');
+        return;
+      }
+    }
+
     onSave({
       ...form,
-      actions: form.actionsJson ? JSON.parse(form.actionsJson) : undefined,
-      mcpServerConfig: form.mcpServerConfig ? JSON.parse(form.mcpServerConfig) : undefined,
-    } as ConnectorFormValues);
+    });
+  };
+
+  const handleInspect = async () => {
+    if (!form.mcpServerUrl.trim()) {
+      toast.error('MCP Server URL or command is required');
+      return;
+    }
+
+    let mcpServerConfig: Record<string, unknown> | undefined;
+    if (form.mcpServerConfig.trim()) {
+      try {
+        mcpServerConfig = JSON.parse(form.mcpServerConfig);
+      } catch {
+        toast.error('Invalid MCP server config JSON');
+        return;
+      }
+    }
+
+    setInspecting(true);
+    setInspectError(null);
+    setInspectTools([]);
+    try {
+      const result = await inspectMcp(form.mcpTransportType, form.mcpServerUrl, mcpServerConfig);
+      if (result.error) {
+        setInspectError(result.error);
+        return;
+      }
+      setInspectTools(result.tools ?? []);
+    } catch (err) {
+      setInspectError(err instanceof Error ? err.message : 'Inspection failed');
+    } finally {
+      setInspecting(false);
+    }
   };
 
   return (
@@ -143,6 +201,42 @@ export function CreateEditConnectorDialog({
             </div>
           </div>
 
+          <div className='grid grid-cols-3 gap-4'>
+            <div>
+              <Label>Auth Source Type</Label>
+              <Select value={form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value })}>
+                <SelectTrigger>
+                  <SelectValue placeholder='Select auth source' />
+                </SelectTrigger>
+                <SelectContent>
+                  {AUTH_SOURCE_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Connected App Key</Label>
+              <Input
+                placeholder='microsoft'
+                value={form.connectedAppKey}
+                onChange={(e) => setForm({ ...form, connectedAppKey: e.target.value })}
+                disabled={form.authSourceType !== 'connected_app'}
+              />
+            </div>
+            <div>
+              <Label>Runtime Auth Config (JSON)</Label>
+              <Textarea
+                placeholder='{"strategy": "http_header_bearer"}'
+                value={form.runtimeAuthConfig}
+                onChange={(e) => setForm({ ...form, runtimeAuthConfig: e.target.value })}
+                disabled={form.authSourceType === 'none'}
+                rows={3}
+                className='font-mono text-xs'
+              />
+            </div>
+          </div>
+
           <div className='grid grid-cols-2 gap-4'>
             <div>
               <Label>Transport Type</Label>
@@ -175,6 +269,34 @@ export function CreateEditConnectorDialog({
             <Label>MCP Server Config (JSON)</Label>
             <Textarea placeholder='{"commandArgs": ["--stdio"]}' value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
           </div>
+
+          <div className='flex items-center justify-between gap-3'>
+            <div className='text-sm text-muted-foreground'>Inspect the configured MCP server and preview the available tools.</div>
+            <Button type='button' variant='outline' onClick={handleInspect} disabled={inspecting}>
+              {inspecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <TestTube2 className='mr-2 h-4 w-4' />}
+              Test MCP
+            </Button>
+          </div>
+
+          {(inspectError || inspectTools.length > 0) && (
+            <div className='rounded-md border p-3 space-y-2'>
+              {inspectError ? (
+                <p className='text-sm text-destructive'>{inspectError}</p>
+              ) : (
+                <div className='space-y-2'>
+                  <p className='text-sm font-medium'>Available tools</p>
+                  <div className='space-y-1'>
+                    {inspectTools.map((tool) => (
+                      <div key={tool.name} className='rounded border px-2 py-1 text-xs'>
+                        <div className='font-medium'>{tool.name}</div>
+                        {tool.description ? <div className='text-muted-foreground'>{tool.description}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <Label>Actions (JSON array)</Label>

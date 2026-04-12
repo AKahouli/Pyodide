@@ -2,11 +2,13 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConnectorService } from './connector.service';
 import { ConnectorCredentialService } from './connector-credential.service';
+import { ConnectorAuthServiceImpl } from './connector-auth.service';
 import { Connector, ConnectorSchema } from './schemas/connector.schema';
 import { ConnectorCredential, ConnectorCredentialSchema } from './schemas/connector-credential.schema';
 import { AdminConnectorController } from './admin-connector.controller';
 import { ConnectorController } from './connector.controller';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { ConnectedAppModule } from '../connected-app/connected-app.module';
 
 @Module({
   imports: [
@@ -15,9 +17,18 @@ import { AuthorizationModule } from '../authorization/authorization.module';
       { name: ConnectorCredential.name, schema: ConnectorCredentialSchema },
     ]),
     AuthorizationModule,
+    ConnectedAppModule,
   ],
   controllers: [AdminConnectorController, ConnectorController],
-  providers: [ConnectorService, ConnectorCredentialService],
-  exports: [ConnectorService, ConnectorCredentialService],
+  providers: [
+    ConnectorService,
+    ConnectorCredentialService,
+    ConnectorAuthServiceImpl,
+    {
+      provide: 'ConnectorAuthService',
+      useExisting: ConnectorAuthServiceImpl,
+    },
+  ],
+  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService'],
 })
 export class ConnectorModule {}

@@ -1227,6 +1227,9 @@ export interface ConnectorResponse {
   color: string;
   authType: string;
   authConfigSchema: Record<string, unknown>;
+  authSourceType: string;
+  connectedAppKey: string;
+  runtimeAuthConfig: Record<string, unknown>;
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;
@@ -1256,6 +1259,9 @@ export interface CreateConnectorRequest {
   color?: string;
   authType?: string;
   authConfigSchema?: Record<string, unknown>;
+  authSourceType?: string;
+  connectedAppKey?: string;
+  runtimeAuthConfig?: Record<string, unknown>;
   mcpTransportType?: string;
   mcpServerUrl?: string;
   mcpServerConfig?: Record<string, unknown>;

@@ -19,6 +19,9 @@ export interface IConnectorResponse {
   color: string;
   authType: string;
   authConfigSchema: Record<string, unknown>;
+  authSourceType: string;
+  connectedAppKey: string;
+  runtimeAuthConfig: Record<string, unknown>;
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: Record<string, unknown>;

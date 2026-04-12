@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -32,6 +32,7 @@ import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
 import { Connector, ConnectorDocument } from '../../connector/schemas/connector.schema';
+import type { ConnectorAuthService } from '../../connector/interfaces/connector-auth.interface';
 import {
   extractTextFromComponents,
   mapGrpcComponents,
@@ -92,6 +93,8 @@ export class PlaybookExecutionService {
     private readonly promptService: PlaybookPromptService,
     private readonly semanticEnrichmentService: PlaybookSemanticEnrichmentService,
     private readonly judgeEnrichmentService: PlaybookJudgeEnrichmentService,
+    @Inject('ConnectorAuthService')
+    private readonly connectorAuthService: ConnectorAuthService,
   ) {
     this.logger.setContext('PlaybookExecutionService');
     this.maxComponentsPerTask = this.configService.get<number>('playbook.maxComponentsPerTask') || MAX_COMPONENTS_PER_TASK_DEFAULT;
@@ -177,6 +180,7 @@ export class PlaybookExecutionService {
   private async buildGrpcToolBindings(
     bindings: any[],
     agentConnectorIds?: string[],
+    userId?: string,
   ): Promise<any[]> {
     const enabledBindings = (bindings || []).filter((b: any) => b?.isEnabled !== false);
     if (enabledBindings.length === 0 && (!agentConnectorIds || agentConnectorIds.length === 0)) {
@@ -249,6 +253,8 @@ export class PlaybookExecutionService {
         mcp_transport_type: connector?.mcpTransportType || '',
         mcp_server_url: connector?.mcpServerUrl || '',
         mcp_server_config: this.toGrpcStruct(connector?.mcpServerConfig || {}),
+        auth_headers: {} as Record<string, string>,
+        auth_env: {} as Record<string, string>,
       });
     }
 
@@ -281,8 +287,32 @@ export class PlaybookExecutionService {
         mcp_transport_type: connector?.mcpTransportType || '',
         mcp_server_url: connector?.mcpServerUrl || '',
         mcp_server_config: this.toGrpcStruct(connector?.mcpServerConfig || {}),
+        auth_headers: (binding as any).auth_headers || {} as Record<string, string>,
+        auth_env: (binding as any).auth_env || {} as Record<string, string>,
       };
     });
+
+    if (userId) {
+      for (const binding of result) {
+        const connector = connectorMap.get(binding.connector_id);
+        if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+          try {
+            const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+              authSourceType: connector.authSourceType,
+              connectedAppKey: connector.connectedAppKey,
+              runtimeAuthConfig: connector.runtimeAuthConfig || {},
+            });
+            binding.auth_headers = auth.headers;
+            binding.auth_env = auth.env;
+          } catch (err) {
+            this.logger.warn('Failed to resolve connector auth', {
+              connector_id: binding.connector_id,
+              error: (err as Error).message,
+            });
+          }
+        }
+      }
+    }
 
     this.logger.debug('buildGrpcToolBindings result', {
       totalBindings: result.length,
@@ -1576,6 +1606,7 @@ export class PlaybookExecutionService {
       toolBindingsByTaskId.set(task.id, await this.buildGrpcToolBindings(
         task.toolBindings || [],
         task.assignedAgentId ? grpcAgentMap.get(task.assignedAgentId.toString())?.connectorIds : undefined,
+        userId,
       ));
     }
     const promptOverrides = await this.buildPromptOverrides();
@@ -2988,6 +3019,7 @@ export class PlaybookExecutionService {
     const toolBindings = await this.buildGrpcToolBindings(
       task.toolBindings || [],
       grpcAgent?.connectorIds,
+      userId,
     );
     const promptOverrides = await this.buildPromptOverrides();
 

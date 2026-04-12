@@ -61,6 +61,7 @@ import { WorkspaceModule } from '../workspace/workspace.module';
 import { UsageModule } from '../usage/usage.module';
 import { UserModule } from '../user/user.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ConnectorModule } from '../connector/connector.module';
 import playbookConfig from './config/playbook.config';
 
 @Module({
@@ -84,6 +85,7 @@ import playbookConfig from './config/playbook.config';
     UsageModule,
     UserModule,
     NotificationsModule,
+    ConnectorModule,
   ],
   controllers: [
     PlaybookStreamController, // Must be before PlaybookController to avoid route conflict with :id param

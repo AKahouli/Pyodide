@@ -17,6 +17,18 @@ export enum ConnectorAuthType {
   NONE = 'none',
 }
 
+export enum ConnectorAuthSourceType {
+  CONNECTED_APP = 'connected_app',
+  CREDENTIAL = 'credential',
+  NONE = 'none',
+}
+
+export enum RuntimeAuthStrategy {
+  HTTP_HEADER_BEARER = 'http_header_bearer',
+  CUSTOM_HEADERS = 'custom_headers',
+  ENV_VARS = 'env_vars',
+}
+
 export enum McpTransportType {
   STDIO = 'stdio',
   SSE = 'sse',
@@ -80,6 +92,15 @@ export class Connector extends Document {
 
   @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
   authConfigSchema!: Record<string, unknown>;
+
+  @Prop({ default: 'credential', enum: ConnectorAuthSourceType })
+  authSourceType!: string;
+
+  @Prop({ default: '', maxlength: 64, trim: true })
+  connectedAppKey!: string;
+
+  @Prop({ type: MongooseSchema.Types.Mixed, default: {} })
+  runtimeAuthConfig!: Record<string, unknown>;
 
   @Prop({ required: true, enum: McpTransportType, default: McpTransportType.STREAMABLE_HTTP })
   mcpTransportType!: McpTransportType;

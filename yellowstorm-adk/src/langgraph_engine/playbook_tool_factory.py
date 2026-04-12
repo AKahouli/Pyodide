@@ -1058,6 +1058,8 @@ def _create_connector_mcp_tools(
         server_config = binding.get("mcp_server_config", {}) or {}
         raw_actions = binding.get("actions", [])
         fixed_params = binding.get("fixed_params", {})
+        binding_auth_headers = binding.get("auth_headers") or {}
+        binding_auth_env = binding.get("auth_env") or {}
         actions = (
             [
                 {
@@ -1115,6 +1117,8 @@ def _create_connector_mcp_tools(
                 sc: Dict[str, Any] = server_config,
                 fp: Dict[str, Any] = fixed_params,
                 tn: str = tool_name,
+                ah: Dict[str, str] = binding_auth_headers,
+                ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
                 async def _execute_mcp(**kwargs: Any) -> str:
                     raw_params = kwargs.get("params")
@@ -1137,7 +1141,15 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
-                        return await call_mcp_tool(tt, su, sc, ak, merged_params)
+                        return await call_mcp_tool(
+                            tt,
+                            su,
+                            sc,
+                            ak,
+                            merged_params,
+                            auth_headers=ah,
+                            auth_env=ae,
+                        )
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"

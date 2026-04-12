@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Cable, ChevronRight, ChevronDown, Plug, Search } from 'lucide-react';
+import { Cable, ChevronRight, Plug, Search, ShieldCheck, Link2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
-import type { ConnectorResponse, ConnectorActionResponse } from '@/modules/admin/types';
+import type { ConnectorResponse } from '@/modules/admin/types';
 import apiClient from '@/lib/api/client';
-import { toast } from 'sonner';
+import { useRequireApp } from '@/modules/connected-app/hooks/useRequireApp';
 
 interface ConnectorWithState extends ConnectorResponse {
   expanded: boolean;
@@ -23,6 +24,21 @@ interface DragPayload {
 interface ConnectorSidebarProps {
   isOpen: boolean;
   onDragStart: (payload: DragPayload) => void;
+}
+
+function useOAuthStatus(appKey: string | undefined): {
+  isConnected: boolean;
+  isConnecting: boolean;
+  handleConnect: () => Promise<void>;
+} {
+  const { isConnected, isConnecting, ensureConnected } = useRequireApp(appKey ?? '');
+
+  const handleConnect = useCallback(async () => {
+    if (!appKey) return;
+    await ensureConnected();
+  }, [appKey, ensureConnected]);
+
+  return { isConnected, isConnecting, handleConnect };
 }
 
 export function ConnectorSidebar({ isOpen, onDragStart }: ConnectorSidebarProps) {
@@ -95,73 +111,140 @@ export function ConnectorSidebar({ isOpen, onDragStart }: ConnectorSidebarProps)
           </div>
         ) : (
           <div className='p-2 space-y-1'>
-            {filtered.map((connector) => (
-              <Collapsible
-                key={connector.id}
-                open={connector.expanded}
-                onOpenChange={() => toggleExpand(connector.id)}
-              >
-                <CollapsibleTrigger asChild>
-                  <div
-                    className='flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50 cursor-grab transition-colors text-sm'
-                    draggable
-                    onDragStart={(e) => {
-                      const enabledActions = connector.actions
-                        .filter((a) => a.isEnabled)
-                        .map((a) => ({ key: a.key, label: a.label }));
-                      const payload: DragPayload = {
-                        type: 'connector',
-                        connectorId: connector.id,
-                        connectorName: connector.name,
-                        actions: enabledActions,
-                      };
-                      e.dataTransfer.setData('application/json', JSON.stringify(payload));
-                      e.dataTransfer.effectAllowed = 'copy';
-                      onDragStart(payload);
-                    }}
-                  >
-                    <ChevronRight className={cn('h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform', connector.expanded && 'rotate-90')} />
-                    <Plug className='h-3.5 w-3.5 text-muted-foreground shrink-0' />
-                    <span className='truncate font-medium'>{connector.name}</span>
-                    <Badge variant='secondary' className='ml-auto text-[10px] px-1.5 py-0'>
-                      {connector.actions.filter((a) => a.isEnabled).length}
-                    </Badge>
-                  </div>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className='ml-7 mt-0.5 space-y-0.5'>
-                    {connector.actions
-                      .filter((a) => a.isEnabled)
-                      .map((action) => (
-                        <div
-                          key={action.key}
-                          className='flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/30 cursor-grab text-xs text-muted-foreground'
-                          draggable
-                          onDragStart={(e) => {
-                            const payload: DragPayload = {
-                              type: 'connector',
-                              connectorId: connector.id,
-                              connectorName: connector.name,
-                              actions: [{ key: action.key, label: action.label }],
-                            };
-                            e.dataTransfer.setData('application/json', JSON.stringify(payload));
-                            e.dataTransfer.effectAllowed = 'copy';
-                            onDragStart(payload);
-                          }}
-                        >
-                          <span className='truncate'>{action.label}</span>
-                          <Badge variant='outline' className='ml-auto text-[10px] px-1 py-0'>
-                            {action.safety}
-                          </Badge>
-                        </div>
-                      ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            ))}
+            {filtered.map((connector) => {
+              const isOAuth = connector.authSourceType === 'connected_app' && !!connector.connectedAppKey;
+              return (
+                <ConnectorCard
+                  key={connector.id}
+                  connector={connector}
+                  isOAuth={isOAuth}
+                  onToggleExpand={() => toggleExpand(connector.id)}
+                  onDragStart={onDragStart}
+                />
+              );
+            })}
           </div>
         )}
       </ScrollArea>
     </div>
+  );
+}
+
+function ConnectorCard({
+  connector,
+  isOAuth,
+  onToggleExpand,
+  onDragStart,
+}: {
+  connector: ConnectorWithState;
+  isOAuth: boolean;
+  onToggleExpand: () => void;
+  onDragStart: (payload: DragPayload) => void;
+}) {
+  const { isConnected, isConnecting, handleConnect } = useOAuthStatus(
+    isOAuth ? connector.connectedAppKey : undefined,
+  );
+
+  const canDrag = !isOAuth || isConnected;
+
+  const startDrag = (e: React.DragEvent, actions: Array<{ key: string; label: string }>) => {
+    if (!canDrag) {
+      e.preventDefault();
+      return;
+    }
+    const payload: DragPayload = {
+      type: 'connector',
+      connectorId: connector.id,
+      connectorName: connector.name,
+      actions,
+    };
+    e.dataTransfer.setData('application/json', JSON.stringify(payload));
+    e.dataTransfer.effectAllowed = 'copy';
+    onDragStart(payload);
+  };
+
+  const enabledActions = connector.actions.filter((a) => a.isEnabled);
+
+  return (
+    <Collapsible open={connector.expanded} onOpenChange={onToggleExpand}>
+      <CollapsibleTrigger asChild>
+        <div
+          className={cn(
+            'flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors text-sm',
+            canDrag
+              ? 'hover:bg-muted/50 cursor-grab'
+              : 'opacity-60 cursor-not-allowed',
+          )}
+          draggable={canDrag}
+          onDragStart={(e) =>
+            startDrag(e, enabledActions.map((a) => ({ key: a.key, label: a.label })))
+          }
+        >
+          <ChevronRight className={cn('h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform', connector.expanded && 'rotate-90')} />
+          <Plug className='h-3.5 w-3.5 text-muted-foreground shrink-0' />
+          <span className='truncate font-medium'>{connector.name}</span>
+
+          {isOAuth && (
+            isConnected ? (
+              <ShieldCheck className='h-3.5 w-3.5 text-green-600 shrink-0 ml-auto' />
+            ) : (
+              <Link2 className='h-3.5 w-3.5 text-amber-500 shrink-0 ml-auto' />
+            )
+          )}
+
+          {!isOAuth && (
+            <Badge variant='secondary' className='ml-auto text-[10px] px-1.5 py-0'>
+              {enabledActions.length}
+            </Badge>
+          )}
+
+          {isOAuth && !isConnected && (
+            <Button
+              size='sm'
+              variant='ghost'
+              className='h-5 px-1.5 text-[10px] ml-auto shrink-0'
+              disabled={isConnecting}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleConnect();
+              }}
+            >
+              Connect
+            </Button>
+          )}
+        </div>
+      </CollapsibleTrigger>
+
+      {isOAuth && !isConnected && (
+        <div className='ml-7 mb-1'>
+          <p className='text-[10px] text-muted-foreground'>
+            Connect your account to use this connector.
+          </p>
+        </div>
+      )}
+
+      <CollapsibleContent>
+        <div className='ml-7 mt-0.5 space-y-0.5'>
+          {enabledActions.map((action) => (
+            <div
+              key={action.key}
+              className={cn(
+                'flex items-center gap-2 rounded px-2 py-1 hover:bg-muted/30 text-xs text-muted-foreground',
+                canDrag ? 'cursor-grab' : 'opacity-40 cursor-not-allowed',
+              )}
+              draggable={canDrag}
+              onDragStart={(e) =>
+                startDrag(e, [{ key: action.key, label: action.label }])
+              }
+            >
+              <span className='truncate'>{action.label}</span>
+              <Badge variant='outline' className='ml-auto text-[10px] px-1 py-0'>
+                {action.safety}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }

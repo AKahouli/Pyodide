@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -11,10 +11,11 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Cable, Plug, Loader2 } from 'lucide-react';
-import type { ConnectorResponse, ConnectorActionResponse } from '@/modules/admin/types';
+import { Cable, Plug, Loader2, Link2 } from 'lucide-react';
+import type { ConnectorResponse } from '@/modules/admin/types';
 import type { ToolBinding, ToolBindingAction } from '../types';
 import apiClient from '@/lib/api/client';
+import { useRequireApp } from '@/modules/connected-app/hooks/useRequireApp';
 
 interface ConnectorBindingModalProps {
   open: boolean;
@@ -24,6 +25,21 @@ interface ConnectorBindingModalProps {
   connectorName: string;
   existingBinding: ToolBinding | null;
   onSave: (taskId: string, binding: ToolBinding) => void;
+}
+
+function useConnectorAppKey(connectorId: string | undefined): string | null {
+  const [appKey, setAppKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!connectorId) { setAppKey(null); return; }
+    let cancelled = false;
+    (async () => {
+      apiClient.get(`/connectors/${connectorId}`).then((res) => {
+        if (!cancelled) setAppKey(res.data?.data?.connectedAppKey ?? null);
+      }).catch(() => { if (!cancelled) setAppKey(null); });
+    })();
+    return () => { cancelled = true; };
+  }, [connectorId]);
+  return appKey;
 }
 
 export function ConnectorBindingModal({
@@ -38,12 +54,18 @@ export function ConnectorBindingModal({
   const [connector, setConnector] = useState<ConnectorResponse | null>(null);
   const [credentials, setCredentials] = useState<Array<{ id: string; displayName: string; status: string }>>([]);
   const [loading, setLoading] = useState(false);
+  const [connecting, setConnecting] = useState(false);
 
   const [selectedCredentialId, setSelectedCredentialId] = useState<string | null>(null);
   const [selectedActions, setSelectedActions] = useState<Set<string>>(new Set());
   const [fixedParams, setFixedParams] = useState('');
   const [disableAutoSkills, setDisableAutoSkills] = useState(false);
   const [initialized, setInitialized] = useState(false);
+
+  const appKey = useConnectorAppKey(connectorId);
+  const { isConnected, isConnecting, ensureConnected } = useRequireApp(appKey ?? '');
+
+  const isOAuthConnector = connector?.authSourceType === 'connected_app' && !!connector?.connectedAppKey;
 
   useEffect(() => {
     if (!open) {
@@ -95,6 +117,19 @@ export function ConnectorBindingModal({
     return () => { cancelled = true; };
   }, [open, connectorId, existingBinding]);
 
+  const handleConnect = useCallback(async () => {
+    if (!appKey) return;
+    setConnecting(true);
+    try {
+      const connected = await ensureConnected();
+      if (!connected) {
+        setConnecting(false);
+      }
+    } finally {
+      setConnecting(false);
+    }
+  }, [appKey, ensureConnected]);
+
   const toggleAction = (key: string) => {
     setSelectedActions((prev) => {
       const next = new Set(prev);
@@ -124,7 +159,7 @@ export function ConnectorBindingModal({
       connectorId,
       connectorName: connectorName || existingBinding?.connectorName,
       actions,
-      credentialId: selectedCredentialId,
+      credentialId: isOAuthConnector ? null : selectedCredentialId,
       fixedParams: parsedFixedParams,
       disableAutoSkills,
       isEnabled: true,
@@ -135,6 +170,8 @@ export function ConnectorBindingModal({
   };
 
   const enabledActions = connector?.actions.filter((a) => a.isEnabled) ?? [];
+
+  const canSave = isOAuthConnector ? isConnected : true;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -152,32 +189,70 @@ export function ConnectorBindingModal({
           </div>
         ) : connector ? (
           <div className='space-y-4'>
-            <div>
-              <Label className='text-sm font-medium'>Credential</Label>
-              <div className='mt-1.5 space-y-1.5'>
-                <label className='flex items-center gap-2 text-sm'>
-                  <input
-                    type='radio'
-                    name='credential'
-                    checked={selectedCredentialId === null || selectedCredentialId === ''}
-                    onChange={() => setSelectedCredentialId(null)}
-                  />
-                  <span>None (use server defaults)</span>
-                </label>
-                {(Array.isArray(credentials) ? credentials : []).map((cred) => (
-                  <label key={cred.id} className='flex items-center gap-2 text-sm'>
+            {isOAuthConnector && (
+              <div className='rounded-md border p-3 space-y-2'>
+                <div className='flex items-center gap-2'>
+                  <Link2 className='h-4 w-4 text-muted-foreground' />
+                  <Label className='text-sm font-medium'>
+                    {connector.connectedAppKey
+                      ? `Connected App: ${connector.connectedAppKey}`
+                      : 'OAuth2 Connection Required'}
+                  </Label>
+                </div>
+                {isConnected ? (
+                  <p className='text-xs text-green-600'>Connected and ready to use</p>
+                ) : (
+                  <div className='flex items-center gap-2'>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      disabled={isConnecting}
+                      onClick={handleConnect}
+                    >
+                      {isConnecting ? (
+                        <Loader2 className='h-3 w-3 animate-spin' />
+                      ) : (
+                        'Connect Account'
+                      )}
+                    </Button>
+                    {!isConnecting && (
+                      <p className='text-xs text-muted-foreground'>
+                        You need to connect your account before using this connector.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!isOAuthConnector && (
+              <div>
+                <Label className='text-sm font-medium'>Credential</Label>
+                <div className='mt-1.5 space-y-1.5'>
+                  <label className='flex items-center gap-2 text-sm'>
                     <input
                       type='radio'
                       name='credential'
-                      checked={selectedCredentialId === cred.id}
-                      onChange={() => setSelectedCredentialId(cred.id)}
+                      checked={selectedCredentialId === null || selectedCredentialId === ''}
+                      onChange={() => setSelectedCredentialId(null)}
                     />
-                    <span>{cred.displayName}</span>
-                    <Badge variant='outline' className='text-[10px]'>{cred.status}</Badge>
+                    <span>None (use server defaults)</span>
                   </label>
-                ))}
+                  {(Array.isArray(credentials) ? credentials : []).map((cred) => (
+                    <label key={cred.id} className='flex items-center gap-2 text-sm'>
+                      <input
+                        type='radio'
+                        name='credential'
+                        checked={selectedCredentialId === cred.id}
+                        onChange={() => setSelectedCredentialId(cred.id)}
+                      />
+                      <span>{cred.displayName}</span>
+                      <Badge variant='outline' className='text-[10px]'>{cred.status}</Badge>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
+            )}
 
             <div>
               <Label className='text-sm font-medium'>Actions</Label>
@@ -221,7 +296,7 @@ export function ConnectorBindingModal({
 
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSave} disabled={selectedActions.size === 0}>Save Binding</Button>
+          <Button onClick={handleSave} disabled={!canSave || selectedActions.size === 0}>Save Binding</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

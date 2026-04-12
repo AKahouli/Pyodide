@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ConnectorActionSafety, ConnectorAuthType, McpTransportType } from '../schemas/connector.schema';
+import { ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, McpTransportType } from '../schemas/connector.schema';
 
 export class ConnectorActionDto {
   @ApiProperty({ description: 'Action key, e.g. list_files' })
@@ -101,6 +101,22 @@ export class CreateConnectorDto {
   @IsOptional()
   @IsObject()
   authConfigSchema?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ enum: ConnectorAuthSourceType, description: 'Where user auth comes from' })
+  @IsOptional()
+  @IsString()
+  authSourceType?: ConnectorAuthSourceType;
+
+  @ApiPropertyOptional({ description: 'Connected app key for OAuth-backed connectors (e.g. microsoft, github)' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  connectedAppKey?: string;
+
+  @ApiPropertyOptional({ description: 'Runtime auth injection config (strategy, headers, env mapping)', type: Object })
+  @IsOptional()
+  @IsObject()
+  runtimeAuthConfig?: Record<string, unknown>;
 
   @ApiPropertyOptional({ description: 'MCP transport type' })
   @IsOptional()

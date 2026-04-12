@@ -2036,6 +2036,8 @@ def _proto_task_to_dict(proto_task) -> dict:
                 )
                 if getattr(b, "mcp_server_config", None) and b.mcp_server_config.fields
                 else {},
+                "auth_headers": dict(b.auth_headers) if b.auth_headers else {},
+                "auth_env": dict(b.auth_env) if b.auth_env else {},
             }
             for b in tool_bindings
         ]

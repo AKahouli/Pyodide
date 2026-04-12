@@ -5,6 +5,9 @@ export interface ConnectorFormValues {
   icon: string;
   color: string;
   authType: string;
+  authSourceType: string;
+  connectedAppKey: string;
+  runtimeAuthConfig: string;
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: string;
@@ -20,6 +23,9 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   icon: '',
   color: '',
   authType: 'none',
+  authSourceType: 'credential',
+  connectedAppKey: '',
+  runtimeAuthConfig: '',
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
   mcpServerConfig: '',
