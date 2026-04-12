@@ -109,6 +109,23 @@ export interface PlaybookTask {
   taskType?: string;
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
+  toolBindings?: ToolBinding[];
+}
+
+export interface ToolBindingAction {
+  actionKey: string;
+  isEnabled?: boolean;
+}
+
+export interface ToolBinding {
+  id: string;
+  connectorId: string;
+  connectorName?: string;
+  actions: ToolBindingAction[];
+  credentialId?: string | null;
+  fixedParams?: Record<string, unknown>;
+  disableAutoSkills?: boolean;
+  isEnabled?: boolean;
 }
 
 export interface PlaybookEdge {
@@ -871,6 +888,7 @@ export interface PlaybookState {
   copilotMode: PlaybookCopilotMode;
   executionPanelOpen: boolean;
   workspaceExplorerOpen: boolean;
+  connectorSidebarOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
@@ -992,6 +1010,12 @@ export interface PlaybookActions {
   setWorkspaceExplorerOpen: (open: boolean) => void;
   addInputFileToTask: (taskId: string, inputFile: InputFile) => void;
   removeInputFileFromTask: (taskId: string, inputFileId: string) => void;
+
+  // Connector Bindings
+  connectorSidebarOpen: boolean;
+  setConnectorSidebarOpen: (open: boolean) => void;
+  addToolBindingToTask: (taskId: string, binding: ToolBinding) => void;
+  removeToolBindingFromTask: (taskId: string, bindingId: string) => void;
 
   // Cleanup
   reset: () => void;

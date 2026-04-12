@@ -44,6 +44,7 @@ import { PlaybookModule } from './modules/playbook/playbook.module';
 import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
+import { ConnectorModule } from './modules/connector/connector.module';
 
 @Module({
   imports: [
@@ -90,6 +91,7 @@ import { ConnectedAppModule } from './modules/connected-app/connected-app.module
     AuthProviderModule,
     AnalyticsModule,
     ConnectedAppModule,
+    ConnectorModule,
     HealthModule,
   ],
   providers: [

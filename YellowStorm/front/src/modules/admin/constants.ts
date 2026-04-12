@@ -16,7 +16,8 @@ import {
   Puzzle,
   Bot,
   KeyRound,
-  Plug
+  Plug,
+  Cable,
 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
@@ -161,6 +162,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['skills.read', 'skills.*', '*'],
     description: 'Manage agent skills',
     descriptionKey: 'menu.skills.description',
+  },
+  {
+    id: 'connectors',
+    label: 'Connectors',
+    labelKey: 'menu.connectors.label',
+    path: '/admin/connectors',
+    icon: Cable,
+    permissions: ['connectors.read', 'connectors.*', '*'],
+    description: 'Manage MCP connector catalog',
+    descriptionKey: 'menu.connectors.description',
   },
   {
     id: 'analytics',

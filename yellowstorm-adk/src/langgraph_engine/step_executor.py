@@ -575,6 +575,7 @@ async def _execute_step_direct(
             code_interpreter_files=code_interpreter_files,
             output_workspace_id=output_workspace_id,
             workspace_context_mode=tool_scope["workspace_context_mode"],
+            step_connector_bindings=task.get("tool_bindings"),
         )
 
         if execution_mode in ("replay_strict", "replay_flex", "replay_adaptive") and validated_replay:

@@ -1,5 +1,20 @@
 import { ExecutionStatus } from '../schemas/playbook-execution.schema';
 
+export interface ToolBindingActionData {
+  actionKey: string;
+  isEnabled?: boolean;
+}
+
+export interface ToolBindingData {
+  id: string;
+  connectorId: string;
+  actions: ToolBindingActionData[];
+  credentialId?: string | null;
+  fixedParams?: Record<string, unknown>;
+  disableAutoSkills?: boolean;
+  isEnabled?: boolean;
+}
+
 export interface InputFileData {
   type: 'workspace' | 'document';
   id: string;
@@ -51,6 +66,7 @@ export interface PlaybookTaskData {
   activeOutputFormatError?: string | null;
   inputFiles?: InputFileData[];
   stepReplayMode?: string;
+  toolBindings?: ToolBindingData[];
 }
 
 export interface PlaybookEdgeData {

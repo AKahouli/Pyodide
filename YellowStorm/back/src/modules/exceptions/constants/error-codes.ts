@@ -187,6 +187,11 @@ export enum ErrorCode {
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
   AUTH_PROVIDER_ALREADY_EXISTS = 'ERR_2601',
   AUTH_PROVIDER_IN_USE = 'ERR_2603',
+  // Connector errors (3100-3199)
+  CONNECTOR_NOT_FOUND = 'ERR_3100',
+  CONNECTOR_ALREADY_EXISTS = 'ERR_3101',
+  CONNECTOR_CREDENTIAL_NOT_FOUND = 'ERR_3110',
+
   // Connected App errors (3000-3099)
   CONNECTED_APP_NOT_FOUND = 'ERR_3000',
   CONNECTED_APP_ALREADY_EXISTS = 'ERR_3001',
@@ -367,4 +372,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CONNECTED_APP_OAUTH_FAILED]: 'OAuth authentication with the app failed.',
   [ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED]: 'Failed to refresh app token. Please reconnect.',
   [ErrorCode.CONNECTED_APP_DISABLED]: 'This connected app is currently disabled.',
+
+  [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
+  [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
+  [ErrorCode.CONNECTOR_CREDENTIAL_NOT_FOUND]: 'Connector credential not found.',
 };

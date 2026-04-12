@@ -31,6 +31,7 @@ import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
+import { Connector, ConnectorDocument } from '../../connector/schemas/connector.schema';
 import {
   extractTextFromComponents,
   mapGrpcComponents,
@@ -73,6 +74,8 @@ export class PlaybookExecutionService {
   constructor(
     @InjectModel(PlaybookExecution.name)
     private readonly executionModel: Model<PlaybookExecutionDocument>,
+    @InjectModel(Connector.name)
+    private readonly connectorModel: Model<ConnectorDocument>,
     private readonly playbookService: PlaybookService,
     private readonly grpcService: PlaybookGrpcService,
     private readonly contextService: PlaybookContextService,
@@ -169,6 +172,51 @@ export class PlaybookExecutionService {
         return acc;
       }, {}),
     };
+  }
+
+  private async buildGrpcToolBindings(bindings: any[]): Promise<any[]> {
+    const enabledBindings = (bindings || []).filter((b: any) => b?.isEnabled !== false);
+    if (enabledBindings.length === 0) {
+      return [];
+    }
+
+    const connectorIds = Array.from(new Set(
+      enabledBindings
+        .map((binding: any) => binding?.connectorId)
+        .filter((id: any) => Types.ObjectId.isValid(id)),
+    )).map((id) => new Types.ObjectId(id));
+
+    const connectors = await this.connectorModel.find({ _id: { $in: connectorIds } }).lean().exec();
+    const connectorMap = new Map<string, any>(connectors.map((connector: any) => [connector._id.toString(), connector]));
+
+    return enabledBindings.map((binding: any) => {
+      const connector = connectorMap.get(binding.connectorId);
+      const connectorActions = new Map<string, any>(((connector?.actions || []) as any[]).map((action: any) => [action.key, action]));
+
+      return {
+        id: binding.id,
+        connector_id: binding.connectorId,
+        connector_name: binding.connectorName || connector?.name || binding.connectorId,
+        actions: (binding.actions || [])
+          .filter((action: any) => action.isEnabled !== false)
+          .map((action: any) => {
+            const connectorAction = connectorActions.get(action.actionKey);
+            return {
+              action_key: action.actionKey,
+              label: connectorAction?.label || action.actionKey,
+              description: connectorAction?.description || '',
+              parameter_schema: this.toGrpcStruct(connectorAction?.parameterSchema || {}),
+              parameter_schema_json: JSON.stringify(connectorAction?.parameterSchema || {}),
+            };
+          }),
+        credential_id: binding.credentialId || null,
+        fixed_params: binding.fixedParams || {},
+        disable_auto_skills: binding.disableAutoSkills || false,
+        mcp_transport_type: connector?.mcpTransportType || '',
+        mcp_server_url: connector?.mcpServerUrl || '',
+        mcp_server_config: this.toGrpcStruct(connector?.mcpServerConfig || {}),
+      };
+    });
   }
 
   private mapGrpcToolTrace(rawToolTrace: any[] = []): Array<{
@@ -1439,6 +1487,10 @@ export class PlaybookExecutionService {
       workspace_id,
       workspace_documents: Array.from(docMap.values()),
     }));
+    const toolBindingsByTaskId = new Map<string, any[]>();
+    for (const task of enabledTasks) {
+      toolBindingsByTaskId.set(task.id, await this.buildGrpcToolBindings(task.toolBindings || []));
+    }
     const promptOverrides = await this.buildPromptOverrides();
 
     const request: any = {
@@ -1475,6 +1527,7 @@ export class PlaybookExecutionService {
             description: p.description || '',
           })),
           task_type: t.taskType || 'generic',
+          tool_bindings: toolBindingsByTaskId.get(t.id) || [],
         };
       }),
       agents: [],
@@ -2845,6 +2898,7 @@ export class PlaybookExecutionService {
       });
     }
 
+    const toolBindings = await this.buildGrpcToolBindings(task.toolBindings || []);
     const promptOverrides = await this.buildPromptOverrides();
 
     const grpcRequest: any = {
@@ -2878,6 +2932,7 @@ export class PlaybookExecutionService {
           description: p.description || '',
         })),
         task_type: task.taskType || 'generic',
+        tool_bindings: toolBindings,
       },
       context_from_dependencies: contextFromDependencies,
       workspace_context: taskWorkspaceContexts,

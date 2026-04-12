@@ -38,6 +38,7 @@ import type {
   PlaybookPageMode,
   PlaybookUndoSnapshot,
   UpsertPlaybookScheduleData,
+  ToolBinding,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -116,6 +117,7 @@ const initialState: PlaybookState = {
   copilotMode: 'design',
   executionPanelOpen: (() => { try { return localStorage.getItem(EXEC_PANEL_KEY) === '1'; } catch { return false; } })(),
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
+  connectorSidebarOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
@@ -2423,6 +2425,48 @@ export const usePlaybookStore = create<PlaybookStore>()(
           isDirty: true,
           dirtyVersion: state.dirtyVersion + 1,
         }));
+      },
+
+      addToolBindingToTask: (taskId: string, binding: ToolBinding) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const existing = task.toolBindings ?? [];
+          const replaced = existing.filter((b) => b.connectorId !== binding.connectorId);
+          return { ...task, toolBindings: [...replaced, binding] };
+        });
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
+      removeToolBindingFromTask: (taskId: string, bindingId: string) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          return { ...task, toolBindings: (task.toolBindings ?? []).filter((b) => b.id !== bindingId) };
+        });
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
+      // ===== Connector Sidebar =====
+
+      setConnectorSidebarOpen: (open) => {
+        set({ connectorSidebarOpen: open });
       },
 
       // ===== Undo/Redo =====

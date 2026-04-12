@@ -173,6 +173,19 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/skills/${id}`,
     import: '/admin/skills/import',
   },
+  adminConnectors: {
+    list: '/admin/connectors',
+    byId: (id: string) => `/admin/connectors/${id}`,
+    inspect: '/admin/connectors/inspect',
+    importMcp: '/admin/connectors/import-mcp',
+  },
+  connectors: {
+    list: '/connectors',
+    byId: (id: string) => `/connectors/${id}`,
+    credentials: (connectorId: string) => `/connectors/${connectorId}/credentials`,
+    credential: (id: string) => `/connectors/credentials/${id}`,
+    validateCredential: (id: string) => `/connectors/credentials/${id}/validate`,
+  },
   adminPlaybookPrompts: {
     list: '/admin/playbook-prompts',
     byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,

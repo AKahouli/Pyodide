@@ -90,6 +90,13 @@ export const Permissions = {
   ADMIN_LOGS_READ: 'admin.logs.read',
   ADMIN_ALL: 'admin.*',
 
+  // Connector Management
+  CONNECTORS_READ: 'connectors.read',
+  CONNECTORS_CREATE: 'connectors.create',
+  CONNECTORS_UPDATE: 'connectors.update',
+  CONNECTORS_DELETE: 'connectors.delete',
+  CONNECTORS_ALL: 'connectors.*',
+
   // Connected App Management
   CONNECTED_APPS_READ: 'connected_apps.read',
   CONNECTED_APPS_CREATE: 'connected_apps.create',
@@ -193,6 +200,13 @@ const ALL_PERMISSIONS = new Set<string>([
   'admin.audit.read',
   'admin.logs.read',
   'admin.*',
+
+  // Connector Management
+  'connectors.read',
+  'connectors.create',
+  'connectors.update',
+  'connectors.delete',
+  'connectors.*',
 
   // Connected App Management
   'connected_apps.read',

@@ -25,6 +25,7 @@ import {
   PlaybookPromptTemplate,
   PlaybookPromptTemplateSchema,
 } from './schemas/playbook-prompt-template.schema';
+import { Connector, ConnectorSchema } from '../connector/schemas/connector.schema';
 
 // Controllers — stream controller must be before playbook controller to avoid :id route conflict
 import { PlaybookStreamController } from './controllers/playbook-stream.controller';
@@ -69,9 +70,10 @@ import playbookConfig from './config/playbook.config';
       { name: Playbook.name, schema: PlaybookSchema },
       { name: PlaybookExecution.name, schema: PlaybookExecutionSchema },
         { name: PlaybookDesignMessage.name, schema: PlaybookDesignMessageSchema },
-        { name: PlaybookValidatedReplay.name, schema: PlaybookValidatedReplaySchema },
-        { name: PlaybookOutputFormatTemplate.name, schema: PlaybookOutputFormatTemplateSchema },
-        { name: PlaybookPromptTemplate.name, schema: PlaybookPromptTemplateSchema },
+      { name: PlaybookValidatedReplay.name, schema: PlaybookValidatedReplaySchema },
+      { name: PlaybookOutputFormatTemplate.name, schema: PlaybookOutputFormatTemplateSchema },
+      { name: PlaybookPromptTemplate.name, schema: PlaybookPromptTemplateSchema },
+      { name: Connector.name, schema: ConnectorSchema },
       ]),
     JwtModule.register({}),
     forwardRef(() => AuthModule),

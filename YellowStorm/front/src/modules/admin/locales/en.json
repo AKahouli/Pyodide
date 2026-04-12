@@ -27,6 +27,8 @@
   "menu.tools.description": "Manage agent tools",
   "menu.skills.label": "Skills",
   "menu.skills.description": "Manage agent skills",
+  "menu.connectors.label": "Connectors",
+  "menu.connectors.description": "Manage MCP connector catalog",
   "menu.reports.label": "Reports",
   "menu.reports.title": "Message Reports",
   "menu.reports.description": "Review and manage reported AI responses",

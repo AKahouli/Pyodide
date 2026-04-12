@@ -27,6 +27,27 @@ export class InputFileItem {
 export const InputFileItemSchema = SchemaFactory.createForClass(InputFileItem);
 
 @Schema({ _id: false, strict: false })
+export class ToolBindingAction {
+  actionKey!: string;
+  isEnabled?: boolean;
+}
+
+export const ToolBindingActionSchema = SchemaFactory.createForClass(ToolBindingAction);
+
+@Schema({ _id: false, strict: false })
+export class ToolBinding {
+  id!: string;
+  connectorId!: string;
+  actions!: ToolBindingAction[];
+  credentialId?: string | null;
+  fixedParams?: Record<string, unknown>;
+  disableAutoSkills?: boolean;
+  isEnabled?: boolean;
+}
+
+export const ToolBindingSchema = SchemaFactory.createForClass(ToolBinding);
+
+@Schema({ _id: false, strict: false })
 export class TaskInputPortSchema {
   @Prop({ type: String, required: true })
   id!: string;
@@ -130,6 +151,9 @@ export class PlaybookTask {
 
   @Prop({ type: [TaskOutputPortSchemaDefinition], default: [], _id: false })
   outputPorts!: TaskOutputPortSchema[];
+
+  @Prop({ type: [ToolBindingSchema], default: [], _id: false })
+  toolBindings!: ToolBinding[];
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);

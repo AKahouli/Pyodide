@@ -766,6 +766,7 @@ export class PlaybookService {
         activeOutputFormatStatus: activeOutputFormats.get(t.id)?.generationStatus || null,
         activeOutputFormatError: activeOutputFormats.get(t.id)?.generationError || null,
         stepReplayMode: t.stepReplayMode || 'live',
+        toolBindings: t.toolBindings || [],
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,

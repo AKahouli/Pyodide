@@ -86,6 +86,7 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       taskType: task.taskType,
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
+      toolBindings: task.toolBindings,
     })),
   };
 }

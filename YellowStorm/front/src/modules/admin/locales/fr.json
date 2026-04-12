@@ -27,6 +27,8 @@
   "menu.tools.description": "Gérer les outils des agents",
   "menu.skills.label": "Compétences",
   "menu.skills.description": "Gérer les compétences des agents",
+  "menu.connectors.label": "Connecteurs",
+  "menu.connectors.description": "Gérer le catalogue de connecteurs MCP",
   "menu.reports.label": "Signalements",
   "menu.reports.title": "Signalements de messages",
   "menu.reports.description": "Voir et traiter les messages signalés",

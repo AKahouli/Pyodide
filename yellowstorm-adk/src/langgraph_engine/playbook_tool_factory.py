@@ -9,7 +9,7 @@ import copy
 from typing import Dict, Any, List, Optional, Tuple
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 logger = get_logger(__name__)
@@ -66,6 +66,7 @@ _GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
 
 # --- ToolResultCollector ---
 
+
 class ToolResultCollector:
     """Collects structured components from tool executions.
 
@@ -87,14 +88,19 @@ class ToolResultCollector:
 
 # --- Pydantic schemas for tool inputs ---
 
+
 class SearchQueryInput(BaseModel):
     query: str = Field(description="The search query string.")
 
 
 class BrainSearchInput(BaseModel):
     query: str = Field(description="The search query string.")
-    brain_name: Optional[str] = Field(default=None, description="Specific brain/workspace to search in.")
-    document_filter: Optional[str] = Field(default=None, description="Filter by specific document.")
+    brain_name: Optional[str] = Field(
+        default=None, description="Specific brain/workspace to search in."
+    )
+    document_filter: Optional[str] = Field(
+        default=None, description="Filter by specific document."
+    )
 
 
 class InMemoryInput(BaseModel):
@@ -102,7 +108,9 @@ class InMemoryInput(BaseModel):
 
 
 class CalculatorInput(BaseModel):
-    expression: str = Field(description="Mathematical expression to evaluate. Supports: +, -, *, /, **, %, sqrt().")
+    expression: str = Field(
+        description="Mathematical expression to evaluate. Supports: +, -, *, /, **, %, sqrt()."
+    )
 
 
 class WebSearchInput(BaseModel):
@@ -111,7 +119,9 @@ class WebSearchInput(BaseModel):
 
 class CodeInterpreterInput(BaseModel):
     code: str = Field(description="Python 3 code to execute in an isolated sandbox.")
-    timeout_seconds: int = Field(default=60, description="Maximum execution time in seconds (max 300).")
+    timeout_seconds: int = Field(
+        default=60, description="Maximum execution time in seconds (max 300)."
+    )
 
 
 class PlanGeneratorInput(BaseModel):
@@ -120,7 +130,7 @@ class PlanGeneratorInput(BaseModel):
         description=(
             "JSON string containing an array of step objects. "
             "Each step must have 'task' and 'agent' fields. "
-            "Example: '[{\"task\": \"Search docs\", \"agent\": \"search_agent\"}]'"
+            'Example: \'[{"task": "Search docs", "agent": "search_agent"}]\''
         )
     )
 
@@ -137,6 +147,7 @@ def create_langchain_tools(
     code_interpreter_files: Optional[List[Dict[str, str]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
+    step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -148,23 +159,43 @@ def create_langchain_tools(
         code_interpreter_files: Optional list of resolved files to mount in the sandbox.
         output_workspace_id: Workspace used for generated file uploads.
         workspace_context_mode: Indicates whether the current task relies on fallback workspace context.
+        step_connector_bindings: Optional list of connector bindings attached to this step.
 
     Returns:
         Tuple of (list of StructuredTools, ToolResultCollector).
     """
     collector = ToolResultCollector()
 
+    # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
+    mcp_tools: List[StructuredTool] = []
+    if step_connector_bindings:
+        mcp_tools = _create_connector_mcp_tools(step_connector_bindings, collector)
+
     tool_configs = agent_config.get("tools", [])
+
+    # If agent has no native tools, return only connector MCP tools
     if not tool_configs:
-        return [], collector
+        logger.info(
+            "Created LangChain tools for playbook agent (connectors only)",
+            agent=agent_config.get("name"),
+            tool_count=len(mcp_tools),
+            tool_names=[t.name for t in mcp_tools],
+        )
+        return mcp_tools, collector
 
     tool_names = {
         t["name"] for t in tool_configs if isinstance(t, dict) and t.get("name")
     }
     if not tool_names:
-        return [], collector
+        logger.info(
+            "Created LangChain tools for playbook agent (connectors only, empty tool configs)",
+            agent=agent_config.get("name"),
+            tool_count=len(mcp_tools),
+            tool_names=[t.name for t in mcp_tools],
+        )
+        return mcp_tools, collector
 
-    tools: List[StructuredTool] = []
+    tools: List[StructuredTool] = list(mcp_tools)
 
     # Merge workspace context into agent brain data
     brain_ids, brain_documents = _merge_brain_data(agent_config, workspace_context)
@@ -179,6 +210,7 @@ def create_langchain_tools(
 
     if brain_documents and needs_search:
         from src.smart_rag.tools import build_tree
+
         doc_tree, brain_tree = build_tree(
             brain_documents, {"nodes": [], "relationships": []}
         )
@@ -187,7 +219,12 @@ def create_langchain_tools(
     # Search tools can be created with doc_tree if available, or with input_files for filtered search
     if "search" in tool_names and (doc_tree or input_files):
         search_tools = _create_search_tools(
-            tool_configs, doc_tree, brain_tree, brain_ids, top_k, collector,
+            tool_configs,
+            doc_tree,
+            brain_tree,
+            brain_ids,
+            top_k,
+            collector,
             input_files=input_files,
             documents_by_port=documents_by_port,
         )
@@ -231,7 +268,9 @@ def create_langchain_tools(
         tools.append(_create_plan_tool())
 
     if agent_config.get("skills"):
-        activate_skill_tool = _create_activate_skill_tool(agent_config.get("skills") or [])
+        activate_skill_tool = _create_activate_skill_tool(
+            agent_config.get("skills") or []
+        )
         if activate_skill_tool:
             tools.append(activate_skill_tool)
 
@@ -248,9 +287,69 @@ def create_langchain_tools(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _merge_brain_data(
-    agent_config: dict, workspace_context: Optional[list]
-) -> tuple:
+
+def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        schema_type = next((item for item in schema_type if item != "null"), "string")
+    if schema_type == "string":
+        return str
+    if schema_type == "integer":
+        return int
+    if schema_type == "number":
+        return float
+    if schema_type == "boolean":
+        return bool
+    if schema_type == "array":
+        return List[Any]
+    if schema_type == "object":
+        return Dict[str, Any]
+    return Any
+
+
+def _build_args_schema_for_connector_tool(
+    tool_name: str, parameter_schema: Dict[str, Any]
+) -> Any:
+    properties = (
+        parameter_schema.get("properties")
+        if isinstance(parameter_schema, dict)
+        else None
+    )
+    required = (
+        set(parameter_schema.get("required") or [])
+        if isinstance(parameter_schema, dict)
+        else set()
+    )
+    if not isinstance(properties, dict) or not properties:
+        return create_model(
+            f"{tool_name}Input",
+            params=(
+                Dict[str, Any],
+                Field(
+                    default_factory=dict,
+                    description="Parameters for the connector action. Override fixed params as needed.",
+                ),
+            ),
+        )
+
+    field_defs: Dict[str, Any] = {}
+    for prop_name, prop_schema in properties.items():
+        prop_schema = prop_schema if isinstance(prop_schema, dict) else {}
+        py_type = _json_schema_type_to_python(prop_schema)
+        description = prop_schema.get("description") or ""
+        if prop_name in required:
+            field_defs[prop_name] = (py_type, Field(..., description=description))
+        else:
+            default = prop_schema.get("default", None)
+            field_defs[prop_name] = (
+                Optional[py_type],
+                Field(default=default, description=description),
+            )
+
+    return create_model(f"{tool_name}Input", **field_defs)
+
+
+def _merge_brain_data(agent_config: dict, workspace_context: Optional[list]) -> tuple:
     """Merge agent brain_ids/brain_documents with workspace_context."""
     brain_ids = list(agent_config.get("brain_ids") or [])
     brain_documents = list(agent_config.get("brain_documents") or [])
@@ -261,12 +360,14 @@ def _merge_brain_data(
             if wid and wid not in brain_ids:
                 brain_ids.append(wid)
             for doc in wc.get("documents", []):
-                brain_documents.append({
-                    "_id": doc.get("id", doc.get("_id", "")),
-                    "filename": doc.get("filename", ""),
-                    "filepath": doc.get("filepath", ""),
-                    "workspace_id": doc.get("workspace_id", wid or ""),
-                })
+                brain_documents.append(
+                    {
+                        "_id": doc.get("id", doc.get("_id", "")),
+                        "filename": doc.get("filename", ""),
+                        "filepath": doc.get("filepath", ""),
+                        "workspace_id": doc.get("workspace_id", wid or ""),
+                    }
+                )
 
     return brain_ids, brain_documents
 
@@ -289,7 +390,9 @@ def _get_tool_description(tool_configs: list, tool_name: str) -> str:
     return ""
 
 
-def _create_activate_skill_tool(skills: List[Dict[str, Any]]) -> Optional[StructuredTool]:
+def _create_activate_skill_tool(
+    skills: List[Dict[str, Any]],
+) -> Optional[StructuredTool]:
     skill_map = {
         str(skill.get("name") or "").strip(): skill
         for skill in skills
@@ -305,7 +408,9 @@ def _create_activate_skill_tool(skills: List[Dict[str, Any]]) -> Optional[Struct
             return f"Skill '{name}' is not available. Available skills: {available}"
 
         instructions = str(skill.get("instructions") or "").strip()
-        return f"<skill_content name=\"{skill['name']}\">\n{instructions}\n</skill_content>"
+        return (
+            f'<skill_content name="{skill["name"]}">\n{instructions}\n</skill_content>'
+        )
 
     return StructuredTool.from_function(
         func=_activate_skill,
@@ -344,10 +449,14 @@ def _infer_generated_artifact_kind(filename: str) -> Optional[str]:
     normalized = str(filename or "").strip().lower()
     if "." not in normalized:
         return None
-    return _GENERATED_ARTIFACT_KIND_BY_EXTENSION.get(normalized[normalized.rfind("."):])
+    return _GENERATED_ARTIFACT_KIND_BY_EXTENSION.get(
+        normalized[normalized.rfind(".") :]
+    )
 
 
-def _build_code_interpreter_file_list(code_interpreter_files: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+def _build_code_interpreter_file_list(
+    code_interpreter_files: Optional[List[Dict[str, str]]],
+) -> List[Dict[str, str]]:
     deduped_by_filename: Dict[str, Dict[str, str]] = {}
 
     for doc in code_interpreter_files or []:
@@ -358,18 +467,23 @@ def _build_code_interpreter_file_list(code_interpreter_files: Optional[List[Dict
 
         existing = deduped_by_filename.get(filename)
         current_is_local = _is_sandbox_local_path(filepath)
-        existing_is_local = _is_sandbox_local_path(existing.get("filepath", "")) if existing else False
+        existing_is_local = (
+            _is_sandbox_local_path(existing.get("filepath", "")) if existing else False
+        )
 
         if existing is None or (existing_is_local and not current_is_local):
             deduped_by_filename[filename] = {"filepath": filepath, "filename": filename}
 
     return [
-        entry for entry in deduped_by_filename.values()
+        entry
+        for entry in deduped_by_filename.values()
         if not _is_sandbox_local_path(entry.get("filepath", ""))
     ]
 
 
-def _format_documents_by_port(documents_by_port: Optional[Dict[str, List[str]]], max_ports: int = 6) -> str:
+def _format_documents_by_port(
+    documents_by_port: Optional[Dict[str, List[str]]], max_ports: int = 6
+) -> str:
     if not documents_by_port:
         return ""
 
@@ -402,7 +516,11 @@ def _create_search_tools(
     When input_files is provided (non-empty list), only the filtered search tool
     will be created, which restricts search to the specified document external_ids.
     """
-    from src.smart_rag.tools import construct_json, generate_brain_tree_schema, SearchToolkit
+    from src.smart_rag.tools import (
+        construct_json,
+        generate_brain_tree_schema,
+        SearchToolkit,
+    )
     from src.config.settings import get_settings
 
     settings = get_settings()
@@ -422,7 +540,9 @@ def _create_search_tools(
 
     brain_schema, brain_attribute_mapping = None, None
     if brain_tree:
-        brain_schema, brain_attribute_mapping, _ = generate_brain_tree_schema(brain_tree)
+        brain_schema, brain_attribute_mapping, _ = generate_brain_tree_schema(
+            brain_tree
+        )
 
     # Build toolkit
     toolkit = SearchToolkit(
@@ -453,36 +573,42 @@ def _create_search_tools(
         for src in new_text:
             obj = src.get("object", {})
             content = obj.get("content", {})
-            collector.add_component("citation", {
-                "parent_id": "",
-                "text_source": {
-                    "type": "text",
-                    "source": content.get("source", ""),
-                    "external_id": content.get("external_id", ""),
-                    "page": str(content.get("page", "")),
-                    "page_content": content.get("page_content", ""),
-                    "workspace_id": content.get("brain_id", ""),
-                    "reference": src.get("reference", ""),
+            collector.add_component(
+                "citation",
+                {
+                    "parent_id": "",
+                    "text_source": {
+                        "type": "text",
+                        "source": content.get("source", ""),
+                        "external_id": content.get("external_id", ""),
+                        "page": str(content.get("page", "")),
+                        "page_content": content.get("page_content", ""),
+                        "workspace_id": content.get("brain_id", ""),
+                        "reference": src.get("reference", ""),
+                    },
                 },
-            })
+            )
 
         for src in new_image:
             obj = src.get("object", {})
             content = obj.get("content", {})
-            collector.add_component("citation", {
-                "parent_id": "",
-                "image_source": {
-                    "type": "image",
-                    "path": content.get("path", ""),
-                    "page": str(content.get("page", "")),
-                    "file_name": content.get("file_name", ""),
-                    "external_id": content.get("external_id", ""),
-                    "workspace_id": content.get("brain_id", ""),
-                    "height": str(content.get("height", "")),
-                    "width": str(content.get("width", "")),
-                    "reference": src.get("reference", ""),
+            collector.add_component(
+                "citation",
+                {
+                    "parent_id": "",
+                    "image_source": {
+                        "type": "image",
+                        "path": content.get("path", ""),
+                        "page": str(content.get("page", "")),
+                        "file_name": content.get("file_name", ""),
+                        "external_id": content.get("external_id", ""),
+                        "workspace_id": content.get("brain_id", ""),
+                        "height": str(content.get("height", "")),
+                        "width": str(content.get("width", "")),
+                        "reference": src.get("reference", ""),
+                    },
                 },
-            })
+            )
 
     # When input_files is provided, only create filtered search tool
     if input_files:
@@ -490,75 +616,95 @@ def _create_search_tools(
             "CREATING_FILTERED_SEARCH_TOOL",
             input_files_count=len(input_files),
         )
+
         async def _filtered_search(query: str) -> str:
             result = await toolkit.perform_filtered_search(query, input_files)
             _collect_new_citations()
             return _format_search_result(result)
 
-        tools.append(StructuredTool(
-            name="perform_filtered_search",
-            description=(
-                f"Search within specific documents from the knowledge base. "
-                f"Restricted to {len(input_files)} document(s). "
-                f"Use this to find information in the specified documents only."
-                + (f" Port groups: {_format_documents_by_port(documents_by_port)}." if documents_by_port else "")
-            ),
-            func=None,
-            coroutine=_filtered_search,
-            args_schema=SearchQueryInput,
-        ))
+        tools.append(
+            StructuredTool(
+                name="perform_filtered_search",
+                description=(
+                    f"Search within specific documents from the knowledge base. "
+                    f"Restricted to {len(input_files)} document(s). "
+                    f"Use this to find information in the specified documents only."
+                    + (
+                        f" Port groups: {_format_documents_by_port(documents_by_port)}."
+                        if documents_by_port
+                        else ""
+                    )
+                ),
+                func=None,
+                coroutine=_filtered_search,
+                args_schema=SearchQueryInput,
+            )
+        )
         return tools
 
     # Document search tool
     if attribute_mapping:
+
         async def _document_search(query: str) -> str:
             result = await toolkit.perform_document_search(query)
             _collect_new_citations()
             return _format_search_result(result)
 
-        tools.append(StructuredTool(
-            name="perform_document_search",
-            description=(
-                "Search within specific documents from the knowledge base. "
-                "Use this to find information in uploaded documents."
-            ),
-            func=None,
-            coroutine=_document_search,
-            args_schema=SearchQueryInput,
-        ))
+        tools.append(
+            StructuredTool(
+                name="perform_document_search",
+                description=(
+                    "Search within specific documents from the knowledge base. "
+                    "Use this to find information in uploaded documents."
+                ),
+                func=None,
+                coroutine=_document_search,
+                args_schema=SearchQueryInput,
+            )
+        )
 
     # Brain search tool
     if brain_attribute_mapping:
-        async def _brain_search(query: str, brain_name: str = None, document_filter: str = None) -> str:
-            result = await toolkit.preform_all_brain_search(query, brain_name, document_filter)
+
+        async def _brain_search(
+            query: str, brain_name: str = None, document_filter: str = None
+        ) -> str:
+            result = await toolkit.preform_all_brain_search(
+                query, brain_name, document_filter
+            )
             _collect_new_citations()
             return _format_search_result(result)
 
-        tools.append(StructuredTool(
-            name="preform_all_brain_search",
-            description=(
-                "Search across all knowledge bases (brains). "
-                "Optionally filter by brain name or document."
-            ),
-            func=None,
-            coroutine=_brain_search,
-            args_schema=BrainSearchInput,
-        ))
+        tools.append(
+            StructuredTool(
+                name="preform_all_brain_search",
+                description=(
+                    "Search across all knowledge bases (brains). "
+                    "Optionally filter by brain name or document."
+                ),
+                func=None,
+                coroutine=_brain_search,
+                args_schema=BrainSearchInput,
+            )
+        )
 
     # Standard search fallback (when no specific schema but we have brain_ids)
     if not attribute_mapping and not brain_attribute_mapping:
+
         async def _standard_search(query: str) -> str:
             result = await toolkit.perform_standard_search(query)
             _collect_new_citations()
             return _format_search_result(result)
 
-        tools.append(StructuredTool(
-            name="perform_standard_search",
-            description="Search all available documents.",
-            func=None,
-            coroutine=_standard_search,
-            args_schema=SearchQueryInput,
-        ))
+        tools.append(
+            StructuredTool(
+                name="perform_standard_search",
+                description="Search all available documents.",
+                func=None,
+                coroutine=_standard_search,
+                args_schema=SearchQueryInput,
+            )
+        )
 
     return tools
 
@@ -600,13 +746,15 @@ def _create_in_memory_tools(
     async def _in_memory_extraction(file_name: str) -> str:
         return await toolkit.perform_in_memory_extraction(file_name)
 
-    return [StructuredTool(
-        name="perform_in_memory_extraction",
-        description=in_memory_desc,
-        func=None,
-        coroutine=_in_memory_extraction,
-        args_schema=InMemoryInput,
-    )]
+    return [
+        StructuredTool(
+            name="perform_in_memory_extraction",
+            description=in_memory_desc,
+            func=None,
+            coroutine=_in_memory_extraction,
+            args_schema=InMemoryInput,
+        )
+    ]
 
 
 def _create_calculator_tool() -> StructuredTool:
@@ -625,7 +773,9 @@ def _create_calculator_tool() -> StructuredTool:
     )
 
 
-def _create_web_search_tool(brain_ids: list, collector: ToolResultCollector) -> Optional[StructuredTool]:
+def _create_web_search_tool(
+    brain_ids: list, collector: ToolResultCollector
+) -> Optional[StructuredTool]:
     """Create a web search LangChain tool."""
     from src.smart_rag.tools import SearchToolkit
 
@@ -645,12 +795,15 @@ def _create_web_search_tool(brain_ids: list, collector: ToolResultCollector) -> 
         # Collect sources component
         sources = result.get("sources", [])
         if sources:
-            collector.add_component("sources", {
-                "sources": [
-                    {"title": s.get("title", ""), "url": s.get("url", "")}
-                    for s in sources
-                ],
-            })
+            collector.add_component(
+                "sources",
+                {
+                    "sources": [
+                        {"title": s.get("title", ""), "url": s.get("url", "")}
+                        for s in sources
+                    ],
+                },
+            )
         return result.get("text", str(result))
 
     return StructuredTool(
@@ -684,7 +837,9 @@ def _create_code_interpreter_tool(
 
     settings = get_settings()
     backend_url = getattr(settings, "CODE_INTERPRETER_BACKEND_URL", None)
-    normalized_code_interpreter_files = _build_code_interpreter_file_list(code_interpreter_files)
+    normalized_code_interpreter_files = _build_code_interpreter_file_list(
+        code_interpreter_files
+    )
     available_filenames = _format_available_filenames(normalized_code_interpreter_files)
     port_scope_note = _format_documents_by_port(documents_by_port)
 
@@ -693,7 +848,9 @@ def _create_code_interpreter_tool(
         return None
 
     if not output_workspace_id:
-        logger.warning("Code interpreter output workspace not configured, skipping tool")
+        logger.warning(
+            "Code interpreter output workspace not configured, skipping tool"
+        )
         return None
 
     # Pre-compute v2 file_paths payload expected by the sandbox backend
@@ -719,7 +876,9 @@ def _create_code_interpreter_tool(
         timeout_seconds = min(timeout_seconds, 300)
 
         if not brain_id:
-            return "Error: Code interpreter requires at least one workspace/brain context"
+            return (
+                "Error: Code interpreter requires at least one workspace/brain context"
+            )
         if not user_id:
             return "Error: Code interpreter requires a user_id in agent_params"
         if not session_id:
@@ -746,21 +905,30 @@ def _create_code_interpreter_tool(
             stderr = result.get("stderr", "")
 
             # Collect sandbox component
-            collector.add_component("sandbox", {
-                "code": code,
-                "output": stdout,
-                "error": stderr,
-                "output_available": True,
-            })
+            collector.add_component(
+                "sandbox",
+                {
+                    "code": code,
+                    "output": stdout,
+                    "error": stderr,
+                    "output_available": True,
+                },
+            )
 
             # Collect artifact components for generated files
             for gf in result.get("generated_files", []):
                 generated_filename = gf.get("filename", gf.get("name", ""))
-                collector.add_component("artifact", {
-                    "file_path": gf.get("azure_path", gf.get("file_path", "")),
-                    "filename": generated_filename,
-                    "artifact_kind": _infer_generated_artifact_kind(generated_filename) or "document",
-                })
+                collector.add_component(
+                    "artifact",
+                    {
+                        "file_path": gf.get("azure_path", gf.get("file_path", "")),
+                        "filename": generated_filename,
+                        "artifact_kind": _infer_generated_artifact_kind(
+                            generated_filename
+                        )
+                        or "document",
+                    },
+                )
 
             # Build text response for the LLM
             output = []
@@ -783,7 +951,11 @@ def _create_code_interpreter_tool(
             return f"Error: Code execution timed out after {timeout_seconds} seconds"
         except requests.exceptions.RequestException as e:
             response = getattr(e, "response", None)
-            details = f" | backend body: {response.text[:500]}" if response is not None and response.text else ""
+            details = (
+                f" | backend body: {response.text[:500]}"
+                if response is not None and response.text
+                else ""
+            )
             return f"Error: Failed to connect to sandbox backend: {e}{details}"
         except Exception as e:
             return f"Error: {e}"
@@ -796,9 +968,21 @@ def _create_code_interpreter_tool(
             "Workspace documents are mounted into the execution workspace, and generated files "
             "(CSV, images, reports, PDFs) are automatically saved. "
             "Do not ask the user to upload workspace documents again; use the files already available in the sandbox."
-            + (f" Bound input-port document groups: {port_scope_note}." if port_scope_note else "")
-            + (" Fallback workspace context is available." if workspace_context_mode == "fallback_playbook" else "")
-            + (f" Available workspace files: {available_filenames}." if available_filenames else "")
+            + (
+                f" Bound input-port document groups: {port_scope_note}."
+                if port_scope_note
+                else ""
+            )
+            + (
+                " Fallback workspace context is available."
+                if workspace_context_mode == "fallback_playbook"
+                else ""
+            )
+            + (
+                f" Available workspace files: {available_filenames}."
+                if available_filenames
+                else ""
+            )
         ),
         func=None,
         coroutine=_run_code,
@@ -846,3 +1030,115 @@ def _format_search_result(result: Dict[str, Any]) -> str:
         return "No relevant results found."
 
     return "\n\n---\n\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Connector MCP tool helpers
+# ---------------------------------------------------------------------------
+
+
+def _create_connector_mcp_tools(
+    bindings: List[Dict[str, Any]],
+    collector: ToolResultCollector,
+) -> List[StructuredTool]:
+    """Create LangChain tools from step-level connector bindings via MCP.
+
+    Each binding specifies a connector, allowed actions, and optional fixed params.
+    The actual MCP tool calls are deferred to async execution.
+    """
+    if not bindings:
+        return []
+
+    tools: List[StructuredTool] = []
+    for binding in bindings:
+        connector_id = binding.get("connector_id", "")
+        connector_name = binding.get("connector_name") or connector_id
+        transport_type = binding.get("mcp_transport_type", "streamable_http")
+        server_url = binding.get("mcp_server_url", "")
+        server_config = binding.get("mcp_server_config", {}) or {}
+        raw_actions = binding.get("actions", [])
+        fixed_params = binding.get("fixed_params", {})
+        actions = (
+            [
+                {
+                    "action_key": a
+                    if isinstance(a, str)
+                    else a.get("action_key", a.get("name", "")),
+                    "label": None if isinstance(a, str) else a.get("label"),
+                    "description": None if isinstance(a, str) else a.get("description"),
+                    "parameter_schema": {}
+                    if isinstance(a, str)
+                    else (a.get("parameter_schema") or {}),
+                }
+                for a in raw_actions
+            ]
+            if raw_actions
+            else []
+        )
+        if not actions:
+            continue
+
+        for action in actions:
+            action_key = action.get("action_key", "")
+            action_label = action.get("label") or action_key
+            action_description = (
+                action.get("description") or f"Connector action '{action_key}'"
+            )
+            action_parameter_schema = action.get("parameter_schema") or {}
+            tool_name = f"connector_{connector_id}_{action_key}"
+            args_schema = _build_args_schema_for_connector_tool(
+                tool_name, action_parameter_schema
+            )
+
+            def _make_mcp_tool(
+                cid: str = connector_id,
+                cn: str = connector_name,
+                ak: str = action_key,
+                al: str = action_label,
+                ad: str = action_description,
+                arg_schema: Any = args_schema,
+                tt: str = transport_type,
+                su: str = server_url,
+                sc: Dict[str, Any] = server_config,
+                fp: Dict[str, Any] = fixed_params,
+                tn: str = tool_name,
+            ) -> StructuredTool:
+                async def _execute_mcp(**kwargs: Any) -> str:
+                    raw_params = kwargs.get("params")
+                    if isinstance(raw_params, dict):
+                        params = raw_params
+                    else:
+                        # Some model/tool calling stacks send the declared fields directly
+                        # instead of nesting them under `params`.
+                        params = {k: v for k, v in kwargs.items() if k != "params"}
+                    if not isinstance(params, dict):
+                        params = {}
+                    try:
+                        if not su:
+                            return (
+                                f"Error: No MCP server configured for connector {cid}"
+                            )
+
+                        from src.langgraph_engine.mcp_client_factory import (
+                            call_mcp_tool,
+                        )
+
+                        merged_params = {**fp, **params}
+                        return await call_mcp_tool(tt, su, sc, ak, merged_params)
+                    except Exception as e:
+                        logger.error("MCP tool execution failed", tool=tn, error=str(e))
+                        return f"Connector action '{ak}' failed: {str(e)}"
+
+                _execute_mcp.__name__ = tn
+
+                return StructuredTool(
+                    name=tn,
+                    description=f"{ad} (connector: {cn}, action: {al})",
+                    func=None,
+                    coroutine=_execute_mcp,
+                    args_schema=arg_schema,
+                )
+
+            tools.append(_make_mcp_tool())
+
+    return tools

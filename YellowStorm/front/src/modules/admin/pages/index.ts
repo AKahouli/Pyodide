@@ -9,6 +9,7 @@ export { ReportsPage } from './ReportsPage';
 export { ModelsPage } from './ModelsPage';
 export { ToolsPage } from './ToolsPage';
 export { SkillsPage } from './SkillsPage';
+export { ConnectorsPage } from './connectors/ConnectorsPage';
 export { AgentTypesPage } from './AgentTypesPage';
 export { DefaultAgentsPage } from './DefaultAgentsPage';
 export { PlaybookPromptsPage } from './PlaybookPromptsPage';

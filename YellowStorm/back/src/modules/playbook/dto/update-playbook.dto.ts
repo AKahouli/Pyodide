@@ -204,6 +204,19 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested({ each: true })
   @Type(() => TaskOutputPortDto)
   outputPorts?: TaskOutputPortDto[];
+
+  @ApiPropertyOptional({ description: 'Connector tool bindings for this step', type: [Object] })
+  @IsOptional()
+  @IsArray()
+  toolBindings?: Array<{
+    id: string;
+    connectorId: string;
+    actions: Array<{ actionKey: string; isEnabled?: boolean }>;
+    credentialId?: string | null;
+    fixedParams?: Record<string, unknown>;
+    disableAutoSkills?: boolean;
+    isEnabled?: boolean;
+  }>;
 }
 
 export class UpdatePlaybookEdgeDto {

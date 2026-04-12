@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, Share2, FolderOpen, Copy, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, Loader2, Share2, FolderOpen, Copy, PanelRightOpen, Cable } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -45,7 +45,7 @@ import { useAgentStore } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, tasksToNodes } from '../hooks/usePlaybookCanvas';
 import { useAutosave } from '../hooks/useAutosave';
-import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions } from './PlaybookNode';
+import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
@@ -53,8 +53,10 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
+import { ConnectorSidebar } from './ConnectorSidebar';
+import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -200,6 +202,19 @@ function PlaybookCanvasInner() {
   const [outputFormatDraft, setOutputFormatDraft] = useState('');
   const [outputFormatLoading, setOutputFormatLoading] = useState(false);
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
+  const connectorSidebarOpen = usePlaybookStore((s) => s.connectorSidebarOpen);
+  const setConnectorSidebarOpen = usePlaybookStore((s) => s.setConnectorSidebarOpen);
+  const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
+
+  const [bindingModalState, setBindingModalState] = useState<{
+    open: boolean;
+    taskId: string;
+    connectorId: string;
+    connectorName: string;
+    actions: Array<{ key: string; label: string }>;
+    existingBinding: ToolBinding | null;
+  } | null>(null);
+
   const [scheduleSheetOpen, setScheduleSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(false);
 
@@ -518,6 +533,90 @@ function PlaybookCanvasInner() {
       addNode(clonedTask);
     },
     [nodes, addNode],
+  );
+
+  const handleConnectorDrop = useCallback(
+    (taskId: string, payload: ConnectorDropPayload) => {
+      const task = playbook?.tasks.find((t) => t.id === taskId);
+      const existingBinding = task?.toolBindings?.find((b) => b.connectorId === payload.connectorId) ?? null;
+      setBindingModalState({
+        open: true,
+        taskId,
+        connectorId: payload.connectorId,
+        connectorName: payload.connectorName,
+        actions: payload.actions,
+        existingBinding,
+      });
+    },
+    [playbook?.tasks],
+  );
+
+  const handleConnectorDragStart = useCallback(
+    (payload: ConnectorDropPayload) => {
+      /* no-op for now; can add visual feedback later */
+    },
+    [],
+  );
+
+  const handleBindingModalSave = useCallback(
+    (taskId: string, binding: ToolBinding) => {
+      addToolBindingToTask(taskId, binding);
+    },
+    [addToolBindingToTask],
+  );
+
+  const handleCanvasDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (e.target !== e.currentTarget) return;
+      try {
+        const raw = e.dataTransfer.getData('application/json');
+        if (!raw) return;
+        const payload = JSON.parse(raw);
+        if (payload?.type !== 'connector' || !payload?.connectorId) return;
+        const taskId = crypto.randomUUID();
+        const existingCount = playbook?.tasks.length || 0;
+        const center = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        const newTask: PlaybookTask = {
+          id: taskId,
+          title: `${payload.connectorName} Step`,
+          description: '',
+          assignedAgentId: null,
+          executionOrder: existingCount,
+          positionX: center.x,
+          positionY: center.y,
+          interruptBefore: false,
+          interruptAfter: false,
+          allowClarification: false,
+          clarificationPrompt: '',
+          maxClarifications: 3,
+          inputKeys: [],
+          outputKey: '',
+          enabled: true,
+          notifyOnComplete: false,
+          notifyEmails: [],
+          inputFiles: [],
+          taskType: 'generic',
+          inputPorts: [
+            { id: 'default', name: 'Input', artifactKind: 'text', required: false },
+          ],
+          outputPorts: [
+            { id: 'default', name: 'Output', artifactKind: 'text' },
+          ],
+        };
+        addNode(newTask);
+        const task = playbook?.tasks.find((t) => t.id === taskId);
+        const existingBinding = task?.toolBindings?.find((b) => b.connectorId === payload.connectorId) ?? null;
+        setBindingModalState({
+          open: true,
+          taskId,
+          connectorId: payload.connectorId,
+          connectorName: payload.connectorName,
+          actions: payload.actions,
+          existingBinding,
+        });
+      } catch { /* noop */ }
+    },
+    [playbook?.tasks.length, playbook?.tasks, reactFlow, addNode],
   );
 
   const handleExecuteStep = useCallback(
@@ -1001,6 +1100,16 @@ function PlaybookCanvasInner() {
             <FolderOpen className="h-4 w-4 sm:mr-1" />
             <span className="hidden sm:inline">Explorer</span>
           </Button>
+          <Button
+            variant={connectorSidebarOpen ? "default" : "outline"}
+            size="sm"
+            onClick={() => setConnectorSidebarOpen(!connectorSidebarOpen)}
+            className="px-2 sm:px-3"
+            title="Connectors"
+          >
+            <Cable className="h-4 w-4 sm:mr-1" />
+            <span className="hidden sm:inline">Connectors</span>
+          </Button>
           <PlaybookToolbar
             pageMode={pageMode}
             onPageModeChange={handlePageModeChange}
@@ -1049,11 +1158,14 @@ function PlaybookCanvasInner() {
         {/* Workspace Explorer Sidebar */}
         <WorkspaceExplorerSidebar />
 
+        {/* Connector Sidebar */}
+        <ConnectorSidebar isOpen={connectorSidebarOpen} onDragStart={handleConnectorDragStart} />
+
         {/* Canvas + Execution split */}
         <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
           <div className="relative flex-1 min-w-0 overflow-hidden">
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-              <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor }}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
                 <Canvas
                   nodes={liveNodes}
                   edges={liveEdges}
@@ -1074,6 +1186,8 @@ function PlaybookCanvasInner() {
                   nodesDraggable={!isSaving}
                   nodesConnectable={!isSaving}
                   elementsSelectable={!isSaving}
+                  onDrop={handleCanvasDrop}
+                  onDragOver={(e) => { e.preventDefault(); }}
                 >
                   <Controls />
                 </Canvas>
@@ -1172,6 +1286,20 @@ function PlaybookCanvasInner() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {bindingModalState?.open && (
+        <ConnectorBindingModal
+          open={bindingModalState.open}
+          onOpenChange={(open) => {
+            if (!open) setBindingModalState(null);
+          }}
+          taskId={bindingModalState.taskId}
+          connectorId={bindingModalState.connectorId}
+          connectorName={bindingModalState.connectorName}
+          existingBinding={bindingModalState.existingBinding}
+          onSave={handleBindingModalSave}
+        />
+      )}
     </div>
   );
 }

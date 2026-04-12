@@ -1,223 +1,327 @@
+# Agent Instructions
+
 ## External File Loading
 
-CRITICAL: When you encounter a file reference (e.g., @rules/general.md), use your Read tool to load it on a need-to-know basis. They're relevant to the SPECIFIC task at hand.
-
-Instructions:
-
-- Do NOT preemptively load all references - use lazy loading based on actual need
-- When loaded, treat content as mandatory instructions that override defaults
-- Follow references recursively when needed
+When you encounter a file reference (e.g., `@rules/general.md`), load it on demand using your Read tool. Treat loaded content as mandatory instructions that override defaults. Follow references recursively. Do NOT preemptively load all references.
 
 ---
 
-## 📚 Documentation Management Protocol
+## Repository & Stack
 
-This protocol is **mandatory** and must be executed on every coding operation — no exceptions.
-Must never follow this protocol, if your task is not intented to generate or modify code.
+**Monorepo:** `YellowStorm/back`, `YellowStorm/front`, `yellowstorm-adk`
 
-### Doc Structure
+| Layer | Stack |
+|-------|-------|
+| Backend | NestJS 10, Mongoose, gRPC, Jest |
+| Frontend | React 18, Vite, TypeScript, Radix UI, Tailwind CSS, Vitest |
+| Agent Runtime | Python 3.12+, LangGraph, Google ADK, Pytest |
+| Database | MongoDB (NestJS); subsystem-specific stores in Python |
+| Infra | Docker, Docker Compose, Git |
+| Docs | MkDocs (user-facing), internal Markdown |
+
+**Package managers:** npm (back/front), Poetry (Python).
+
+---
+
+## Coding Standards
+
+- **TypeScript:** Follow existing NestJS/React patterns in the package being edited.
+- **Python:** PEP 8, type hints mandatory on function signatures, docstrings on public APIs.
+- **Localization:** Every user-facing string must use the project's i18n layer (`i18`). Hardcoded UI text is forbidden.
+- **Error handling:** Graceful exceptions with proper wrapping and structured logging (`logging` module in Python).
+- **Secrets:** Never hardcode. Use `.env` or secrets management.
+- **Comments:** Sparingly — code should be self-documenting.
+- **Commits:** Conventional format: `<type>(<scope>): <subject>` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`.
+
+---
+
+## Agent Team
+
+### Workflow
+
+```
+User task
+  │
+  ▼
+┌──────┐   multi-file or    ┌──────┐
+│ build │──  risky task?  ──▶│ plan │── action plan ──▶ back to build
+└──┬───┘   (mandatory)      └──────┘
+   │
+   │  implements
+   ▼
+┌──────────┐                ┌─────────────┐
+│ reviewer │◀── MANDATORY ──│ task output  │
+└──┬───────┘  before close  └─────────────┘
+   │
+   │  pass / fail
+   ▼
+┌─────────────┐
+│ maintainer  │◀── post-merge docs & cleanup
+└─────────────┘
+```
+
+`diagnostics` and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+
+---
+
+### Agent Definitions
+
+#### `plan` — Strategic Analysis (read-only)
+
+**Mandatory when:**
+- Task touches 3+ files
+- Task spans 2+ feature slugs
+- Task modifies an API contract, data schema, or architectural boundary
+- Task is ambiguous or underspecified
+
+**Skip when:** Single-file fix with no interface change. Pure formatting/typo/comment edit.
+
+**Outputs a scoped action plan:**
+1. Files to touch (with rationale)
+2. Risk assessment (what could break)
+3. Doc impact tier (Full / Light / None — see Documentation Protocol)
+4. Recommended specialist calls (e.g., "call `diagnostics` first — failure is unclear")
+
+`build` must follow the plan. Deviations require re-invoking `plan`.
+
+---
+
+#### `build` — Implementation (default agent)
+
+Primary coding agent. Has bash permissions, skill access, and delegation authority.
+
+**Before writing code:**
+1. Check if `plan` is required (see criteria above). If yes, delegate and wait.
+2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs.
+3. Read the top 15 lines of `/docs/CHANGELOG.md`.
+4. For each related slug, read its `Latest Doc Path`. Note architecture decisions, API contracts, and recent changes.
+5. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
+
+**After writing code:**
+1. Delegate to `reviewer`. **Task is not complete until `reviewer` returns PASS.**
+2. If `reviewer` returns FAIL, fix the findings and re-submit.
+3. Once passed, delegate to `maintainer` with: what changed, why, and which feature slugs were affected.
+
+**Delegation triggers during implementation:**
+- Unclear failure or vague bug → `diagnostics` before editing
+- Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
+- Need current library docs → context7 skill (see below)
+
+**Hard rules:**
+- Destructive shell commands require user approval.
+- Never skip pre-coding steps, even for small fixes.
+
+---
+
+#### `reviewer` — Quality Gate (read-only, BLOCKING)
+
+Single-pass review across three lenses:
+
+| Lens | Focus |
+|------|-------|
+| **Correctness** | Bugs, regressions, missing edge cases, missing tests |
+| **Security** | Auth flaws, input validation, injection/XSS/SSRF, secret leaks, unsafe trust boundaries, AI/tool safety |
+| **Performance** | N+1s, unbounded queries, render churn, unnecessary re-renders, blocking calls |
+
+**Output:**
+
+```
+## Verdict: PASS | FAIL
+
+### Findings (if any)
+1. [critical|major|minor] file:line — description
+
+### Required actions (if FAIL)
+- ...
+```
+
+- **FAIL** on any critical finding. `build` must fix before close.
+- **PASS with findings** allowed for major/minor — logged but non-blocking.
+- Read-only. Never modifies code.
+
+---
+
+#### `diagnostics` — Debug & Test
+
+**Invoke when:**
+- Bug report (before `build` edits anything)
+- Test gaps flagged by `reviewer`
+- Flaky or failing test investigation
+
+**Does:**
+- Reproduces failures, isolates minimal root cause
+- Writes unit/integration/regression tests (Jest, Vitest, Pytest)
+- Validates fixes by running relevant test suite
+
+**Output:** Root cause analysis + test files. Hands back to `build` for code changes beyond tests.
+
+---
+
+#### `frontend-qa` — Browser Validation
+
+**Invoke after:** Any frontend change affecting interaction, layout, or browser runtime behavior.
+
+**Does:**
+- Real-browser validation via `chrome-devtools` and `ai-elements` skills + project MCP browser tooling
+- Visual regression, responsive behavior, interaction quality (focus, keyboard, a11y basics)
+
+**Output:** Pass/fail with evidence. Findings go back to `build`.
+
+---
+
+#### `maintainer` — Docs & Refactoring
+
+**Invoke:**
+- After every task that passes `reviewer` (mandatory for doc sync)
+- When `plan` identifies refactoring opportunities
+
+**Does:**
+- Documentation: feature READMEs, `DOC_INDEX.md`, `CHANGELOG.md`
+- Behavior-preserving code refactoring and module cleanup
+
+See the `maintainer` agent file for the full documentation procedure.
+
+---
+
+### Routing Cheat Sheet
+
+| Signal | Action |
+|--------|--------|
+| Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
+| Vague bug or unclear failure | `diagnostics` first |
+| Any code change | `reviewer` after (mandatory, blocking) |
+| Frontend UI/interaction change | `frontend-qa` after |
+| Task complete and reviewed | `maintainer` last |
+| Need library/framework docs | context7 skill |
+| Single-file, no interface change | `build` directly → `reviewer` → `maintainer` |
+
+---
+
+## Documentation Protocol
+
+### Structure
+
+```
 docs/
-├── DOC_INDEX.md ← master dictionary (auto-maintained)
-├── CHANGELOG.md ← central changelog (auto-maintained)
+├── DOC_INDEX.md
+├── CHANGELOG.md
 └── {feature_slug}/
-    ├── README_YYYY-MM-DD_HH-MM-SS.md ← versioned snapshot created at each iteration
-    ├── README_YYYY-MM-DD_HH-MM-SS.md ← previous iteration snapshot
-    └── ... ← all past snapshots preserved
+    └── README.md     ← single living doc, versioned by git
+```
 
-### DOC_INDEX.md Structure
+### Change Tiers
+
+| Tier | Trigger | Doc action |
+|------|---------|------------|
+| **Full** | API/contract change, new feature, architecture mod, requirement change | Update or create feature README + index + changelog |
+| **Light** | Implementation-only change, no interface change | Changelog entry only |
+| **None** | Typo, formatting, comment-only edit | No doc action |
+
+`plan` determines the tier when invoked. Otherwise `build` determines it.
+
+### Hard Rules
+
+- One `README.md` per slug, updated in place, history tracked by git.
+- Never create a duplicate slug — check `DOC_INDEX.md` first.
+- Relative paths for cross-references.
+- All timestamps UTC.
+- `CHANGELOG.md` updated **last**.
+- Content must be factual and code-derived.
+
+### DOC_INDEX.md Format
 
 ```markdown
-# 📖 Documentation Index
+# Documentation Index
 
-> Auto-maintained by the coding agent. Do not edit manually.
-> Last updated: <!-- YYYY-MM-DD HH:MM -->
+> Auto-maintained by the maintainer agent. Do not edit manually.
+> Last updated: YYYY-MM-DD HH:MM UTC
 
-| Feature Slug  | Description                            | Latest Doc Path                                          | Status    | Last Updated     |
-|---------------|----------------------------------------|----------------------------------------------------------|-----------|------------------|
-| `auth`        | Authentication & session management    | `/docs/auth/README_2026-03-20_14-30-00.md`               | ✅ stable | 2026-03-20 14:30 |
-| `agent-core`  | Core agent orchestration loop          | `/docs/agent-core/README_2026-03-27_09-15-42.md`         | ✅ stable | 2026-03-27 09:15 |
-| `playbook`    | Playbook design, execution, and replay | `/docs/playbook/README_2026-03-28_17-05-11.md`           | 🚧 draft  | 2026-03-28 17:05 |
+| Feature Slug | Description | Doc Path | Status | Last Updated |
+|--------------|-------------|----------|--------|--------------|
+| `auth` | Authentication & session management | `/docs/auth/README.md` | ✅ stable | 2026-03-20 |
+```
+
+### CHANGELOG.md Format
+
+```markdown
+## [YYYY-MM-DD HH:MM UTC] — {short title}
+
+- **Feature:** `{feature_slug}`
+- **Type:** feat | fix | refactor | docs
+- **Changed:** {what}
+- **Why:** {rationale}
+- **Impact:** {files/modules affected}
+```
+
+### Feature README Template
+
+```markdown
+# {Feature Name}
+
+> **Slug:** `{feature_slug}` | **Status:** 🚧 draft | **Last Updated:** YYYY-MM-DD HH:MM UTC
+
+## Purpose
+{What this feature does and why it exists.}
+
+## Scope
+{Included and explicitly excluded.}
+
+## Architecture
+{Key modules, data flow. Mermaid diagram if non-trivial.}
+
+## Requirements
+- As a {role}, I want to {goal} so that {benefit}.
+- [ ] {acceptance criterion}
+
+## API / Interfaces
+{Key signatures, endpoints, or schemas.}
+
+## Design Decisions
+| Decision | Rationale | Alternatives Considered |
+|----------|-----------|------------------------|
+
+## Related Features
+- [`{related_slug}`](/docs/{related_slug}/README.md)
 ```
 
 ---
 
-### 🔍 Pre-Coding Protocol (MANDATORY)
+## Library Documentation Lookup (context7)
 
-Before writing **any** code, execute these steps in order:
+**Available to:** `build`, `plan`, `diagnostics`.
 
-**Step 1 — Consult the Index**
+When the task involves a library, framework, SDK, or API — even well-known ones — fetch current docs first. Training data may be outdated.
 
-Read `/docs/DOC_INDEX.md` in full. Identify all feature slugs semantically related to the current task by matching on `Feature Slug` and `Description`.
-Read the top 15 lines of `/docs/CHANGELOG.md` to keep in mind recent changes just in case.
+```bash
+npx ctx7@latest library <name> "<question>"
+npx ctx7@latest docs <libraryId> "<question>"
+```
 
-**Step 2 — Load Relevant Docs**
+- Always `library` first to get a valid ID.
+- Full question as the query.
+- Max 3 commands per question.
+- Never include credentials.
+- On quota errors, inform user → `npx ctx7@latest login`.
 
-For each related feature found, read the file listed in its `Latest Doc Path` column. Pay attention to:
-- Existing architecture decisions and module boundaries
-- User requirements and acceptance criteria
-- API contracts and data schemas
-- Recent changes recorded at the bottom of the file
-
-If no related feature exists in the index, acknowledge it and proceed to create a new entry in the Post-Coding Protocol.
-
-**Step 3 — Align Before Acting**
-
-Before writing code, verify internally:
-- Which existing architectural decisions are being respected
-- Which requirements are being addressed
-- Whether this task modifies an existing feature or introduces a new one
+**Not for:** refactoring, scripts from scratch, debugging business logic, code review, general concepts.
 
 ---
 
+## Development Workflow
 
-### ⚙️ Behavioral Rules
+1. Branch from `main`
+2. `plan` if criteria met → action plan
+3. `build` implements (pre-coding protocol mandatory)
+4. `reviewer` validates → **must PASS**
+5. `diagnostics` if test gaps; `frontend-qa` if UI affected
+6. `maintainer` syncs docs per tier
+7. Test: `npm test` / `npm run build` (back/front), `poetry run pytest` (Python)
 
-- **Never skip** the Pre-Coding Protocol, even for small fixes or refactors
-- **Never delete** any README snapshot — mark deprecated content within a new snapshot using a `> ⚠️ DEPRECATED as of YYYY-MM-DD HH:MM` banner on the affected section
-- **Never create** a duplicate slug — check the index first; if it already exists, create a new version (Step 5a) rather than a new feature entry
-- **Never mutate** a previously created README file — each file is an immutable snapshot of the state at that iteration
-- **Always use** relative paths for cross-references between doc files; when linking to another feature's doc, always link to its **latest** snapshot as listed in `DOC_INDEX.md`
-- Doc content must be **factual and code-derived** — no speculation or padding
-- `/docs/CHANGELOG.md` must be updated **last**, after all doc files are already written
-- **Timestamps must be consistent** — use UTC across all filenames, index entries, file headers, and changelog entries within a session
+## graphify
 
+This project has a graphify knowledge graph at graphify-out/.
 
-
-## 🛠️ Tooling & Environment
-
-- **Repository Shape**: Monorepo split across `YellowStorm/back`, `YellowStorm/front`, and `yellowstorm-adk`
-- **Backend**: NestJS 10, Mongoose, gRPC, Jest
-- **Frontend**: React 18, Vite, TypeScript, Radix UI, Tailwind CSS, Vitest
-- **Agent Runtime / AI Orchestration**: Python 3.12+, LangGraph, Google ADK, Pytest
-- **Database**: MongoDB in the NestJS app; additional Python-side persistence may exist in subsystem-specific code
-- **Containerization**: Docker, Docker Compose
-- **Version Control**: Git
-- **Package Managers**: npm for `YellowStorm/back` and `YellowStorm/front`, Poetry where present for Python tooling
-- **Testing**: Jest, Vitest, and Pytest depending on the package being changed
-- **Documentation**: MkDocs (for user-facing docs), internal Markdown for code docs
-- **AI/ML**: OpenAI SDK and agent orchestration tooling used by `yellowstorm-adk`
-
-## 🎯 Coding Standards
-
-- **TypeScript**: Follow the established NestJS and React patterns already present in the package being edited
-- **Python**: Follow PEP 8 and existing typing/docstring conventions in `yellowstorm-adk`
-- **Type Hinting**: Mandatory for Python function signatures and complex data structures; preserve existing TypeScript typing quality
-- **Docstrings**: Keep Python public APIs and modules documented where the surrounding code expects it
-- **Comments**: Use sparingly; code should be self-documenting where possible
-- **Error Handling**: Graceful error handling with proper exception wrapping and logging
-- **Logging**: Structured logging using Python's `logging` module
-- **Security**: Never hardcode secrets; use environment variables or secrets management
-- **Localization**: implement localization for every user-facing string using the project’s i18n layer (“i18”). Hardcoded UI text is forbidden (buttons, labels, placeholders, tooltips, empty states, errors, toasts, dialogs, badges, headings, helper text, status messages).
-
-## OpenCode Agent Team
-
-This repository uses a project-local OpenCode agent configuration in `opencode.json` and `.opencode/agents/`.
-
-### Primary Agents
-
-- `build`: default implementation agent with controlled bash permissions, skill permissions, and delegated specialist access
-- `plan`: read-mostly analysis agent for planning, review, and investigation
-
-### Specialist Subagents
-
-- `backend-architect`: use for NestJS module boundaries, gRPC/backend contracts, data flow, and server-side maintainability
-- `frontend-ui-ux-designer`: use for React/Vite UI implementation, responsive behavior, and interaction quality
-- `browser-qa-engineer`: use for real-browser validation, UI regressions, and Chrome DevTools-driven investigation
-- `code-reviewer`: use for bug finding, regression review, maintainability issues, and missing tests; read-only
-- `test-engineer`: use for Jest, Vitest, and Pytest coverage, regression tests, and validation
-- `security-auditor`: use for auth, validation, secret handling, injection/XSS/SSRF, unsafe trust boundaries, and AI/tool safety; read-only
-- `performance-engineer`: use for backend latency, frontend render churn, and workflow/runtime bottlenecks
-- `debugger-root-cause`: use to reproduce failures and isolate the minimal root cause before fixing
-- `ai-systems-engineer`: use for prompts, routing, context strategy, delegation behavior, and ADK/gRPC workflow reliability
-- `refactoring-maintainer`: use for behavior-preserving simplification and module cleanup
-- `docs-maintainer`: use for documentation snapshots, changelog/index maintenance, and contributor-facing technical docs
-
-### Skills And Browser Tooling
-
-- The project-level OpenCode configuration explicitly allows the `chrome-devtools` and `ai-elements` skills
-- Browser-facing validation should prefer the `chrome-devtools` skill and the project MCP browser tooling when a task affects real UI behavior
-
-### Delegation Guidance
-
-- Prefer `explore` for fast codebase discovery and read-only searches
-- Prefer `code-reviewer`, `security-auditor`, and `performance-engineer` for analysis-first tasks before implementation when risk is high
-- Prefer `debugger-root-cause` before editing when the user gives a vague bug report or a multi-layer failure
-- Prefer `browser-qa-engineer` after frontend changes that affect interaction, layout, or browser runtime behavior
-- Prefer `docs-maintainer` after documentation-heavy changes or when syncing docs with implemented behavior
-- Keep destructive shell commands gated behind approval even when using `build`
-
-## 🔄 Development Workflow
-
-1. **Branching**: Create a feature branch from `main` (e.g., `feature/new-auth-system`)
-2. **Development**: Implement changes following the coding standards
-3. **Testing**: Run the relevant package checks for the area changed: `npm test` / `npm run build` in `YellowStorm/back`, `npm test` / `npm run build` in `YellowStorm/front`, and `poetry run pytest` in Python packages when applicable
-4. **Documentation**: Update relevant documentation following the documentation management protocol 
-
-
-## 🧪 Testing Strategy
-
-- **Unit Tests**: Isolate individual components and functions
-- **Integration Tests**: Test interactions between components
-- **E2E Tests**: Test critical user flows
-- **Mocking**: Use the test tooling already established in each package (`jest`, `vitest`, fixtures/mocks in Python)
-- **Test Data**: Use fixtures for consistent test data generation
-
-## 📚 Documentation Requirements
-
-- **Code Documentation**: Docstrings for all modules, classes, and functions
-- **API Documentation**: Keep NestJS/OpenAPI and backend contract documentation aligned with implemented endpoints and gRPC interfaces
-- **User Documentation**: MkDocs site for end-users (if applicable)
-- **Architecture Documentation**: High-level architecture diagrams and explanations
-- **Changelog**: Keep `CHANGELOG.md` updated with all changes following the documentation management protocol 
-
-## 🚨 Security Guidelines
-
-- **Never commit secrets**: API keys, passwords, tokens should be in `.env` files or secrets manager
-- **Input Validation**: Validate all external input (API requests, file uploads)
-- **Rate Limiting**: Implement rate limiting on sensitive endpoints
-- **Injection Safety**: Use framework-safe database and query patterns, validate filters, and avoid unsafe dynamic query construction
-- **XSS Protection**: Sanitize all user-generated content
-- **Dependency Scanning**: Regularly scan for vulnerable dependencies
-
-## 📝 Git Commit Messages
-
-Use conventional commits format:
-
-```
-<type>(<scope>): <subject>
-
-<body>
-
-<footer>
-```
-
-**Types**: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`
-
-**Example**:
-
-```
-feat(auth): add JWT-based authentication system
-
-Implements JWT authentication with refresh tokens and token validation middleware.
-
-Related to: #123
-
-
-<!-- context7 -->
-Use the `ctx7` CLI to fetch current documentation whenever the user asks about a library, framework, SDK, API, CLI tool, or cloud service -- even well-known ones like React, Next.js, Prisma, Express, Tailwind, Django, or Spring Boot. This includes API syntax, configuration, version migration, library-specific debugging, setup instructions, and CLI tool usage. Use even when you think you know the answer -- your training data may not reflect recent changes. Prefer this over web search for library docs.
-
-Do not use for: refactoring, writing scripts from scratch, debugging business logic, code review, or general programming concepts.
-
-## Steps
-
-1. Resolve library: `npx ctx7@latest library <name> "<user's question>"`
-2. Pick the best match (ID format: `/org/project`) by: exact name match, description relevance, code snippet count, source reputation (High/Medium preferred), and benchmark score (higher is better). If results don't look right, try alternate names or queries (e.g., "next.js" not "nextjs", or rephrase the question)
-3. Fetch docs: `npx ctx7@latest docs <libraryId> "<user's question>"`
-4. Answer using the fetched documentation
-
-You MUST call `library` first to get a valid ID unless the user provides one directly in `/org/project` format. Use the user's full question as the query -- specific and detailed queries return better results than vague single words. Do not run more than 3 commands per question. Do not include sensitive information (API keys, passwords, credentials) in queries.
-
-For version-specific docs, use `/org/project/version` from the `library` output (e.g., `/vercel/next.js/v14.3.0`).
-
-If a command fails with a quota error, inform the user and suggest `npx ctx7@latest login` or setting `CONTEXT7_API_KEY` env var for higher limits. Do not silently fall back to training data.
-<!-- context7 -->
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current

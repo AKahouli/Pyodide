@@ -963,6 +963,7 @@ class DynamicGraphBuilder:
                         code_interpreter_files=code_interpreter_files,
                         output_workspace_id=output_workspace_id,
                         workspace_context_mode=tool_scope["workspace_context_mode"],
+                        step_connector_bindings=task.get("tool_bindings"),
                     )
                     step_execution_modes = state.get("step_execution_modes") or {}
                     execution_mode = step_execution_modes.get(task_id) or state.get("execution_mode", "live")

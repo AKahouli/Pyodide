@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../utils/migrate-ports';
 import { detectPortHit } from '../utils/port-hit-detection';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort } from '../types';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
@@ -47,9 +47,17 @@ export interface NodeContextMenuActions {
   canGrabOutputFormat: (nodeId: string) => boolean;
 }
 
+export interface ConnectorDropPayload {
+  type: 'connector';
+  connectorId: string;
+  connectorName: string;
+  actions: Array<{ key: string; label: string }>;
+}
+
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
   openOutputFormatEditor?: (nodeId: string) => void;
+  onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
 }
 
 export const NodeDataActionsContext = createContext<NodeDataActions | null>(null);
@@ -333,6 +341,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
+  const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
+  const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
 
   const resolveDragPayload = useCallback((e: React.DragEvent): InputFile | null => {
     try {
@@ -340,6 +350,16 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       if (!raw) return null;
       const payload = JSON.parse(raw);
       if (payload && payload.type && payload.id && payload.name) return payload as InputFile;
+    } catch { /* noop */ }
+    return null;
+  }, []);
+
+  const resolveConnectorDragPayload = useCallback((e: React.DragEvent): ConnectorDropPayload | null => {
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload?.type === 'connector' && payload?.connectorId) return payload as ConnectorDropPayload;
     } catch { /* noop */ }
     return null;
   }, []);
@@ -390,6 +410,12 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     setIsDragOver(false);
     setDragOverPortId(null);
     setDragPortCompatible(null);
+
+    const connectorPayload = resolveConnectorDragPayload(e);
+    if (connectorPayload) {
+      nodeDataActions?.onConnectorDrop?.(id, connectorPayload);
+      return;
+    }
 
     const payload = resolveDragPayload(e);
     if (!payload) return;
@@ -570,6 +596,38 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     onClick={nodeDataActions?.openOutputFormatEditor ? () => nodeDataActions.openOutputFormatEditor?.(id) : undefined}
                   />
                 )}
+              </div>
+            )}
+
+            {toolBindings.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                {toolBindings.filter((b) => b.isEnabled !== false).map((binding) => (
+                  <Tooltip key={binding.id}>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="outline"
+                        className="h-5 gap-1 px-1.5 py-0 text-[10px] font-medium border-sky-500/30 bg-sky-50 text-sky-700 cursor-default"
+                      >
+                        <Cable className="h-2.5 w-2.5" />
+                        <span className="truncate max-w-[80px]">{binding.connectorName || binding.connectorId}</span>
+                        <button
+                          type="button"
+                          className="ml-0.5 hover:text-red-500 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeToolBindingFromTask(id, binding.id);
+                          }}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div>{binding.connectorName || binding.connectorId}</div>
+                      <div className="text-muted-foreground">{binding.actions.filter((a) => a.isEnabled !== false).length} action(s)</div>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
               </div>
             )}
 

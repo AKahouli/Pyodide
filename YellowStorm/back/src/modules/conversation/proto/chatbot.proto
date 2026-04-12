@@ -372,6 +372,28 @@ message PlaybookTaskConfig {
     repeated TaskOutputPort output_ports = 15;
     string task_type = 16;
     repeated PortDocumentBinding input_files_by_port = 17;  // Port-aware document bindings
+    repeated ToolBinding tool_bindings = 18;
+}
+
+message ToolBindingAction {
+    string action_key = 1;
+    string label = 2;
+    string description = 3;
+    google.protobuf.Struct parameter_schema = 4;
+    string parameter_schema_json = 5;
+}
+
+message ToolBinding {
+    string id = 1;
+    string connector_id = 2;
+    repeated ToolBindingAction actions = 3;
+    string credential_id = 4;
+    map<string, string> fixed_params = 5;
+    bool disable_auto_skills = 6;
+    string connector_name = 7;
+    string mcp_transport_type = 8;
+    string mcp_server_url = 9;
+    google.protobuf.Struct mcp_server_config = 10;
 }
 
 message TaskOutputPort {

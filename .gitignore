@@ -4,7 +4,7 @@ node_modules/
 # Build
 dist/
 build/
-
+graphify-out/
 # Environment
 .env
 .env.local

@@ -1200,3 +1200,94 @@ export interface SkillQueryParams {
   search?: string;
   isActive?: boolean;
 }
+
+// === Connector ===
+
+export interface ConnectorActionResponse {
+  key: string;
+  label: string;
+  description: string;
+  parameterSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  safety: string;
+  supportsBatch: boolean;
+  supportsIteration: boolean;
+  isEnabled: boolean;
+}
+
+export interface ConnectorResponse {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  authType: string;
+  authConfigSchema: Record<string, unknown>;
+  mcpTransportType: string;
+  mcpServerUrl: string;
+  mcpServerConfig: Record<string, unknown>;
+  actions: ConnectorActionResponse[];
+  referencedSkillIds: string[];
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConnectorListResponse {
+  data: ConnectorResponse[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface CreateConnectorRequest {
+  slug: string;
+  name: string;
+  description: string;
+  icon?: string;
+  color?: string;
+  authType?: string;
+  authConfigSchema?: Record<string, unknown>;
+  mcpTransportType?: string;
+  mcpServerUrl?: string;
+  mcpServerConfig?: Record<string, unknown>;
+  actions?: Array<{
+    key: string;
+    label: string;
+    description?: string;
+    parameterSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    safety?: string;
+    supportsBatch?: boolean;
+    supportsIteration?: boolean;
+    isEnabled?: boolean;
+  }>;
+  referencedSkillIds?: string[];
+  isActive?: boolean;
+}
+
+export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> {}
+
+export interface ConnectorQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  isActive?: boolean;
+}
+
+export interface McpToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface McpInspectResult {
+  serverName: string;
+  tools: McpToolDefinition[];
+  error?: string;
+}
