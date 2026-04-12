@@ -103,6 +103,14 @@ export class ConnectorService {
     return this.toResponse(connector);
   }
 
+  async findBySlug(slug: string): Promise<IConnectorResponse | null> {
+    const connector = await this.connectorModel
+      .findOne({ slug, isActive: true })
+      .lean()
+      .exec();
+    return connector ? this.toResponse(connector) : null;
+  }
+
   async findByIds(ids: string[]): Promise<IConnectorResponse[]> {
     if (!ids.length) return [];
 

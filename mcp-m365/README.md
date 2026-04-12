@@ -1,80 +1,100 @@
-# Microsoft 365 Search Backend
+# M365 Document Connector
 
-FastMCP server for searching Microsoft 365 data using Microsoft Graph Search API.
+FastMCP server providing document-oriented tools for Microsoft 365 via Microsoft Graph API.
+
+## Document Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_accessible_sites` | List SharePoint sites accessible to the user |
+| `list_accessible_drives` | List OneDrive and SharePoint document libraries |
+| `search_documents` | Full-text and metadata search across M365 documents |
+| `find_items_by_name` | Find files/folders by exact name |
+| `list_folder_children` | Browse folder contents |
+| `get_item_metadata` | Get detailed metadata for a file or folder |
+| `get_document_content` | Read document content (inline text or download URL) |
+| `create_folder` | Create a new folder |
+| `create_document` | Create a new document with text content |
+| `update_document_content` | Update an existing text document |
+| `rename_item` | Rename a file or folder |
+| `delete_item` | Delete a file or folder |
+
+## Collaboration Tools (backward compatible)
+
+| Tool | Description |
+|------|-------------|
+| `search_m365` | General M365 search across entity types |
+| `list_users` | Search users in the organization |
+| `list_joined_teams` | List joined Teams |
+| `list_channels` | List channels in a team |
+| `send_teams_message` | Send a Teams message |
+| `send_email` | Send an email via Outlook |
+| `create_meeting` | Create a calendar event |
 
 ## Setup
 
-1. **Create virtual environment:**
-   ```bash
-   python -m venv venv
-   venv\Scripts\activate  # Windows
-   ```
+```bash
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-2. **Install dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
+## Configuration
 
-3. **Configure environment:**
-   - Copy `.env.example` to `.env`
-   - Fill in your Azure AD app registration details:
-     - `AZURE_CLIENT_ID`: Your app's client ID
-     - `AZURE_TENANT_ID`: Your tenant ID
-     - `AZURE_CLIENT_SECRET`: Client secret (if using confidential client)
+| Environment Variable | Description |
+|---------------------|-------------|
+| `M365_ACCESS_TOKEN` | Fallback access token (injected via header at runtime) |
+| `M365_MCP_TRANSPORT` | Transport type: `sse` (default), `http`, `streamable-http` |
+| `MCP_PORT` / `PORT` | Server port (default: 8001) |
+| `ALLOWED_ORIGINS` | CORS origins (default: `*`) |
 
 ## Running
 
-### Start Token Storage API (Port 8000)
-```bash
-python token_api.py
-```
-
-### Start MCP Server (SSE Transport) on Port 8001
 ```bash
 python server.py
 ```
-By default, the MCP server runs on port **8001** and allows CORS from any origin for direct browser connections. You can configure this in `.env`:
-- `MCP_PORT=8001`
-- `ALLOWED_ORIGINS=*`
 
-## MCP Tools
+## Content Read Behavior
 
-### `search_m365`
-Search Microsoft 365 data.
+- **Text files** (`.txt`, `.md`, `.json`, `.csv`, `.py`, etc.): content returned inline.
+- **Binary/Office files** (`.docx`, `.xlsx`, `.pptx`, `.pdf`, images, etc.): a short-lived `downloadUrl` is returned. Use the platform transfer tools to import the file into the workspace.
 
-**Parameters:**
-- `entity_type`: Type of entity to search
-  - `drive` - OneDrive drives
-  - `driveItem` - Files and folders
-  - `list` - SharePoint lists
-  - `listItem` - SharePoint list items
-  - `chatMessage` - Teams chat messages
-  - `message` - Outlook emails
-- `query`: Search query (supports KQL)
-- `size`: Number of results (default: 25, max: 1000)
+## Item Reference Shape
 
-**Example:**
+All document tools return normalized items:
+
 ```json
 {
-  "entity_type": "driveItem",
-  "query": "contoso",
-  "size": 25
+  "siteId": "...",
+  "driveId": "...",
+  "itemId": "...",
+  "name": "Report.docx",
+  "webUrl": "https://...",
+  "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "size": 12345,
+  "isFolder": false,
+  "lastModifiedDateTime": "2026-04-12T10:00:00Z",
+  "createdDateTime": "2026-03-01T08:00:00Z"
 }
 ```
-
-### `get_token_status`
-Check if user token is available.
 
 ## Required Permissions
 
 Configure these delegated permissions in your Azure AD app:
 
-- `Files.Read.All` - For drive/driveItem
-- `Sites.Read.All` - For list/listItem
-- `Mail.Read` - For message
-- `Chat.Read` - For chatMessage
+- `Files.Read.All` - Read documents
+- `Files.ReadWrite.All` - Create, update, rename, delete
+- `Sites.Read.All` - Browse SharePoint sites and document libraries
+- `Sites.ReadWrite.All` - Write to SharePoint document libraries
+- `Mail.Read` - For email search (collaboration tools)
+- `Chat.Read` - For Teams messages (collaboration tools)
 
-## Token Storage
+## Architecture
 
-User access tokens are stored in `user_token.json` (gitignored).
-This is for **testing only** - use proper session management in production.
+```
+mcp-m365/
+  server.py          # FastMCP entry point, token middleware, collaboration tools
+  document_tools.py  # 12 document-oriented MCP tools
+  graph_helpers.py   # Shared Graph API client, auth, item normalization
+  requirements.txt
+```

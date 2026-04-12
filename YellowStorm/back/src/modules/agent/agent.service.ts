@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
@@ -18,6 +18,7 @@ import { ModelsService } from '../models/models.service';
 import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
+import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
 
 @Injectable()
 export class AgentService {
@@ -30,6 +31,8 @@ export class AgentService {
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
     private readonly connectorService: ConnectorService,
+    @Inject('ConnectorAuthService')
+    private readonly connectorAuthService: ConnectorAuthService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -631,27 +634,55 @@ export class AgentService {
       }
     }
 
-    const buildConversationConnectorBindings = (connectorIds: string[] = []) => connectorIds
-      .map((connectorId) => connectorsMap.get(connectorId))
-      .filter(Boolean)
-      .map((connector: any) => ({
-        connector_id: connector.id,
-        connector_name: connector.name,
-        actions: (connector.actions || [])
-          .filter((action: any) => action.isEnabled !== false)
-          .map((action: any) => ({
-            action_key: action.key,
-            label: action.label || action.key,
-            description: action.description || '',
-            parameter_schema: action.parameterSchema || {},
-          })),
-        mcp_transport_type: connector.mcpTransportType || '',
-        mcp_server_url: connector.mcpServerUrl || '',
-        mcp_server_config: connector.mcpServerConfig || {},
-      }))
-      .filter((binding: any) => binding.actions.length > 0);
+    const buildConversationConnectorBindings = async (connectorIds: string[] = [], userId?: string) => {
+      const bindings = connectorIds
+        .map((connectorId) => connectorsMap.get(connectorId))
+        .filter(Boolean)
+        .map((connector: any) => ({
+          connector_id: connector.id,
+          connector_name: connector.name,
+          actions: (connector.actions || [])
+            .filter((action: any) => action.isEnabled !== false)
+            .map((action: any) => ({
+              action_key: action.key,
+              label: action.label || action.key,
+              description: action.description || '',
+              parameter_schema: action.parameterSchema || {},
+            })),
+          mcp_transport_type: connector.mcpTransportType || '',
+          mcp_server_url: connector.mcpServerUrl || '',
+          mcp_server_config: connector.mcpServerConfig || {},
+          auth_headers: {} as Record<string, string>,
+          auth_env: {} as Record<string, string>,
+        }))
+        .filter((binding: any) => binding.actions.length > 0);
 
-    const grpcAgents = filteredAgents.map((agent) => {
+      if (userId) {
+        for (const binding of bindings) {
+          const connector = connectorsMap.get(binding.connector_id);
+          if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+            try {
+              const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+                authSourceType: connector.authSourceType,
+                connectedAppKey: connector.connectedAppKey,
+                runtimeAuthConfig: connector.runtimeAuthConfig || {},
+              });
+              binding.auth_headers = auth.headers;
+              binding.auth_env = auth.env;
+            } catch (err) {
+              this.logger.warn('Failed to resolve connector auth for conversation', {
+                connector_id: binding.connector_id,
+                error: (err as Error).message,
+              });
+            }
+          }
+        }
+      }
+
+      return bindings;
+    };
+
+    const grpcAgents = await Promise.all(filteredAgents.map(async (agent) => {
       const agentTools = agent.toolIds
         .map((id) => toolsMap.get(id))
         .filter(Boolean) as IToolResponse[];
@@ -667,7 +698,7 @@ export class AgentService {
       const effectiveModelId = agent.model || fallbackModelId || '';
       const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
-      const connectorBindings = buildConversationConnectorBindings(agent.connectorIds || []);
+      const connectorBindings = await buildConversationConnectorBindings(agent.connectorIds || [], userId);
       const connectorToolDefs = connectorBindings.flatMap((binding: any) =>
         (binding.actions || []).map((action: any) => ({
           name: `connector_${binding.connector_id}_${action.action_key}`,
@@ -749,7 +780,7 @@ export class AgentService {
       });
 
       return grpcAgent;
-    });
+    }));
 
     this.logger.log('Agents built for stream', {
       userId,

@@ -5,6 +5,8 @@ export interface ConnectorAuthService {
       authSourceType: string;
       connectedAppKey: string;
       runtimeAuthConfig: Record<string, unknown>;
+      connectorId?: string;
+      credentialId?: string;
     },
   ): Promise<{ headers: Record<string, string>; env: Record<string, string> }>;
 }

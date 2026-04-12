@@ -2006,6 +2006,7 @@ def _proto_task_to_dict(proto_task) -> dict:
                 "id": b.id,
                 "connector_id": b.connector_id,
                 "connector_name": getattr(b, "connector_name", "") or None,
+                "connector_slug": getattr(b, "connector_slug", "") or None,
                 "actions": [
                     {
                         "action_key": a.action_key,

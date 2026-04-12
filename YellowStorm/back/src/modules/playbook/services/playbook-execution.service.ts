@@ -268,6 +268,7 @@ export class PlaybookExecutionService {
         id: binding.id,
         connector_id: binding.connector_id || binding.connectorId,
         connector_name: binding.connector_name || binding.connectorName || connector?.name || '',
+        connector_slug: connector?.slug || '',
         actions: (binding.actions || [])
           .filter((action: any) => action.isEnabled !== false)
           .map((action: any) => {
@@ -295,7 +296,12 @@ export class PlaybookExecutionService {
     if (userId) {
       for (const binding of result) {
         const connector = connectorMap.get(binding.connector_id);
-        if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+        if (!connector) continue;
+
+        if (
+          connector.authSourceType === 'connected_app' &&
+          connector.connectedAppKey
+        ) {
           try {
             const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
               authSourceType: connector.authSourceType,
@@ -306,6 +312,35 @@ export class PlaybookExecutionService {
             binding.auth_env = auth.env;
           } catch (err) {
             this.logger.warn('Failed to resolve connector auth', {
+              connector_id: binding.connector_id,
+              error: (err as Error).message,
+            });
+          }
+        } else if (connector.authSourceType === 'credential') {
+          try {
+            const credentialId = (binding as any).credential_id;
+            if (credentialId) {
+              const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+                authSourceType: connector.authSourceType,
+                connectedAppKey: connector.connectedAppKey,
+                runtimeAuthConfig: connector.runtimeAuthConfig || {},
+                connectorId: binding.connector_id,
+                credentialId,
+              });
+              binding.auth_headers = auth.headers;
+              binding.auth_env = auth.env;
+            } else {
+              const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+                authSourceType: connector.authSourceType,
+                connectedAppKey: connector.connectedAppKey,
+                runtimeAuthConfig: connector.runtimeAuthConfig || {},
+                connectorId: binding.connector_id,
+              });
+              binding.auth_headers = auth.headers;
+              binding.auth_env = auth.env;
+            }
+          } catch (err) {
+            this.logger.warn('Failed to resolve credential auth', {
               connector_id: binding.connector_id,
               error: (err as Error).message,
             });

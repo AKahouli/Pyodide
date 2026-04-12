@@ -1,30 +1,35 @@
 """
-FastMCP Server for Microsoft 365
-Provides MCP tools to interact with Microsoft 365 data using Microsoft Graph API.
+M365 Document Connector - FastMCP Server
+
+Provides MCP tools to interact with Microsoft 365 documents using Microsoft Graph API.
+Includes document discovery, search, browsing, read/write operations, plus
+collaboration tools (Teams, email, calendar) for backward compatibility.
 
 Authentication is injected at runtime via the Authorization header or environment
 variables by the connector auth layer. This server is fully stateless — it does
 not read or write any local token files.
 """
 
-import os
 import json
-from contextvars import ContextVar
+import os
 from typing import Literal, Optional
+
 import httpx
-from fastmcp import FastMCP
 from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
+from fastmcp import FastMCP
 from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
+
+from graph_helpers import _request_token, GRAPH_BASE, graph_headers
+
+from document_tools import register_document_tools
 
 load_dotenv()
 
-mcp = FastMCP("M365 Search Server")
+mcp = FastMCP("M365 Document Connector")
 
-GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-
-_request_token: ContextVar[str | None] = ContextVar("_request_token", default=None)
+register_document_tools(mcp)
 
 
 class TokenExtractorMiddleware:
@@ -44,24 +49,9 @@ class TokenExtractorMiddleware:
         await self.app(scope, receive, send)
 
 
-def get_access_token() -> str:
-    token = _request_token.get()
-    if token:
-        return token
-    env_token = os.getenv("M365_ACCESS_TOKEN")
-    if env_token:
-        return env_token
-    raise RuntimeError(
-        "No access token available. "
-        "Token must be injected via Authorization header or M365_ACCESS_TOKEN env var."
-    )
-
-
-def graph_headers() -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {get_access_token()}",
-        "Content-Type": "application/json",
-    }
+# ---------------------------------------------------------------------------
+# Collaboration tools (backward compatibility)
+# ---------------------------------------------------------------------------
 
 
 @mcp.tool()
@@ -102,7 +92,7 @@ async def search_m365(
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://graph.microsoft.com/v1.0/search/query",
+                f"{GRAPH_BASE}/search/query",
                 headers=graph_headers(),
                 json=search_request,
                 timeout=30.0,

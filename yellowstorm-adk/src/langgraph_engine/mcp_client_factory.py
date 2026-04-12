@@ -113,7 +113,7 @@ async def call_mcp_tool(
                 texts.append(str(part))
         return "\n".join(texts) if texts else str(result)
     except Exception as e:
-        logger.error("MCP tool call failed", action=action_key, error=str(e))
+        logger.error("MCP tool call failed: action=%s error=%s", action_key, str(e))
         return f"Connector action '{action_key}' failed: {str(e)}"
 
 

@@ -26,9 +26,11 @@ import {
   CreateConnectorCredentialDto,
   UpdateConnectorCredentialDto,
 } from './dto';
+import { ImportConnectorItemDto, ExportToConnectorDto } from './dto/connector-transfer.dto';
 import { IConnectorResponse, IConnectorCredentialResponse } from './interfaces/connector.interface';
 import { ConnectorService } from './connector.service';
 import { ConnectorCredentialService } from './connector-credential.service';
+import { ConnectorTransferService } from './connector-transfer.service';
 
 @ApiTags('Connectors')
 @ApiBearerAuth()
@@ -38,6 +40,7 @@ export class ConnectorController {
   constructor(
     private readonly connectorService: ConnectorService,
     private readonly credentialService: ConnectorCredentialService,
+    private readonly transferService: ConnectorTransferService,
   ) {}
 
   @Get()
@@ -118,5 +121,39 @@ export class ConnectorController {
     @CurrentUser() user: UserDocument,
   ): Promise<IConnectorCredentialResponse> {
     return this.credentialService.validateCredential(id, user._id.toString());
+  }
+
+  // --- Transfer ---
+
+  @Post('transfer/import')
+  @ApiOperation({ summary: 'Import a file from a remote connector into a workspace' })
+  async importFromConnector(
+    @Body() dto: ImportConnectorItemDto,
+    @CurrentUser() user: UserDocument,
+  ): Promise<unknown> {
+    return this.transferService.importToWorkspace(
+      user._id.toString(),
+      dto.connectorId,
+      dto.itemRef,
+      dto.workspaceId,
+      { filename: dto.filename, mimeType: dto.mimeType },
+    );
+  }
+
+  @Post('transfer/export')
+  @ApiOperation({ summary: 'Export a workspace document to a remote connector' })
+  async exportToConnector(
+    @Body() dto: ExportToConnectorDto,
+    @CurrentUser() user: UserDocument,
+  ): Promise<unknown> {
+    return this.transferService.exportFromWorkspace(
+      user._id.toString(),
+      dto.connectorId,
+      dto.targetRef,
+      dto.workspaceId,
+      dto.documentId,
+      dto.mode || 'create',
+      { filename: dto.filename },
+    );
   }
 }

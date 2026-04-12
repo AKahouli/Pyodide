@@ -20,6 +20,8 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
       authSourceType: string;
       connectedAppKey: string;
       runtimeAuthConfig: Record<string, unknown>;
+      connectorId?: string;
+      credentialId?: string;
     },
   ): Promise<{ headers: Record<string, string>; env: Record<string, string> }> {
     const empty = { headers: {}, env: {} };
@@ -52,7 +54,34 @@ export class ConnectorAuthServiceImpl implements ConnectorAuthService {
     }
 
     if (connector.authSourceType === 'credential') {
-      return empty;
+      const credentialId = connector.credentialId;
+      try {
+        const credential = credentialId
+          ? await this.credentialService.findByIdRaw(credentialId, userId)
+          : connector.connectorId
+            ? await this.credentialService.findActiveByConnectorId(connector.connectorId)
+            : null;
+        if (!credential || credential.status !== 'active') {
+          this.logger.warn('Credential not found or not active', {
+            credentialId,
+            connectorId: connector.connectorId,
+          });
+          return empty;
+        }
+        const token = credential.authPayload?.token as string | undefined;
+        if (!token) {
+          this.logger.warn('Credential has no token in authPayload', { credentialId });
+          return empty;
+        }
+        return this.buildAuthMaterial(strategy, token, config);
+      } catch (error) {
+        this.logger.warn('Failed to resolve credential token', {
+          credentialId,
+          userId,
+          error: (error as Error).message,
+        });
+        return empty;
+      }
     }
 
     return empty;

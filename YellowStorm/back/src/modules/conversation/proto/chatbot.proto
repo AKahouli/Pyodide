@@ -396,6 +396,7 @@ message ToolBinding {
     google.protobuf.Struct mcp_server_config = 10;
     map<string, string> auth_headers = 11;
     map<string, string> auth_env = 12;
+    string connector_slug = 13;
 }
 
 message TaskOutputPort {

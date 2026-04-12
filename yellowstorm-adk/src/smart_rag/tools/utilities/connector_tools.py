@@ -1,4 +1,5 @@
 import inspect
+import re
 from typing import Any, Dict, List, Optional
 
 from src.logger.logging import get_logger
@@ -123,15 +124,142 @@ def _build_signature(parameter_schema: Dict[str, Any]) -> inspect.Signature:
     return inspect.Signature(parameters)
 
 
+def _make_workspace_optional(
+    parameter_schema: Dict[str, Any],
+    has_default_workspace: bool,
+) -> Dict[str, Any]:
+    if not has_default_workspace or not isinstance(parameter_schema, dict):
+        return parameter_schema
+
+    properties = parameter_schema.get("properties")
+    if not isinstance(properties, dict) or "workspace_id" not in properties:
+        return parameter_schema
+
+    cloned = dict(parameter_schema)
+    required = list(cloned.get("required") or [])
+    cloned["required"] = [name for name in required if name != "workspace_id"]
+    return cloned
+
+
+def _augment_workspace_bridge_schema(
+    action_key: str,
+    parameter_schema: Dict[str, Any],
+    has_default_workspace: bool,
+) -> Dict[str, Any]:
+    cloned = _make_workspace_optional(parameter_schema, has_default_workspace)
+    if not isinstance(cloned, dict):
+        return parameter_schema
+
+    properties = cloned.get("properties")
+    if not isinstance(properties, dict):
+        properties = {}
+        cloned["properties"] = properties
+
+    required = list(cloned.get("required") or [])
+
+    if action_key == "import_connector_item_to_workspace":
+        properties.setdefault(
+            "driveId",
+            {"type": "string", "description": "Drive ID for the source item."},
+        )
+        properties.setdefault(
+            "itemId",
+            {"type": "string", "description": "Item ID for the source file."},
+        )
+        properties.setdefault(
+            "path",
+            {
+                "type": "string",
+                "description": "Path to the source file when itemId is unavailable.",
+            },
+        )
+        cloned["required"] = [
+            name for name in required if name not in {"item_ref", "workspace_id"}
+        ]
+    elif action_key == "export_workspace_file_to_connector":
+        properties.setdefault(
+            "driveId",
+            {"type": "string", "description": "Drive ID for the target location."},
+        )
+        properties.setdefault(
+            "itemId",
+            {"type": "string", "description": "Existing item ID for update mode."},
+        )
+        properties.setdefault(
+            "path",
+            {"type": "string", "description": "Folder path for create mode."},
+        )
+        properties.setdefault(
+            "parentId",
+            {"type": "string", "description": "Parent folder item ID for create mode."},
+        )
+        cloned["required"] = [
+            name for name in required if name not in {"target_ref", "workspace_id"}
+        ]
+
+    return cloned
+
+
+def _normalize_workspace_and_refs(
+    action_key: str,
+    params: Dict[str, Any],
+    default_workspace_id: str,
+) -> Dict[str, Any]:
+    merged = dict(params)
+
+    workspace_value = str(merged.get("workspace_id") or "").strip()
+    if default_workspace_id and workspace_value in {
+        "",
+        "workspace",
+        "default",
+        "conversation",
+    }:
+        merged["workspace_id"] = default_workspace_id
+
+    if action_key == "import_connector_item_to_workspace" and not merged.get(
+        "item_ref"
+    ):
+        drive_id = merged.get("driveId") or merged.get("drive_id")
+        item_id = merged.get("itemId") or merged.get("item_id")
+        path = merged.get("path")
+        if drive_id and (item_id or path):
+            merged["item_ref"] = {
+                "driveId": drive_id,
+                **({"itemId": item_id} if item_id else {}),
+                **({"path": path} if path else {}),
+            }
+
+    if action_key == "export_workspace_file_to_connector" and not merged.get(
+        "target_ref"
+    ):
+        drive_id = merged.get("driveId") or merged.get("drive_id")
+        item_id = merged.get("itemId") or merged.get("item_id")
+        path = merged.get("path")
+        parent_id = merged.get("parentId") or merged.get("parent_id")
+        if drive_id and (item_id or path or parent_id):
+            merged["target_ref"] = {
+                "driveId": drive_id,
+                **({"itemId": item_id} if item_id else {}),
+                **({"path": path} if path else {}),
+                **({"parentId": parent_id} if parent_id else {}),
+            }
+
+    return merged
+
+
 def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
     tools: List[Any] = []
 
     for binding in bindings or []:
         connector_id = str(binding.get("connector_id") or "").strip()
         connector_name = str(binding.get("connector_name") or connector_id).strip()
+        connector_slug = str(binding.get("connector_slug") or connector_name).strip()
         transport_type = str(binding.get("mcp_transport_type") or "").strip()
         server_url = str(binding.get("mcp_server_url") or "").strip()
         server_config = binding.get("mcp_server_config") or {}
+        fixed_params = binding.get("fixed_params") or {}
+        binding_auth_headers = binding.get("auth_headers") or {}
+        binding_auth_env = binding.get("auth_env") or {}
 
         if not connector_id:
             continue
@@ -141,7 +269,8 @@ def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
             if not action_key:
                 continue
 
-            tool_name = f"connector_{connector_id}_{action_key}".lower()
+            slug = re.sub(r"[^a-z0-9-]", "", connector_slug.lower())[:24] or "connector"
+            tool_name = f"{slug}_{action_key}".lower()[:64]
             description = str(
                 action.get("description")
                 or f"Connector action '{action_key}' from {connector_name}"
@@ -156,6 +285,9 @@ def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
                 _server_url: str = server_url,
                 _server_config: Dict[str, Any] = server_config,
                 _action_key: str = action_key,
+                _fixed_params: Dict[str, Any] = fixed_params,
+                _auth_headers: Dict[str, str] = binding_auth_headers,
+                _auth_env: Dict[str, str] = binding_auth_env,
                 **kwargs: Any,
             ) -> str:
                 from src.langgraph_engine.mcp_client_factory import call_mcp_tool
@@ -170,12 +302,15 @@ def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
                     if isinstance(kwargs.get("params"), dict)
                     else kwargs
                 )
+                merged_params = {**_fixed_params, **params}
                 return await call_mcp_tool(
                     _transport_type,
                     _server_url,
                     _server_config,
                     _action_key,
-                    params,
+                    merged_params,
+                    auth_headers=_auth_headers,
+                    auth_env=_auth_env,
                 )
 
             _connector_tool.__name__ = tool_name
