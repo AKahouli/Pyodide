@@ -5,7 +5,6 @@ import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorAuthServiceImpl } from './connector-auth.service';
 import { ConnectorTransferService } from './connector-transfer.service';
 import { M365TransferAdapter } from './adapters/m365-transfer.adapter';
-import { WorkspaceBridgeService } from './workspace-bridge.service';
 import { Connector, ConnectorSchema } from './schemas/connector.schema';
 import { ConnectorCredential, ConnectorCredentialSchema } from './schemas/connector-credential.schema';
 import { AdminConnectorController } from './admin-connector.controller';
@@ -33,12 +32,11 @@ import { LoggerModule } from '../logger';
     ConnectorAuthServiceImpl,
     ConnectorTransferService,
     M365TransferAdapter,
-    WorkspaceBridgeService,
     {
       provide: 'ConnectorAuthService',
       useExisting: ConnectorAuthServiceImpl,
     },
   ],
-  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService, WorkspaceBridgeService],
+  exports: [ConnectorService, ConnectorCredentialService, 'ConnectorAuthService', ConnectorTransferService],
 })
 export class ConnectorModule {}

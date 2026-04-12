@@ -1,7 +1,7 @@
 ---
 description: Browser-based validation agent. Verifies UI changes in a real browser using Chrome DevTools and project MCP tooling.
 mode: subagent
-model: gpt-5.4-mini-oc
+model: azure/gpt-5.4-mini-oc
 tools:
   write: false
   edit: false

@@ -1,7 +1,7 @@
 ---
 description: Debug and test agent. Reproduces failures, isolates root causes, and writes tests. Invoked before editing on bug reports and after reviewer flags test gaps.
 mode: subagent
-model: gpt-5.4-medium-oc
+model: azure/gpt-5.4-medium-oc
 tools:
   write: true
   edit: true

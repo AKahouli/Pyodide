@@ -311,7 +311,6 @@ def _json_schema_type_to_python(schema: Dict[str, Any]) -> Any:
 def _build_args_schema_for_connector_tool(
     tool_name: str,
     parameter_schema: Dict[str, Any],
-    optional_fields: Optional[set[str]] = None,
 ) -> Any:
     properties = (
         parameter_schema.get("properties")
@@ -323,8 +322,6 @@ def _build_args_schema_for_connector_tool(
         if isinstance(parameter_schema, dict)
         else set()
     )
-    optional_fields = optional_fields or set()
-    required = {name for name in required if name not in optional_fields}
     if not isinstance(properties, dict) or not properties:
         return create_model(
             f"{tool_name}Input",
@@ -352,107 +349,6 @@ def _build_args_schema_for_connector_tool(
             )
 
     return create_model(f"{tool_name}Input", **field_defs)
-
-
-def _augment_workspace_bridge_schema(
-    action_key: str,
-    parameter_schema: Dict[str, Any],
-    has_default_workspace: bool,
-) -> Dict[str, Any]:
-    cloned = dict(parameter_schema) if isinstance(parameter_schema, dict) else {}
-    properties = cloned.get("properties")
-    if not isinstance(properties, dict):
-        properties = {}
-        cloned["properties"] = properties
-
-    required = list(cloned.get("required") or [])
-    if has_default_workspace:
-        required = [name for name in required if name != "workspace_id"]
-
-    if action_key == "import_connector_item_to_workspace":
-        properties.setdefault(
-            "driveId",
-            {"type": "string", "description": "Drive ID for the source item."},
-        )
-        properties.setdefault(
-            "itemId",
-            {"type": "string", "description": "Item ID for the source file."},
-        )
-        properties.setdefault(
-            "path",
-            {
-                "type": "string",
-                "description": "Path to the source file when itemId is unavailable.",
-            },
-        )
-        required = [name for name in required if name != "item_ref"]
-    elif action_key == "export_workspace_file_to_connector":
-        properties.setdefault(
-            "driveId",
-            {"type": "string", "description": "Drive ID for the target location."},
-        )
-        properties.setdefault(
-            "itemId",
-            {"type": "string", "description": "Existing item ID for update mode."},
-        )
-        properties.setdefault(
-            "path",
-            {"type": "string", "description": "Folder path for create mode."},
-        )
-        properties.setdefault(
-            "parentId",
-            {"type": "string", "description": "Parent folder item ID for create mode."},
-        )
-        required = [name for name in required if name != "target_ref"]
-
-    cloned["required"] = required
-    return cloned
-
-
-def _normalize_workspace_and_refs(
-    action_key: str,
-    params: Dict[str, Any],
-    default_workspace_id: str,
-) -> Dict[str, Any]:
-    merged = dict(params)
-    workspace_value = str(merged.get("workspace_id") or "").strip()
-    if default_workspace_id and workspace_value in {
-        "",
-        "workspace",
-        "default",
-        "conversation",
-    }:
-        merged["workspace_id"] = default_workspace_id
-
-    if action_key == "import_connector_item_to_workspace" and not merged.get(
-        "item_ref"
-    ):
-        drive_id = merged.get("driveId") or merged.get("drive_id")
-        item_id = merged.get("itemId") or merged.get("item_id")
-        path = merged.get("path")
-        if drive_id and (item_id or path):
-            merged["item_ref"] = {
-                "driveId": drive_id,
-                **({"itemId": item_id} if item_id else {}),
-                **({"path": path} if path else {}),
-            }
-
-    if action_key == "export_workspace_file_to_connector" and not merged.get(
-        "target_ref"
-    ):
-        drive_id = merged.get("driveId") or merged.get("drive_id")
-        item_id = merged.get("itemId") or merged.get("item_id")
-        path = merged.get("path")
-        parent_id = merged.get("parentId") or merged.get("parent_id")
-        if drive_id and (item_id or path or parent_id):
-            merged["target_ref"] = {
-                "driveId": drive_id,
-                **({"itemId": item_id} if item_id else {}),
-                **({"path": path} if path else {}),
-                **({"parentId": parent_id} if parent_id else {}),
-            }
-
-    return merged
 
 
 def _merge_brain_data(agent_config: dict, workspace_context: Optional[list]) -> tuple:

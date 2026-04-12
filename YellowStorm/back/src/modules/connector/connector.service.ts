@@ -204,30 +204,56 @@ export class ConnectorService {
       isEnabled: true,
     }));
 
-    await this.connectorModel.updateOne(
-      { slug: this.slugify(inspectResult.serverName), createdBy: new Types.ObjectId(createdBy) },
-      {
-        $set: {
-          name: inspectResult.serverName,
-          description: `MCP connector imported from ${serverUrl}`,
-          mcpTransportType: transportType,
-          mcpServerUrl: serverUrl,
-          mcpServerConfig: serverConfig ?? {},
-          actions,
-        },
-        $setOnInsert: {
-          slug: this.slugify(inspectResult.serverName),
-          authType: 'none',
-          authConfigSchema: {},
-          referencedSkillIds: [],
-          isActive: true,
-          createdBy: new Types.ObjectId(createdBy),
-        },
-      },
-      { upsert: true },
-    ).exec();
+    const creatorId = new Types.ObjectId(createdBy);
+    const baseName = inspectResult.serverName || this.slugify(serverUrl.split('/').pop() ?? serverUrl) || 'connector';
+    const baseSlug = this.slugify(baseName) || 'connector';
+    const { name, slug } = await this.getUniqueImportedIdentity(baseName, baseSlug, creatorId);
+
+    await this.connectorModel.create({
+      slug,
+      name,
+      description: `MCP connector imported from ${serverUrl}`,
+      authType: 'none',
+      authConfigSchema: {},
+      referencedSkillIds: [],
+      isActive: true,
+      createdBy: creatorId,
+      mcpTransportType: transportType,
+      mcpServerUrl: serverUrl,
+      mcpServerConfig: serverConfig ?? {},
+      actions,
+    });
 
     return inspectResult;
+  }
+
+  private async getUniqueImportedIdentity(
+    baseName: string,
+    baseSlug: string,
+    createdBy: Types.ObjectId,
+  ): Promise<{ name: string; slug: string }> {
+    const existingConnectors = await this.connectorModel
+      .find({ createdBy, slug: { $regex: `^${escapeRegex(baseSlug)}(?:-[0-9]+)?$` } })
+      .select({ slug: 1, name: 1 })
+      .lean()
+      .exec();
+
+    if (!existingConnectors.some((connector) => connector.slug === baseSlug)) {
+      return { name: baseName, slug: baseSlug };
+    }
+
+    const existingSlugs = new Set(existingConnectors.map((connector) => connector.slug));
+    let suffix = 2;
+    let nextSlug = `${baseSlug}-${suffix}`;
+    while (existingSlugs.has(nextSlug)) {
+      suffix += 1;
+      nextSlug = `${baseSlug}-${suffix}`;
+    }
+
+    return {
+      name: `${baseName} (${suffix})`,
+      slug: nextSlug,
+    };
   }
 
   async inspectMcp(transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {

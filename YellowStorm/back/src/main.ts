@@ -9,7 +9,6 @@ import { json, urlencoded } from 'express';
 import { inspect } from 'node:util';
 import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
-import { WorkspaceBridgeService } from './modules/connector/workspace-bridge.service';
 
 function serializeUnhandledReason(reason: unknown) {
   if (reason instanceof Error) {
@@ -91,12 +90,6 @@ async function bootstrap() {
 
   // Cookie Parser - Required for refresh token cookies
   app.use(cookieParser());
-
-  // Workspace Bridge MCP server (before global prefix and validation pipes)
-  const workspaceBridge = app.get(WorkspaceBridgeService);
-  await workspaceBridge.init();
-  app.use('/mcp/workspace-bridge', workspaceBridge.handler);
-
 
   // API Versioning
   app.enableVersioning({

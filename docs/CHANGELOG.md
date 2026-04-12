@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-13 00:00:00] — Fix MCP connector import collision behavior
+
+- **Feature:** `connectors`
+- **Type:** `fix`
+- **Changed:** MCP import no longer upserts by generated slug. Repeated imports now create new connectors with collision-safe names/slugs instead of overwriting existing entries.
+- **Why:** Previously, importing an MCP connector with the same generated slug would silently overwrite the existing entry, causing data loss. Import collisions are now handled safely by appending distinguishing suffixes.
+- **Impact:** `YellowStorm/back/src/modules/connector/`
+
 ## [2026-04-11 23:48:00] — MCP connector integration for playbook steps
 
 - **Feature:** `connectors`
