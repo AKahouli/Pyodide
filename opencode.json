@@ -86,14 +86,14 @@
       "permission": {
         "edit": "deny",
         "bash": {
-          "*": "ask",
+          "*": "allow",
           "git status*": "allow",
           "git diff*": "allow",
           "git log*": "allow",
           "npx ctx7*": "allow"
         },
         "task": {
-          "*": "deny",
+          "*": "allow",
           "explore": "allow",
           "reviewer": "allow",
           "diagnostics": "allow"

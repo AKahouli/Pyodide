@@ -15,6 +15,7 @@ export interface AgentFormValues {
   tools: string[];
   skills: string[];
   disabledSkills: string[];
+  connectors: string[];
   isActive: boolean;
   isDefaultForType: boolean;
 }
@@ -36,6 +37,7 @@ export function createAgentFormSchema(t: Translator) {
     tools: z.array(z.string()).default([]),
     skills: z.array(z.string()).default([]),
     disabledSkills: z.array(z.string()).default([]),
+    connectors: z.array(z.string()).default([]),
     isActive: z.boolean().default(true),
     isDefaultForType: z.boolean().default(false),
   });
@@ -53,6 +55,7 @@ export const defaultFormValues: AgentFormValues = {
   tools: [],
   skills: [],
   disabledSkills: [],
+  connectors: [],
   isActive: true,
   isDefaultForType: false,
 };

@@ -75,8 +75,15 @@ export function ConnectorBindingModal({
           apiClient.get(`/connectors/${connectorId}/credentials`),
         ]);
         if (!cancelled) {
-          setConnector(connRes.data?.data ?? null);
+          const conn = connRes.data?.data ?? null;
+          setConnector(conn);
           setCredentials(Array.isArray(credRes.data?.data) ? credRes.data.data : []);
+          if (!existingBinding && conn?.actions?.length) {
+            const enabledKeys = conn.actions
+              .filter((a: any) => a.isEnabled !== false)
+              .map((a: any) => a.key);
+            setSelectedActions(new Set(enabledKeys));
+          }
         }
       } catch (err) {
         console.error('Failed to fetch connector data:', err);
@@ -86,7 +93,7 @@ export function ConnectorBindingModal({
     }
     fetchData();
     return () => { cancelled = true; };
-  }, [open, connectorId]);
+  }, [open, connectorId, existingBinding]);
 
   const toggleAction = (key: string) => {
     setSelectedActions((prev) => {

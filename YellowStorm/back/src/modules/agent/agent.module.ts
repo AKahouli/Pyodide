@@ -9,6 +9,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
 import { ToolModule } from '../tool/tool.module';
 import { ModelsModule } from '../models/models.module';
 import { SkillModule } from '../skill/skill.module';
+import { ConnectorModule } from '../connector/connector.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { SkillModule } from '../skill/skill.module';
     ToolModule,
     ModelsModule,
     SkillModule,
+    ConnectorModule,
   ],
   controllers: [AgentController, AdminAgentController],
   providers: [AgentService],

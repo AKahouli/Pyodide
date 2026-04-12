@@ -1003,6 +1003,7 @@ export interface AgentResponse {
   tools: string[];
   skills?: string[];
   disabledSkills?: string[];
+  connectors?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -1034,6 +1035,7 @@ export interface CreateAgentRequest {
   tools?: string[];
   skills?: string[];
   disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1051,6 +1053,7 @@ export interface UpdateAgentRequest {
   tools?: string[];
   skills?: string[];
   disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

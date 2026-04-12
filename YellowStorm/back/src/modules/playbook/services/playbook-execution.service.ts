@@ -174,49 +174,133 @@ export class PlaybookExecutionService {
     };
   }
 
-  private async buildGrpcToolBindings(bindings: any[]): Promise<any[]> {
+  private async buildGrpcToolBindings(
+    bindings: any[],
+    agentConnectorIds?: string[],
+  ): Promise<any[]> {
     const enabledBindings = (bindings || []).filter((b: any) => b?.isEnabled !== false);
-    if (enabledBindings.length === 0) {
+    if (enabledBindings.length === 0 && (!agentConnectorIds || agentConnectorIds.length === 0)) {
       return [];
     }
 
-    const connectorIds = Array.from(new Set(
+    const stepConnectorIds = Array.from(new Set(
       enabledBindings
         .map((binding: any) => binding?.connectorId)
         .filter((id: any) => Types.ObjectId.isValid(id)),
     )).map((id) => new Types.ObjectId(id));
 
-    const connectors = await this.connectorModel.find({ _id: { $in: connectorIds } }).lean().exec();
-    const connectorMap = new Map<string, any>(connectors.map((connector: any) => [connector._id.toString(), connector]));
+    const agentConnIds = agentConnectorIds || [];
+    for (const cid of agentConnIds) {
+      if (Types.ObjectId.isValid(cid) && !stepConnectorIds.some((id) => id.toString() === cid)) {
+        stepConnectorIds.push(new Types.ObjectId(cid));
+      }
+    }
 
-    return enabledBindings.map((binding: any) => {
-      const connector = connectorMap.get(binding.connectorId);
-      const connectorActions = new Map<string, any>(((connector?.actions || []) as any[]).map((action: any) => [action.key, action]));
+    const allConnectorIds = stepConnectorIds;
+    if (allConnectorIds.length === 0) {
+      return [];
+    }
+
+    const connectors = await this.connectorModel.find({ _id: { $in: allConnectorIds } }).lean().exec();
+    const connectorMap = new Map<string, any>(connectors.map((c: any) => [c._id.toString(), c]));
+
+    this.logger.debug('buildGrpcToolBindings inputs', {
+      enabledStepBindings: enabledBindings.length,
+      agentConnectorIds: agentConnIds,
+      connectorsFound: connectors.length,
+      connectorIds: allConnectorIds.map((id) => id.toString()),
+    });
+
+    const stepConnectorIdSet = new Set(
+      enabledBindings.map((binding: any) => binding.connectorId),
+    );
+    const allBindings = [...enabledBindings];
+
+    for (const cid of agentConnIds) {
+      if (!Types.ObjectId.isValid(cid)) continue;
+      if (stepConnectorIdSet.has(cid)) continue;
+
+      const connector = connectorMap.get(cid);
+      if (!connector) {
+        this.logger.warn('Agent connector not found in DB', { connectorId: cid });
+        continue;
+      }
+
+      const connActions = (connector.actions || []).filter((action: any) => action.isEnabled !== false);
+      if (connActions.length === 0) {
+        this.logger.warn('Agent connector has no enabled actions', { connectorId: cid, connectorName: connector.name });
+        continue;
+      }
+
+      allBindings.push({
+        id: `agent_${cid}`,
+        connector_id: cid,
+        connector_name: connector?.name || cid,
+        actions: connActions.map((action: any) => ({
+          action_key: action.key,
+          label: action.label || action.key,
+          description: action.description || '',
+          parameter_schema: this.toGrpcStruct(action.parameterSchema || {}),
+          parameter_schema_json: JSON.stringify(action.parameterSchema || {}),
+        })),
+        credential_id: null,
+        fixed_params: {},
+        disable_auto_skills: false,
+        mcp_transport_type: connector?.mcpTransportType || '',
+        mcp_server_url: connector?.mcpServerUrl || '',
+        mcp_server_config: this.toGrpcStruct(connector?.mcpServerConfig || {}),
+      });
+    }
+
+    const result = allBindings.map((binding: any) => {
+      const connector = connectorMap.get(binding.connector_id || binding.connectorId);
+      const connectorActions = new Map<string, any>(
+        ((connector?.actions || []) as any[]).map((action: any) => [action.key, action]),
+      );
 
       return {
         id: binding.id,
-        connector_id: binding.connectorId,
-        connector_name: binding.connectorName || connector?.name || binding.connectorId,
+        connector_id: binding.connector_id || binding.connectorId,
+        connector_name: binding.connector_name || binding.connectorName || connector?.name || '',
         actions: (binding.actions || [])
           .filter((action: any) => action.isEnabled !== false)
           .map((action: any) => {
-            const connectorAction = connectorActions.get(action.actionKey);
+            const actionKey = action.action_key || action.actionKey;
+            const ca = connectorActions.get(actionKey);
             return {
-              action_key: action.actionKey,
-              label: connectorAction?.label || action.actionKey,
-              description: connectorAction?.description || '',
-              parameter_schema: this.toGrpcStruct(connectorAction?.parameterSchema || {}),
-              parameter_schema_json: JSON.stringify(connectorAction?.parameterSchema || {}),
+              action_key: actionKey,
+              label: action.label || ca?.label || actionKey,
+              description: action.description || ca?.description || '',
+              parameter_schema: this.toGrpcStruct(ca?.parameterSchema || action.parameterSchema || {}),
+              parameter_schema_json: JSON.stringify(ca?.parameterSchema || action.parameterSchema || {}),
             };
           }),
-        credential_id: binding.credentialId || null,
-        fixed_params: binding.fixedParams || {},
-        disable_auto_skills: binding.disableAutoSkills || false,
+        credential_id: binding.credential_id || binding.credentialId || null,
+        fixed_params: binding.fixed_params || binding.fixedParams || {},
+        disable_auto_skills: binding.disable_auto_skills || binding.disableAutoSkills || false,
         mcp_transport_type: connector?.mcpTransportType || '',
         mcp_server_url: connector?.mcpServerUrl || '',
         mcp_server_config: this.toGrpcStruct(connector?.mcpServerConfig || {}),
       };
     });
+
+    this.logger.debug('buildGrpcToolBindings result', {
+      totalBindings: result.length,
+      totalActions: result.reduce((sum: number, b: any) => sum + (b.actions?.length || 0), 0),
+      bindings: result.map((b: any) => ({
+        id: b.id,
+        connector_id: b.connector_id,
+        action_count: b.actions?.length,
+        has_transport: !!b.mcp_transport_type,
+        has_url: !!b.mcp_server_url,
+        actions_have_schema: (b.actions || []).every((a: any) => {
+          const schema = a.parameter_schema || a.parameter_schema_json;
+          return schema && schema !== '{}' && schema !== '{}';
+        }),
+      })),
+    });
+
+    return result;
   }
 
   private mapGrpcToolTrace(rawToolTrace: any[] = []): Array<{
@@ -1489,7 +1573,10 @@ export class PlaybookExecutionService {
     }));
     const toolBindingsByTaskId = new Map<string, any[]>();
     for (const task of enabledTasks) {
-      toolBindingsByTaskId.set(task.id, await this.buildGrpcToolBindings(task.toolBindings || []));
+      toolBindingsByTaskId.set(task.id, await this.buildGrpcToolBindings(
+        task.toolBindings || [],
+        task.assignedAgentId ? grpcAgentMap.get(task.assignedAgentId.toString())?.connectorIds : undefined,
+      ));
     }
     const promptOverrides = await this.buildPromptOverrides();
 
@@ -2898,7 +2985,10 @@ export class PlaybookExecutionService {
       });
     }
 
-    const toolBindings = await this.buildGrpcToolBindings(task.toolBindings || []);
+    const toolBindings = await this.buildGrpcToolBindings(
+      task.toolBindings || [],
+      grpcAgent?.connectorIds,
+    );
     const promptOverrides = await this.buildPromptOverrides();
 
     const grpcRequest: any = {

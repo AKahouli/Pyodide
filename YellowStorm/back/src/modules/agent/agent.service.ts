@@ -17,6 +17,7 @@ import { AgentTypeService } from '../agent-type/agent-type.service';
 import { ModelsService } from '../models/models.service';
 import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
+import { ConnectorService } from '../connector/connector.service';
 
 @Injectable()
 export class AgentService {
@@ -28,6 +29,7 @@ export class AgentService {
     private readonly agentTypeService: AgentTypeService,
     private readonly modelsService: ModelsService,
     private readonly skillService: SkillService,
+    private readonly connectorService: ConnectorService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -72,6 +74,7 @@ export class AgentService {
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
+      connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -215,6 +218,9 @@ export class AgentService {
     if (dto.disabledSkills) {
       updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
     }
+    if (dto.connectors) {
+      updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
@@ -298,6 +304,7 @@ export class AgentService {
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
       skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
       disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
+      connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -415,6 +422,9 @@ export class AgentService {
     }
     if (dto.disabledSkills) {
       updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.connectors) {
+      updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
     }
 
     const updated = await this.agentModel
@@ -610,6 +620,37 @@ export class AgentService {
       }
     }
 
+    const allConnectorIds = [
+      ...new Set(filteredAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean)),
+    ];
+    const connectorsMap = new Map<string, any>();
+    if (allConnectorIds.length > 0) {
+      const fetchedConnectors = await this.connectorService.findByIds(allConnectorIds);
+      for (const connector of fetchedConnectors) {
+        connectorsMap.set(connector.id, connector);
+      }
+    }
+
+    const buildConversationConnectorBindings = (connectorIds: string[] = []) => connectorIds
+      .map((connectorId) => connectorsMap.get(connectorId))
+      .filter(Boolean)
+      .map((connector: any) => ({
+        connector_id: connector.id,
+        connector_name: connector.name,
+        actions: (connector.actions || [])
+          .filter((action: any) => action.isEnabled !== false)
+          .map((action: any) => ({
+            action_key: action.key,
+            label: action.label || action.key,
+            description: action.description || '',
+            parameter_schema: action.parameterSchema || {},
+          })),
+        mcp_transport_type: connector.mcpTransportType || '',
+        mcp_server_url: connector.mcpServerUrl || '',
+        mcp_server_config: connector.mcpServerConfig || {},
+      }))
+      .filter((binding: any) => binding.actions.length > 0);
+
     const grpcAgents = filteredAgents.map((agent) => {
       const agentTools = agent.toolIds
         .map((id) => toolsMap.get(id))
@@ -626,6 +667,15 @@ export class AgentService {
       const effectiveModelId = agent.model || fallbackModelId || '';
       const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
+      const connectorBindings = buildConversationConnectorBindings(agent.connectorIds || []);
+      const connectorToolDefs = connectorBindings.flatMap((binding: any) =>
+        (binding.actions || []).map((action: any) => ({
+          name: `connector_${binding.connector_id}_${action.action_key}`,
+          description: action.description || `${binding.connector_name} connector action ${action.label || action.action_key}`,
+          prompt: '',
+          top_k: 0,
+        })),
+      );
 
       // Build prompt using batch-resolved prompts
       let prompt = '';
@@ -667,7 +717,7 @@ export class AgentService {
             toolObj[attr.name] = attr.value;
           }
           return toolObj;
-        }),
+        }).concat(connectorToolDefs),
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
@@ -676,6 +726,13 @@ export class AgentService {
         chatbot: {
           model: litellmModel,
         },
+        agent_params: {
+          params: {
+            user_id: userId,
+            connector_bindings_json: JSON.stringify(connectorBindings),
+          },
+        },
+        connectorIds: agent.connectorIds || [],
       };
 
       this.logger.debug('Agent built for stream', {
@@ -684,6 +741,8 @@ export class AgentService {
         agentType: grpcAgent.agent_type,
         model: grpcAgent.chatbot.model,
         toolCount: grpcAgent.tools.length,
+        connectorToolCount: connectorToolDefs.length,
+        connectorBindingCount: connectorBindings.length,
         promptLength: grpcAgent.prompt.length,
         ignorePrePrompt: agent.ignorePrePrompt,
         isDefault: agent.isDefault,
@@ -826,6 +885,7 @@ export class AgentService {
             ...(sessionId ? { session_id: sessionId } : {}),
           },
         },
+        connectorIds: agent.connectorIds || [],
       };
 
       return grpcAgent;
@@ -999,6 +1059,9 @@ export class AgentService {
       disabledSkills: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      connectors: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
@@ -1048,6 +1111,9 @@ export class AgentService {
       ),
       skillIds: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
       disabledSkillIds: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectorIds: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
       agentTypeSkillIds,

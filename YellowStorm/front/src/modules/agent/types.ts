@@ -16,6 +16,7 @@ export interface Agent {
   tools: string[];
   skills?: string[];
   disabledSkills?: string[];
+  connectors?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -76,6 +77,7 @@ export interface CreateAgentData {
   tools?: string[];
   skills?: string[];
   disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -93,6 +95,7 @@ export interface UpdateAgentData {
   tools?: string[];
   skills?: string[];
   disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

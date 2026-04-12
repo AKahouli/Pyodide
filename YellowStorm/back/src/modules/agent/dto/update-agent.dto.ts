@@ -87,6 +87,12 @@ export class UpdateAgentDto {
   @IsMongoId({ each: true })
   disabledSkills?: string[];
 
+  @ApiPropertyOptional({ description: 'Connector IDs attached to this agent', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  connectors?: string[];
+
   @ApiPropertyOptional({ description: 'Whether the agent is active' })
   @IsOptional()
   @IsBoolean()

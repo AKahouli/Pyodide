@@ -1068,7 +1068,11 @@ def _create_connector_mcp_tools(
                     "description": None if isinstance(a, str) else a.get("description"),
                     "parameter_schema": {}
                     if isinstance(a, str)
-                    else (a.get("parameter_schema") or {}),
+                    else (
+                        a.get("parameter_schema") or {}
+                        if a.get("parameter_schema")
+                        else {}
+                    ),
                 }
                 for a in raw_actions
             ]
@@ -1077,6 +1081,15 @@ def _create_connector_mcp_tools(
         )
         if not actions:
             continue
+
+        logger.info(
+            "connector_binding_processing",
+            connector_id=connector_id,
+            connector_name=connector_name,
+            transport_type=transport_type,
+            server_url=server_url[:80] if server_url else "(empty)",
+            action_count=len(actions),
+        )
 
         for action in actions:
             action_key = action.get("action_key", "")
@@ -1140,5 +1153,12 @@ def _create_connector_mcp_tools(
                 )
 
             tools.append(_make_mcp_tool())
+
+        logger.info(
+            "connector_tools_created",
+            connector_id=connector_id,
+            tools_created=len(actions),
+            tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
+        )
 
     return tools

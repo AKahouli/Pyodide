@@ -10,6 +10,7 @@ export interface IAgentResponse {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   tools: string[];
+  connectors?: string[];
   skills?: string[];
   disabledSkills?: string[];
   isDefault: boolean;
@@ -34,6 +35,7 @@ export interface IAgentForStream {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   toolIds: string[];
+  connectorIds?: string[];
   skillIds?: string[];
   disabledSkillIds?: string[];
   agentTypeSkillIds?: string[];
@@ -71,4 +73,5 @@ export interface IGrpcAgent {
   agent_params?: {
     params: Record<string, string>;
   };
+  connectorIds?: string[];
 }

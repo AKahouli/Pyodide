@@ -20,7 +20,7 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { createAgentFormSchema, defaultFormValues, type AgentFormValues } from './agent-form-schema';
 import type { AgentResponse, AgentTypeResponse } from '../../types';
 import { getActiveAgentTypes } from '../../api';
-import { getActiveSkills, getActiveTools, type ToolOption } from '@/modules/agent/api';
+import { getActiveConnectors, getActiveSkills, getActiveTools, type ConnectorOption, type ToolOption } from '@/modules/agent/api';
 import type { SkillOption } from '@/modules/agent/types';
 import { useModels } from '@/modules/models/store';
 import { useModelsStore } from '@/modules/models/store';
@@ -41,6 +41,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   const [agentTypes, setAgentTypes] = useState<AgentTypeResponse[]>([]);
   const [availableTools, setAvailableTools] = useState<ToolOption[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillOption[]>([]);
+  const [availableConnectors, setAvailableConnectors] = useState<ConnectorOption[]>([]);
   const models = useModels();
   const [loading, setLoading] = useState(false);
   const loadedAgentTypeId = useRef<string | null>(null);
@@ -71,11 +72,13 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
           .catch(() => {}),
         getActiveTools().catch(() => [] as ToolOption[]),
         getActiveSkills().catch(() => [] as SkillOption[]),
+        getActiveConnectors().catch(() => [] as ConnectorOption[]),
       ])
-        .then(([types, , tools, skills]) => {
+        .then(([types, , tools, skills, connectors]) => {
           setAgentTypes(types || []);
           setAvailableTools(tools || []);
           setAvailableSkills(skills || []);
+          setAvailableConnectors(connectors || []);
 
           if (agent) {
             reset({
@@ -90,6 +93,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
               tools: agent.tools || [],
               skills: agent.skills || [],
               disabledSkills: agent.disabledSkills || [],
+              connectors: agent.connectors || [],
               isActive: agent.isActive,
               isDefaultForType: agent.isDefaultForType || false,
             });
@@ -120,6 +124,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   const watchedTools = watch('tools');
   const watchedSkills = watch('skills');
   const watchedDisabledSkills = watch('disabledSkills');
+  const watchedConnectors = watch('connectors');
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
 
   useEffect(() => {
@@ -149,6 +154,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                 <TabsTrigger value='behaviour'>{t('defaultAgents.form.tabs.behaviour')}</TabsTrigger>
                 <TabsTrigger value='tools'>{t('defaultAgents.form.tabs.tools')}</TabsTrigger>
                 <TabsTrigger value='skills'>Skills</TabsTrigger>
+                <TabsTrigger value='connectors'>Connectors</TabsTrigger>
               </TabsList>
 
               <ScrollArea className='flex-1 min-h-0 mt-4'>
@@ -271,6 +277,27 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                           placeholder={t('defaultAgents.form.tools.selectPlaceholder')}
                           searchPlaceholder={t('defaultAgents.form.tools.searchPlaceholder')}
                           emptyText={t('defaultAgents.form.tools.emptyText')}
+                        />
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value='connectors' forceMount className='mt-0 data-[state=inactive]:hidden'>
+                    <div className='grid gap-4'>
+                      <div className='space-y-2'>
+                        <Label>Connectors</Label>
+                        <p className='text-xs text-muted-foreground'>Attach MCP connectors to this agent. They will be available on every playbook step that uses this agent.</p>
+                        <MultiSelect
+                          options={availableConnectors.map((connector) => ({
+                            value: connector.id,
+                            label: connector.name,
+                            description: connector.description,
+                          }))}
+                          value={watchedConnectors}
+                          onValueChange={(val) => setValue('connectors', val)}
+                          placeholder='Select connectors'
+                          searchPlaceholder='Search connectors'
+                          emptyText='No connectors found'
                         />
                       </div>
                     </div>

@@ -60,3 +60,16 @@ export async function getActiveSkills(): Promise<SkillOption[]> {
   );
   return response.data.data;
 }
+
+export interface ConnectorOption {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function getActiveConnectors(): Promise<ConnectorOption[]> {
+  const response = await apiClient.get<ApiResponse<ConnectorOption[]>>(
+    API_ENDPOINTS.connectors.list
+  );
+  return response.data.data;
+}
