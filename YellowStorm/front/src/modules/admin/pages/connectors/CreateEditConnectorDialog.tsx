@@ -173,7 +173,7 @@ export function CreateEditConnectorDialog({
           <div className='grid grid-cols-2 gap-4'>
             <div>
               <Label>Slug</Label>
-              <Input placeholder='sharepoint' value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} disabled={!!connector} />
+              <Input placeholder='sharepoint' value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
             </div>
             <div>
               <Label>Name</Label>

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-13 09:30:00] — Allow admin slug editing in connector edit dialog
+
+- **Feature:** `connectors`
+- **Type:** `fix`
+- **Changed:** Connector edit dialog now renders the slug field as editable instead of read-only, allowing admins to modify slugs post-creation.
+- **Why:** Admins need the ability to correct or customize slugs after initial connector creation.
+- **Impact:** `YellowStorm/front/src/modules/admin/pages/connectors/`
+
 ## [2026-04-13 00:00:00] — Fix MCP connector import collision behavior
 
 - **Feature:** `connectors`
