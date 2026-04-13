@@ -239,5 +239,9 @@
   "upload.item.completed": "Completed",
   "upload.item.failed": "Failed",
   "upload.item.pending": "Pending",
-  "upload.item.uploading": "Uploading"
+  "upload.item.uploading": "Uploading",
+  "select.noWorkspaces": "No workspaces available",
+  "select.searchPlaceholder": "Search workspaces...",
+  "select.selectedCount_one": "{{count}} selected",
+  "select.selectedCount_other": "{{count}} selected"
 }
