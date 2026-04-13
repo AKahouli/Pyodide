@@ -7,6 +7,7 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
+import { InternalServiceGuard } from './guards/internal-service.guard';
 import { Session, SessionSchema } from './schemas/session.schema';
 import { UserModule } from '../user';
 import { UsageModule } from '../usage';
@@ -35,7 +36,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
     forwardRef(() => AuthorizationModule),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard, JwtStrategy],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, InternalServiceGuard],
+  exports: [AuthService, JwtAuthGuard, JwtStrategy, InternalServiceGuard],
 })
 export class AuthModule {}

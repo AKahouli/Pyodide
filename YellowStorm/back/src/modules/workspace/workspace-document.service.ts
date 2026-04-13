@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
@@ -469,6 +471,78 @@ export class WorkspaceDocumentService {
     });
 
     return this.mapToResponse(document);
+  }
+
+  /**
+   * Ingest a file from an external download URL into a workspace.
+   * Downloads the file, then delegates to uploadSmallFile for storage.
+   * Used by the brain/agent to save MCP-sourced files (e.g., SharePoint download URLs).
+   */
+  async ingestFromUrl(
+    workspaceId: string,
+    dto: IngestUrlDto,
+  ): Promise<DocumentResponse> {
+    this.logger.log('Ingesting file from URL', {
+      workspaceId,
+      userId: dto.userId,
+      filename: dto.filename,
+      hasAuthHeaders: !!dto.authHeaders,
+    });
+
+    let buffer: Buffer;
+    let resolvedMimeType = dto.mimeType || 'application/octet-stream';
+
+    try {
+      const response = await axios.get(dto.downloadUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30_000,
+        maxContentLength: this.maxFileSizeMb * 1024 * 1024,
+        headers: dto.authHeaders || {},
+      });
+
+      buffer = Buffer.from(response.data);
+
+      if (!dto.mimeType && response.headers['content-type']) {
+        resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
+      }
+    } catch (error) {
+      const err = error as any;
+      const status = err.response?.status;
+      const message = status
+        ? `Failed to download file: HTTP ${status}`
+        : `Failed to download file: ${err.message}`;
+
+      this.logger.error('File download failed during ingest', {
+        workspaceId,
+        downloadUrl: dto.downloadUrl,
+        error: message,
+      });
+
+      throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);
+    }
+
+    const doc = await this.uploadSmallFile(
+      workspaceId,
+      dto.userId,
+      buffer,
+      dto.filename,
+      resolvedMimeType,
+    );
+
+    if (dto.sourceMeta) {
+      await this.documentModel.findByIdAndUpdate(doc.id, {
+        $set: { metadata: dto.sourceMeta },
+      });
+    }
+
+    this.logger.log('File ingested from URL', {
+      documentId: doc.id,
+      workspaceId,
+      filename: doc.originalName,
+      size: doc.size,
+    });
+
+    return doc;
   }
 
   /**
