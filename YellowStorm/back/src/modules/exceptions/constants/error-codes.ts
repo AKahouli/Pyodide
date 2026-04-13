@@ -158,6 +158,7 @@ export enum ErrorCode {
   // Playbook errors (2500-2599)
   PLAYBOOK_NOT_FOUND = 'ERR_2500',
   PLAYBOOK_EXECUTION_NOT_FOUND = 'ERR_2501',
+  PLAYBOOK_TASK_NOT_FOUND = 'ERR_2510',
   PLAYBOOK_EXECUTION_IN_PROGRESS = 'ERR_2502',
   PLAYBOOK_EXECUTION_NOT_INTERRUPTED = 'ERR_2503',
   PLAYBOOK_EXECUTION_NO_THREAD = 'ERR_2504',
@@ -306,6 +307,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.PLAYBOOK_NOT_FOUND]: 'Playbook not found.',
   [ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND]: 'Playbook execution not found.',
+  [ErrorCode.PLAYBOOK_TASK_NOT_FOUND]: 'Playbook task not found.',
   [ErrorCode.PLAYBOOK_EXECUTION_IN_PROGRESS]: 'This playbook already has an execution in progress.',
   [ErrorCode.PLAYBOOK_EXECUTION_NOT_INTERRUPTED]: 'Execution is not in an interrupted state.',
   [ErrorCode.PLAYBOOK_EXECUTION_NO_THREAD]: 'No thread ID available for resuming execution.',

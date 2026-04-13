@@ -276,9 +276,7 @@ export class PlaybookDesignService {
       id: node.id || `task-${idx}`,
       title: node.title || `Step ${idx + 1}`,
       description: node.description || '',
-      assignedAgentId: node.assigned_agent_id
-        ? new Types.ObjectId(node.assigned_agent_id)
-        : null,
+      assignedAgentId: this.toOptionalObjectId(node.assigned_agent_id),
       executionOrder: node.execution_order ?? idx,
       positionX: node.x ?? 0,
       positionY: node.y ?? 0,
@@ -298,6 +296,15 @@ export class PlaybookDesignService {
     }));
 
     return { tasks, edges };
+  }
+
+  private toOptionalObjectId(value: unknown): Types.ObjectId | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+
+    const candidate = String(value);
+    return Types.ObjectId.isValid(candidate) ? new Types.ObjectId(candidate) : null;
   }
 
   private generateDesignSummary(

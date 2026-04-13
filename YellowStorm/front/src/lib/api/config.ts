@@ -201,6 +201,8 @@ export const API_ENDPOINTS = {
     execution: (id: string, execId: string) => `/playbooks/${id}/executions/${execId}`,
     deleteAllExecutions: (id: string) => `/playbooks/${id}/executions`,
     deleteExecution: (id: string, execId: string) => `/playbooks/${id}/executions/${execId}`,
+    deleteStepExecution: (id: string, execId: string, taskId: string, stepExecutionId: string) =>
+      `/playbooks/${id}/executions/${execId}/tasks/${taskId}/step-executions/${stepExecutionId}`,
     validateReplay: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/validate-replay`,
     replays: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/replays`,
     activateReplay: (id: string, taskId: string, replayId: string) => `/playbooks/${id}/tasks/${taskId}/replays/${replayId}/activate`,

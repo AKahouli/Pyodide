@@ -253,6 +253,42 @@ export interface TaskResultData {
       judgeUsed: boolean;
     };
   }>;
+  stepExecutions?: Array<{
+    id: string;
+    attemptNumber: number | null;
+    status: string;
+    output: string | null;
+    error: string | null;
+    durationMs: number | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    components?: Array<{ id: string; type: string; data: Record<string, unknown> }>;
+    toolTrace?: Array<{
+      callIndex: number;
+      toolName: string;
+      args: Record<string, unknown>;
+      outputSummary: string | null;
+    }>;
+    llmPromptTrace?: Array<{
+      stage: string;
+      model: string;
+      prompt: string;
+    }>;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+    modelName?: string | null;
+    artifacts?: Array<{
+      portId: string;
+      artifactKind: string;
+      content?: string;
+      url?: string;
+      filename?: string;
+      mimeType?: string;
+      size?: number;
+      metadata?: Record<string, unknown>;
+    }>;
+  }>;
 }
 
 export interface PlaybookExecutionSummaryResponse {

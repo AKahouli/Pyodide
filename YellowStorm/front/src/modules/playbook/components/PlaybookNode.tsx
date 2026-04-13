@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState } from 'react';
 import { type NodeProps, Handle, Position } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -37,10 +37,14 @@ export interface NodeContextMenuActions {
   onExecuteStep: (nodeId: string) => void;
   onResumeFromStep: (nodeId: string) => void;
   onSkipStep: (nodeId: string) => void;
+  onSaveBaseline: (nodeId: string) => void;
+  onGrabOutputFormat: (nodeId: string) => void;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
   canSkipStep: (nodeId: string) => boolean;
+  canSaveBaseline: (nodeId: string) => boolean;
+  canGrabOutputFormat: (nodeId: string) => boolean;
 }
 
 export interface NodeDataActions {
@@ -524,18 +528,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       </ContextMenuTrigger>
 
       <ContextMenuContent>
-        <ContextMenuItem onClick={() => actions?.onEdit(id)}>
-          <Pencil className="h-4 w-4" />
-          {t('nodeContextMenu.edit')}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => actions?.onClone(id)}>
-          <Copy className="h-4 w-4" />
-          {t('nodeContextMenu.clone')}
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => actions?.onToggleEnabled(id)}>
-          <Power className="h-4 w-4" />
-          {isEnabled ? t('node.disable') : t('node.enable')}
-        </ContextMenuItem>
         <ContextMenuItem disabled={!isEnabled || !isConfigured || !actions?.canExecute} onClick={() => actions?.onExecuteStep(id)}>
           <Play className="h-4 w-4" />
           {t('node.executeStep')}
@@ -547,6 +539,26 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <ContextMenuItem disabled={!actions?.canSkipStep(id)} onClick={() => actions?.onSkipStep(id)}>
           <SkipForward className="h-4 w-4" />
           {t('node.skip')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.canSaveBaseline(id)} onClick={() => actions?.onSaveBaseline(id)}>
+          <FileText className="h-4 w-4" />
+          {t('nodeContextMenu.saveBaseline')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.canGrabOutputFormat(id)} onClick={() => actions?.onGrabOutputFormat(id)}>
+          <FileText className="h-4 w-4" />
+          {t('nodeContextMenu.saveOutputFormat')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => actions?.onEdit(id)}>
+          <Pencil className="h-4 w-4" />
+          {t('nodeContextMenu.edit')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => actions?.onClone(id)}>
+          <Copy className="h-4 w-4" />
+          {t('nodeContextMenu.clone')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => actions?.onToggleEnabled(id)}>
+          <Power className="h-4 w-4" />
+          {isEnabled ? t('node.disable') : t('node.enable')}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => actions?.onDelete(id)}>

@@ -1,10 +1,9 @@
-import { ModelSelector, ModelSelectorContent, ModelSelectorEmpty, ModelSelectorGroup, ModelSelectorInput, ModelSelectorItem, ModelSelectorList, ModelSelectorLogo, ModelSelectorLogoGroup, ModelSelectorName, ModelSelectorTrigger } from '@/components/ai-elements/model-selector';
 import { PromptInput, PromptInputActionAddAttachments, PromptInputActionMenu, PromptInputActionMenuContent, PromptInputActionMenuTrigger, PromptInputAttachment, PromptInputAttachments, PromptInputBody, PromptInputButton, PromptInputFooter, type PromptInputMessage, PromptInputProvider, PromptInputSpeechButton, PromptInputSubmit, PromptInputTextarea, PromptInputTools } from '@/components/ai-elements/prompt-input';
 import { MentionPopup } from '@/components/ai-elements/mention-popup';
 import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 
-import { CheckIcon, Pencil } from 'lucide-react';
+import { Pencil } from 'lucide-react';
 import { useRef, useState, useEffect, useCallback, useMemo, memo } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
@@ -12,7 +11,8 @@ import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
 import { toast } from 'sonner';
 import Usage from '../ui/usage';
 import { useModels, useChefs, useModelById, useDefaultModel } from '@/modules/models';
-import { useSelectedModelId, useSetSelectedModelId } from '@/modules/conversation/store';
+import { useSelectedModelId, useSetSelectedModelId, useSelectedWorkspaceIds, useSetSelectedWorkspaceIds, useResetSelectedWorkspaceIds } from '@/modules/conversation/store';
+import { WorkspaceSelect } from '@/modules/workspace/components/WorkspaceSelect';
 import { useCurrentConversation } from '@/modules/conversation/store';
 import { fetchTaggedAgents } from '@/modules/conversation/api';
 import { useAgents, useAgentStore } from '@/modules/agent';
@@ -45,7 +45,7 @@ export interface FileUploadInfo {
 }
 
 interface InputProps {
-  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[]) => void;
+  onSubmit?: (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[]) => void;
   onStop?: () => void;
   status?: 'submitted' | 'streaming' | 'ready' | 'error';
   disabled?: boolean;
@@ -58,14 +58,18 @@ interface InputProps {
   maxFiles?: number;
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
+  showWorkspaceSelect?: boolean;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
   const selectedModelId = useSelectedModelId();
   const setSelectedModelId = useSetSelectedModelId();
+  const selectedWorkspaceIds = useSelectedWorkspaceIds();
+  const setSelectedWorkspaceIds = useSetSelectedWorkspaceIds();
+  const resetSelectedWorkspaceIds = useResetSelectedWorkspaceIds();
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
   const [status, setStatus] = useState<'submitted' | 'streaming' | 'ready' | 'error'>('ready');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -200,7 +204,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         // Append at cursor or end of existing text
         before = value.slice(0, cursorPos);
         // Add a space before @ if not already there and not at start
-        const prefix = (before.length > 0 && !/\s$/.test(before)) ? ' ' : '';
+        const prefix = before.length > 0 && !/\s$/.test(before) ? ' ' : '';
         before += prefix;
         after = value.slice(cursorPos);
         start = before.length;
@@ -253,11 +257,14 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
       lastAppliedMentionMsgId.current = autoMention._msgId;
       // We use a small timeout to ensure the textarea is ready and hasn't been cleared/updated by other effects
       const timeoutId = setTimeout(() => {
-        insertMention({
-          id: autoMention.id,
-          name: autoMention.name,
-          isMember: autoMention.isMember
-        }, null);
+        insertMention(
+          {
+            id: autoMention.id,
+            name: autoMention.name,
+            isMember: autoMention.isMember,
+          },
+          null,
+        );
       }, 50);
       return () => clearTimeout(timeoutId);
     }
@@ -341,79 +348,78 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
 
   const derivedStatus = externalStatus ?? status;
 
-  const handleSubmit = useCallback((message: PromptInputMessage) => {
-    // Block submission while an answer is being generated
-    if (submitDisabled || derivedStatus === 'streaming' || derivedStatus === 'submitted') {
-      return;
-    }
+  const handleSubmit = useCallback(
+    (message: PromptInputMessage) => {
+      // Block submission while an answer is being generated
+      if (submitDisabled || derivedStatus === 'streaming' || derivedStatus === 'submitted') {
+        return;
+      }
 
-    const hasText = Boolean(message.text);
-    const hasAttachments = Boolean(message.files?.length);
+      const hasText = Boolean(message.text);
+      const hasAttachments = Boolean(message.files?.length);
 
-    if (!(hasText || hasAttachments)) {
-      return;
-    }
+      if (!(hasText || hasAttachments)) {
+        return;
+      }
 
-    // Extract agent and member IDs from mentions still present in the text
-    // Checks both typed mentions (mentionMap) and pasted @AgentName patterns
-    const agentIdSet = new Set<string>();
-    const memberIdSet = new Set<string>();
+      // Extract agent and member IDs from mentions still present in the text
+      // Checks both typed mentions (mentionMap) and pasted @AgentName patterns
+      const agentIdSet = new Set<string>();
+      const memberIdSet = new Set<string>();
 
-    if (message.text) {
-      // Typed mentions tracked via popup selection
-      for (const [name, data] of mentionMap) {
-        if (message.text.includes(`@${name}`)) {
-          if (data.type === 'agent') {
-            agentIdSet.add(data.id);
-          } else {
-            memberIdSet.add(data.id);
+      if (message.text) {
+        // Typed mentions tracked via popup selection
+        for (const [name, data] of mentionMap) {
+          if (message.text.includes(`@${name}`)) {
+            if (data.type === 'agent') {
+              agentIdSet.add(data.id);
+            } else {
+              memberIdSet.add(data.id);
+            }
+          }
+        }
+        // Pasted or untracked mentions — match against known agents
+        for (const agent of memoizedAgents) {
+          if (!agentIdSet.has(agent.id) && agent.isActive && message.text.includes(`@${agent.name}`)) {
+            agentIdSet.add(agent.id);
+          }
+        }
+        // Pasted or untracked mentions — match against group members (if any)
+        if (members) {
+          for (const member of members) {
+            if (!memberIdSet.has(member.id) && message.text.includes(`@${member.name}`)) {
+              memberIdSet.add(member.id);
+            }
           }
         }
       }
-      // Pasted or untracked mentions — match against known agents
-      for (const agent of memoizedAgents) {
-        if (!agentIdSet.has(agent.id) && agent.isActive && message.text.includes(`@${agent.name}`)) {
-          agentIdSet.add(agent.id);
-        }
-      }
-      // Pasted or untracked mentions — match against group members (if any)
-      if (members) {
-        for (const member of members) {
-          if (!memberIdSet.has(member.id) && message.text.includes(`@${member.name}`)) {
-            memberIdSet.add(member.id);
-          }
-        }
-      }
-    }
-    const agentIds = [...agentIdSet];
-    const memberIds = [...memberIdSet];
+      const agentIds = [...agentIdSet];
+      const memberIds = [...memberIdSet];
 
-    if (externalSubmit) {
-      externalSubmit(
-        message,
-        model,
-        agentIds.length > 0 ? agentIds : undefined,
-        memberIds.length > 0 ? memberIds : undefined
-      );
+      if (externalSubmit) {
+        externalSubmit(message, model, agentIds.length > 0 ? agentIds : undefined, selectedWorkspaceIds.length > 0 ? selectedWorkspaceIds : undefined, memberIds.length > 0 ? memberIds : undefined);
+        setMentionMap(new Map());
+        resetSelectedWorkspaceIds();
+        return;
+      }
+
+      setStatus('submitted');
+
+      setTimeout(() => {
+        setStatus('streaming');
+      }, SUBMITTING_TIMEOUT);
+
+      setTimeout(() => {
+        setStatus('ready');
+      }, STREAMING_TIMEOUT);
+
       setMentionMap(new Map());
-      return;
-    }
-
-    setStatus('submitted');
-
-    setTimeout(() => {
-      setStatus('streaming');
-    }, SUBMITTING_TIMEOUT);
-
-    setTimeout(() => {
-      setStatus('ready');
-    }, STREAMING_TIMEOUT);
-
-    setMentionMap(new Map());
-  }, [submitDisabled, derivedStatus, mentionMap, memoizedAgents, externalSubmit, model]);
+    },
+    [submitDisabled, derivedStatus, mentionMap, memoizedAgents, externalSubmit, model, selectedWorkspaceIds, resetSelectedWorkspaceIds],
+  );
 
   return (
-    <div className='size-full'>
+    <div>
       <PromptInputProvider onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
@@ -438,6 +444,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
                   </DropdownMenuItem>
                 </PromptInputActionMenuContent>
               </PromptInputActionMenu>
+              {showWorkspaceSelect && <WorkspaceSelect selectedIds={selectedWorkspaceIds} onChange={setSelectedWorkspaceIds} disabled={disabled || submitDisabled} />}
               {/* <PromptInputSpeechButton textareaRef={textareaRef} /> */}
               {/* <ModelSelector onOpenChange={setModelSelectorOpen} open={modelSelectorOpen}>
                 <ModelSelectorTrigger asChild>

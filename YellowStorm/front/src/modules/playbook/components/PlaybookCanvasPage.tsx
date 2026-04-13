@@ -143,6 +143,8 @@ function PlaybookCanvasInner() {
   const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
   const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
   const skipExecutionStep = usePlaybookStore((s) => s.skipExecutionStep);
+  const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
+  const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const { refreshUsage } = useUsage();
 
@@ -202,15 +204,14 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     if (!id || isGeneratingRoute) return;
 
-    const activeExecution =
-      (currentExecution?.playbookId === id &&
-        (currentExecution.status === 'running' || currentExecution.status === 'interrupted')
-        ? currentExecution
+    const selectedExecution = currentExecution?.playbookId === id ? currentExecution : null;
+    const activeExecution = selectedExecution
+      ? (selectedExecution.status === 'running' || selectedExecution.status === 'interrupted'
+        ? selectedExecution
         : null)
-      || (execution &&
-        (execution.status === 'running' || execution.status === 'interrupted')
+      : execution && (execution.status === 'running' || execution.status === 'interrupted')
         ? execution
-        : null);
+        : null;
 
     if (!activeExecution) return;
 
@@ -546,6 +547,53 @@ function PlaybookCanvasInner() {
     [id, currentExecution, skipExecutionStep],
   );
 
+  const executionForNodeActions =
+    currentExecution?.playbookId === id
+      ? currentExecution
+      : execution || null;
+
+  const getTaskResultForNode = useCallback(
+    (nodeId: string) => executionForNodeActions?.taskResults.find((tr) => tr.taskId === nodeId) || null,
+    [executionForNodeActions],
+  );
+
+  const handleSaveBaseline = useCallback(
+    async (nodeId: string) => {
+      if (!id || !executionForNodeActions) return;
+      const taskResult = getTaskResultForNode(nodeId);
+      if (!taskResult || taskResult.status !== 'completed') return;
+      await validateTaskReplay(id, nodeId, executionForNodeActions.id, { preserveOutputFormat: false });
+    },
+    [executionForNodeActions, getTaskResultForNode, id, validateTaskReplay],
+  );
+
+  const handleGrabOutputFormat = useCallback(
+    async (nodeId: string) => {
+      if (!id || !executionForNodeActions) return;
+      const taskResult = getTaskResultForNode(nodeId);
+      if (!taskResult || taskResult.status !== 'completed' || (!taskResult.output && !(taskResult.components?.length))) return;
+      await grabOutputFormatTemplate(id, nodeId, { executionId: executionForNodeActions.id });
+    },
+    [executionForNodeActions, getTaskResultForNode, grabOutputFormatTemplate, id],
+  );
+
+  const canSaveBaseline = useCallback(
+    (nodeId: string) => Boolean(executionForNodeActions && getTaskResultForNode(nodeId)?.status === 'completed'),
+    [executionForNodeActions, getTaskResultForNode],
+  );
+
+  const canGrabOutputFormat = useCallback(
+    (nodeId: string) => {
+      const taskResult = getTaskResultForNode(nodeId);
+      return Boolean(
+        executionForNodeActions
+        && taskResult?.status === 'completed'
+        && (taskResult.output || taskResult.components?.length),
+      );
+    },
+    [executionForNodeActions, getTaskResultForNode],
+  );
+
   const canSkipStep = useCallback(
     (nodeId: string) => {
       if (!currentExecution || currentExecution.playbookId !== id) return false;
@@ -582,12 +630,34 @@ function PlaybookCanvasInner() {
       onExecuteStep: handleExecuteStep,
       onResumeFromStep: handleResumeFromStep,
       onSkipStep: handleSkipStep,
+      onSaveBaseline: handleSaveBaseline,
+      onGrabOutputFormat: handleGrabOutputFormat,
       canExecute: !hasActiveExecution && !isSaving && !isDirty,
       isExecuting,
       canResumeFromStep,
       canSkipStep,
+      canSaveBaseline,
+      canGrabOutputFormat,
     }),
-    [handleEditNode, handleCloneNode, removeNode, handleToggleEnabled, handleExecuteStep, handleResumeFromStep, handleSkipStep, hasActiveExecution, isSaving, isDirty, isExecuting, canResumeFromStep, canSkipStep],
+    [
+      handleEditNode,
+      handleCloneNode,
+      removeNode,
+      handleToggleEnabled,
+      handleExecuteStep,
+      handleResumeFromStep,
+      handleSkipStep,
+      handleSaveBaseline,
+      handleGrabOutputFormat,
+      hasActiveExecution,
+      isSaving,
+      isDirty,
+      isExecuting,
+      canResumeFromStep,
+      canSkipStep,
+      canSaveBaseline,
+      canGrabOutputFormat,
+    ],
   );
 
   const handleNodeDoubleClick = useCallback(
