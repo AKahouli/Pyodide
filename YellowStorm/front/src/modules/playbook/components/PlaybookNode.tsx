@@ -1,6 +1,6 @@
-import { createContext, useContext, useMemo, useState } from 'react';
-import { type NodeProps, Handle, Position } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText } from 'lucide-react';
+import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
+import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -20,14 +20,14 @@ import {
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
 import { PortLabel } from './PortLabel';
-import { ArtifactBadge } from './ArtifactBadge';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../utils/migrate-ports';
-import type { PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort } from '../types';
+import { detectPortHit } from '../utils/port-hit-detection';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
@@ -47,9 +47,17 @@ export interface NodeContextMenuActions {
   canGrabOutputFormat: (nodeId: string) => boolean;
 }
 
+export interface ConnectorDropPayload {
+  type: 'connector';
+  connectorId: string;
+  connectorName: string;
+  actions: Array<{ key: string; label: string }>;
+}
+
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
   openOutputFormatEditor?: (nodeId: string) => void;
+  onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
 }
 
 export const NodeDataActionsContext = createContext<NodeDataActions | null>(null);
@@ -118,6 +126,7 @@ function SemanticScoreBadge({
   evidence: number;
   judge: number;
 }) {
+  const { t } = useModuleTranslation('playbook');
   const radius = 14;
   const circumference = 2 * Math.PI * radius;
   const normalized = Math.max(0, Math.min(100, score));
@@ -157,18 +166,65 @@ function SemanticScoreBadge({
             </div>
           </div>
           <div className="min-w-0">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Match</div>
+            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t('node.match')}</div>
           </div>
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="space-y-1 text-xs">
-        <div className="font-medium">Evaluation score</div>
-        <div>Overall: {normalized}%</div>
-        <div>Semantic: {Math.round(semantic)}%</div>
-        <div>Evidence: {Math.round(evidence)}%</div>
-        <div>Judge: {Math.round(judge)}%</div>
+        <div className="font-medium">{t('node.evaluationScore')}</div>
+        <div>{t('node.scoreLabel.overall')} {normalized}%</div>
+        <div>{t('node.scoreLabel.semantic')} {Math.round(semantic)}%</div>
+        <div>{t('node.scoreLabel.evidence')} {Math.round(evidence)}%</div>
+        <div>{t('node.scoreLabel.judge')} {Math.round(judge)}%</div>
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+function JudgeScoreBadge({
+  score,
+  accuracy,
+  completeness,
+}: {
+  score: number;
+  accuracy: number;
+  completeness: number;
+}) {
+  const { t } = useModuleTranslation('playbook');
+  const tone = getSemanticScoreTone(score);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
+          <span>{Math.round(score)}%</span>
+        </Badge>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        <div className="font-medium">{t('node.advisorScore')}</div>
+        <div>{t('node.scoreLabel.accuracy')} {Math.round(accuracy)}%</div>
+        <div>{t('node.scoreLabel.completeness')} {Math.round(completeness)}%</div>
+        <div>{t('node.scoreLabel.overall')} {Math.round(score)}%</div>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function JudgeStateBadge({ status }: { status?: string }) {
+  const { t } = useModuleTranslation('playbook');
+  if (!status || status === 'idle') return null;
+  const isRunning = status === 'evaluating';
+  const label = isRunning ? t('node.advisorState.evaluating') : t('node.advisorState.evaluated');
+  const tone = isRunning
+    ? 'border-sky-500/30 bg-sky-100 text-sky-700'
+    : status === 'failed'
+      ? 'border-red-500/30 bg-red-50 text-red-700'
+      : 'border-emerald-500/30 bg-emerald-100 text-emerald-700';
+
+  return (
+    <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone)}>
+      {isRunning && <Loader2 className="h-2.5 w-2.5 animate-spin" />}
+      <span>{status === 'failed' ? t('node.advisorState.failed') : label}</span>
+    </Badge>
   );
 }
 
@@ -206,40 +262,26 @@ function NodeMetaBadge({
   );
 }
 
-function getInputPortTop(idx: number, total: number): string {
-  if (total <= 1) return '50%';
-  const step = 100 / (total + 1);
-  return `${step * (idx + 1)}%`;
-}
-
-function getOutputPortTop(idx: number, total: number): string {
-  if (total <= 1) return '50%';
-  const step = 100 / (total + 1);
-  return `${step * (idx + 1)}%`;
-}
-
-function getInputPortStyle(port: TaskInputPort, idx: number, total: number): React.CSSProperties {
+function getInputPortStyle(port: TaskInputPort): React.CSSProperties {
   const colors = PORT_COLORS[port.artifactKind];
   return {
-    top: getInputPortTop(idx, total),
-    width: 12,
-    height: 12,
-    background: colors?.dot || 'var(--muted)',
-    border: '2px solid var(--background)',
-    transform: 'translateY(-50%)',
+    background: colors?.raw || 'hsl(var(--muted))',
+    border: '2px solid hsl(var(--background))',
   };
 }
 
-function getOutputPortStyle(port: TaskOutputPort, idx: number, total: number): React.CSSProperties {
+function getOutputPortStyle(port: TaskOutputPort): React.CSSProperties {
   const colors = PORT_COLORS[port.artifactKind];
   return {
-    top: getOutputPortTop(idx, total),
-    width: 12,
-    height: 12,
-    background: colors?.dot || 'var(--muted)',
-    border: '2px solid var(--background)',
-    transform: 'translateY(-50%)',
+    background: colors?.raw || 'hsl(var(--muted))',
+    border: '2px solid hsl(var(--background))',
   };
+}
+
+function getPortTopPercent(idx: number, total: number): number {
+  if (total <= 1) return 50;
+  const step = 100 / (total + 1);
+  return step * (idx + 1);
 }
 
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
@@ -254,28 +296,42 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
 
   const [isDragOver, setIsDragOver] = useState(false);
-  const [hoveredHandleId, setHoveredHandleId] = useState<string | null>(null);
+  const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
+  const [dragPortCompatible, setDragPortCompatible] = useState<boolean | null>(null);
+  const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
   const inputPorts = migratedTask.inputPorts ?? [];
   const outputPorts = migratedTask.outputPorts ?? [];
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
 
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, inputPorts.length, outputPorts.length, updateNodeInternals]);
+
   const inputFiles = currentTask?.inputFiles ?? data.inputFiles ?? [];
+  const portFileMap = useMemo(() => {
+    const map: Record<string, InputFile> = {};
+    for (const f of inputFiles) {
+      if (f.portId) map[f.portId] = f;
+    }
+    return map;
+  }, [inputFiles]);
   const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
   const isConfigured = !!data.assignedAgentId;
   const status = data.stepStatus as StepStatus | undefined;
-  const stepArtifacts = usePlaybookStore((s) =>
-    s.currentExecution?.taskResults.find((tr) => tr.taskId === id)?.artifacts,
-  );
   const semanticMatch = data.stepSemanticMatch;
+  const judgeStatus = data.stepJudgeStatus;
+  const judgeResult = data.stepJudgeResult;
   const ringClass = status ? STATUS_RING[status] : '';
   const headerBgClass = status ? STATUS_HEADER_BG[status] : '';
   const isStepRunning = status === 'running';
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
   const isSelected = selected || selectedStepId === id;
-  const selectedClass = isSelected ? 'border-[#ffcd03] ring-2 ring-inset ring-[#ffcd03]/70 shadow-lg shadow-[#ffcd03]/30 animate-[pulse_2.8s_ease-in-out_infinite]' : '';
+  const selectedClass = isSelected
+    ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
+    : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
   const replayBadgeLabel = currentTask?.activeReplayVersion
     ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
@@ -285,28 +341,101 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
+  const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
+  const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
+
+  const resolveDragPayload = useCallback((e: React.DragEvent): InputFile | null => {
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload && payload.type && payload.id && payload.name) return payload as InputFile;
+    } catch { /* noop */ }
+    return null;
+  }, []);
+
+  const resolveConnectorDragPayload = useCallback((e: React.DragEvent): ConnectorDropPayload | null => {
+    try {
+      const raw = e.dataTransfer.getData('application/json');
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (payload?.type === 'connector' && payload?.connectorId) return payload as ConnectorDropPayload;
+    } catch { /* noop */ }
+    return null;
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'copy';
     setIsDragOver(true);
+
+    if (inputPorts.length <= 1) {
+      setDragOverPortId(null);
+      setDragPortCompatible(null);
+      return;
+    }
+
+    const nodeEl = e.currentTarget as HTMLDivElement;
+    const rect = nodeEl.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const nodeHeight = rect.height;
+    const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+
+    if (hit) {
+      setDragOverPortId(hit.port.id);
+      setDragPortCompatible(null);
+    } else {
+      setDragOverPortId(null);
+      setDragPortCompatible(null);
+    }
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
-    setIsDragOver(false);
+    const nodeEl = e.currentTarget as HTMLDivElement;
+    const rect = nodeEl.getBoundingClientRect();
+    const { clientX, clientY } = e;
+    if (
+      clientX < rect.left || clientX > rect.right ||
+      clientY < rect.top || clientY > rect.bottom
+    ) {
+      setIsDragOver(false);
+      setDragOverPortId(null);
+      setDragPortCompatible(null);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    try {
-      const payload = JSON.parse(e.dataTransfer.getData('application/json')) as InputFile;
-      if (payload && payload.type && payload.id && payload.name) {
-        addInputFileToTask(id, payload);
-      }
-    } catch {
-      // Invalid payload, ignore
+    setDragOverPortId(null);
+    setDragPortCompatible(null);
+
+    const connectorPayload = resolveConnectorDragPayload(e);
+    if (connectorPayload) {
+      nodeDataActions?.onConnectorDrop?.(id, connectorPayload);
+      return;
+    }
+
+    const payload = resolveDragPayload(e);
+    if (!payload) return;
+
+    if (inputPorts.length <= 1) {
+      const portId = inputPorts.length === 1 ? inputPorts[0].id : undefined;
+      addInputFileToTask(id, { ...payload, portId });
+      return;
+    }
+
+    const nodeEl = e.currentTarget as HTMLDivElement;
+    const rect = nodeEl.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    const nodeHeight = rect.height;
+    const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+
+    if (hit) {
+      addInputFileToTask(id, { ...payload, portId: hit.port.id });
+    } else {
+      addInputFileToTask(id, payload);
     }
   };
 
@@ -324,48 +453,87 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             ringClass,
             selectedClass,
             disabledClass,
-            isDragOver && 'ring-2 ring-primary ring-inset bg-primary/5'
+            isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
+            isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
+            isDragOver && dragOverPortId && dragPortCompatible === false && 'ring-2 ring-red-400/50 ring-inset bg-red-50/20',
           )}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
         >
           {/* Input ports — left side */}
-          {inputPorts.map((port, idx) => (
-            <div key={port.id} className="relative">
-              <Handle
-                id={`in-${port.id}`}
-                type="target"
-                position={Position.Left}
-                style={getInputPortStyle(port, idx, inputPorts.length)}
-                onMouseEnter={() => setHoveredHandleId(`in-${port.id}`)}
-                onMouseLeave={() => setHoveredHandleId(null)}
-              />
-              {hoveredHandleId === `in-${port.id}` && (
-                <PortLabel name={port.name} kind={port.artifactKind} position="left" />
-              )}
-              {port.required && hasMultiplePorts && (
-                <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
-              )}
-            </div>
-          ))}
+          <div className="absolute left-0 inset-y-0 z-10 w-0 pointer-events-none">
+          {inputPorts.map((port, idx) => {
+            const isPortDragTarget = isDragOver && dragOverPortId === port.id;
+            const portColors = PORT_COLORS[port.artifactKind];
+            const boundFile = portFileMap[port.id];
+            const top = `${getPortTopPercent(idx, inputPorts.length)}%`;
+
+            return (
+              <div
+                key={port.id}
+                className="absolute left-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+                style={{ top }}
+              >
+                <Handle
+                  id={port.id}
+                  type="target"
+                  position={Position.Left}
+                  className="!w-3 !h-3"
+                  style={{ ...getInputPortStyle(port), top: 0 }}
+                />
+                {boundFile && !isPortDragTarget && (
+                  <div
+                    className="absolute left-0 -translate-x-1/2 z-20 w-5 h-5 rounded-full pointer-events-none"
+                    style={{ background: portColors?.raw || 'hsl(var(--muted))', opacity: 0.2 }}
+                  />
+                )}
+                {isPortDragTarget && (
+                  <div
+                    className={cn(
+                      'absolute left-0 -translate-x-1/2 z-30 w-6 h-6 rounded-full animate-pulse pointer-events-none',
+                      dragPortCompatible === true
+                        ? 'ring-2 ring-green-400/70 bg-green-400/10'
+                        : dragPortCompatible === false
+                          ? 'ring-2 ring-red-400/70 bg-red-400/10'
+                          : 'ring-2 ring-primary/50 bg-primary/10',
+                    )}
+                  />
+                )}
+                {/* Persistent label */}
+                <PortLabel
+                  name={boundFile?.name || port.name}
+                  kind={port.artifactKind}
+                  position="left"
+                  selected={isSelected}
+                />
+                {port.required && hasMultiplePorts && (
+                  <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
+                )}
+              </div>
+            );
+          })}
+          </div>
 
           {/* Output ports — right side */}
+          <div className="absolute right-0 inset-y-0 z-10 w-0 pointer-events-none">
           {outputPorts.map((port, idx) => (
-            <div key={port.id} className="relative">
+            <div
+              key={port.id}
+              className="absolute right-0 z-10 flex items-center -translate-y-1/2 pointer-events-auto"
+              style={{ top: `${getPortTopPercent(idx, outputPorts.length)}%` }}
+            >
               <Handle
-                id={`out-${port.id}`}
+                id={port.id}
                 type="source"
                 position={Position.Right}
-                style={getOutputPortStyle(port, idx, outputPorts.length)}
-                onMouseEnter={() => setHoveredHandleId(`out-${port.id}`)}
-                onMouseLeave={() => setHoveredHandleId(null)}
+                className="!w-3 !h-3"
+                style={{ ...getOutputPortStyle(port), top: 0 }}
               />
-              {hoveredHandleId === `out-${port.id}` && (
-                <PortLabel name={port.name} kind={port.artifactKind} position="right" />
-              )}
+              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected} />
             </div>
           ))}
+          </div>
 
           <NodeHeader className={cn('transition-colors duration-300', headerBgClass)}>
             <div className="flex items-center justify-between w-full gap-2">
@@ -431,9 +599,50 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             )}
 
-            {stepArtifacts && stepArtifacts.length > 0 && (
-              <ArtifactBadge artifacts={stepArtifacts} />
+            {toolBindings.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1">
+                {toolBindings.filter((b) => b.isEnabled !== false).map((binding) => (
+                  <Tooltip key={binding.id}>
+                    <TooltipTrigger asChild>
+                      <Badge
+                        variant="outline"
+                        className="h-5 gap-1 px-1.5 py-0 text-[10px] font-medium border-sky-500/30 bg-sky-50 text-sky-700 cursor-default"
+                      >
+                        <Cable className="h-2.5 w-2.5" />
+                        <span className="truncate max-w-[80px]">{binding.connectorName || binding.connectorId}</span>
+                        <button
+                          type="button"
+                          className="ml-0.5 hover:text-red-500 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeToolBindingFromTask(id, binding.id);
+                          }}
+                        >
+                          <X className="h-2.5 w-2.5" />
+                        </button>
+                      </Badge>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <div>{binding.connectorName || binding.connectorId}</div>
+                      <div className="text-muted-foreground">{binding.actions.filter((a) => a.isEnabled !== false).length} action(s)</div>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
             )}
+
+            {(judgeStatus && judgeStatus !== 'idle') || judgeResult ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <JudgeStateBadge status={judgeStatus} />
+                {judgeResult && (
+                  <JudgeScoreBadge
+                    score={judgeResult.overallScore}
+                    accuracy={judgeResult.accuracyScore}
+                    completeness={judgeResult.completenessScore}
+                  />
+                )}
+              </div>
+            ) : null}
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <div className="flex min-w-0 items-center gap-2">

@@ -20,6 +20,13 @@ export enum StepStatus {
   SKIPPED = 'skipped',
 }
 
+export enum JudgeStatus {
+  IDLE = 'idle',
+  EVALUATING = 'evaluating',
+  EVALUATED = 'evaluated',
+  FAILED = 'failed',
+}
+
 @Schema({ _id: false })
 export class TaskEvaluationHistoryEntry {
   @Prop({ type: String, required: true })
@@ -55,6 +62,47 @@ export class TaskEvaluationHistoryEntry {
 }
 
 export const TaskEvaluationHistoryEntrySchema = SchemaFactory.createForClass(TaskEvaluationHistoryEntry);
+
+@Schema({ _id: false })
+export class TaskJudgeHistoryEntry {
+  @Prop({ type: String, required: true })
+  id!: string;
+
+  @Prop({ type: Date, required: true })
+  createdAt!: Date;
+
+  @Prop({ type: Number, default: null })
+  attemptNumber!: number | null;
+
+  @Prop({ type: String, default: null })
+  model!: string | null;
+
+  @Prop({ type: Object, required: true })
+  judgeResult!: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    confidence: number;
+    toolUsageScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    toolSelectionIssues: string[];
+    missingToolCalls: string[];
+    redundantToolCalls: string[];
+    toolOutputUseIssues: string[];
+    toolSequencingIssues: string[];
+    toolUsageStrengths: string[];
+    toolUsageRecommendation: string;
+    safeAutoFixType: 'optimize_step' | 'none';
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  };
+}
+
+export const TaskJudgeHistoryEntrySchema = SchemaFactory.createForClass(TaskJudgeHistoryEntry);
 
 @Schema({ _id: false })
 export class TaskStepExecutionEntry {
@@ -202,11 +250,67 @@ export class TaskResult {
     judgeUsed: boolean;
   } | null;
 
+  @Prop({ type: String, enum: JudgeStatus, default: JudgeStatus.IDLE })
+  judgeStatus!: JudgeStatus;
+
+  @Prop({ type: Object, default: null })
+  judgeResult!: {
+    accuracyScore: number;
+    completenessScore: number;
+    overallScore: number;
+    confidence: number;
+    toolUsageScore: number;
+    missingFacts: string[];
+    incoherences: string[];
+    unsupportedClaims: string[];
+    handoffRisks: string[];
+    rewriteHints: string[];
+    toolSelectionIssues: string[];
+    missingToolCalls: string[];
+    redundantToolCalls: string[];
+    toolOutputUseIssues: string[];
+    toolSequencingIssues: string[];
+    toolUsageStrengths: string[];
+    toolUsageRecommendation: string;
+    safeAutoFixType: 'optimize_step' | 'none';
+    recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+    reason: string;
+  } | null;
+
+  @Prop({ type: String, default: null })
+  judgeError!: string | null;
+
+  @Prop({ type: [TaskJudgeHistoryEntrySchema], default: [] })
+  judgeHistory!: TaskJudgeHistoryEntry[];
+
   @Prop({ type: [TaskEvaluationHistoryEntrySchema], default: [] })
   evaluationHistory!: TaskEvaluationHistoryEntry[];
 
   @Prop({ type: [TaskStepExecutionEntrySchema], default: [] })
   stepExecutions!: TaskStepExecutionEntry[];
+
+  @Prop({ type: Number, default: 0 })
+  advisorTurnCount!: number;
+
+  @Prop({ type: [{ type: Object }], default: [] })
+  advisorTurnHistory!: Array<{
+    turn: number;
+    createdAt: Date;
+    score: number | null;
+    recommendation: string | null;
+    safeAutoFixType: string | null;
+    actionType: 'evaluate' | 'optimize_step' | 'stop';
+    stopReason?: string | null;
+  }>;
+
+  @Prop({ type: String, default: null })
+  lastAdvisorAction!: string | null;
+
+  @Prop({ type: Number, default: null })
+  lastAdvisorScoreDelta!: number | null;
+
+  @Prop({ type: String, default: null })
+  advisorStopReason!: string | null;
 
   @Prop({ type: Number, default: 1 })
   attemptNumber!: number;
@@ -235,6 +339,47 @@ export class TaskResult {
 
 export const TaskResultSchema = SchemaFactory.createForClass(TaskResult);
 
+@Schema({ _id: false })
+export class PlaybookJudgeSummary {
+  @Prop({ type: Number, default: 0 })
+  overallScore!: number;
+
+  @Prop({ type: Number, default: 0 })
+  confidence!: number;
+
+  @Prop({ type: [String], default: [] })
+  structuralIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  promptIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  contractIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  handoffIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  toolUsageIssues!: string[];
+
+  @Prop({ type: [String], default: [] })
+  crossStepToolPatterns!: string[];
+
+  @Prop({ type: [String], default: [] })
+  rootCauseTaskIds!: string[];
+
+  @Prop({ type: [String], default: [] })
+  highImpactRecommendations!: string[];
+
+  @Prop({ type: String, enum: ['update_current_playbook', 'generate_new_optimized_playbook'], default: 'update_current_playbook' })
+  recommendation!: 'update_current_playbook' | 'generate_new_optimized_playbook';
+
+  @Prop({ type: String, default: '' })
+  reason!: string;
+}
+
+export const PlaybookJudgeSummarySchema = SchemaFactory.createForClass(PlaybookJudgeSummary);
+
 @Schema({ timestamps: true, collection: 'playbook_executions' })
 export class PlaybookExecution extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Playbook', required: true, index: true })
@@ -260,6 +405,36 @@ export class PlaybookExecution extends Document {
 
   @Prop({ type: Object, default: null })
   interruptPayload!: Record<string, unknown> | null;
+
+  @Prop({ type: Boolean, default: true })
+  reflectionEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  advisorAutopilotEnabled!: boolean;
+
+  @Prop({ type: Number, default: 80 })
+  advisorAutopilotTargetScore!: number;
+
+  @Prop({ type: Number, default: 2 })
+  advisorAutopilotMaxTurns!: number;
+
+  @Prop({ type: String, enum: ['idle', 'running', 'judging', 'optimizing', 'rerunning', 'completed', 'stopped', 'failed'], default: 'idle' })
+  advisorAutopilotStatus!: 'idle' | 'running' | 'judging' | 'optimizing' | 'rerunning' | 'completed' | 'stopped' | 'failed';
+
+  @Prop({ type: String, default: null })
+  advisorAutopilotTaskId!: string | null;
+
+  @Prop({ type: Number, default: 0 })
+  advisorAutopilotAttemptCount!: number;
+
+  @Prop({ type: String, default: null })
+  advisorAutopilotLastError!: string | null;
+
+  @Prop({ type: String, enum: ['idle', 'evaluating', 'evaluated', 'failed'], default: 'idle' })
+  judgeSummaryStatus!: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+
+  @Prop({ type: PlaybookJudgeSummarySchema, default: null })
+  judgeSummary!: PlaybookJudgeSummary | null;
 
   @Prop({ type: String, default: null })
   error!: string | null;

@@ -5,6 +5,7 @@ import { usePlaybookStreamGlobal } from './playbookStreamService';
 const store = vi.hoisted(() => ({
   onExecutionStart: vi.fn(),
   onStepStart: vi.fn(),
+  onStepUpdate: vi.fn(),
   onStepComplete: vi.fn(),
   onExecutionComplete: vi.fn(),
   onInterrupt: vi.fn(),
@@ -139,6 +140,67 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     } as MessageEvent);
 
     expect(store.onStepStart).toHaveBeenCalledWith({ executionId: 'e2', taskId: 't1' });
+
+    unmount();
+  });
+
+  it('batches rapid step updates and only applies the latest payload per step', () => {
+    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
+
+    act(() => { vi.advanceTimersByTime(250); });
+
+    const es = EventSourceMock.instances[0];
+    const stepUpdateListener = es.listeners.get('playbook_step_update')?.[0];
+    expect(stepUpdateListener).toBeDefined();
+
+    act(() => {
+      stepUpdateListener?.({
+        data: JSON.stringify({ executionId: 'e1', taskId: 't1', output: 'hel' }),
+      } as MessageEvent);
+      stepUpdateListener?.({
+        data: JSON.stringify({ executionId: 'e1', taskId: 't1', output: 'hello' }),
+      } as MessageEvent);
+    });
+
+    expect(store.onStepUpdate).not.toHaveBeenCalled();
+
+    act(() => { vi.advanceTimersByTime(32); });
+
+    expect(store.onStepUpdate).toHaveBeenCalledTimes(1);
+    expect(store.onStepUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: 'e1', taskId: 't1', output: 'hello' }),
+    );
+
+    unmount();
+  });
+
+  it('flushes pending step updates before step completion events', () => {
+    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
+
+    act(() => { vi.advanceTimersByTime(250); });
+
+    const es = EventSourceMock.instances[0];
+    const stepUpdateListener = es.listeners.get('playbook_step_update')?.[0];
+    const stepCompleteListener = es.listeners.get('playbook_step_complete')?.[0];
+
+    act(() => {
+      stepUpdateListener?.({
+        data: JSON.stringify({ executionId: 'e1', taskId: 't1', output: 'hello' }),
+      } as MessageEvent);
+    });
+
+    expect(store.onStepUpdate).not.toHaveBeenCalled();
+
+    act(() => {
+      stepCompleteListener?.({
+        data: JSON.stringify({ executionId: 'e1', taskId: 't1', status: 'completed' }),
+      } as MessageEvent);
+    });
+
+    expect(store.onStepUpdate).toHaveBeenCalledTimes(1);
+    expect(store.onStepComplete).toHaveBeenCalledWith(
+      expect.objectContaining({ executionId: 'e1', taskId: 't1', status: 'completed' }),
+    );
 
     unmount();
   });

@@ -30,8 +30,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
   React.useEffect(() => {
     const fetchRegistration = async (): Promise<boolean> => {
       try {
-        const data = await authApi.getRegistrationStatus();
-        return data.enabled;
+        const providers = await authApi.getAuthProviders();
+        const classic = providers.find((p) => p.type === 'classic');
+        return classic?.registrationEnabled ?? false;
       } catch {
         return true; // Fail-open
       }
@@ -142,6 +143,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
         ...initialState,
         isLoading: false,
       });
+
+      // Re-fetch providers to get fresh registrationEnabled state
+      try {
+        const providers = await authApi.getAuthProviders();
+        const classic = providers.find((p) => p.type === 'classic');
+        const registrationEnabled = classic?.registrationEnabled ?? false;
+        setState((prev) => ({ ...prev, registrationEnabled }));
+      } catch {
+        // Keep default on failure
+      }
     }
   }, []);
 
@@ -196,6 +207,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setState((prev) => ({
         ...prev,
         user,
+        isAuthenticated: true,
+        isLoading: false,
         requiresEmailVerification: !user.emailVerified,
         requiresProfileCompletion: !user.profileComplete,
       }));

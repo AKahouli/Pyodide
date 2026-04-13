@@ -4,7 +4,7 @@
 
 import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
-import type { Agent, AgentType, CreateAgentData, UpdateAgentData } from './types';
+import type { Agent, AgentType, CreateAgentData, UpdateAgentData, SkillOption } from './types';
 
 export async function getAllAgents(): Promise<Agent[]> {
   const response = await apiClient.get<ApiResponse<Agent[]>>(
@@ -50,6 +50,26 @@ export interface ToolOption {
 export async function getActiveTools(): Promise<ToolOption[]> {
   const response = await apiClient.get<ApiResponse<ToolOption[]>>(
     API_ENDPOINTS.tools.active
+  );
+  return response.data.data;
+}
+
+export async function getActiveSkills(): Promise<SkillOption[]> {
+  const response = await apiClient.get<ApiResponse<SkillOption[]>>(
+    API_ENDPOINTS.skills.active
+  );
+  return response.data.data;
+}
+
+export interface ConnectorOption {
+  id: string;
+  name: string;
+  description: string;
+}
+
+export async function getActiveConnectors(): Promise<ConnectorOption[]> {
+  const response = await apiClient.get<ApiResponse<ConnectorOption[]>>(
+    API_ENDPOINTS.connectors.list
   );
   return response.data.data;
 }

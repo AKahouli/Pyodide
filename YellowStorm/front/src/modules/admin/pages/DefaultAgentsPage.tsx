@@ -85,6 +85,9 @@ export function DefaultAgentsPage() {
           instruction: data.instruction,
           ignorePrePrompt: data.ignorePrePrompt,
           tools: data.tools,
+          skills: data.skills,
+          disabledSkills: data.disabledSkills,
+          connectors: data.connectors,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });
@@ -102,6 +105,9 @@ export function DefaultAgentsPage() {
           instruction: data.instruction,
           ignorePrePrompt: data.ignorePrePrompt,
           tools: data.tools,
+          skills: data.skills,
+          disabledSkills: data.disabledSkills,
+          connectors: data.connectors,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });

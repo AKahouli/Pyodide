@@ -56,7 +56,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
       { id: 'data', name: 'Supporting Data', artifactKind: 'data', required: false },
     ],
     outputPorts: [
-      { id: 'slides', name: 'Slide Deck', artifactKind: 'slide_deck' },
+      { id: 'slides', name: 'Slide Deck', artifactKind: 'document' },
       { id: 'summary', name: 'Speaker Notes', artifactKind: 'text' },
     ],
     promptTemplate:

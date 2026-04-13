@@ -1,0 +1,73 @@
+{
+  "page": {
+    "title": "Connected Apps",
+    "description": "Connect your external apps to enable file access, email integration, and more.",
+    "empty": "No apps available yet."
+  },
+  "card": {
+    "connected": "Connected",
+    "notConnected": "Not connected",
+    "connect": "Connect",
+    "disconnect": "Disconnect",
+    "connectedAs": "Connected as {{email}}",
+    "confirmDisconnect": "Are you sure you want to disconnect {{appName}}?"
+  },
+  "button": {
+    "label": "Apps",
+    "tooltip": "Connected Apps"
+  },
+  "store": {
+    "connected": "App connected successfully",
+    "disconnected": "App disconnected",
+    "errors": {
+      "fetchFailed": "Failed to load apps",
+      "connectFailed": "Failed to start connection",
+      "disconnectFailed": "Failed to disconnect",
+      "oauthFailed": "Connection failed. Please try again.",
+      "connectIncomplete": "Connection did not complete. Please try again.",
+      "popupBlocked": "Popup was blocked. Please allow popups for this site."
+    }
+  },
+  "admin": {
+    "title": "Connected Apps",
+    "description": "Manage external app definitions for user OAuth connections.",
+    "create": "Add App",
+    "edit": "Edit App",
+    "delete": "Delete App",
+    "confirmDelete": "This will delete the app definition and disconnect all users. Continue?",
+    "fields": {
+      "appKey": "App Key",
+      "displayName": "Display Name",
+      "description": "Description",
+      "iconKey": "Icon Key",
+      "authorizationUrl": "Authorization URL",
+      "tokenUrl": "Token URL",
+      "revokeUrl": "Revoke URL",
+      "clientId": "Client ID",
+      "clientSecret": "Client Secret",
+      "tenantId": "Tenant ID",
+      "scopes": "Scopes",
+      "pkceEnabled": "PKCE Enabled",
+      "enabled": "Enabled",
+      "sortOrder": "Sort Order",
+      "connectedUsers": "Connected Users"
+    },
+    "toasts": {
+      "created": "App created",
+      "updated": "App updated",
+      "deleted": "App deleted",
+      "enabled": "App enabled",
+      "disabled": "App disabled",
+      "errors": {
+        "load": "Failed to load apps",
+        "create": "Failed to create app",
+        "update": "Failed to update app",
+        "delete": "Failed to delete app",
+        "toggle": "Failed to toggle app"
+      }
+    },
+    "errors": {
+      "load": "Failed to load connected apps"
+    }
+  }
+}

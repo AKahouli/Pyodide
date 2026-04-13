@@ -75,6 +75,16 @@ export interface AuthContextType extends AuthState {
   refreshUser: () => Promise<void>;
 }
 
+// Auth provider (public, no secrets)
+export interface AuthProviderPublic {
+  type: 'classic' | 'oauth';
+  providerKey: string;
+  displayName: string;
+  iconKey: string;
+  sortOrder: number;
+  registrationEnabled?: boolean;
+}
+
 // Modal types
 export type AuthModalType = 'login' | 'register' | 'forgotPassword' | null;
 

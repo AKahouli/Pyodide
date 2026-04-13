@@ -12,4 +12,5 @@ export default registerAs('app', () => ({
   throttleLimit: parseInt(process.env.THROTTLE_LIMIT || '100', 10),
   logLevel: process.env.LOG_LEVEL || 'info',
   memoryLimitMb: parseInt(process.env.MEMORY_LIMIT_MB || '512', 10),
+  encryptionKey: process.env.ENCRYPTION_KEY || '',
 }));

@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
+import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -11,8 +14,46 @@ import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
-import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact } from '../types';
+import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
+
+const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
+  structure: 'bg-purple-100 text-purple-700 border-purple-200',
+  prompt: 'bg-blue-100 text-blue-700 border-blue-200',
+  contract: 'bg-amber-100 text-amber-700 border-amber-200',
+  handoff: 'bg-rose-100 text-rose-700 border-rose-200',
+  tooling: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+  evidence: 'bg-sky-100 text-sky-700 border-sky-200',
+  outputFormat: 'bg-orange-100 text-orange-700 border-orange-200',
+};
+
+function RemediationItemRow({
+  text,
+  category,
+  onApply,
+}: {
+  text: string;
+  category: RemediationCategory;
+  onApply: () => void;
+}) {
+  const { t } = useModuleTranslation('playbook');
+  return (
+    <div className="rounded border bg-muted/20 px-3 py-2">
+      <div className="flex items-center gap-2 mb-1">
+        <Badge variant="outline" className={cn('text-[10px] border', REMEDIATION_CATEGORY_COLORS[category])}>
+          {t(`detail.remediation.category.${category}`)}
+        </Badge>
+      </div>
+      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{text}</p>
+      <div className="mt-2 flex justify-end">
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply}>
+          <CheckSquare className="mr-1 h-3 w-3" />
+          {t('detail.remediation.apply')}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function ArtifactListItem({
   artifact,
@@ -123,6 +164,12 @@ function formatSignedPercentDelta(value: number): string {
   return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
+function formatConfidence(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-';
+  const normalized = value <= 1 ? value * 100 : value;
+  return `${Math.round(normalized)}%`;
+}
+
 function formatToolArgs(args: Record<string, unknown> | undefined): string {
   if (!args) return '{}';
   try {
@@ -206,17 +253,103 @@ export function ExecutionStepDetail({
   onActiveTabChange,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
+  const navigate = useNavigate();
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
   const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
   const deleteStepExecution = usePlaybookStore((s) => s.deleteStepExecution);
+  const updatePlaybookFromJudge = usePlaybookStore((s) => s.updatePlaybookFromJudge);
+  const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
+  const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
+  const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
+  const applyAdvisorRemediations = usePlaybookStore((s) => s.applyAdvisorRemediations);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [selectedStepExecutionId, setSelectedStepExecutionId] = useState<string | null>(null);
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
+  const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
+  const [judgeActionLoading, setJudgeActionLoading] = useState<'update' | 'generate' | 'optimize' | null>(null);
+  const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
+  const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
+  const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
+  const [remediationLoading, setRemediationLoading] = useState(false);
   const currentTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
   const evaluationHistory = step?.evaluationHistory || [];
+  const judgeHistory = step?.judgeHistory || [];
+  const stepJudgeStatus = step?.judgeStatus || 'idle';
+  const stepJudgeError = step?.judgeError || null;
+  const judgeSummary = execution?.judgeSummary || null;
+  const advisorAutopilotActive = execution?.advisorAutopilotEnabled === true;
+  const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
+  const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
+  const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const issueSections = useMemo(() => {
+    if (!stepJudgeResult) return [];
+    return [
+      {
+        title: t('detail.judge.structuralIssues'),
+        badge: t('detail.remediation.category.structure'),
+        badgeClassName: 'bg-purple-100 text-purple-700 border-purple-200',
+        items: stepJudgeResult.missingFacts || [],
+      },
+      {
+        title: t('detail.judge.promptIssues'),
+        badge: t('detail.remediation.category.prompt'),
+        badgeClassName: 'bg-blue-100 text-blue-700 border-blue-200',
+        items: stepJudgeResult.incoherences || [],
+      },
+      {
+        title: t('detail.judge.contractIssues'),
+        badge: t('detail.remediation.category.contract'),
+        badgeClassName: 'bg-amber-100 text-amber-700 border-amber-200',
+        items: stepJudgeResult.unsupportedClaims || [],
+      },
+      {
+        title: t('detail.judge.handoffIssues'),
+        badge: t('detail.remediation.category.handoff'),
+        badgeClassName: 'bg-rose-100 text-rose-700 border-rose-200',
+        items: stepJudgeResult.handoffRisks || [],
+      },
+      {
+        title: t('detail.judge.toolSelectionIssues'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.toolSelectionIssues || [],
+      },
+      {
+        title: t('detail.judge.missingToolCalls'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.missingToolCalls || [],
+      },
+      {
+        title: t('detail.judge.redundantToolCalls'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.redundantToolCalls || [],
+      },
+      {
+        title: t('detail.judge.toolOutputUseIssues'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.toolOutputUseIssues || [],
+      },
+      {
+        title: t('detail.judge.toolSequencingIssues'),
+        badge: t('detail.remediation.category.tooling'),
+        badgeClassName: 'bg-emerald-100 text-emerald-700 border-emerald-200',
+        items: stepJudgeResult.toolSequencingIssues || [],
+      },
+      {
+        title: t('detail.judge.toolUsageStrengths'),
+        badge: t('detail.remediation.category.evidence'),
+        badgeClassName: 'bg-sky-100 text-sky-700 border-sky-200',
+        items: stepJudgeResult.toolUsageStrengths || [],
+      },
+    ];
+  }, [stepJudgeResult, t]);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
     if (baselineReplay?.llmPromptTrace?.length) {
@@ -276,19 +409,53 @@ export function ExecutionStepDetail({
   const outputFormatBadgeTone = currentTask?.activeOutputFormatStatus === 'failed'
     ? 'border-red-500/30 bg-red-50 text-red-700'
     : 'border-sky-500/30 bg-sky-100 text-sky-700';
+  const isLiveStreaming = step?.status === 'running' || step?.status === 'interrupted';
+  const [isNearBottom, setIsNearBottom] = useState(true);
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({ top: container.scrollHeight, behavior });
+      return;
+    }
+    container.scrollTop = container.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const threshold = 96;
+    const updateNearBottom = () => {
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      setIsNearBottom(distanceFromBottom <= threshold);
+    };
+
+    updateNearBottom();
+    container.addEventListener('scroll', updateNearBottom, { passive: true });
+    return () => {
+      container.removeEventListener('scroll', updateNearBottom);
+    };
+  }, [step?.taskId]);
 
   const canDownload = step ? step.status === 'completed' || step.status === 'failed' || step.status === 'skipped' || step.status === 'interrupted' : false;
   const stepExecutions = useMemo(() => {
     if (!step) return [];
     const current = buildCurrentStepExecution(step);
     const persisted = step.stepExecutions || [];
-    const hasCurrentPersisted = persisted.some((entry) => entry.attemptNumber === current.attemptNumber);
-    return (hasCurrentPersisted ? persisted : [current, ...persisted]).sort((a, b) => {
+    const mergedExecutions = [
+      current,
+      ...persisted.filter((entry) => entry.attemptNumber !== current.attemptNumber),
+    ];
+    return mergedExecutions.sort((a, b) => {
       const left = new Date(a.completedAt || a.startedAt || 0).getTime();
       const right = new Date(b.completedAt || b.startedAt || 0).getTime();
       return right - left;
     });
   }, [step]);
+
+  const currentStepExecutionId = step ? `current:${step.taskId}:${step.attemptNumber ?? 'latest'}` : null;
 
   const handleDownloadHtml = useCallback(() => {
     if (step) downloadStepResultHtml(step);
@@ -298,23 +465,84 @@ export function ExecutionStepDetail({
     if (step) downloadStepResultPdf(step);
   }, [step]);
 
+  const handleApplyJudgeUpdate = useCallback(async () => {
+    if (!execution || !currentPlaybook) return;
+    setJudgeActionLoading('update');
+    try {
+      await updatePlaybookFromJudge(currentPlaybook.id, execution.id);
+    } finally {
+      setJudgeActionLoading(null);
+    }
+  }, [currentPlaybook, execution, updatePlaybookFromJudge]);
+
+  const handleGenerateJudgePlaybook = useCallback(async () => {
+    if (!execution || !currentPlaybook) return;
+    setJudgeActionLoading('generate');
+    try {
+      const created = await generatePlaybookFromJudge(currentPlaybook.id, execution.id);
+      navigate(`/playbooks/${created.id}`);
+    } finally {
+      setJudgeActionLoading(null);
+    }
+  }, [currentPlaybook, execution, generatePlaybookFromJudge, navigate]);
+
+  const handleOptimizeJudgeStep = useCallback(async () => {
+    if (!execution || !currentPlaybook || !step) return;
+    setJudgeActionLoading('optimize');
+    try {
+      await optimizeStepFromJudge(currentPlaybook.id, execution.id, step.taskId);
+    } finally {
+      setJudgeActionLoading(null);
+    }
+  }, [currentPlaybook, execution, optimizeStepFromJudge, step]);
+
+  const openRemediationDialog = useCallback(async (mode: 'optimize-step' | 'update-current' | 'generate-new') => {
+    if (!execution || !currentPlaybook) return;
+    setRemediationLoading(true);
+    setRemediationDialogMode(mode);
+    try {
+      const taskId = mode === 'optimize-step' ? step?.taskId : undefined;
+      const items = await fetchAdvisorRemediations(currentPlaybook.id, execution.id, taskId);
+      setRemediationItems(items);
+      setRemediationDialogOpen(true);
+    } finally {
+      setRemediationLoading(false);
+    }
+  }, [execution, currentPlaybook, step, fetchAdvisorRemediations]);
+
+  const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
+    if (!currentPlaybook || !execution) return;
+    return applyAdvisorRemediations(currentPlaybook.id, execution.id, {
+      mode: remediationDialogMode === 'generate-new' ? 'generate-new' : 'update-current',
+      selectedIds,
+    });
+  }, [currentPlaybook, execution, remediationDialogMode, applyAdvisorRemediations]);
+
   useEffect(() => {
     setSelectedStepExecutionId((current) => {
       if (!stepExecutions.length) return null;
+      const liveExecution = currentStepExecutionId
+        ? stepExecutions.find((entry) => entry.id === currentStepExecutionId) || stepExecutions[0]
+        : stepExecutions[0];
+
+      if (step?.status === 'running' || step?.status === 'interrupted') {
+        return liveExecution?.id ?? null;
+      }
+
       if (current && stepExecutions.some((entry) => entry.id === current)) {
         return current;
       }
-      return stepExecutions[0].id;
+
+      return liveExecution?.id ?? null;
     });
-  }, [stepExecutions, step?.taskId]);
+  }, [currentStepExecutionId, step?.status, stepExecutions]);
 
   useEffect(() => {
     setSelectedEvaluationId((current) => {
       if (!evaluationHistory.length) return null;
-      if (current && evaluationHistory.some((entry) => entry.id === current)) {
-        return current;
-      }
-      return evaluationHistory[0].id;
+      const latestEvaluationId = evaluationHistory[0].id;
+      if (current === latestEvaluationId) return current;
+      return latestEvaluationId;
     });
   }, [evaluationHistory, step?.taskId]);
 
@@ -328,6 +556,15 @@ export function ExecutionStepDetail({
       return comparisonCandidates[0].id;
     });
   }, [evaluationHistory, selectedEvaluationId, step?.taskId]);
+
+  useEffect(() => {
+    setSelectedJudgeHistoryId((current) => {
+      if (!judgeHistory.length) return null;
+      const latestJudgeHistoryId = judgeHistory[judgeHistory.length - 1].id;
+      if (current === latestJudgeHistoryId) return current;
+      return latestJudgeHistoryId;
+    });
+  }, [judgeHistory, step?.taskId]);
 
   if (!step) {
     return (
@@ -345,215 +582,238 @@ export function ExecutionStepDetail({
   const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
   const isEvaluationPending = isRunningEvaluation || step.status === 'running';
   const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
+  const streamingContentKey = [
+    step.taskId,
+    step.status,
+    step.output || '',
+    step.error || '',
+    step.components?.length || 0,
+    step.toolTrace?.length || 0,
+    step.llmPromptTrace?.length || 0,
+    step.artifacts?.length || 0,
+    selectedStepExecution?.id || 'no-step-execution',
+  ].join('|');
+
+  useEffect(() => {
+    if (!isLiveStreaming) return;
+    if (!isNearBottom) return;
+    scrollToBottom('auto');
+  }, [isLiveStreaming, isNearBottom, streamingContentKey, scrollToBottom]);
 
   return (
-    <div className="flex-1 overflow-y-auto p-6">
-      <div className="mb-6">
-        <div className="mb-2 flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
-          {showReplayBadge && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-              {replayBadgeVersion
-                ? t('detail.badges.replayBaseline', { version: replayBadgeVersion })
-                : t('detail.badges.baseline')}
-            </span>
-          )}
-          {showOutputFormatBadge && (
-            <button
-              type="button"
-              className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors hover:opacity-90 ${outputFormatBadgeTone}`}
-              onClick={() => onOpenOutputFormatEditor?.(step.taskId)}
-            >
-              {isOutputFormatBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-              {currentTask?.activeOutputFormatTemplateVersion
-                ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
-                : t('detail.badges.outputFormat')}
-            </button>
-          )}
-          {step.isStale && (
-            <span
-              className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
-              title={step.staleReason || 'Invalidated by an upstream rerun'}
-            >
-              {t('detail.badges.stale')}
-            </span>
-          )}
-          {(execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') && (
-            <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700">
-              {getExecutionModeLabel(execution?.executionMode, t)}
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-1.5">
-            <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
-            <Select
-              value={currentTask?.stepReplayMode ?? 'live'}
-              onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
-              disabled={!currentTask?.hasValidatedReplay}
-            >
-              <SelectTrigger className="h-7 w-[130px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
-                <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
-                <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
-                <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
-              </SelectContent>
-            </Select>
-            {!currentTask?.hasValidatedReplay && (
-              <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
-                {t('detail.noBaseline')}
+    <div className="relative flex-1 overflow-hidden">
+      <div
+        ref={scrollContainerRef}
+        data-testid="execution-step-scroll"
+        className="h-full overflow-y-auto p-6"
+      >
+        <div className="mb-6">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
+            {showReplayBadge && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                {replayBadgeVersion
+                  ? t('detail.badges.replayBaseline', { version: replayBadgeVersion })
+                  : t('detail.badges.baseline')}
               </span>
             )}
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" className="h-8 w-8" title={t('detail.actions')}>
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {execution && step.status === 'completed' && (
-                <DropdownMenuItem onClick={() => onRequestValidateReplay?.(step.taskId)}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  {t('detail.actions.saveReplay')}
-                </DropdownMenuItem>
-              )}
-              {execution && (
-                <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  {t('detail.actions.runEvaluation')}
-                </DropdownMenuItem>
-              )}
-              {execution && step.status === 'completed' && !!step.output && (
-                <DropdownMenuItem onClick={() => onRequestGrabOutputFormat?.(step.taskId)}>
-                  <FileText className="mr-2 h-4 w-4" />
-                  {t('detail.actions.saveOutputFormat')}
-                </DropdownMenuItem>
-              )}
-              {canDownload && (
-                <>
-                  <DropdownMenuItem onClick={handleDownloadHtml}>
-                    <FileText className="mr-2 h-4 w-4" />
-                    {t('detail.actions.downloadHtml')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleDownloadPdf}>
-                    <Download className="mr-2 h-4 w-4" />
-                    {t('detail.actions.downloadPdf')}
-                  </DropdownMenuItem>
-                </>
-              )}
-              {execution && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    className="text-destructive focus:text-destructive"
-                    onClick={() => void deleteExecution(execution.playbookId, execution.id)}
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    {t('detail.actions.deleteExecution')}
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
-          {step.agentName && <span>{t('detail.metadata.agent')}: {step.agentName}</span>}
-          <span>{t('detail.metadata.started')}: {formatTime(step.startedAt)}</span>
-          {step.completedAt && (
-            <span>{t('detail.metadata.completed')}: {formatTime(step.completedAt)}</span>
-          )}
-          <span>{t('detail.metadata.duration')}: {formatDuration(step.durationMs)}</span>
-        </div>
-      </div>
-
-      {step.isStale && (
-        <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {t('detail.staleMessage')}
-        </div>
-      )}
-
-      <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
-          <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
-          <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
-          <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
-          <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="results" className="space-y-4">
-          {stepExecutions.length > 0 && (
-            <div className="flex flex-wrap items-end justify-between gap-3 rounded-lg border bg-muted/20 p-4">
-              <div className="min-w-[260px] flex-1 space-y-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.results.stepExecutionLabel')}</div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" className="h-9 w-full justify-between">
-                      <span className="truncate text-left">
-                        {selectedStepExecution
-                          ? `${t('detail.evaluation.attempt')} ${selectedStepExecution.attemptNumber ?? '-'} | ${new Date(selectedStepExecution.completedAt || selectedStepExecution.startedAt || Date.now()).toLocaleString()}`
-                          : t('detail.results.stepExecutionPlaceholder')}
-                      </span>
-                      <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-[380px] p-1">
-                    {stepExecutions.map((entry) => {
-                      const isSelected = entry.id === selectedStepExecution?.id;
-                      const canDeleteEntry = Boolean(
-                        execution
-                        && entry.attemptNumber !== (step.attemptNumber ?? null)
-                        && !entry.id.startsWith('current:'),
-                      );
-                      return (
-                        <div
-                          key={entry.id}
-                          className={cn(
-                            'flex items-center gap-2 rounded-sm px-2 py-1.5',
-                            isSelected ? 'bg-accent' : 'hover:bg-muted/60',
-                          )}
-                        >
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 text-left"
-                            onClick={() => setSelectedStepExecutionId(entry.id)}
-                          >
-                            <div className="truncate text-sm">
-                              {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {new Date(entry.completedAt || entry.startedAt || Date.now()).toLocaleString()}
-                            </div>
-                            <div className="text-xs text-muted-foreground">{entry.status}</div>
-                          </button>
-                          {canDeleteEntry && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 shrink-0"
-                              title={t('detail.results.deleteStepExecution')}
-                              onClick={async (event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
-                                  return;
-                                }
-                                await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
-                              }}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+            {showOutputFormatBadge && (
+              <button
+                type="button"
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition-colors hover:opacity-90 ${outputFormatBadgeTone}`}
+                onClick={() => onOpenOutputFormatEditor?.(step.taskId)}
+              >
+                {isOutputFormatBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                {currentTask?.activeOutputFormatTemplateVersion
+                  ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
+                  : t('detail.badges.outputFormat')}
+              </button>
+            )}
+            {step.isStale && (
+              <span
+                className="rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700"
+                title={step.staleReason || 'Invalidated by an upstream rerun'}
+              >
+                {t('detail.badges.stale')}
+              </span>
+            )}
+            {(execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') && (
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700">
+                {getExecutionModeLabel(execution?.executionMode, t)}
+              </span>
+            )}
+            <div className="ml-auto flex flex-col items-end gap-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
+                <Select
+                  value={currentTask?.stepReplayMode ?? 'live'}
+                  onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
+                  disabled={!currentTask?.hasValidatedReplay}
+                >
+                  <SelectTrigger className="h-7 w-[130px] text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
+                    <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
+                    <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
+                    <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!currentTask?.hasValidatedReplay && (
+                  <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
+                    {t('detail.noBaseline')}
+                  </span>
+                )}
               </div>
-              <div className="text-xs text-muted-foreground">{t('detail.results.executionHint')}</div>
+              {stepExecutions.length > 0 && (
+                <div className="flex items-center gap-1.5">
+                  <span className="whitespace-nowrap text-xs text-muted-foreground">
+                    {t('detail.results.stepExecutionLabel')}
+                  </span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" className="h-7 w-[220px] justify-between text-xs">
+                        <span className="truncate text-left">
+                          {selectedStepExecution
+                            ? `${t('detail.evaluation.attempt')} ${selectedStepExecution.attemptNumber ?? '-'} | ${new Date(selectedStepExecution.completedAt || selectedStepExecution.startedAt || Date.now()).toLocaleString()}`
+                            : t('detail.results.stepExecutionPlaceholder')}
+                        </span>
+                        <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-[380px] p-1">
+                      {stepExecutions.map((entry) => {
+                        const isSelected = entry.id === selectedStepExecution?.id;
+                        const canDeleteEntry = Boolean(
+                          execution
+                          && entry.attemptNumber !== (step.attemptNumber ?? null)
+                          && !entry.id.startsWith('current:'),
+                        );
+                        return (
+                          <div
+                            key={entry.id}
+                            className={cn(
+                              'flex items-center gap-2 rounded-sm px-2 py-1.5',
+                              isSelected ? 'bg-accent' : 'hover:bg-muted/60',
+                            )}
+                          >
+                            <button
+                              type="button"
+                              className="min-w-0 flex-1 text-left"
+                              onClick={() => setSelectedStepExecutionId(entry.id)}
+                            >
+                              <div className="truncate text-sm">
+                                {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {new Date(entry.completedAt || entry.startedAt || Date.now()).toLocaleString()}
+                              </div>
+                              <div className="text-xs text-muted-foreground">{entry.status}</div>
+                            </button>
+                            {canDeleteEntry && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 shrink-0"
+                                title={t('detail.results.deleteStepExecution')}
+                                onClick={async (event) => {
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
+                                    return;
+                                  }
+                                  await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              )}
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" className="h-8 w-8" title={t('detail.actions')}>
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {execution && step.status === 'completed' && (
+                  <DropdownMenuItem onClick={() => onRequestValidateReplay?.(step.taskId)}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('detail.actions.saveReplay')}
+                  </DropdownMenuItem>
+                )}
+                {execution && (
+                  <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('detail.actions.runEvaluation')}
+                  </DropdownMenuItem>
+                )}
+                {execution && step.status === 'completed' && !!step.output && (
+                  <DropdownMenuItem onClick={() => onRequestGrabOutputFormat?.(step.taskId)}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('detail.actions.saveOutputFormat')}
+                  </DropdownMenuItem>
+                )}
+                {canDownload && (
+                  <>
+                    <DropdownMenuItem onClick={handleDownloadHtml}>
+                      <FileText className="mr-2 h-4 w-4" />
+                      {t('detail.actions.downloadHtml')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleDownloadPdf}>
+                      <Download className="mr-2 h-4 w-4" />
+                      {t('detail.actions.downloadPdf')}
+                    </DropdownMenuItem>
+                  </>
+                )}
+                {execution && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => void deleteExecution(execution.playbookId, execution.id)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      {t('detail.actions.deleteExecution')}
+                    </DropdownMenuItem>
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
+            {step.agentName && <span>{t('detail.metadata.agent')}: {step.agentName}</span>}
+            <span>{t('detail.metadata.started')}: {formatTime(step.startedAt)}</span>
+            {step.completedAt && (
+              <span>{t('detail.metadata.completed')}: {formatTime(step.completedAt)}</span>
+            )}
+            <span>{t('detail.metadata.duration')}: {formatDuration(step.durationMs)}</span>
+          </div>
+        </div>
+
+          {step.isStale && (
+            <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              {t('detail.staleMessage')}
             </div>
           )}
 
+          <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
+            <TabsList className="grid w-full grid-cols-6">
+              <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
+              <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+              <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
+              <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
+              <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
+              <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
+            </TabsList>
+
+        <TabsContent value="results" className="space-y-4">
           {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
             <div className="rounded-lg border bg-muted/30 p-4 text-sm">
               <div className="font-medium">{t('detail.provenance.title')}</div>
@@ -583,18 +843,14 @@ export function ExecutionStepDetail({
 
           {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <h3 className="mb-2 text-sm font-medium">{t('execution.output')}</h3>
               <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
             </div>
           ) : selectedStepExecution?.output ? (
             <div className="prose prose-sm max-w-none dark:prose-invert">
-              <h3 className="mb-2 text-sm font-medium">{t('execution.output')}</h3>
               <div className="rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
                 {selectedStepExecution.output}
               </div>
             </div>
-          ) : selectedStepExecution && selectedStepExecution.status !== 'pending' && selectedStepExecution.status !== 'running' && !selectedStepExecution.error ? (
-            <p className="text-sm text-muted-foreground">{t('execution.noOutput')}</p>
           ) : null}
 
           {selectedStepExecution?.status === 'running' && (
@@ -872,6 +1128,241 @@ export function ExecutionStepDetail({
           )}
         </TabsContent>
 
+        <TabsContent value="judge" className="space-y-4">
+          {advisorAutopilotActive && (
+            <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.title')}</div>
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                  {t(`detail.autopilot.status.${execution?.advisorAutopilotStatus || 'idle'}` as any)}
+                </Badge>
+              </div>
+              <div className="grid gap-3 md:grid-cols-3">
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.targetScore')}</div>
+                  <div className="mt-1 font-medium">{formatPercent(execution?.advisorAutopilotTargetScore)}</div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.maxTurns')}</div>
+                  <div className="mt-1 font-medium">{execution?.advisorAutopilotMaxTurns ?? 0}</div>
+                </div>
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.attemptCount')}</div>
+                  <div className="mt-1 font-medium">{execution?.advisorAutopilotAttemptCount ?? 0}</div>
+                </div>
+              </div>
+              {step?.advisorStopReason && (
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.stopReason')}</div>
+                  <div className="mt-1 text-muted-foreground">{t(`detail.autopilot.stopReasonValue.${step.advisorStopReason}` as any)}</div>
+                </div>
+              )}
+              {execution?.advisorAutopilotLastError && (
+                <div>
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.lastError')}</div>
+                  <div className="mt-1 text-destructive whitespace-pre-wrap">{execution.advisorAutopilotLastError}</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {judgeHistory.length > 0 && (
+            <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
+              <div className="min-w-[260px] flex-1 space-y-1">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.stepExecutionLabel')}</div>
+                <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {judgeHistory.map((entry) => (
+                      <SelectItem key={entry.id} value={entry.id}>
+                        {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.judgeResult.overallScore)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedJudgeHistory && (
+                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                  <span>{t('detail.evaluation.recorded')}: {new Date(selectedJudgeHistory.createdAt).toLocaleString()}</span>
+                  <span>{t('detail.evaluation.attempt')}: {selectedJudgeHistory.attemptNumber ?? '-'}</span>
+                  <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {stepJudgeResult ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/20 p-4">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                    <div className="text-3xl font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
+                  </div>
+                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                    {t('detail.judge.confidence')} {formatConfidence(stepJudgeResult.confidence)}
+                  </Badge>
+                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                    {t('detail.judge.toolUsageScore')} {formatPercent(stepJudgeResult.toolUsageScore)}
+                  </Badge>
+                  <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                    {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
+                  </div>
+                  <div className="ml-auto flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.updateCurrentPlaybook')}
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.optimizeThisStep')}
+                    </Button>
+                    <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.generateNewOptimizedPlaybook')}
+                    </Button>
+                  </div>
+                </div>
+                <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
+
+                <AdvisorChangeReviewDialog
+                  open={remediationDialogOpen}
+                  onOpenChange={setRemediationDialogOpen}
+                  items={remediationItems}
+                  tasks={currentPlaybook?.tasks || []}
+                  mode={remediationDialogMode}
+                  loading={remediationLoading}
+                  onApply={handleApplyRemediations}
+                />
+              </div>
+
+              <div className="rounded-lg border bg-background p-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
+                <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
+                  {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
+                </p>
+              </div>
+
+              <div className="rounded-lg border bg-background p-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
+                <div className="mt-2 space-y-2 text-sm">
+                  {stepJudgeResult.rewriteHints.length > 0 ? (
+                    stepJudgeResult.rewriteHints.map((hint, idx) => (
+                      <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
+                    ))
+                  ) : (
+                    <div className="text-muted-foreground">{t('detail.judge.none')}</div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {issueSections.map((section) => (
+                  <IssueSection
+                    key={section.title}
+                    title={section.title}
+                    badge={section.badge}
+                    badgeClassName={section.badgeClassName}
+                    items={section.items}
+                    emptyLabel={t('detail.judge.none')}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : stepJudgeStatus === 'failed' ? (
+            <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+              <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                {t('detail.judge.failed')}
+              </div>
+              <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                {stepJudgeError || t('detail.judge.failedUnknown')}
+              </pre>
+            </div>
+          ) : (
+            <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+              {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
+                ? t('detail.judge.evaluating')
+                : t('detail.judge.empty')}
+            </div>
+          )}
+
+          {judgeSummary && !stepJudgeResult && (
+            <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                  {Math.round(judgeSummary.overallScore)}%
+                </Badge>
+                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                  {t('detail.judge.confidence')} {formatConfidence(judgeSummary.confidence)}
+                </Badge>
+                <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                  {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
+                </div>
+                <div className="ml-auto flex flex-wrap gap-2">
+                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.updateCurrentPlaybook')}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.optimizeThisStep')}
+                  </Button>
+                  <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.generateNewOptimizedPlaybook')}
+                  </Button>
+                </div>
+              </div>
+              <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
+
+              <AdvisorChangeReviewDialog
+                open={remediationDialogOpen}
+                onOpenChange={setRemediationDialogOpen}
+                items={remediationItems}
+                tasks={currentPlaybook?.tasks || []}
+                mode={remediationDialogMode}
+                loading={remediationLoading}
+                onApply={handleApplyRemediations}
+              />
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
+                <IssueSection
+                  title={t('detail.judge.toolUsageIssues')}
+                  badge={t('detail.remediation.category.tooling')}
+                  badgeClassName="bg-emerald-100 text-emerald-700 border-emerald-200"
+                  items={judgeSummary.toolUsageIssues || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+                <IssueSection
+                  title={t('detail.judge.crossStepToolPatterns')}
+                  badge={t('detail.remediation.category.structure')}
+                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                  items={judgeSummary.crossStepToolPatterns || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+                <IssueSection
+                  title={t('detail.judge.rootCauseTaskIds')}
+                  badge={t('detail.remediation.category.structure')}
+                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                  items={judgeSummary.rootCauseTaskIds || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+                <IssueSection
+                  title={t('detail.judge.highImpactRecommendations')}
+                  badge={t('detail.remediation.category.structure')}
+                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                  items={judgeSummary.highImpactRecommendations || []}
+                  emptyLabel={t('detail.judge.none')}
+                />
+              </div>
+            </div>
+          )}
+        </TabsContent>
+
         <TabsContent value="tool-trace" className="space-y-4">
           {step.toolTrace && step.toolTrace.length > 0 ? (
             <div className="space-y-3">
@@ -1008,7 +1499,56 @@ export function ExecutionStepDetail({
             </div>
           )}
         </TabsContent>
-      </Tabs>
+        </Tabs>
+      </div>
+
+      {isLiveStreaming && !isNearBottom && (
+        <Button
+          type="button"
+          size="sm"
+          className="absolute bottom-4 right-4 z-20 shadow-lg"
+          onClick={() => scrollToBottom()}
+        >
+          <ChevronDown className="mr-1 h-4 w-4" />
+          Jump to bottom
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function IssueSection({
+  title,
+  badge,
+  badgeClassName,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  badge: string;
+  badgeClassName: string;
+  items: string[];
+  emptyLabel: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-background p-3">
+      <div className="flex items-center gap-2">
+        <div className="text-xs uppercase tracking-wide text-muted-foreground">{title}</div>
+        <Badge variant="outline" className={cn('text-[10px] border', badgeClassName)}>
+          {badge}
+        </Badge>
+      </div>
+      <div className="mt-2 space-y-2 text-sm">
+        {items.length > 0 ? (
+          items.map((item, index) => (
+            <div key={`${title}-${index}`} className="rounded border bg-muted/20 px-3 py-2">
+              <p className="whitespace-pre-wrap text-muted-foreground">{item}</p>
+            </div>
+          ))
+        ) : (
+          <div className="text-muted-foreground">{emptyLabel}</div>
+        )}
+      </div>
     </div>
   );
 }

@@ -13,16 +13,39 @@ export class InputFileItem {
   id!: string;
   name!: string;
   workspaceId?: string;
+  portId?: string;
   metadata?: {
     workspaceId?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
     language?: string;
+    mimeType?: string;
   };
 }
 
 export const InputFileItemSchema = SchemaFactory.createForClass(InputFileItem);
+
+@Schema({ _id: false, strict: false })
+export class ToolBindingAction {
+  actionKey!: string;
+  isEnabled?: boolean;
+}
+
+export const ToolBindingActionSchema = SchemaFactory.createForClass(ToolBindingAction);
+
+@Schema({ _id: false, strict: false })
+export class ToolBinding {
+  id!: string;
+  connectorId!: string;
+  actions!: ToolBindingAction[];
+  credentialId?: string | null;
+  fixedParams?: Record<string, unknown>;
+  disableAutoSkills?: boolean;
+  isEnabled?: boolean;
+}
+
+export const ToolBindingSchema = SchemaFactory.createForClass(ToolBinding);
 
 @Schema({ _id: false, strict: false })
 export class TaskInputPortSchema {
@@ -32,7 +55,7 @@ export class TaskInputPortSchema {
   @Prop({ type: String, required: true })
   name!: string;
 
-  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'], required: true })
+  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'dashboard'], required: true })
   artifactKind!: string;
 
   @Prop({ type: Boolean, default: false })
@@ -52,7 +75,7 @@ export class TaskOutputPortSchema {
   @Prop({ type: String, required: true })
   name!: string;
 
-  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'], required: true })
+  @Prop({ type: String, enum: ['text', 'document', 'code', 'image', 'data', 'dashboard'], required: true })
   artifactKind!: string;
 
   @Prop({ type: String })
@@ -128,6 +151,9 @@ export class PlaybookTask {
 
   @Prop({ type: [TaskOutputPortSchemaDefinition], default: [], _id: false })
   outputPorts!: TaskOutputPortSchema[];
+
+  @Prop({ type: [ToolBindingSchema], default: [], _id: false })
+  toolBindings!: ToolBinding[];
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);
@@ -178,6 +204,9 @@ export class Playbook extends Document {
   @Prop({ type: Boolean, default: true })
   isActive!: boolean;
 
+  @Prop({ type: String, trim: true })
+  integrationToken?: string;
+
   @Prop({ type: ExecutionScheduleSchema, default: null })
   executionSchedule!: ExecutionSchedule | null;
 
@@ -190,6 +219,7 @@ export const PlaybookSchema = SchemaFactory.createForClass(Playbook);
 PlaybookSchema.index({ createdBy: 1, updatedAt: -1 });
 PlaybookSchema.index({ createdBy: 1, isActive: 1, updatedAt: -1 });
 PlaybookSchema.index({ isActive: 1, 'executionSchedule.enabled': 1 });
+PlaybookSchema.index({ integrationToken: 1 }, { unique: true, sparse: true });
 
 PlaybookSchema.set('toJSON', {
   virtuals: true,

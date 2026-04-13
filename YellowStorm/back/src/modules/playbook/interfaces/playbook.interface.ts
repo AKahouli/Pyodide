@@ -1,8 +1,26 @@
+import { ExecutionStatus } from '../schemas/playbook-execution.schema';
+
+export interface ToolBindingActionData {
+  actionKey: string;
+  isEnabled?: boolean;
+}
+
+export interface ToolBindingData {
+  id: string;
+  connectorId: string;
+  actions: ToolBindingActionData[];
+  credentialId?: string | null;
+  fixedParams?: Record<string, unknown>;
+  disableAutoSkills?: boolean;
+  isEnabled?: boolean;
+}
+
 export interface InputFileData {
   type: 'workspace' | 'document';
   id: string;
   name: string;
   workspaceId?: string;
+  portId?: string;
   metadata?: {
     workspaceId?: string;
     documentId?: string;
@@ -48,6 +66,7 @@ export interface PlaybookTaskData {
   activeOutputFormatError?: string | null;
   inputFiles?: InputFileData[];
   stepReplayMode?: string;
+  toolBindings?: ToolBindingData[];
 }
 
 export interface PlaybookEdgeData {
@@ -118,9 +137,16 @@ export interface PlaybookSummaryResponse {
   isFavorite: boolean;
   /** True when embedded `executionSchedule` exists and is enabled (scheduled runs). */
   scheduleEnabled: boolean;
+  /** Latest execution status for the list badge. */
+  executionStatus?: ExecutionStatus | null;
+  integrationToken?: string | null;
   lastExecutionAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PlaybookIntegrationLinkResponse {
+  token: string;
 }
 
 export interface PaginatedPlaybookSummaries {
@@ -167,6 +193,16 @@ export interface PlaybookExecutionResponse {
   status: string;
   executionMode: string;
   executionTrigger: 'manual' | 'scheduled';
+  reflectionEnabled: boolean;
+  advisorAutopilotEnabled: boolean;
+  advisorAutopilotTargetScore: number;
+  advisorAutopilotMaxTurns: number;
+  advisorAutopilotStatus: 'idle' | 'running' | 'judging' | 'optimizing' | 'rerunning' | 'completed' | 'stopped' | 'failed';
+  advisorAutopilotTaskId: string | null;
+  advisorAutopilotAttemptCount: number;
+  advisorAutopilotLastError: string | null;
+  judgeSummaryStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeSummary: PlaybookJudgeSummary | null;
   replaySourceByTask: Record<string, { replayId: string; validationVersion: number }> | null;
   taskResults: TaskResultData[];
   threadId: string | null;
@@ -190,6 +226,29 @@ export interface PlaybookExecutionResponse {
   }>;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PlaybookAdvisorResult {
+  accuracyScore: number;
+  completenessScore: number;
+  overallScore: number;
+  confidence: number;
+  toolUsageScore: number;
+  missingFacts: string[];
+  incoherences: string[];
+  unsupportedClaims: string[];
+  handoffRisks: string[];
+  rewriteHints: string[];
+  toolSelectionIssues: string[];
+  missingToolCalls: string[];
+  redundantToolCalls: string[];
+  toolOutputUseIssues: string[];
+  toolSequencingIssues: string[];
+  toolUsageStrengths: string[];
+  toolUsageRecommendation: string;
+  safeAutoFixType: 'optimize_step' | 'none';
+  recommendation: 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
+  reason: string;
 }
 
 export interface TaskResultData {
@@ -234,6 +293,16 @@ export interface TaskResultData {
     model: string;
     judgeUsed: boolean;
   } | null;
+  judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeResult?: PlaybookAdvisorResult | null;
+  judgeError?: string | null;
+  judgeHistory?: Array<{
+    id: string;
+    createdAt: string;
+    attemptNumber: number | null;
+    model: string | null;
+    judgeResult: PlaybookAdvisorResult;
+  }>;
   evaluationHistory?: Array<{
     id: string;
     createdAt: string;
@@ -289,6 +358,19 @@ export interface TaskResultData {
       metadata?: Record<string, unknown>;
     }>;
   }>;
+  advisorTurnCount?: number;
+  advisorTurnHistory?: Array<{
+    turn: number;
+    createdAt: string;
+    score: number | null;
+    recommendation: string | null;
+    safeAutoFixType: string | null;
+    actionType: 'evaluate' | 'optimize_step' | 'stop';
+    stopReason?: string | null;
+  }>;
+  lastAdvisorAction?: string | null;
+  lastAdvisorScoreDelta?: number | null;
+  advisorStopReason?: string | null;
 }
 
 export interface PlaybookExecutionSummaryResponse {
@@ -306,6 +388,21 @@ export interface PlaybookExecutionSummaryResponse {
   singleStepTaskId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PlaybookJudgeSummary {
+  overallScore: number;
+  confidence: number;
+  structuralIssues: string[];
+  promptIssues: string[];
+  contractIssues: string[];
+  handoffIssues: string[];
+  toolUsageIssues: string[];
+  crossStepToolPatterns: string[];
+  rootCauseTaskIds: string[];
+  highImpactRecommendations: string[];
+  recommendation: 'update_current_playbook' | 'generate_new_optimized_playbook';
+  reason: string;
 }
 
 export interface PaginatedExecutions {

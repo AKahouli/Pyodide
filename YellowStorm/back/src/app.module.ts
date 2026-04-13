@@ -41,6 +41,10 @@ import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookModule } from './modules/playbook/playbook.module';
+import { SkillModule } from './modules/skill/skill.module';
+import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
+import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
+import { ConnectorModule } from './modules/connector/connector.module';
 
 @Module({
   imports: [
@@ -80,10 +84,14 @@ import { PlaybookModule } from './modules/playbook/playbook.module';
     ConversationModule,
     ModelsModule,
     ToolModule,
+    SkillModule,
     AgentTypeModule,
     AgentModule,
     PlaybookModule,
+    AuthProviderModule,
     AnalyticsModule,
+    ConnectedAppModule,
+    ConnectorModule,
     HealthModule,
   ],
   providers: [

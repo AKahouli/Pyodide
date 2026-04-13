@@ -18,6 +18,7 @@ from src.smart_rag.infrastructure.monitoring import langfuse_client
 from src.smart_rag.tools import build_tree, SearchToolkit, SearchToolADK, calculator
 from google.adk import Agent
 from src.logger.logging import get_logger
+from src.skills.runtime import inject_skill_catalog, make_activate_skill_tool
 
 logger = get_logger("api.smart_rag.SingleAgentService")
 
@@ -282,6 +283,12 @@ class SingleAgentService:
             # Build agent tools
             tools = []
 
+            # Inject AgentSkills catalog into the system prompt and expose lazy activation.
+            agent_prompt = inject_skill_catalog(agent_config.prompt, agent_config.skills)
+            activate_skill_tool = make_activate_skill_tool(agent_config.skills)
+            if activate_skill_tool:
+                tools.append(activate_skill_tool)
+
             # Add standard search tool if search is enabled
             if search_tool and agent_config.brain_ids:
                 search_web = "standard" if search_web_tool else "off"
@@ -337,14 +344,14 @@ class SingleAgentService:
                 agent = Agent(
                     name=agent_config.name,
                     model=model,
-                    instruction=agent_config.prompt,
+                    instruction=agent_prompt,
                     tools=tools
                 )
             else:
                 agent = Agent(
                     name=agent_config.name,
                     model=model,
-                    instruction=agent_config.prompt
+                    instruction=agent_prompt
                 )
 
             logger.info(f"Created agent {agent_config.name} with {len(tools)} tools: {[t.schema.get('name') if hasattr(t, 'schema') else str(t) for t in tools]}")

@@ -130,6 +130,94 @@ describe('playbook store', () => {
     expect(state.selectedStepId).toBe('t2');
   });
 
+  it('refreshes execution details after completion so terminal task states win', async () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      taskResults: [
+        {
+          taskId: 't1',
+          nodeTitle: 'Step 1',
+          agentName: 'Agent 1',
+          order: 1,
+          status: 'running',
+          output: null,
+          error: null,
+          durationMs: null,
+          startedAt: '2026-04-11T07:00:00.000Z',
+          completedAt: null,
+        },
+        {
+          taskId: 't2',
+          nodeTitle: 'Step 2',
+          agentName: 'Agent 2',
+          order: 2,
+          status: 'running',
+          output: null,
+          error: null,
+          durationMs: null,
+          startedAt: '2026-04-11T07:00:00.000Z',
+          completedAt: null,
+        },
+      ] as any,
+    });
+    const completedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        {
+          taskId: 't1',
+          nodeTitle: 'Step 1',
+          agentName: 'Agent 1',
+          order: 1,
+          status: 'completed',
+          output: 'done',
+          error: null,
+          durationMs: 100,
+          startedAt: '2026-04-11T07:00:00.000Z',
+          completedAt: '2026-04-11T07:00:10.000Z',
+        },
+        {
+          taskId: 't2',
+          nodeTitle: 'Step 2',
+          agentName: 'Agent 2',
+          order: 2,
+          status: 'completed',
+          output: 'done',
+          error: null,
+          durationMs: 100,
+          startedAt: '2026-04-11T07:00:00.000Z',
+          completedAt: '2026-04-11T07:00:10.000Z',
+        },
+      ] as any,
+    });
+
+    apiMock.getExecution.mockResolvedValueOnce(completedExecution);
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      currentExecution: execution,
+      executionCache: { e1: execution },
+      executionHistory: [makeExecutionSummary({ id: 'e1', playbookId: 'p1', status: 'running' })],
+    });
+
+    usePlaybookStore.getState().onExecutionComplete({
+      executionId: 'e1',
+      status: 'completed',
+      durationMs: 1234,
+      skippedTaskIds: [],
+    } as any);
+
+    expect(usePlaybookStore.getState().currentExecution?.taskResults[0].status).toBe('completed');
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e1');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(usePlaybookStore.getState().currentExecution?.status).toBe('completed');
+    expect(usePlaybookStore.getState().currentExecution?.taskResults[0].status).toBe('completed');
+  });
+
   it('stores generate retry payload when generation fails', async () => {
     apiMock.generatePlaybook.mockRejectedValueOnce(new Error('boom'));
     await expect(usePlaybookStore.getState().generatePlaybook({ name: 'PB', prompt: 'x' })).rejects.toThrow('boom');
@@ -506,20 +594,61 @@ describe('playbook store', () => {
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
   });
 
-  it('fetches execution and keeps newer cached status over older api status', async () => {
+  it('prefers terminal api execution state over cached running state', async () => {
     const cached = makeExecution({
       id: 'e1',
       status: 'running',
       taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'running' }],
       updatedAt: '2025-01-01T00:00:10.000Z',
     });
-    usePlaybookStore.setState({ executionCache: { e1: cached }, selectedStepId: null });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      selectedStepId: null,
+      executingPlaybookIds: ['p1'],
+    });
 
     apiMock.getExecution.mockResolvedValueOnce(
       makeExecution({
         id: 'e1',
-        status: 'pending',
-        taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'pending' }],
+        playbookId: 'p1',
+        status: 'completed',
+        updatedAt: '2025-01-01T00:00:20.000Z',
+        completedAt: '2025-01-01T00:00:20.000Z',
+        taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed' }],
+      }),
+    );
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+    const state = usePlaybookStore.getState();
+    expect(state.currentExecution?.status).toBe('completed');
+    expect(state.currentExecution?.taskResults[0].status).toBe('completed');
+    expect(state.executingPlaybookIds).not.toContain('p1');
+  });
+
+  it('keeps a newer optimistic running execution over an older completed fetch', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      startedAt: '2025-01-01T00:00:15.000Z',
+      updatedAt: '2025-01-01T00:00:15.000Z',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'running', startedAt: '2025-01-01T00:00:15.000Z' }],
+    });
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+      selectedStepId: null,
+      executingPlaybookIds: ['p1'],
+    });
+
+    apiMock.getExecution.mockResolvedValueOnce(
+      makeExecution({
+        id: 'e1',
+        playbookId: 'p1',
+        status: 'completed',
+        updatedAt: '2025-01-01T00:00:10.000Z',
+        completedAt: '2025-01-01T00:00:10.000Z',
+        taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed', completedAt: '2025-01-01T00:00:10.000Z' }],
       }),
     );
 
@@ -527,6 +656,7 @@ describe('playbook store', () => {
     const state = usePlaybookStore.getState();
     expect(state.currentExecution?.status).toBe('running');
     expect(state.currentExecution?.taskResults[0].status).toBe('running');
+    expect(state.executingPlaybookIds).toContain('p1');
   });
 
   it('optimistically updates statuses when resuming from a step', async () => {
@@ -627,7 +757,7 @@ describe('playbook store', () => {
       output: null,
       isStale: false,
     });
-    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2' });
+    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2', streaming: false });
   });
 
   it('optimistically updates the rerun step status immediately', async () => {
@@ -709,6 +839,74 @@ describe('playbook store', () => {
       startedAt: null,
       completedAt: null,
     });
+  });
+
+  it('focuses the rerun execution immediately when the panel is showing an older execution', async () => {
+    const rerunTarget = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        {
+          taskId: 't1',
+          nodeTitle: 'Step 1',
+          agentName: 'A1',
+          order: 1,
+          status: 'completed',
+          output: 'old',
+          error: null,
+          durationMs: 100,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          isStale: false,
+          staleReason: null,
+          invalidatedByTaskId: null,
+        },
+      ],
+    });
+    const olderVisibleExecution = makeExecution({
+      id: 'e0',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        {
+          taskId: 't9',
+          nodeTitle: 'Older',
+          agentName: 'A9',
+          order: 1,
+          status: 'completed',
+          output: 'older result',
+          error: null,
+          durationMs: 100,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+        },
+      ] as any,
+    });
+
+    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e1', playbookId: 'p1', status: 'running', taskResults: rerunTarget.taskResults }));
+    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
+
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+      currentExecution: olderVisibleExecution,
+      executionCache: { e0: olderVisibleExecution, e1: rerunTarget },
+      executionHistory: [
+        makeExecutionSummary({ id: 'e0', playbookId: 'p1', executionNumber: 1, status: 'completed' }),
+        makeExecutionSummary({ id: 'e1', playbookId: 'p1', executionNumber: 2, status: 'completed' }),
+      ],
+      selectedStepId: null,
+    });
+
+    const promise = usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1');
+    const state = usePlaybookStore.getState();
+
+    expect(state.currentExecution?.id).toBe('e1');
+    expect(state.currentExecution?.status).toBe('running');
+    expect(state.executionHistory.find((entry) => entry.id === 'e1')?.status).toBe('running');
+
+    await promise;
   });
 
   // ===== Schedule =====

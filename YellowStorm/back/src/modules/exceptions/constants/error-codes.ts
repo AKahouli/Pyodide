@@ -125,6 +125,17 @@ export enum ErrorCode {
   // Auth token missing (for SSE)
   AUTH_TOKEN_MISSING = 'ERR_1120',
 
+  // OAuth errors (1121-1129)
+  AUTH_OAUTH_FAILED = 'ERR_1121',
+  AUTH_OAUTH_STATE_INVALID = 'ERR_1122',
+  AUTH_OAUTH_EMAIL_MISSING = 'ERR_1123',
+  AUTH_OAUTH_LINK_REQUIRED = 'ERR_1124',
+  AUTH_OAUTH_LINK_TOKEN_INVALID = 'ERR_1125',
+  AUTH_OAUTH_LINK_TOKEN_EXPIRED = 'ERR_1126',
+  AUTH_OAUTH_PROVIDER_DISABLED = 'ERR_1127',
+  AUTH_OAUTH_PROVIDER_NOT_FOUND = 'ERR_1128',
+  AUTH_OAUTH_ACCOUNT_ALREADY_LINKED = 'ERR_1129',
+
   // Models errors (2000-2099)
   MODEL_NOT_FOUND = 'ERR_2000',
   MODEL_INACTIVE = 'ERR_2003',
@@ -141,6 +152,10 @@ export enum ErrorCode {
   // Tool errors (2200-2299)
   TOOL_NOT_FOUND = 'ERR_2200',
   TOOL_ALREADY_EXISTS = 'ERR_2201',
+
+  // Skill errors (2250-2299)
+  SKILL_NOT_FOUND = 'ERR_2250',
+  SKILL_ALREADY_EXISTS = 'ERR_2251',
 
   // Agent Type errors (2300-2399)
   AGENT_TYPE_NOT_FOUND = 'ERR_2300',
@@ -167,6 +182,24 @@ export enum ErrorCode {
   PLAYBOOK_EXECUTION_TIMEOUT = 'ERR_2507',
   PLAYBOOK_NO_TASKS = 'ERR_2508',
   PLAYBOOK_GENERATE_FAILED = 'ERR_2509',
+
+  // Auth Provider errors (2600-2699)
+  AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
+  AUTH_PROVIDER_ALREADY_EXISTS = 'ERR_2601',
+  AUTH_PROVIDER_IN_USE = 'ERR_2603',
+  // Connector errors (3100-3199)
+  CONNECTOR_NOT_FOUND = 'ERR_3100',
+  CONNECTOR_ALREADY_EXISTS = 'ERR_3101',
+  CONNECTOR_CREDENTIAL_NOT_FOUND = 'ERR_3110',
+
+  // Connected App errors (3000-3099)
+  CONNECTED_APP_NOT_FOUND = 'ERR_3000',
+  CONNECTED_APP_ALREADY_EXISTS = 'ERR_3001',
+  CONNECTED_APP_NOT_CONNECTED = 'ERR_3002',
+  CONNECTED_APP_OAUTH_STATE_INVALID = 'ERR_3003',
+  CONNECTED_APP_OAUTH_FAILED = 'ERR_3004',
+  CONNECTED_APP_TOKEN_REFRESH_FAILED = 'ERR_3005',
+  CONNECTED_APP_DISABLED = 'ERR_3007',
 }
 
 export const ErrorMessages: Record<ErrorCode, string> = {
@@ -280,6 +313,16 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.AUTH_TOKEN_MISSING]: 'Authentication token is required.',
 
+  [ErrorCode.AUTH_OAUTH_FAILED]: 'OAuth authentication failed.',
+  [ErrorCode.AUTH_OAUTH_STATE_INVALID]: 'Invalid or expired OAuth state. Please try again.',
+  [ErrorCode.AUTH_OAUTH_EMAIL_MISSING]: 'The OAuth provider did not return an email address.',
+  [ErrorCode.AUTH_OAUTH_LINK_REQUIRED]: 'An account with this email already exists. Check your email to link your account.',
+  [ErrorCode.AUTH_OAUTH_LINK_TOKEN_INVALID]: 'Invalid account linking token.',
+  [ErrorCode.AUTH_OAUTH_LINK_TOKEN_EXPIRED]: 'Account linking token has expired. Please try logging in again.',
+  [ErrorCode.AUTH_OAUTH_PROVIDER_DISABLED]: 'This authentication provider is currently disabled.',
+  [ErrorCode.AUTH_OAUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
+  [ErrorCode.AUTH_OAUTH_ACCOUNT_ALREADY_LINKED]: 'This provider account is already linked to another user.',
+
   [ErrorCode.MODEL_NOT_FOUND]: 'Model not found.',
   [ErrorCode.MODEL_INACTIVE]: 'This model is currently unavailable. Please select a different model.',
   [ErrorCode.LITELLM_CONNECTION_FAILED]: 'Failed to connect to LiteLLM service.',
@@ -293,6 +336,8 @@ export const ErrorMessages: Record<ErrorCode, string> = {
 
   [ErrorCode.TOOL_NOT_FOUND]: 'Tool not found.',
   [ErrorCode.TOOL_ALREADY_EXISTS]: 'A tool with this name already exists.',
+  [ErrorCode.SKILL_NOT_FOUND]: 'Skill not found.',
+  [ErrorCode.SKILL_ALREADY_EXISTS]: 'A skill with this name already exists.',
 
   [ErrorCode.AGENT_TYPE_NOT_FOUND]: 'Agent type not found.',
   [ErrorCode.AGENT_TYPE_ALREADY_EXISTS]: 'An agent type with this name already exists.',
@@ -316,4 +361,19 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_EXECUTION_TIMEOUT]: 'Playbook execution timed out due to inactivity.',
   [ErrorCode.PLAYBOOK_NO_TASKS]: 'Playbook has no tasks to execute.',
   [ErrorCode.PLAYBOOK_GENERATE_FAILED]: 'Failed to generate playbook.',
+
+  [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
+  [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',
+  [ErrorCode.AUTH_PROVIDER_IN_USE]: 'This authentication provider is in use and cannot be deleted.',
+  [ErrorCode.CONNECTED_APP_NOT_FOUND]: 'Connected app not found.',
+  [ErrorCode.CONNECTED_APP_ALREADY_EXISTS]: 'A connected app with this key already exists.',
+  [ErrorCode.CONNECTED_APP_NOT_CONNECTED]: 'User is not connected to this app.',
+  [ErrorCode.CONNECTED_APP_OAUTH_STATE_INVALID]: 'Invalid or expired OAuth state. Please try again.',
+  [ErrorCode.CONNECTED_APP_OAUTH_FAILED]: 'OAuth authentication with the app failed.',
+  [ErrorCode.CONNECTED_APP_TOKEN_REFRESH_FAILED]: 'Failed to refresh app token. Please reconnect.',
+  [ErrorCode.CONNECTED_APP_DISABLED]: 'This connected app is currently disabled.',
+
+  [ErrorCode.CONNECTOR_NOT_FOUND]: 'Connector not found.',
+  [ErrorCode.CONNECTOR_ALREADY_EXISTS]: 'A connector with this slug already exists.',
+  [ErrorCode.CONNECTOR_CREDENTIAL_NOT_FOUND]: 'Connector credential not found.',
 };

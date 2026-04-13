@@ -67,6 +67,37 @@ export class UserService {
   }
 
   /**
+   * Create a new OAuth user with a random unusable password hash.
+   * The user's email is considered verified (provider-verified).
+   */
+  async createOAuthUser(data: {
+    email: string;
+    profile?: { firstName?: string; lastName?: string };
+  }): Promise<UserDocument> {
+    const existingUser = await this.userModel.findOne({ email: data.email.toLowerCase() });
+    if (existingUser) {
+      throw new ConflictException(ErrorCode.USER_ALREADY_EXISTS, 'Email already registered');
+    }
+
+    const randomPassword = crypto.randomBytes(32).toString('hex');
+    const passwordHash = await bcrypt.hash(randomPassword, this.bcryptRounds);
+
+    const user = new this.userModel({
+      email: data.email.toLowerCase(),
+      passwordHash,
+      emailVerified: true,
+      profileComplete: false,
+      profile: data.profile || {},
+    });
+
+    await user.save();
+
+    this.logger.log('OAuth user created', { userId: user._id, email: user.email });
+
+    return user;
+  }
+
+  /**
    * Find user by ID
    */
   async findById(id: string): Promise<UserDocument | null> {

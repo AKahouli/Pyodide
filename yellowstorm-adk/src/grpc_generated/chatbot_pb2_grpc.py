@@ -61,6 +61,11 @@ class ChatbotServiceStub(object):
                 request_serializer=chatbot__pb2.RunStepRequest.SerializeToString,
                 response_deserializer=chatbot__pb2.StepResponse.FromString,
                 _registered_method=True)
+        self.RunStepStream = channel.unary_stream(
+                '/chatbot.ChatbotService/RunStepStream',
+                request_serializer=chatbot__pb2.RunStepRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.PlaybookStreamChunk.FromString,
+                _registered_method=True)
         self.ResumeStep = channel.unary_unary(
                 '/chatbot.ChatbotService/ResumeStep',
                 request_serializer=chatbot__pb2.ResumeStepRequest.SerializeToString,
@@ -118,6 +123,12 @@ class ChatbotServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RunStepStream(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def ResumeStep(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -169,6 +180,11 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
                     servicer.RunStep,
                     request_deserializer=chatbot__pb2.RunStepRequest.FromString,
                     response_serializer=chatbot__pb2.StepResponse.SerializeToString,
+            ),
+            'RunStepStream': grpc.unary_stream_rpc_method_handler(
+                    servicer.RunStepStream,
+                    request_deserializer=chatbot__pb2.RunStepRequest.FromString,
+                    response_serializer=chatbot__pb2.PlaybookStreamChunk.SerializeToString,
             ),
             'ResumeStep': grpc.unary_unary_rpc_method_handler(
                     servicer.ResumeStep,
@@ -328,6 +344,33 @@ class ChatbotService(object):
             '/chatbot.ChatbotService/RunStep',
             chatbot__pb2.RunStepRequest.SerializeToString,
             chatbot__pb2.StepResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RunStepStream(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/chatbot.ChatbotService/RunStepStream',
+            chatbot__pb2.RunStepRequest.SerializeToString,
+            chatbot__pb2.PlaybookStreamChunk.FromString,
             options,
             channel_credentials,
             insecure,

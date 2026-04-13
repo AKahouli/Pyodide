@@ -296,7 +296,20 @@ export class LoggerService implements NestLoggerService {
 
   private sanitize(data: Record<string, unknown>, depth = 0): Record<string, unknown> {
     const MAX_DEPTH = 10;
-    const sensitiveKeys = ['password', 'token', 'secret', 'authorization', 'apikey', 'api_key'];
+    const sensitiveKeys = [
+      'password',
+      'token',
+      'secret',
+      'authorization',
+      'apikey',
+      'api_key',
+      'accessToken',
+      'refreshToken',
+      'credentials',
+      'sessionId',
+      'cookie',
+      'set-cookie',
+    ];
 
     if (depth >= MAX_DEPTH) {
       return { _truncated: '[MAX_DEPTH_EXCEEDED]' };

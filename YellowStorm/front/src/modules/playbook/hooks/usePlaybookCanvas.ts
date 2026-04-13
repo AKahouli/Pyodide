@@ -46,8 +46,8 @@ function playbookEdgesToFlowEdges(edges: PlaybookEdge[]): Edge[] {
     id: edge.id,
     source: edge.sourceId,
     target: edge.targetId,
-    sourceHandle: edge.sourceOutputPortId ? `out-${edge.sourceOutputPortId}` : undefined,
-    targetHandle: edge.targetInputPortId ? `in-${edge.targetInputPortId}` : undefined,
+    sourceHandle: edge.sourceOutputPortId || undefined,
+    targetHandle: edge.targetInputPortId || undefined,
     type: 'animated',
     data: {
       sourceOutputPortId: edge.sourceOutputPortId || 'default',
@@ -217,19 +217,13 @@ export function usePlaybookCanvas() {
           return eds;
         }
 
-        const sourceOutputPortId = connection.sourceHandle?.replace('out-', '') ?? 'default';
-        const targetInputPortId = connection.targetHandle?.replace('in-', '') ?? 'default';
+        const sourceOutputPortId = connection.sourceHandle ?? 'default';
+        const targetInputPortId = connection.targetHandle ?? 'default';
 
-        const exists = eds.some((e) => {
-          const eData = (e.data || {}) as Record<string, unknown>;
-          return (
-            e.source === connection.source &&
-            e.target === connection.target &&
-            (eData.sourceOutputPortId as string) === sourceOutputPortId &&
-            (eData.targetInputPortId as string) === targetInputPortId
-          );
-        });
-        if (exists) return eds;
+        const newEdgeId = `e-${connection.source}-${sourceOutputPortId}-${connection.target}-${targetInputPortId}`;
+        if (eds.some((e) => e.id === newEdgeId)) {
+          return eds;
+        }
 
         const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
         const targetNode = nodesRef.current.find((n) => n.id === connection.target);
@@ -240,7 +234,7 @@ export function usePlaybookCanvas() {
         const isTypeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
 
         const newEdge: Edge = {
-          id: `e-${connection.source}-${sourceOutputPortId}-${connection.target}-${targetInputPortId}`,
+          id: newEdgeId,
           source: connection.source,
           target: connection.target,
           sourceHandle: connection.sourceHandle,
@@ -248,10 +242,9 @@ export function usePlaybookCanvas() {
           type: isTypeMatch !== false ? 'animated' : 'animated-warning',
           data: { sourceOutputPortId, targetInputPortId, isTypeMatch },
         };
-        const updated = addEdge(newEdge, eds) as Edge[];
         captureSnapshot();
-        deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
-        return updated;
+        deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges([...eds, newEdge])));
+        return [...eds, newEdge];
       });
     },
     [updateEdges, captureSnapshot],

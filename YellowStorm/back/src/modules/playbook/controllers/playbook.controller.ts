@@ -9,12 +9,15 @@ import {
   Param,
   Query,
   UseGuards,
+  Res,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
+import { Public } from '../../auth/decorators/public.decorator';
 import { PlaybookService } from '../services/playbook.service';
 import { PlaybookExecutionService } from '../services/playbook-execution.service';
 import { PlaybookDesignService } from '../services/playbook-design.service';
+import { PlaybookJudgeEnrichmentService } from '../services/playbook-judge-enrichment.service';
 import { PlaybookReplayService } from '../services/playbook-replay.service';
 import { PlaybookOutputFormatService } from '../services/playbook-output-format.service';
 import { PlaybookStreamGatewayService } from '../services/playbook-stream-gateway.service';
@@ -41,7 +44,12 @@ import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto'
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
 import { UpdateOutputFormatTemplateDto } from '../dto/update-output-format-template.dto';
 import { RerunStepDto } from '../dto/rerun-step.dto';
+import { GetAdvisorRemediationsDto, ApplyAdvisorRemediationsDto } from '../dto/advisor-remediation.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
+import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
+import type { Response } from 'express';
+import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.decorator';
+import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -51,6 +59,7 @@ export class PlaybookController {
     private readonly playbookService: PlaybookService,
     private readonly executionService: PlaybookExecutionService,
     private readonly designService: PlaybookDesignService,
+    private readonly judgeService: PlaybookJudgeEnrichmentService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly streamGateway: PlaybookStreamGatewayService,
@@ -82,6 +91,46 @@ export class PlaybookController {
     @Body() dto: GeneratePlaybookDto,
   ) {
     return this.designService.generatePlaybook(user._id.toString(), dto, user.email);
+  }
+
+  @Post('rewrite-prompt')
+  @UseGuards(UsageLimitGuard)
+  @CheckUsage()
+  @SkipResponseWrap()
+  async rewritePrompt(
+    @CurrentUser() user: { _id: string; email: string },
+    @Body() dto: RewritePromptDto,
+    @Res() res: Response,
+  ) {
+    res.status(200);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    let fullText = '';
+
+    try {
+      const result = await this.designService.rewritePromptStream(
+        user._id.toString(),
+        dto.prompt,
+        (chunk) => {
+          fullText += chunk;
+          res.write(chunk);
+          res.flush?.();
+        },
+      );
+
+      res.end();
+      return;
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(503);
+      }
+      res.end();
+      return;
+    }
   }
 
   @Post('bulk-delete')
@@ -162,6 +211,67 @@ export class PlaybookController {
     return this.designService.designPlaybook(user._id.toString(), id, dto, user.email);
   }
 
+  @Post(':id/judge/update-current')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async updateFromJudge(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() body: { executionId: string },
+  ) {
+    return this.judgeService.applyCurrentPlaybook(user._id.toString(), id, body.executionId);
+  }
+
+  @Post(':id/judge/generate-new')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async generateFromJudge(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() body: { executionId: string },
+  ) {
+    return this.judgeService.generateNewPlaybook(user._id.toString(), id, body.executionId);
+  }
+
+  @Post(':id/judge/optimize-step')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async optimizeStepFromJudge(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() body: { executionId: string; taskId: string },
+  ) {
+    return this.judgeService.optimizeStep(user._id.toString(), id, body.executionId, body.taskId);
+  }
+
+  @Get(':id/executions/:executionId/advisor-remediations')
+  @UseGuards(PlaybookOwnerGuard)
+  async getAdvisorRemediations(
+    @Param('id') id: string,
+    @Param('executionId') executionId: string,
+    @Query() dto: GetAdvisorRemediationsDto,
+  ) {
+    return this.judgeService.getRemediations(executionId, dto.taskId);
+  }
+
+  @Post(':id/executions/:executionId/advisor-remediations/apply')
+  @UseGuards(PlaybookOwnerGuard, UsageLimitGuard)
+  @CheckUsage()
+  async applyAdvisorRemediations(
+    @CurrentUser() user: { _id: string; email: string },
+    @Param('id') id: string,
+    @Param('executionId') executionId: string,
+    @Body() dto: ApplyAdvisorRemediationsDto,
+  ) {
+    return this.judgeService.applyRemediations(
+      user._id.toString(),
+      id,
+      executionId,
+      dto.selectedIds || [],
+      dto.mode === 'generate-new' ? 'generate-new' : 'update-current',
+    );
+  }
+
   @Get(':id/design-messages')
   @UseGuards(PlaybookOwnerGuard)
   async getDesignMessages(@Param('id') id: string) {
@@ -189,6 +299,24 @@ export class PlaybookController {
     return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email, {
       executionTrigger: 'manual',
     });
+  }
+
+  @Post(':id/integration-link')
+  @UseGuards(PlaybookOwnerGuard)
+  async getIntegrationLink(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+  ): Promise<PlaybookIntegrationLinkResponse> {
+    return this.playbookService.getOrCreateIntegrationToken(id, user._id.toString());
+  }
+
+  @Post('public/:token/execute')
+  @Public()
+  async executePublic(
+    @Param('token') token: string,
+    @Body() dto: ExecutePlaybookDto,
+  ) {
+    return this.executionService.executePlaybookByIntegrationToken(token, dto);
   }
 
   @Post(':id/tasks/:taskId/validate-replay')
@@ -319,7 +447,12 @@ export class PlaybookController {
       dto.taskId,
       dto.runEvaluation === true,
       dto.executionMode,
+      dto.streaming === true,
+      dto.runNodeReflection !== false,
       user.email,
+      dto.advisorAutopilotEnabled === true,
+      dto.advisorAutopilotTargetScore,
+      dto.advisorAutopilotMaxTurns,
     );
   }
 
@@ -336,6 +469,7 @@ export class PlaybookController {
       id,
       executionId,
       dto.taskId,
+      dto.streaming === true,
       user.email,
     );
   }

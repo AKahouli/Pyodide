@@ -3,7 +3,7 @@
  */
 
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
-import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse } from './types';
+import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse, AuthProviderPublic } from './types';
 
 /**
  * Register a new user
@@ -73,6 +73,27 @@ export async function forgotPassword(email: string): Promise<{ message: string }
  */
 export async function resetPassword(token: string, password: string): Promise<{ message: string }> {
   const response = await apiClient.post<ApiResponse<{ message: string }>>(API_ENDPOINTS.auth.resetPassword, { token, password });
+  return response.data.data;
+}
+
+/**
+ * Get all enabled auth providers (public) — unified list including classic + OAuth
+ */
+export async function getAuthProviders(): Promise<AuthProviderPublic[]> {
+  const response = await apiClient.get<ApiResponse<AuthProviderPublic[]>>(API_ENDPOINTS.auth.oauthProviders);
+  return response.data.data;
+}
+
+/**
+ * @deprecated Use getAuthProviders() instead
+ */
+export const getOAuthProviders = getAuthProviders;
+
+/**
+ * Exchange OAuth temp token for JWT + refresh cookie
+ */
+export async function exchangeOAuthToken(token: string): Promise<LoginResponse> {
+  const response = await apiClient.post<ApiResponse<LoginResponse>>(API_ENDPOINTS.auth.oauthExchange, { token });
   return response.data.data;
 }
 

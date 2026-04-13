@@ -32,7 +32,11 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
     case 'text':
       return {
         type,
-        data: { content: comp.text?.content || '' },
+        data: {
+          content: comp.text?.content || '',
+          outputPortId: comp.text?.output_port_id || '',
+          output_port_id: comp.text?.output_port_id || '',
+        },
       };
     case 'code':
       return {
@@ -41,6 +45,8 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
           content: comp.code?.content || '',
           language: comp.code?.language || '',
           filename: comp.code?.filename || '',
+          outputPortId: comp.code?.output_port_id || '',
+          output_port_id: comp.code?.output_port_id || '',
         },
       };
     case 'reasoning':
@@ -142,7 +148,14 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         type,
         data: {
           filePath: comp.artifact?.file_path || '',
+          file_path: comp.artifact?.file_path || '',
           filename: comp.artifact?.filename || '',
+          outputPortId: comp.artifact?.output_port_id || '',
+          output_port_id: comp.artifact?.output_port_id || '',
+          artifactKind: comp.artifact?.artifact_kind || '',
+          artifact_kind: comp.artifact?.artifact_kind || '',
+          mimeType: comp.artifact?.mime_type || '',
+          mime_type: comp.artifact?.mime_type || '',
         },
       };
     case 'citation': {

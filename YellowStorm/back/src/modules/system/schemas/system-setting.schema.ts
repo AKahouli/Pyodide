@@ -31,6 +31,9 @@ export class RegistrationValue {
 
   @Prop()
   disabledBy?: string;
+
+  @Prop({ default: true })
+  classicAuthEnabled?: boolean;
 }
 
 @Schema({

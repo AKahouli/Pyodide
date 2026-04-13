@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { PlaybookService } from './playbook.service';
@@ -16,8 +17,17 @@ import { BadRequestException, ServiceUnavailableException } from '../../exceptio
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentService } from '../../agent/agent.service';
 import { ModelsService } from '../../models/models.service';
+import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { UsageService } from '../../usage/usage.service';
 import { UsageType } from '../../usage/schemas/usage.schema';
+import type { AxiosResponse } from 'axios';
+import { PlaybookPromptService } from './playbook-prompt.service';
+
+const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
+  'You rewrite workflow prompts for a playbook builder.',
+  'Improve clarity, specificity, structure, and actionability while preserving the user\'s intent.',
+  'Return only the rewritten prompt as plain text, with no preamble, no bullets, and no quotes.',
+].join(' ');
 
 @Injectable()
 export class PlaybookDesignService {
@@ -27,12 +37,49 @@ export class PlaybookDesignService {
     private readonly playbookService: PlaybookService,
     private readonly grpcService: PlaybookGrpcService,
     private readonly contextService: PlaybookContextService,
+    private readonly promptService: PlaybookPromptService,
     private readonly agentService: AgentService,
     private readonly modelsService: ModelsService,
+    private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly configService: ConfigService,
     private readonly usageService: UsageService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('PlaybookDesignService');
+  }
+
+  private extractChatCompletionText(responseData: any): string | null {
+    const content = responseData?.choices?.[0]?.message?.content;
+    if (typeof content === 'string') {
+      return content.trim() || null;
+    }
+
+    if (Array.isArray(content)) {
+      const text = content
+        .map((item) => (typeof item?.text === 'string' ? item.text : ''))
+        .join('\n')
+        .trim();
+      return text || null;
+    }
+
+    return null;
+  }
+
+  private normalizeRewritePrompt(text: string): string {
+    return text
+      .trim()
+      .replace(/^```(?:text)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .replace(/^(rewritten prompt|rewrite|prompt rewrite)\s*:\s*/i, '')
+      .trim();
+  }
+
+  private async getPromptRewriteSystemPrompt(): Promise<string> {
+    const prompt = await this.promptService.findByKey('design.prompt_rewrite');
+    if (prompt?.enabled && prompt.systemTemplate?.trim()) {
+      return prompt.systemTemplate.trim();
+    }
+    return this.configService.get<string>('playbook.promptRewriteSystemPrompt')?.trim() || FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT;
   }
 
   /**
@@ -60,6 +107,7 @@ export class PlaybookDesignService {
     // Build workspace contexts
     const workspaceIds = (dto.workspaces || []).map((id) => id);
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
+    const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     const modelId = defaultModel?.litellmModel || defaultModel?.id || '';
 
@@ -69,6 +117,7 @@ export class PlaybookDesignService {
       workspace_context: workspaceContexts,
       existing_playbook: null,
       model: modelId,
+      prompt_overrides: promptOverrides,
     };
 
     this.logger.log('GeneratePlaybook gRPC request built', {
@@ -128,6 +177,164 @@ export class PlaybookDesignService {
     }
   }
 
+  async rewritePrompt(userId: string, prompt: string): Promise<{ prompt: string }> {
+    const sourcePrompt = prompt.trim();
+    this.logger.log('rewritePrompt called', { userId, prompt: sourcePrompt.slice(0, 100) });
+
+    if (!sourcePrompt) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+
+    const httpClient = this.liteLLMConnectionService.getHttpClient();
+    if (!httpClient) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    if (!model) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const systemPrompt = await this.getPromptRewriteSystemPrompt();
+    const userPrompt = `<original_prompt>\n${sourcePrompt}\n</original_prompt>`;
+
+    try {
+      const response = await httpClient.post('/v1/chat/completions', {
+        model,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }, {
+        timeout: 30000,
+      });
+
+      const rewrittenPrompt = this.normalizeRewritePrompt(this.extractChatCompletionText(response.data) || sourcePrompt);
+
+      const usage = response.data?.usage;
+      if (usage) {
+        this.usageService.recordUsage({
+          userId,
+          inputTokens: usage.prompt_tokens || usage.input_tokens || 0,
+          outputTokens: usage.completion_tokens || usage.output_tokens || 0,
+          usageType: UsageType.PLAYBOOK,
+          modelName: usage.model || model,
+          endpoint: 'playbook.rewrite-prompt',
+        }).catch((err) => this.logger.warn('Failed to record rewrite usage', { error: (err as Error).message }));
+      }
+
+      return { prompt: rewrittenPrompt };
+    } catch (error) {
+      this.logger.error('Prompt rewrite failed', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+  }
+
+  async rewritePromptStream(
+    userId: string,
+    prompt: string,
+    onChunk: (chunk: string) => void,
+  ): Promise<{ prompt: string }> {
+    const sourcePrompt = prompt.trim();
+    this.logger.log('rewritePromptStream called', { userId, prompt: sourcePrompt.slice(0, 100) });
+
+    if (!sourcePrompt) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+
+    const httpClient = this.liteLLMConnectionService.getHttpClient();
+    if (!httpClient) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    if (!model) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    const systemPrompt = await this.getPromptRewriteSystemPrompt();
+    const userPrompt = `<original_prompt>\n${sourcePrompt}\n</original_prompt>`;
+
+    let pending = '';
+    let streamedText = '';
+
+    try {
+      const response = await httpClient.post('/v1/chat/completions', {
+        model,
+        temperature: 0.2,
+        stream: true,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }, {
+        timeout: 30000,
+        responseType: 'stream',
+      }) as AxiosResponse;
+
+      for await (const rawChunk of response.data as AsyncIterable<Buffer | string>) {
+        const chunk = Buffer.isBuffer(rawChunk) ? rawChunk.toString('utf8') : String(rawChunk);
+        pending += chunk;
+
+        let separatorIndex = pending.indexOf('\n\n');
+        while (separatorIndex !== -1) {
+          const event = pending.slice(0, separatorIndex).trim();
+          pending = pending.slice(separatorIndex + 2);
+
+          const payload = event
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.replace(/^data:\s*/, ''))
+            .join('\n')
+            .trim();
+
+          if (payload && payload !== '[DONE]') {
+            try {
+              const parsed = JSON.parse(payload);
+              const delta = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content;
+              if (typeof delta === 'string' && delta) {
+                streamedText += delta;
+                onChunk(delta);
+              }
+            } catch {
+              // Ignore malformed streaming chunks and continue.
+            }
+          }
+
+          separatorIndex = pending.indexOf('\n\n');
+        }
+      }
+
+      const result = this.normalizeRewritePrompt(streamedText || sourcePrompt);
+
+      const usage = response.data?.usage;
+      if (usage) {
+        this.usageService.recordUsage({
+          userId,
+          inputTokens: usage.prompt_tokens || usage.input_tokens || 0,
+          outputTokens: usage.completion_tokens || usage.output_tokens || 0,
+          usageType: UsageType.PLAYBOOK,
+          modelName: usage.model || model,
+          endpoint: 'playbook.rewrite-prompt',
+        }).catch((err) => this.logger.warn('Failed to record rewrite usage', { error: (err as Error).message }));
+      }
+
+      return { prompt: result };
+    } catch (error) {
+      this.logger.error('Prompt rewrite stream failed', {
+        userId,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+  }
+
   async designPlaybook(
     userId: string,
     playbookId: string,
@@ -159,6 +366,7 @@ export class PlaybookDesignService {
 
     // Build workspace contexts
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(playbook.workspaces || []);
+    const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     const modelId = defaultModel?.litellmModel || defaultModel?.id || '';
 
@@ -186,9 +394,12 @@ export class PlaybookDesignService {
         edges: playbook.edges.map((e) => ({
           source_id: e.sourceId,
           target_id: e.targetId,
+          source_output_port_id: e.sourceOutputPortId || 'default',
+          target_input_port_id: e.targetInputPortId || 'default',
         })),
       },
       model: modelId,
+      prompt_overrides: promptOverrides,
     };
 
     this.logger.log('Design gRPC request built', {
@@ -287,12 +498,34 @@ export class PlaybookDesignService {
       maxClarifications: node.max_clarifications || 3,
       inputKeys: node.input_keys || [],
       outputKey: node.output_key || '',
+      taskType: node.task_type || 'generic',
+      inputPorts:
+        (node.input_ports || []).length > 0
+          ? node.input_ports.map((p: any) => ({
+              id: p.id || `in-${idx}`,
+              name: p.name || 'Input',
+              artifactKind: p.artifact_kind || 'text',
+              required: p.required ?? false,
+              description: p.description || '',
+            }))
+          : [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+      outputPorts:
+        (node.output_ports || []).length > 0
+          ? node.output_ports.map((p: any) => ({
+              id: p.id || `out-${idx}`,
+              name: p.name || 'Output',
+              artifactKind: p.artifact_kind || 'text',
+              description: p.description || '',
+            }))
+          : [{ id: 'default', name: 'Output', artifactKind: 'text' }],
     }));
 
     const edges = grpcEdges.map((edge: any, idx: number) => ({
       id: `edge-${idx}`,
       sourceId: edge.source_id,
       targetId: edge.target_id,
+      sourceOutputPortId: edge.source_output_port_id || 'default',
+      targetInputPortId: edge.target_input_port_id || 'default',
     }));
 
     return { tasks, edges };
@@ -328,8 +561,8 @@ export class PlaybookDesignService {
       }
     }
 
-    const oldEdgeKeys = new Set(oldEdges.map((e) => `${e.sourceId}-${e.targetId}`));
-    const newEdgeKeys = new Set(newEdges.map((e) => `${e.sourceId}-${e.targetId}`));
+    const oldEdgeKeys = new Set(oldEdges.map((e) => this.buildEdgeKey(e)));
+    const newEdgeKeys = new Set(newEdges.map((e) => this.buildEdgeKey(e)));
     const edgesAdded = [...newEdgeKeys].filter((k) => !oldEdgeKeys.has(k)).length;
     const edgesRemoved = [...oldEdgeKeys].filter((k) => !newEdgeKeys.has(k)).length;
 
@@ -356,5 +589,13 @@ export class PlaybookDesignService {
       createdAt: message.createdAt?.toISOString?.() || message.createdAt,
       updatedAt: message.updatedAt?.toISOString?.() || message.updatedAt,
     };
+  }
+
+  private buildEdgeKey(edge: any): string {
+    const sourceId = edge.sourceId ?? edge.source_id ?? '';
+    const targetId = edge.targetId ?? edge.target_id ?? '';
+    const sourcePortId = edge.sourceOutputPortId ?? edge.source_output_port_id ?? 'default';
+    const targetPortId = edge.targetInputPortId ?? edge.target_input_port_id ?? 'default';
+    return `${sourceId}:${sourcePortId}->${targetId}:${targetPortId}`;
   }
 }

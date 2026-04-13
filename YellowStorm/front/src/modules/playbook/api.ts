@@ -3,7 +3,7 @@
  */
 
 import apiClient, { type ApiResponse } from '@/lib/api/client';
-import { API_ENDPOINTS } from '@/lib/api/config';
+import { API_CONFIG, API_ENDPOINTS, AUTH_STORAGE_KEYS } from '@/lib/api/config';
 import type {
   Playbook,
   PlaybookSummary,
@@ -13,6 +13,8 @@ import type {
   DesignMessage,
   CreatePlaybookData,
   GeneratePlaybookData,
+  RewritePlaybookPromptData,
+  RewritePlaybookPromptResult,
   DesignPlaybookData,
   UpdatePlaybookData,
   ExecutePlaybookData,
@@ -26,6 +28,8 @@ import type {
   GrabOutputFormatTemplateData,
   UpdateOutputFormatTemplateData,
   OutputFormatTemplate,
+  AdvisorRemediationItem,
+  ApplyRemediationsData,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -64,10 +68,25 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       notifyOnComplete: task.notifyOnComplete,
       notifyEmails: task.notifyEmails,
       stepReplayMode: task.stepReplayMode,
-      inputFiles: task.inputFiles,
+      inputFiles: task.inputFiles?.map((f) => ({
+        type: f.type,
+        id: f.id,
+        name: f.name,
+        workspaceId: f.workspaceId,
+        portId: f.portId,
+        metadata: f.metadata ? {
+          workspaceId: f.metadata.workspaceId,
+          documentId: f.metadata.documentId,
+          filename: f.metadata.filename,
+          filepath: f.metadata.filepath,
+          language: f.metadata.language,
+          mimeType: f.metadata.mimeType,
+        } : undefined,
+      })),
       taskType: task.taskType,
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
+      toolBindings: task.toolBindings,
     })),
   };
 }
@@ -113,6 +132,53 @@ export async function generatePlaybook(
   return response.data.data;
 }
 
+export async function rewritePlaybookPrompt(
+  data: RewritePlaybookPromptData,
+): Promise<RewritePlaybookPromptResult> {
+  const response = await apiClient.post<ApiResponse<RewritePlaybookPromptResult>>(
+    API_ENDPOINTS.playbooks.rewritePrompt,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function rewritePlaybookPromptStream(
+  data: RewritePlaybookPromptData,
+  onChunk: (chunk: string) => void,
+): Promise<RewritePlaybookPromptResult> {
+  const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+  const response = await fetch(`${API_CONFIG.baseURL}${API_ENDPOINTS.playbooks.rewritePrompt}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(data),
+    credentials: 'include',
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let fullText = '';
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    const chunk = decoder.decode(value, { stream: true });
+    if (!chunk) continue;
+    fullText += chunk;
+    onChunk(chunk);
+  }
+
+  fullText += decoder.decode();
+  return { prompt: fullText.trim() };
+}
+
 export async function updatePlaybook(
   id: string,
   data: UpdatePlaybookData,
@@ -120,6 +186,55 @@ export async function updatePlaybook(
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
     sanitizePlaybookUpdate(data),
+  );
+  return response.data.data;
+}
+
+export async function updatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(id)}/judge/update-current`,
+    { executionId },
+  );
+  return response.data.data;
+}
+
+export async function generatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(id)}/judge/generate-new`,
+    { executionId },
+  );
+  return response.data.data;
+}
+
+export async function optimizeStepFromJudge(id: string, executionId: string, taskId: string): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(id)}/judge/optimize-step`,
+    { executionId, taskId },
+  );
+  return response.data.data;
+}
+
+export async function fetchAdvisorRemediations(
+  playbookId: string,
+  executionId: string,
+  taskId?: string,
+): Promise<AdvisorRemediationItem[]> {
+  const params = taskId ? { taskId } : {};
+  const response = await apiClient.get<ApiResponse<AdvisorRemediationItem[]>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations`,
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function applyAdvisorRemediations(
+  playbookId: string,
+  executionId: string,
+  data: ApplyRemediationsData,
+): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations/apply`,
+    data,
   );
   return response.data.data;
 }
@@ -135,6 +250,13 @@ export async function executePlaybook(
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbooks.execute(id),
     data || {},
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookIntegrationToken(id: string): Promise<{ token: string }> {
+  const response = await apiClient.post<ApiResponse<{ token: string }>>(
+    API_ENDPOINTS.playbooks.integrationLink(id),
   );
   return response.data.data;
 }
@@ -187,7 +309,7 @@ export async function rerunPlaybookStep(
 export async function resumePlaybookFromStep(
   playbookId: string,
   executionId: string,
-  data: { taskId: string },
+  data: { taskId: string; streaming?: boolean },
 ): Promise<{ status: string; executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ status: string; executionId: string }>>(
     API_ENDPOINTS.playbooks.resumeFromStep(playbookId, executionId),

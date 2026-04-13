@@ -14,6 +14,9 @@ export interface Agent {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   tools: string[];
+  skills?: string[];
+  disabledSkills?: string[];
+  connectors?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -27,7 +30,14 @@ export interface AgentType {
   name: string;
   slug: string;
   prePrompt: string;
+  skills?: string[];
   isActive: boolean;
+}
+
+export interface SkillOption {
+  id: string;
+  name: string;
+  description: string;
 }
 
 export interface AgentState {
@@ -65,6 +75,9 @@ export interface CreateAgentData {
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -80,6 +93,9 @@ export interface UpdateAgentData {
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }

@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import json
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -24,6 +25,7 @@ from src.langgraph_engine.graph_cache import (
     cleanup_stale_graphs,
 )
 from src.langgraph_engine.playbook_queue import register_queue, get_queue, remove_queue
+from src.langgraph_engine.port_resolution import validate_port_routing
 
 logger = get_logger(__name__)
 
@@ -88,6 +90,33 @@ def _extract_interrupt_from_stream_chunk(chunk: Any, thread_id: str) -> Optional
     first_interrupt = interrupt_candidates[0]
     interrupt_value = getattr(first_interrupt, "value", first_interrupt)
     return _normalize_interrupt_value(interrupt_value, thread_id)
+
+
+def _build_resume_state_update(interrupt_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not interrupt_data or interrupt_data.get("type") != "clarification":
+        return None
+
+    task_id = str(interrupt_data.get("task_id") or "").strip()
+    if not task_id:
+        return None
+
+    conversation_json = interrupt_data.get("conversation_json") or "[]"
+    try:
+        transcript = json.loads(conversation_json)
+    except (TypeError, ValueError):
+        transcript = []
+
+    if not isinstance(transcript, list):
+        transcript = []
+
+    task_description = str(interrupt_data.get("task_description") or "").strip()
+
+    update: Dict[str, Any] = {
+        "clarification_transcripts_by_task": {task_id: transcript},
+    }
+    if task_description:
+        update["task_description_overrides_by_task"] = {task_id: task_description}
+    return update
 
 
 async def _consume_graph_stream(
@@ -164,9 +193,12 @@ async def run_playbook(
     validated_replays_by_task: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
     step_execution_modes: Optional[Dict[str, str]] = None,
+    prompt_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute a playbook workflow with dynamic graph."""
     cleanup_stale_graphs()
+
+    validate_port_routing(tasks, edges)
 
     if thread_id is None:
         thread_id = f"{playbook_id}_{uuid.uuid4().hex[:8]}"
@@ -205,6 +237,10 @@ async def run_playbook(
         "validated_replays_by_task": validated_replays_by_task or {},
         "step_execution_modes": step_execution_modes or {},
         "task_outputs": {},
+        "artifacts_by_port": {},
+        "prompt_overrides": prompt_overrides or {},
+        "clarification_transcripts_by_task": {},
+        "task_description_overrides_by_task": {},
     }
 
     config = {"configurable": {"thread_id": thread_id}}
@@ -313,9 +349,12 @@ async def resume_playbook(
     logger.info("[resume_playbook] Resuming", thread_id=thread_id, playbook_id=playbook_id)
 
     try:
+        state_snapshot = await graph.aget_state(config)
+        resume_interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, thread_id)
+        resume_state_update = _build_resume_state_update(resume_interrupt_data)
         interrupt_data, result = await _consume_graph_stream(
             graph=graph,
-            graph_input=Command(resume=human_response),
+            graph_input=Command(update=resume_state_update, resume=human_response),
             config=config,
             thread_id=thread_id,
         )
@@ -379,9 +418,13 @@ async def run_single_step_graph(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    edges: Optional[List[Dict[str, Any]]] = None,
+    upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
+    on_progress=None,
+    prompt_overrides: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     """Execute a single task via a dedicated LangGraph for HITL support.
 
@@ -392,21 +435,40 @@ async def run_single_step_graph(
     from src.langgraph_engine.graph_cache import store_thread_graph, cleanup_thread_graph
     from src.langgraph_engine.step_executor import _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot
 
+    def _normalize_port_id(value: Any) -> str:
+        raw = str(value or "default").strip() or "default"
+        if raw.startswith(("in-", "out-")):
+            return raw.split("-", 1)[1] or "default"
+        return raw
+
     checkpointer = await get_checkpointer()
     builder = DynamicGraphBuilder(checkpointer=checkpointer)
 
     task_id = task.get("id", "single_step")
     thread_id = f"step_{task_id}_{uuid.uuid4().hex[:8]}"
 
+    upstream_results_map = {
+        str(item.get("task_id") or "").strip(): item
+        for item in (upstream_results or [])
+        if isinstance(item, dict) and str(item.get("task_id") or "").strip()
+    }
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for upstream_task_id, upstream_result in upstream_results_map.items():
+        for artifact in upstream_result.get("artifacts") or []:
+            if not isinstance(artifact, dict):
+                continue
+            port_id = _normalize_port_id(artifact.get("port_id") or artifact.get("portId") or "default")
+            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(artifact)
+
     initial_state: ExecutionState = {
         "playbook_id": task_id,
         "thread_id": thread_id,
         "tasks": [task],
-        "edges": [],
+        "edges": edges or [],
         "agents": {agent.get("id", "agent_single"): agent},
         "current_task_ids": [],
         "completed_task_ids": [],
-        "results": {},
+        "results": upstream_results_map,
         "status": "in_progress",
         "error": None,
         "interrupt_payload": None,
@@ -418,6 +480,10 @@ async def run_single_step_graph(
         "validated_replays_by_task": {task_id: validated_replay} if validated_replay else {},
         "step_execution_modes": {},
         "task_outputs": {},
+        "artifacts_by_port": artifacts_by_port,
+        "prompt_overrides": prompt_overrides or {},
+        "clarification_transcripts_by_task": {},
+        "task_description_overrides_by_task": {},
     }
 
     if context_from_dependencies:
@@ -524,7 +590,10 @@ async def resume_single_step(
     logger.info("[resume_single_step] Resuming", thread_id=thread_id, task_id=task_id)
 
     try:
-        final_state = await graph.ainvoke(Command(resume=human_response), config)
+        state_snapshot = await graph.aget_state(config)
+        resume_interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
+        resume_state_update = _build_resume_state_update(resume_interrupt_data)
+        final_state = await graph.ainvoke(Command(update=resume_state_update, resume=human_response), config)
 
         state_snapshot = await graph.aget_state(config)
         if state_snapshot.next:

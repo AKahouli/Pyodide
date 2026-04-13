@@ -1,5 +1,6 @@
-import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown,CalendarClock } from 'lucide-react';
+import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown, CalendarClock, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   DropdownMenu,
@@ -32,10 +33,16 @@ interface Props {
   canRun: boolean;
   executionMode: 'live' | 'inherit';
   onExecutionModeChange: (mode: 'live' | 'inherit') => void;
+  nodeReflectionEnabled: boolean;
+  onNodeReflectionChange: (enabled: boolean) => void;
+  advisorAutopilotEnabled?: boolean;
+  onAdvisorAutopilotChange?: (enabled: boolean) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onDownloadAllResults?: () => void;
+  canDownloadAllResults?: boolean;
   /** Opens schedule dialog (design mode). */
   onSchedule?: () => void;
 }
@@ -59,10 +66,16 @@ export function PlaybookToolbar({
   canRun,
   executionMode,
   onExecutionModeChange,
+  nodeReflectionEnabled,
+  onNodeReflectionChange,
+  advisorAutopilotEnabled = false,
+  onAdvisorAutopilotChange,
   canUndo,
   canRedo,
   onUndo,
   onRedo,
+  onDownloadAllResults,
+  canDownloadAllResults = false,
   onSchedule,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
@@ -114,6 +127,16 @@ export function PlaybookToolbar({
           <SelectItem value="inherit">{t('toolbar.executionMode.inherit')}</SelectItem>
         </SelectContent>
       </Select>
+      <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
+        <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />
+        <span>{t('toolbar.advisor')}</span>
+      </div>
+      {onAdvisorAutopilotChange && (
+        <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
+          <Switch checked={advisorAutopilotEnabled} onCheckedChange={onAdvisorAutopilotChange} />
+          <span>{t('toolbar.stepAutopilot')}</span>
+        </div>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <div className="flex">
@@ -147,6 +170,12 @@ export function PlaybookToolbar({
         <LayoutGrid className="h-4 w-4 sm:mr-1" />
         <span className="hidden sm:inline">{t('toolbar.autoLayout')}</span>
       </Button>
+      {onDownloadAllResults && (
+        <Button variant="outline" size="sm" onClick={onDownloadAllResults} disabled={!canDownloadAllResults} className="px-2 sm:px-3">
+          <Download className="h-4 w-4 sm:mr-1" />
+          <span className="hidden sm:inline">{t('execution.downloadAllResults')}</span>
+        </Button>
+      )}
       {showCopilotAction && (
         <Button
           variant={copilotOpen ? 'default' : 'outline'}

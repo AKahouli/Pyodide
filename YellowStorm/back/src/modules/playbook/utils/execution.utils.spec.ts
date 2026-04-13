@@ -5,6 +5,7 @@ import {
   pLimit,
   mergeWithExistingHumanFeedback,
   topologicalSortByLevel,
+  extractArtifactsFromResult,
   MAX_COMPONENTS_PER_TASK_DEFAULT,
   MAX_COMPONENT_DATA_BYTES_DEFAULT,
 } from './execution.utils';
@@ -220,6 +221,198 @@ describe('execution.utils', () => {
       // Verify the defaults are exported and reasonable
       expect(MAX_COMPONENTS_PER_TASK_DEFAULT).toBe(200);
       expect(MAX_COMPONENT_DATA_BYTES_DEFAULT).toBe(500_000);
+    });
+  });
+
+  describe('extractArtifactsFromResult', () => {
+    it('routes explicit same-kind file outputs by port id', () => {
+      mockExtractComponentData.mockImplementation((comp: any) => {
+        if (comp.id === 'artifact-1') {
+          return {
+            type: 'artifact' as any,
+            data: {
+              artifact_kind: 'document',
+              output_port_id: 'out-pdf',
+              file_path: 'https://example.com/report.pdf',
+              filename: 'report.pdf',
+            },
+          };
+        }
+
+        return {
+          type: 'artifact' as any,
+          data: {
+            artifact_kind: 'document',
+            output_port_id: 'out-pptx',
+            file_path: 'https://example.com/deck.pptx',
+            filename: 'deck.pptx',
+          },
+        };
+      });
+
+      const result = extractArtifactsFromResult(
+        {
+          id: 'task-1',
+          outputPorts: [
+            { id: 'out-pdf', name: 'PDF', artifactKind: 'document' },
+            { id: 'out-pptx', name: 'pptx', artifactKind: 'document' },
+          ],
+        },
+        [{ id: 'artifact-1' }, { id: 'artifact-2' }],
+      );
+
+      expect(result).toEqual([
+        {
+          portId: 'out-pdf',
+          artifactKind: 'document',
+          url: 'https://example.com/report.pdf',
+          filename: 'report.pdf',
+          mimeType: '',
+        },
+        {
+          portId: 'out-pptx',
+          artifactKind: 'document',
+          url: 'https://example.com/deck.pptx',
+          filename: 'deck.pptx',
+          mimeType: '',
+        },
+      ]);
+    });
+
+    it('routes same-kind file outputs by filename when possible', () => {
+      mockExtractComponentData.mockReturnValue({
+        type: 'artifact' as any,
+        data: {
+          artifact_kind: 'document',
+          file_path: 'https://example.com/report.pdf',
+          filename: 'report.pdf',
+        },
+      });
+
+      const result = extractArtifactsFromResult(
+        {
+          id: 'task-1',
+          outputPorts: [
+            { id: 'out-pdf', name: 'PDF', artifactKind: 'document' },
+            { id: 'out-docx', name: 'DOCX', artifactKind: 'document' },
+          ],
+        },
+        [{ id: 'artifact-1' }],
+      );
+
+      expect(result).toEqual([
+        {
+          portId: 'out-pdf',
+          artifactKind: 'document',
+          url: 'https://example.com/report.pdf',
+          filename: 'report.pdf',
+          mimeType: '',
+        },
+      ]);
+    });
+
+    it('infers the output port from the generated filename when possible', () => {
+      mockExtractComponentData.mockReturnValue({
+        type: 'artifact' as any,
+        data: {
+          artifact_kind: 'document',
+          file_path: 'https://example.com/out-0f975e8a.pdf',
+          filename: 'out-0f975e8a.pdf',
+        },
+      });
+
+      const result = extractArtifactsFromResult(
+        {
+          id: 'task-1',
+          outputPorts: [
+            { id: '0f975e8a', name: 'PDF report', artifactKind: 'document' },
+            { id: 'another-port', name: 'DOCX report', artifactKind: 'document' },
+          ],
+        },
+        [{ id: 'artifact-1' }],
+      );
+
+      expect(result).toEqual([
+        {
+          portId: '0f975e8a',
+          artifactKind: 'document',
+          url: 'https://example.com/out-0f975e8a.pdf',
+          filename: 'out-0f975e8a.pdf',
+          mimeType: '',
+        },
+      ]);
+    });
+
+    it('infers file kind before routing to distinct output ports', () => {
+      mockExtractComponentData.mockImplementation((comp: any) => {
+        if (comp.id === 'artifact-1') {
+          return {
+            type: 'artifact' as any,
+            data: {
+              file_path: 'https://example.com/report.pdf',
+              filename: 'report.pdf',
+            },
+          };
+        }
+
+        return {
+          type: 'artifact' as any,
+          data: {
+            file_path: 'https://example.com/deck.pptx',
+            filename: 'deck.pptx',
+          },
+        };
+      });
+
+      const result = extractArtifactsFromResult(
+        {
+          id: 'task-1',
+          outputPorts: [
+            { id: 'pdf-doc', name: 'PDF doc', artifactKind: 'document' },
+            { id: 'ppt-doc', name: 'PPT doc', artifactKind: 'document' },
+          ],
+        },
+        [{ id: 'artifact-1' }, { id: 'artifact-2' }],
+      );
+
+      expect(result).toEqual([
+        {
+          portId: 'pdf-doc',
+          artifactKind: 'document',
+          url: 'https://example.com/report.pdf',
+          filename: 'report.pdf',
+          mimeType: '',
+        },
+        {
+          portId: 'ppt-doc',
+          artifactKind: 'document',
+          url: 'https://example.com/deck.pptx',
+          filename: 'deck.pptx',
+          mimeType: '',
+        },
+      ]);
+    });
+
+    it('skips preview text when multiple text ports exist and no explicit port id is set', () => {
+      mockExtractComponentData.mockReturnValue({
+        type: 'text' as any,
+        data: {
+          content: 'Streaming preview text',
+        },
+      });
+
+      const result = extractArtifactsFromResult(
+        {
+          id: 'task-1',
+          outputPorts: [
+            { id: 'summary', name: 'Summary', artifactKind: 'text' },
+            { id: 'context', name: 'Context', artifactKind: 'text' },
+          ],
+        },
+        [{ id: 'text-1' }],
+      );
+
+      expect(result).toEqual([]);
     });
   });
 

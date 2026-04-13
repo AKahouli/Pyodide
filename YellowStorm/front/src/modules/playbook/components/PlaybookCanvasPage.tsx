@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Loader2, Share2, FolderOpen, Copy } from 'lucide-react';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Loader2, Share2, FolderOpen, Copy, PanelRightOpen, Cable } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -39,14 +39,13 @@ import {
   useCanUndo,
   useCanRedo,
 } from '../store';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, tasksToNodes } from '../hooks/usePlaybookCanvas';
 import { useAutosave } from '../hooks/useAutosave';
-import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions } from './PlaybookNode';
+import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
@@ -54,11 +53,15 @@ import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate } from '../types';
+import { ConnectorSidebar } from './ConnectorSidebar';
+import { ConnectorBindingModal } from './ConnectorBindingModal';
+import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
+import { toast } from 'sonner';
 
 // Edge colors per step status
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
@@ -69,6 +72,15 @@ const EDGE_STYLES: Record<string, React.CSSProperties> = {
   pending: { stroke: 'var(--muted-foreground)', strokeWidth: 1, opacity: 0.4 },
   skipped: { stroke: 'var(--muted-foreground)', strokeWidth: 1, opacity: 0.3 },
 };
+
+function hasEdgeStyleChanged(edge: Edge, nextStyle: React.CSSProperties): boolean {
+  const currentStyle = edge.style as React.CSSProperties | undefined;
+  if (!currentStyle) return true;
+  return currentStyle.stroke !== nextStyle.stroke
+    || currentStyle.strokeWidth !== nextStyle.strokeWidth
+    || currentStyle.strokeDasharray !== nextStyle.strokeDasharray
+    || currentStyle.opacity !== nextStyle.opacity;
+}
 
 function normalizeTaskForExecutionReuse(task: Partial<PlaybookTask> | null | undefined) {
   if (!task) return null;
@@ -102,9 +114,17 @@ function canReuseExecutionForTask(
   return JSON.stringify(normalizeTaskForExecutionReuse(snapshotTask)) === JSON.stringify(normalizeTaskForExecutionReuse(task));
 }
 
+function getVisibleExecutionStatus(execution?: PlaybookExecution | null): PlaybookExecution['status'] | null {
+  if (!execution) return null;
+  if (execution.taskResults.some((taskResult) => taskResult.status === 'running')) return 'running';
+  if (execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')) return 'interrupted';
+  return execution.status;
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -133,6 +153,7 @@ function PlaybookCanvasInner() {
   const updatePlaybook = usePlaybookStore((s) => s.updatePlaybook);
   const clonePlaybook = usePlaybookStore((s) => s.clonePlaybook);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
+  const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
   const undo = usePlaybookStore((s) => s.undo);
   const redo = usePlaybookStore((s) => s.redo);
@@ -163,6 +184,7 @@ function PlaybookCanvasInner() {
     removeNode,
     updateNodeData,
     setNodes,
+    setEdges,
   } = usePlaybookCanvas();
 
   const { saveNow } = useAutosave();
@@ -173,12 +195,28 @@ function PlaybookCanvasInner() {
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [executionMode, setExecutionMode] = useState<'live' | 'inherit'>('live');
+  const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
+  const [advisorAutopilotEnabled, setAdvisorAutopilotEnabled] = useState(false);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
   const [editingOutputFormatVersion, setEditingOutputFormatVersion] = useState<number | null>(null);
   const [outputFormatDraft, setOutputFormatDraft] = useState('');
   const [outputFormatLoading, setOutputFormatLoading] = useState(false);
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
+  const connectorSidebarOpen = usePlaybookStore((s) => s.connectorSidebarOpen);
+  const setConnectorSidebarOpen = usePlaybookStore((s) => s.setConnectorSidebarOpen);
+  const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
+
+  const [bindingModalState, setBindingModalState] = useState<{
+    open: boolean;
+    taskId: string;
+    connectorId: string;
+    connectorName: string;
+    actions: Array<{ key: string; label: string }>;
+    existingBinding: ToolBinding | null;
+  } | null>(null);
+
   const [scheduleSheetOpen, setScheduleSheetOpen] = useState(false);
+  const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(false);
 
   useEffect(() => {
     if (id && !isGeneratingRoute) {
@@ -191,12 +229,19 @@ function PlaybookCanvasInner() {
         executionHistory: [],
         pageMode: 'design',
       });
+      setExecutionPanelCollapsed(false);
       fetchPlaybook(id);
       fetchExecutions(id);
     }
     // Ensure agents are loaded so nodes can display agent names
     useAgentStore.getState().fetchAgents();
   }, [id, isGeneratingRoute, fetchPlaybook, fetchExecutions]);
+
+  useEffect(() => {
+    if (searchParams.get('schedule') === '1') {
+      setScheduleSheetOpen(true);
+    }
+  }, [searchParams]);
 
   // Fallback polling while an execution is active. This keeps both the canvas
   // and the detail pane in sync if an SSE step-complete/execution-complete event
@@ -205,11 +250,12 @@ function PlaybookCanvasInner() {
     if (!id || isGeneratingRoute) return;
 
     const selectedExecution = currentExecution?.playbookId === id ? currentExecution : null;
+    const selectedVisibleStatus = getVisibleExecutionStatus(selectedExecution);
     const activeExecution = selectedExecution
-      ? (selectedExecution.status === 'running' || selectedExecution.status === 'interrupted'
+      ? (selectedVisibleStatus === 'running' || selectedVisibleStatus === 'interrupted'
         ? selectedExecution
         : null)
-      : execution && (execution.status === 'running' || execution.status === 'interrupted')
+      : execution && (getVisibleExecutionStatus(execution) === 'running' || getVisibleExecutionStatus(execution) === 'interrupted')
         ? execution
         : null;
 
@@ -268,7 +314,8 @@ function PlaybookCanvasInner() {
   const prevIsGenerating = useRef(isGenerating);
   const prevIsDesigning = useRef(isDesigning);
   useEffect(() => {
-    if (execution && (execution.status === 'completed' || execution.status === 'failed')) {
+    const visibleStatus = getVisibleExecutionStatus(currentExecution?.playbookId === id ? currentExecution : execution);
+    if (visibleStatus === 'completed' || visibleStatus === 'failed') {
       refreshUsage();
     }
     if (prevIsGenerating.current && !isGenerating) {
@@ -279,7 +326,7 @@ function PlaybookCanvasInner() {
     }
     prevIsGenerating.current = isGenerating;
     prevIsDesigning.current = isDesigning;
-  }, [execution?.status, isGenerating, isDesigning, refreshUsage]);
+  }, [currentExecution?.id, currentExecution?.status, currentExecution?.taskResults, execution?.id, execution?.status, execution?.taskResults, id, isGenerating, isDesigning, refreshUsage]);
 
   const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode }), []);
   const edgeTypes = useMemo(() => ({
@@ -290,45 +337,82 @@ function PlaybookCanvasInner() {
     currentExecution?.playbookId === id
       ? currentExecution
       : execution;
+  const executionTaskResults = executionForCanvas?.taskResults;
+  const visibleExecutionStatus = getVisibleExecutionStatus(executionForCanvas);
 
   // Build step status map from the selected execution for this playbook
   const isLiveExecution = executionForCanvas &&
-    (executionForCanvas.status === 'running' || executionForCanvas.status === 'interrupted');
+    (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
 
   const stepStatusMap = useMemo(() => {
     const map = new Map<string, StepStatus>();
-    if (!executionForCanvas) return map;
-    for (const tr of executionForCanvas.taskResults) {
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
       map.set(tr.taskId, tr.status);
     }
     return map;
-  }, [executionForCanvas]);
+  }, [executionTaskResults]);
 
   const stepSemanticMatchMap = useMemo(() => {
     const map = new Map<string, SemanticMatchResult | null>();
-    if (!executionForCanvas) return map;
-    for (const tr of executionForCanvas.taskResults) {
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
       map.set(tr.taskId, tr.semanticMatch || null);
     }
     return map;
-  }, [executionForCanvas]);
+  }, [executionTaskResults]);
+
+  const stepJudgeStatusMap = useMemo(() => {
+    const map = new Map<string, NonNullable<PlaybookExecution['taskResults'][number]['judgeStatus']>>();
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
+      map.set(tr.taskId, tr.judgeStatus || 'idle');
+    }
+    return map;
+  }, [executionTaskResults]);
+
+  const stepJudgeResultMap = useMemo(() => {
+    const map = new Map<string, PlaybookExecution['taskResults'][number]['judgeResult']>();
+    if (!executionTaskResults) return map;
+    for (const tr of executionTaskResults) {
+      map.set(tr.taskId, tr.judgeResult || null);
+    }
+    return map;
+  }, [executionTaskResults]);
 
   // Overlay step statuses onto nodes
   const liveNodes = useMemo(() => {
     return nodes.map((node) => {
       const status = stepStatusMap.get(node.id);
-      const semanticMatch = stepSemanticMatchMap.get(node.id) ?? null;
+      const semanticMatch = stepSemanticMatchMap.get(node.id);
+      const judgeStatus = stepJudgeStatusMap.get(node.id);
+      const judgeResult = stepJudgeResultMap.get(node.id);
+      const currentData = node.data as PlaybookNodeData;
+      const nextSelected = node.id === selectedStepId;
+      const nextData = {
+        ...currentData,
+        ...(status !== undefined ? { stepStatus: status } : {}),
+        ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
+        ...(judgeStatus !== undefined ? { stepJudgeStatus: judgeStatus } : {}),
+        ...(judgeResult !== undefined ? { stepJudgeResult: judgeResult } : {}),
+      } as PlaybookNodeData;
+
+      const dataChanged = currentData.stepStatus !== nextData.stepStatus
+        || currentData.stepSemanticMatch !== nextData.stepSemanticMatch
+        || (currentData as any).stepJudgeStatus !== (nextData as any).stepJudgeStatus
+        || (currentData as any).stepJudgeResult !== (nextData as any).stepJudgeResult;
+
+      if (!dataChanged && node.selected === nextSelected) {
+        return node;
+      }
+
       return {
         ...node,
-        selected: node.id === selectedStepId,
-        data: {
-          ...node.data,
-          ...(status !== undefined ? { stepStatus: status } : {}),
-          stepSemanticMatch: semanticMatch,
-        },
+        selected: nextSelected,
+        data: nextData,
       };
     });
-  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap]);
+  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap]);
 
   // Style edges based on source node status
   const liveEdges = useMemo(() => {
@@ -336,6 +420,9 @@ function PlaybookCanvasInner() {
     return edges.map((edge): Edge => {
       const sourceStatus = stepStatusMap.get(edge.source) ?? 'pending';
       const style = EDGE_STYLES[sourceStatus] || EDGE_STYLES.pending;
+      if (!hasEdgeStyleChanged(edge, style)) {
+        return edge;
+      }
       return { ...edge, style };
     });
   }, [edges, stepStatusMap]);
@@ -448,6 +535,90 @@ function PlaybookCanvasInner() {
     [nodes, addNode],
   );
 
+  const handleConnectorDrop = useCallback(
+    (taskId: string, payload: ConnectorDropPayload) => {
+      const task = playbook?.tasks.find((t) => t.id === taskId);
+      const existingBinding = task?.toolBindings?.find((b) => b.connectorId === payload.connectorId) ?? null;
+      setBindingModalState({
+        open: true,
+        taskId,
+        connectorId: payload.connectorId,
+        connectorName: payload.connectorName,
+        actions: payload.actions,
+        existingBinding,
+      });
+    },
+    [playbook?.tasks],
+  );
+
+  const handleConnectorDragStart = useCallback(
+    (payload: ConnectorDropPayload) => {
+      /* no-op for now; can add visual feedback later */
+    },
+    [],
+  );
+
+  const handleBindingModalSave = useCallback(
+    (taskId: string, binding: ToolBinding) => {
+      addToolBindingToTask(taskId, binding);
+    },
+    [addToolBindingToTask],
+  );
+
+  const handleCanvasDrop = useCallback(
+    (e: React.DragEvent) => {
+      if (e.target !== e.currentTarget) return;
+      try {
+        const raw = e.dataTransfer.getData('application/json');
+        if (!raw) return;
+        const payload = JSON.parse(raw);
+        if (payload?.type !== 'connector' || !payload?.connectorId) return;
+        const taskId = crypto.randomUUID();
+        const existingCount = playbook?.tasks.length || 0;
+        const center = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+        const newTask: PlaybookTask = {
+          id: taskId,
+          title: `${payload.connectorName} Step`,
+          description: '',
+          assignedAgentId: null,
+          executionOrder: existingCount,
+          positionX: center.x,
+          positionY: center.y,
+          interruptBefore: false,
+          interruptAfter: false,
+          allowClarification: false,
+          clarificationPrompt: '',
+          maxClarifications: 3,
+          inputKeys: [],
+          outputKey: '',
+          enabled: true,
+          notifyOnComplete: false,
+          notifyEmails: [],
+          inputFiles: [],
+          taskType: 'generic',
+          inputPorts: [
+            { id: 'default', name: 'Input', artifactKind: 'text', required: false },
+          ],
+          outputPorts: [
+            { id: 'default', name: 'Output', artifactKind: 'text' },
+          ],
+        };
+        addNode(newTask);
+        const task = playbook?.tasks.find((t) => t.id === taskId);
+        const existingBinding = task?.toolBindings?.find((b) => b.connectorId === payload.connectorId) ?? null;
+        setBindingModalState({
+          open: true,
+          taskId,
+          connectorId: payload.connectorId,
+          connectorName: payload.connectorName,
+          actions: payload.actions,
+          existingBinding,
+        });
+      } catch { /* noop */ }
+    },
+    [playbook?.tasks.length, playbook?.tasks, reactFlow, addNode],
+  );
+
   const handleExecuteStep = useCallback(
     async (nodeId: string) => {
       if (!id) return;
@@ -461,15 +632,22 @@ function PlaybookCanvasInner() {
         || null;
       try {
         if (targetExecution) {
-          await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode);
+        await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
           return;
         }
-        await executePlaybook(id, { singleStepTaskId: nodeId, executionMode: 'live', stepExecutionModes: { [nodeId]: selectedStepMode } });
+        await executePlaybook(id, {
+          singleStepTaskId: nodeId,
+          executionMode: 'live',
+          stepExecutionModes: { [nodeId]: selectedStepMode },
+          streaming: true,
+          runNodeReflection: nodeReflectionEnabled,
+          advisorAutopilotEnabled,
+        });
       } catch {
         // handled in store
       }
     },
-    [id, isDirty, saveNow, currentExecution, execution, rerunStepInExecution, executePlaybook, nodes],
+    [id, isDirty, saveNow, currentExecution, execution, rerunStepInExecution, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled],
   );
 
   const handleResumeFromStep = useCallback(
@@ -482,7 +660,7 @@ function PlaybookCanvasInner() {
         || null;
       if (!targetExecution) return;
       try {
-        await resumeFromStep(id, targetExecution.id, nodeId);
+        await resumeFromStep(id, targetExecution.id, nodeId, true);
       } catch {
         // handled in store
       }
@@ -597,7 +775,7 @@ function PlaybookCanvasInner() {
   const canSkipStep = useCallback(
     (nodeId: string) => {
       if (!currentExecution || currentExecution.playbookId !== id) return false;
-      return currentExecution.status === 'interrupted'
+      return getVisibleExecutionStatus(currentExecution) === 'interrupted'
         && currentExecution.interruptPayload?.taskId === nodeId;
     },
     [currentExecution, id],
@@ -616,7 +794,7 @@ function PlaybookCanvasInner() {
       const snapshotTask = snapshotTasks.find((candidate) => candidate.id === task?.id);
       if (!snapshotTask) return false;
       if (!canReuseExecutionForTask(targetExecution, task)) return false;
-      return targetExecution.status !== 'running';
+      return getVisibleExecutionStatus(targetExecution) !== 'running';
     },
     [currentExecution, execution, id, nodes],
   );
@@ -678,11 +856,15 @@ function PlaybookCanvasInner() {
 
   const handleRun = useCallback(async () => {
     if (!id || !playbook) return;
-    if (isDirty) await saveNow();
-    setPageMode('run');
-    if (executionMode === 'live') {
-      await executePlaybook(id, { executionMode: 'live' });
-    } else {
+    if (!playbook.workspaces || playbook.workspaces.length === 0) {
+      toast.error('Select a default playbook workspace before running this playbook.');
+      return;
+    }
+      if (isDirty) await saveNow();
+      setPageMode('run');
+      if (executionMode === 'live') {
+      await executePlaybook(id, { executionMode: 'live', streaming: true, runNodeReflection: nodeReflectionEnabled });
+      } else {
       const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
       for (const task of playbook.tasks) {
         if (task.enabled !== false) {
@@ -690,9 +872,9 @@ function PlaybookCanvasInner() {
           stepExecutionModes[task.id] = mode;
         }
       }
-      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes });
-    }
-  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, setPageMode]);
+      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes, streaming: true, runNodeReflection: nodeReflectionEnabled });
+      }
+  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, nodeReflectionEnabled, setPageMode]);
 
   const handleAutoLayout = useCallback(() => {
     if (!playbook) return;
@@ -725,6 +907,7 @@ function PlaybookCanvasInner() {
           : execution;
 
       if (executionForSelection) {
+        setExecutionPanelCollapsed(false);
         setExecutionPanelOpen(true);
         viewExecutionInPanel(executionForSelection.id);
         setPageMode('run');
@@ -746,15 +929,43 @@ function PlaybookCanvasInner() {
     [currentExecution, execution, id, nodes, pageMode, selectStep, setDesignerOpen, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
   );
 
+  const handleEdgeDoubleClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      captureSnapshot();
+      setEdges((currentEdges: Edge[]) => {
+        const updated = currentEdges.filter((candidate) => candidate.id !== edge.id);
+        updateEdges(
+          updated.map((candidate) => ({
+            id: candidate.id,
+            sourceId: candidate.source,
+            targetId: candidate.target,
+            sourceOutputPortId: candidate.sourceHandle || ((candidate.data as any)?.sourceOutputPortId) || 'default',
+            targetInputPortId: candidate.targetHandle || ((candidate.data as any)?.targetInputPortId) || 'default',
+          })),
+        );
+        return updated;
+      });
+    },
+    [captureSnapshot, setEdges, updateEdges],
+  );
+
   const handleViewExecutions = useCallback(() => {
     const nextOpen = !executionPanelOpen;
     setExecutionPanelOpen(nextOpen);
     if (nextOpen) {
+      setExecutionPanelCollapsed(false);
       setPageMode('run');
     } else if (pageMode !== 'design') {
       setPageMode('design');
     }
   }, [executionPanelOpen, pageMode, setExecutionPanelOpen, setPageMode]);
+
+  const activeDownloadExecution = currentExecution?.playbookId === id ? currentExecution : execution;
+  const handleDownloadAllResults = useCallback(() => {
+    if (activeDownloadExecution) {
+      downloadWorkflowExecutionResultsHtml(activeDownloadExecution);
+    }
+  }, [activeDownloadExecution]);
 
   const handlePageModeChange = useCallback(
     (mode: PlaybookPageMode) => {
@@ -762,6 +973,7 @@ function PlaybookCanvasInner() {
       if (mode === 'design') {
         return;
       }
+      setExecutionPanelCollapsed(false);
       setExecutionPanelOpen(true);
     },
     [setExecutionPanelOpen, setPageMode],
@@ -777,6 +989,10 @@ function PlaybookCanvasInner() {
 
   const handleWorkspacesChange = useCallback(
     (workspaces: string[]) => {
+      if (workspaces.length === 0) {
+        toast.error('Select at least one default workspace for this playbook.');
+        return;
+      }
       captureSnapshot();
       updateWorkspaces(workspaces);
       if (id) {
@@ -813,9 +1029,7 @@ function PlaybookCanvasInner() {
     );
   }
 
-  const isExecutionPanelVisible = pageMode !== 'design' || executionPanelOpen;
-  const canvasDefaultSize = isExecutionPanelVisible ? 60 : 100;
-  const executionPanelDefaultSize = 40;
+  const isExecutionPanelVisible = !executionPanelCollapsed && (pageMode !== 'design' || executionPanelOpen);
 
   return (
     <div className="flex flex-col h-full w-full">
@@ -886,6 +1100,16 @@ function PlaybookCanvasInner() {
             <FolderOpen className="h-4 w-4 sm:mr-1" />
             <span className="hidden sm:inline">Explorer</span>
           </Button>
+          <Button
+            variant={connectorSidebarOpen ? "default" : "outline"}
+            size="sm"
+            onClick={() => setConnectorSidebarOpen(!connectorSidebarOpen)}
+            className="px-2 sm:px-3"
+            title="Connectors"
+          >
+            <Cable className="h-4 w-4 sm:mr-1" />
+            <span className="hidden sm:inline">Connectors</span>
+          </Button>
           <PlaybookToolbar
             pageMode={pageMode}
             onPageModeChange={handlePageModeChange}
@@ -902,13 +1126,19 @@ function PlaybookCanvasInner() {
             isDirty={isDirty}
             isSaving={isSaving}
             isExecuting={isExecuting}
-            canRun={playbook.tasks.length > 0 && !hasActiveExecution && !isSaving && !isDirty}
+            canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
             executionMode={executionMode}
             onExecutionModeChange={setExecutionMode}
+            nodeReflectionEnabled={nodeReflectionEnabled}
+            onNodeReflectionChange={setNodeReflectionEnabled}
+            advisorAutopilotEnabled={advisorAutopilotEnabled}
+            onAdvisorAutopilotChange={setAdvisorAutopilotEnabled}
             canUndo={canUndo}
             canRedo={canRedo}
             onUndo={undo}
             onRedo={redo}
+            onDownloadAllResults={handleDownloadAllResults}
+            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
             onSchedule={() => setScheduleSheetOpen(true)}
           />
         </div>
@@ -928,13 +1158,15 @@ function PlaybookCanvasInner() {
         {/* Workspace Explorer Sidebar */}
         <WorkspaceExplorerSidebar />
 
+        {/* Connector Sidebar */}
+        <ConnectorSidebar isOpen={connectorSidebarOpen} onDragStart={handleConnectorDragStart} />
+
         {/* Canvas + Execution split */}
-        <ResizablePanelGroup orientation="vertical" className="flex-1" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
-          <ResizablePanel defaultSize={canvasDefaultSize} minSize={30}>
-            <div className="relative h-full overflow-hidden">
-              <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-                <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor }}>
-                  <Canvas
+        <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
+          <div className="relative flex-1 min-w-0 overflow-hidden">
+            <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
+                <Canvas
                   nodes={liveNodes}
                   edges={liveEdges}
                   onNodesChange={onNodesChange}
@@ -943,6 +1175,7 @@ function PlaybookCanvasInner() {
                   onConnect={onConnect}
                   onNodeClick={handleNodeClick}
                   onNodeDoubleClick={handleNodeDoubleClick}
+                  onEdgeDoubleClick={handleEdgeDoubleClick}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}
@@ -953,35 +1186,50 @@ function PlaybookCanvasInner() {
                   nodesDraggable={!isSaving}
                   nodesConnectable={!isSaving}
                   elementsSelectable={!isSaving}
+                  onDrop={handleCanvasDrop}
+                  onDragOver={(e) => { e.preventDefault(); }}
                 >
                   <Controls />
                 </Canvas>
-                </NodeDataActionsContext.Provider>
-              </NodeContextMenuContext.Provider>
-              {isDesigning && (
-                <PlaybookGeneratingOverlay
-                  title={t('canvas.designing')}
-                  subtitle={t('canvas.designingHint')}
-                />
-              )}
-              <PlaybookDesignerPanel playbookId={id} />
-            </div>
-          </ResizablePanel>
+              </NodeDataActionsContext.Provider>
+            </NodeContextMenuContext.Provider>
+            {isDesigning && (
+              <PlaybookGeneratingOverlay
+                title={t('canvas.designing')}
+                subtitle={t('canvas.designingHint')}
+              />
+            )}
+            <PlaybookDesignerPanel playbookId={id} />
+          </div>
 
           {isExecutionPanelVisible && (
-            <>
-              <ResizableHandle withHandle orientation="vertical" />
-              <ResizablePanel defaultSize={executionPanelDefaultSize} minSize={15}>
-                <ExecutionPanel
-                  pageMode={pageMode}
-                  onOpenOutputFormatEditor={(taskId) => {
-                    void openOutputFormatEditor(taskId);
-                  }}
-                />
-              </ResizablePanel>
-            </>
+            <ExecutionPanel
+              pageMode={pageMode}
+              onCollapse={() => setExecutionPanelCollapsed(true)}
+              onOpenOutputFormatEditor={(taskId) => {
+                void openOutputFormatEditor(taskId);
+              }}
+            />
           )}
-        </ResizablePanelGroup>
+
+          {!isExecutionPanelVisible && (
+            <div className="absolute right-3 top-3 z-20">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-8 w-8 shadow-md bg-background"
+                onClick={() => {
+                  setExecutionPanelCollapsed(false);
+                  setExecutionPanelOpen(true);
+                }}
+                title="Open execution sidebar"
+                aria-label="Open execution sidebar"
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Node Editor Sheet */}
@@ -1038,6 +1286,20 @@ function PlaybookCanvasInner() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {bindingModalState?.open && (
+        <ConnectorBindingModal
+          open={bindingModalState.open}
+          onOpenChange={(open) => {
+            if (!open) setBindingModalState(null);
+          }}
+          taskId={bindingModalState.taskId}
+          connectorId={bindingModalState.connectorId}
+          connectorName={bindingModalState.connectorName}
+          existingBinding={bindingModalState.existingBinding}
+          onSave={handleBindingModalSave}
+        />
+      )}
     </div>
   );
 }

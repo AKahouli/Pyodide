@@ -2,10 +2,14 @@ import logging
 import sys
 
 import structlog
-from ddtrace import tracer
 from structlog.types import EventDict, Processor
 
 from src.config.settings import get_settings
+
+try:
+    from ddtrace import tracer
+except Exception:  # pragma: no cover - optional dependency
+    tracer = None
 
 #app_settings = get_settings()
 
@@ -33,7 +37,7 @@ def drop_color_message_key(_, __, event_dict: EventDict) -> EventDict:
 
 def tracer_injection(_, __, event_dict: EventDict) -> EventDict:
     # get correlation ids from current tracer context
-    span = tracer.current_span()
+    span = tracer.current_span() if tracer is not None else None
     trace_id, span_id = (span.trace_id, span.span_id) if span else (None, None)
 
     # add ids to structlog event dictionary

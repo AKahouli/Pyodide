@@ -321,7 +321,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const id = `in-${crypto.randomUUID().slice(0, 8)}`;
-                  setInputPorts((prev) => [...prev, { id, name: 'New Input', artifactKind: 'text', required: false }]);
+                  setInputPorts((prev) => [...prev, { id, name: 'Input', artifactKind: 'text', required: false }]);
                 }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />
@@ -354,7 +354,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                   }}
                   className="h-7 text-xs rounded border bg-background px-1"
                 >
-                  {(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'] as const).map((kind) => (
+                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
                     <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
                   ))}
                 </select>
@@ -394,7 +394,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const id = `out-${crypto.randomUUID().slice(0, 8)}`;
-                  setOutputPorts((prev) => [...prev, { id, name: 'New Output', artifactKind: 'text' }]);
+                  setOutputPorts((prev) => [...prev, { id, name: 'Output', artifactKind: 'text' }]);
                 }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />
@@ -427,7 +427,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                   }}
                   className="h-7 text-xs rounded border bg-background px-1"
                 >
-                  {(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'] as const).map((kind) => (
+                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
                     <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
                   ))}
                 </select>

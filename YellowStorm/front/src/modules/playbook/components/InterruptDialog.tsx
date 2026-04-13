@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   Dialog,
@@ -51,6 +51,19 @@ export function InterruptDialog({ open, onOpenChange }: Props) {
     }
   };
 
+  const handleResponseKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.nativeEvent.isComposing) {
+      return;
+    }
+
+    e.preventDefault();
+    if (!response.trim() || isSubmitting) {
+      return;
+    }
+
+    void handleSubmit(true, { feedback: response });
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
@@ -90,6 +103,7 @@ export function InterruptDialog({ open, onOpenChange }: Props) {
               onChange={(e) => setResponse(e.target.value)}
               placeholder={t('interrupt.responsePlaceholder')}
               rows={3}
+              onKeyDown={handleResponseKeyDown}
             />
             <DialogFooter>
               <Button variant="outline" onClick={() => onOpenChange(false)}>

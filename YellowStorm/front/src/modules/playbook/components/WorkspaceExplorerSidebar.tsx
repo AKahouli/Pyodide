@@ -11,7 +11,9 @@ import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import { getWorkspaces } from '@/modules/workspace/api';
 import type { Workspace, WorkspaceDocument } from '@/modules/workspace/types';
 import type { InputFile } from '../types';
+import type { ArtifactKind } from '../types';
 import { cn } from '@/lib/utils';
+import { inferArtifactKind } from '../utils/infer-artifact-kind';
 
 const EXPLORER_STORAGE_KEY = 'ys_workspace_explorer_state';
 
@@ -46,12 +48,14 @@ interface DragPayload {
   id: string;
   name: string;
   workspaceId?: string;
+  artifactKind?: ArtifactKind;
   metadata?: {
     workspaceId?: string;
     documentId?: string;
     filename?: string;
     filepath?: string;
     language?: string;
+    mimeType?: string;
   };
 }
 
@@ -69,22 +73,25 @@ function DocumentRow({
   onDragStart: (payload: DragPayload) => void;
 }) {
   const handleDragStart = (e: React.DragEvent) => {
+    const artifactKind = inferArtifactKind(document.filename, document.mimeType);
     const payload = {
       type: 'document' as const,
       id: document.id,
       name: document.originalName || document.filename,
       workspaceId,
+      artifactKind,
       metadata: {
         workspaceId,
         documentId: document.id,
         filename: document.filename,
         filepath: document.path,
         language: document.metadata?.language,
+        mimeType: document.mimeType,
       },
     };
     e.dataTransfer.setData('application/json', JSON.stringify(payload));
     e.dataTransfer.effectAllowed = 'copy';
-    onDragStart({ type: 'document', id: document.id, name: document.originalName || document.filename, workspaceId });
+    onDragStart({ type: 'document', id: document.id, name: document.originalName || document.filename, workspaceId, artifactKind });
   };
 
   return (

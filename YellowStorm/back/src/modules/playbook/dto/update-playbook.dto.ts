@@ -35,6 +35,10 @@ export class InputFileMetadataDto {
   @IsOptional()
   @IsString()
   language?: string;
+
+  @IsOptional()
+  @IsString()
+  mimeType?: string;
 }
 
 export class InputFileDto {
@@ -55,6 +59,10 @@ export class InputFileDto {
   workspaceId?: string;
 
   @IsOptional()
+  @IsString()
+  portId?: string;
+
+  @IsOptional()
   @ValidateNested()
   @Type(() => InputFileMetadataDto)
   metadata?: InputFileMetadataDto;
@@ -67,7 +75,7 @@ export class TaskInputPortDto {
   @IsString()
   name!: string;
 
-  @IsEnum(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'])
+  @IsEnum(['text', 'document', 'code', 'image', 'data', 'dashboard'])
   artifactKind!: string;
 
   @IsOptional()
@@ -86,7 +94,7 @@ export class TaskOutputPortDto {
   @IsString()
   name!: string;
 
-  @IsEnum(['text', 'document', 'code', 'image', 'data', 'slide_deck', 'dashboard'])
+  @IsEnum(['text', 'document', 'code', 'image', 'data', 'dashboard'])
   artifactKind!: string;
 
   @IsOptional()
@@ -196,6 +204,19 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested({ each: true })
   @Type(() => TaskOutputPortDto)
   outputPorts?: TaskOutputPortDto[];
+
+  @ApiPropertyOptional({ description: 'Connector tool bindings for this step', type: [Object] })
+  @IsOptional()
+  @IsArray()
+  toolBindings?: Array<{
+    id: string;
+    connectorId: string;
+    actions: Array<{ actionKey: string; isEnabled?: boolean }>;
+    credentialId?: string | null;
+    fixedParams?: Record<string, unknown>;
+    disableAutoSkills?: boolean;
+    isEnabled?: boolean;
+  }>;
 }
 
 export class UpdatePlaybookEdgeDto {

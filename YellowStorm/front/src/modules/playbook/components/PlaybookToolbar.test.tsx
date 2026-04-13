@@ -14,7 +14,7 @@ vi.mock('../utils/task-template-registry', () => ({
 }));
 
 vi.mock('../utils/port-colors', () => ({
-  PORT_COLORS: { text: { icon: () => null, bg: '', ring: '', dot: '' }, document: { icon: () => null, bg: '', ring: '', dot: '' }, code: { icon: () => null, bg: '', ring: '', dot: '' }, image: { icon: () => null, bg: '', ring: '', dot: '' }, data: { icon: () => null, bg: '', ring: '', dot: '' }, slide_deck: { icon: () => null, bg: '', ring: '', dot: '' }, dashboard: { icon: () => null, bg: '', ring: '', dot: '' } },
+  PORT_COLORS: { text: { icon: () => null, bg: '', ring: '', dot: '' }, document: { icon: () => null, bg: '', ring: '', dot: '' }, code: { icon: () => null, bg: '', ring: '', dot: '' }, image: { icon: () => null, bg: '', ring: '', dot: '' }, data: { icon: () => null, bg: '', ring: '', dot: '' }, dashboard: { icon: () => null, bg: '', ring: '', dot: '' } },
 }));
 
 const defaultProps = {
@@ -35,10 +35,14 @@ const defaultProps = {
   canRun: true,
   executionMode: 'live' as const,
   onExecutionModeChange: vi.fn(),
+  nodeReflectionEnabled: true,
+  onNodeReflectionChange: vi.fn(),
   canUndo: false,
   canRedo: false,
   onUndo: vi.fn(),
   onRedo: vi.fn(),
+  onDownloadAllResults: vi.fn(),
+  canDownloadAllResults: true,
 };
 
 describe('PlaybookToolbar', () => {
@@ -49,6 +53,7 @@ describe('PlaybookToolbar', () => {
     expect(screen.getByText('toolbar.designer')).toBeInTheDocument();
     expect(screen.getByText('toolbar.addBlankStep')).toBeInTheDocument();
     expect(screen.getByText('toolbar.autoLayout')).toBeInTheDocument();
+    expect(screen.getByText('execution.downloadAllResults')).toBeInTheDocument();
     expect(screen.getByText('toolbar.saved')).toBeInTheDocument();
     expect(screen.getByText('toolbar.run')).toBeInTheDocument();
   });
@@ -113,5 +118,12 @@ describe('PlaybookToolbar', () => {
   it('hides executions button in design mode when there is no execution context', () => {
     render(<PlaybookToolbar {...defaultProps} pageMode="design" hasExecutionContext={false} />);
     expect(screen.queryByText('toolbar.executions')).not.toBeInTheDocument();
+  });
+
+  it('calls onDownloadAllResults when download button is clicked', async () => {
+    const onDownloadAllResults = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} onDownloadAllResults={onDownloadAllResults} />);
+    await userEvent.click(screen.getByText('execution.downloadAllResults'));
+    expect(onDownloadAllResults).toHaveBeenCalledOnce();
   });
 });

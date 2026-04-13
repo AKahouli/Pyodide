@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
@@ -15,6 +15,11 @@ import { ToolService } from '../tool/tool.service';
 import { IToolResponse } from '../tool/interfaces/tool.interface';
 import { AgentTypeService } from '../agent-type/agent-type.service';
 import { ModelsService } from '../models/models.service';
+import { SkillService } from '../skill/skill.service';
+import { ISkillResponse } from '../skill/interfaces/skill.interface';
+import { ConnectorService } from '../connector/connector.service';
+import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
+import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 
 @Injectable()
 export class AgentService {
@@ -25,6 +30,11 @@ export class AgentService {
     private readonly toolService: ToolService,
     private readonly agentTypeService: AgentTypeService,
     private readonly modelsService: ModelsService,
+    private readonly skillService: SkillService,
+    private readonly connectorService: ConnectorService,
+    @Inject('ConnectorAuthService')
+    private readonly connectorAuthService: ConnectorAuthService,
+    private readonly connectedAppTokenService: ConnectedAppTokenService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -54,6 +64,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(dto.agentType, true, userId);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     const agent = await this.agentModel.create({
       name: dto.name,
       agentType: new Types.ObjectId(dto.agentType),
@@ -65,6 +77,9 @@ export class AgentService {
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
       knowledgeBases: (dto.knowledgeBases ?? []).map((id) => new Types.ObjectId(id)),
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
+      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
+      disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
+      connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
       isDefault: false,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -105,7 +120,7 @@ export class AgentService {
     const [agents, total] = await Promise.all([
       this.agentModel
         .find(filter)
-        .populate('agentType', 'name')
+        .populate('agentType', 'name skills')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -125,7 +140,7 @@ export class AgentService {
   async findUserAgentById(userId: string, agentId: string): Promise<IAgentResponse> {
     const agent = await this.agentModel
       .findById(agentId)
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -184,6 +199,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, true, userId, agentId);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     // Build update object
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.agentType) {
@@ -200,10 +217,19 @@ export class AgentService {
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }
+    if (dto.skills) {
+      updateData.skills = dto.skills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.disabledSkills) {
+      updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.connectors) {
+      updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -268,6 +294,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(dto.agentType, false);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     const agent = await this.agentModel.create({
       name: dto.name,
       agentType: new Types.ObjectId(dto.agentType),
@@ -279,6 +307,9 @@ export class AgentService {
       ignorePrePrompt: dto.ignorePrePrompt ?? false,
       knowledgeBases: [],
       tools: (dto.tools ?? []).map((id) => new Types.ObjectId(id)),
+      skills: (dto.skills ?? []).map((id) => new Types.ObjectId(id)),
+      disabledSkills: (dto.disabledSkills ?? []).map((id) => new Types.ObjectId(id)),
+      connectors: (dto.connectors ?? []).map((id) => new Types.ObjectId(id)),
       isDefault: true,
       isDefaultForType: dto.isDefaultForType ?? false,
       isActive: dto.isActive ?? true,
@@ -315,7 +346,7 @@ export class AgentService {
     const [agents, total] = await Promise.all([
       this.agentModel
         .find(filter)
-        .populate('agentType', 'name')
+        .populate('agentType', 'name skills')
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
@@ -335,7 +366,7 @@ export class AgentService {
   async findDefaultAgentById(agentId: string): Promise<IAgentResponse> {
     const agent = await this.agentModel
       .findOne({ _id: agentId, isDefault: true })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -375,6 +406,8 @@ export class AgentService {
       await this.ensureDefaultForTypeUniqueness(effectiveAgentTypeId, false, undefined, agentId);
     }
 
+    await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
+
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.agentType) {
       updateData.agentType = new Types.ObjectId(dto.agentType);
@@ -389,10 +422,19 @@ export class AgentService {
     if (dto.tools) {
       updateData.tools = dto.tools.map((id) => new Types.ObjectId(id));
     }
+    if (dto.skills) {
+      updateData.skills = dto.skills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.disabledSkills) {
+      updateData.disabledSkills = dto.disabledSkills.map((id) => new Types.ObjectId(id));
+    }
+    if (dto.connectors) {
+      updateData.connectors = dto.connectors.map((id) => new Types.ObjectId(id));
+    }
 
     const updated = await this.agentModel
       .findByIdAndUpdate(agentId, { $set: updateData }, { new: true })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -436,7 +478,7 @@ export class AgentService {
           { isDefault: true },
         ],
       })
-      .populate('agentType', 'name slug')
+      .populate('agentType', 'name slug skills')
       .lean()
       .exec();
 
@@ -472,7 +514,7 @@ export class AgentService {
             _id: { $in: missingSharedIds.map((id) => new Types.ObjectId(id)) },
             isActive: true,
           })
-          .populate('agentType', 'name slug')
+          .populate('agentType', 'name slug skills')
           .lean()
           .exec();
 
@@ -556,6 +598,15 @@ export class AgentService {
       for (const t of fetched) toolsMap.set(t.id, t);
     }
 
+    const allSkillIds = [
+      ...new Set(filteredAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
+
     // Batch-fetch all unique model IDs to resolve full LiteLLM model identifiers
     const allModelIds = [...new Set(
       filteredAgents
@@ -574,7 +625,66 @@ export class AgentService {
       }
     }
 
-    const grpcAgents = filteredAgents.map((agent) => {
+    const allConnectorIds = [
+      ...new Set(filteredAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean)),
+    ];
+    const connectorsMap = new Map<string, any>();
+    if (allConnectorIds.length > 0) {
+      const fetchedConnectors = await this.connectorService.findByIds(allConnectorIds);
+      for (const connector of fetchedConnectors) {
+        connectorsMap.set(connector.id, connector);
+      }
+    }
+
+    const buildConversationConnectorBindings = async (connectorIds: string[] = [], userId?: string) => {
+      const bindings = connectorIds
+        .map((connectorId) => connectorsMap.get(connectorId))
+        .filter(Boolean)
+        .map((connector: any) => ({
+          connector_id: connector.id,
+          connector_name: connector.name,
+          actions: (connector.actions || [])
+            .filter((action: any) => action.isEnabled !== false)
+            .map((action: any) => ({
+              action_key: action.key,
+              label: action.label || action.key,
+              description: action.description || '',
+              parameter_schema: action.parameterSchema || {},
+            })),
+          mcp_transport_type: connector.mcpTransportType || '',
+          mcp_server_url: connector.mcpServerUrl || '',
+          mcp_server_config: connector.mcpServerConfig || {},
+          auth_headers: {} as Record<string, string>,
+          auth_env: {} as Record<string, string>,
+        }))
+        .filter((binding: any) => binding.actions.length > 0);
+
+      if (userId) {
+        for (const binding of bindings) {
+          const connector = connectorsMap.get(binding.connector_id);
+          if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+            try {
+              const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+                authSourceType: connector.authSourceType,
+                connectedAppKey: connector.connectedAppKey,
+                runtimeAuthConfig: connector.runtimeAuthConfig || {},
+              });
+              binding.auth_headers = auth.headers;
+              binding.auth_env = auth.env;
+            } catch (err) {
+              this.logger.warn('Failed to resolve connector auth for conversation', {
+                connector_id: binding.connector_id,
+                error: (err as Error).message,
+              });
+            }
+          }
+        }
+      }
+
+      return bindings;
+    };
+
+    const grpcAgents = await Promise.all(filteredAgents.map(async (agent) => {
       const agentTools = agent.toolIds
         .map((id) => toolsMap.get(id))
         .filter(Boolean) as IToolResponse[];
@@ -589,6 +699,16 @@ export class AgentService {
 
       const effectiveModelId = agent.model || fallbackModelId || '';
       const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
+      const connectorBindings = await buildConversationConnectorBindings(agent.connectorIds || [], userId);
+      const connectorToolDefs = connectorBindings.flatMap((binding: any) =>
+        (binding.actions || []).map((action: any) => ({
+          name: `connector_${binding.connector_id}_${action.action_key}`,
+          description: action.description || `${binding.connector_name} connector action ${action.label || action.action_key}`,
+          prompt: '',
+          top_k: 0,
+        })),
+      );
 
       // Build prompt using batch-resolved prompts
       let prompt = '';
@@ -605,7 +725,6 @@ export class AgentService {
 
       // Append Group Members info if provided
       const hasGroupMembers = groupMembers && groupMembers.length > 0;
-      const isManagerAgent = agent.agentTypeSlug === 'manager';
 
       if (hasGroupMembers) {
         let membersContext = '\n\nConversation Members Context:\n';
@@ -621,16 +740,8 @@ export class AgentService {
         prompt,
         agent_type: agent.agentTypeName.toLowerCase(),
         save_memory: false,
-        tools: agentTools.map((t) => {
-          const toolObj: Record<string, unknown> = {
-            name: t.name,
-            description: t.description,
-          };
-          for (const attr of t.attributes || []) {
-            toolObj[attr.name] = attr.value;
-          }
-          return toolObj;
-        }),
+        tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
+        skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
           workspace_documents: [],
@@ -638,6 +749,13 @@ export class AgentService {
         chatbot: {
           model: litellmModel,
         },
+        agent_params: {
+          params: {
+            user_id: userId,
+            connector_bindings_json: JSON.stringify(connectorBindings),
+          },
+        },
+        connectorIds: agent.connectorIds || [],
       };
 
       this.logger.debug('Agent built for stream', {
@@ -646,13 +764,15 @@ export class AgentService {
         agentType: grpcAgent.agent_type,
         model: grpcAgent.chatbot.model,
         toolCount: grpcAgent.tools.length,
+        connectorToolCount: connectorToolDefs.length,
+        connectorBindingCount: connectorBindings.length,
         promptLength: grpcAgent.prompt.length,
         ignorePrePrompt: agent.ignorePrePrompt,
         isDefault: agent.isDefault,
       });
 
       return grpcAgent;
-    });
+    }));
 
     this.logger.log('Agents built for stream', {
       userId,
@@ -688,7 +808,7 @@ export class AgentService {
         _id: { $in: agentIds.map((id) => new Types.ObjectId(id)) },
         isActive: true,
       })
-      .populate('agentType', 'name slug')
+      .populate('agentType', 'name slug skills')
       .lean()
       .exec();
 
@@ -711,6 +831,15 @@ export class AgentService {
       for (const t of fetched) toolsMap.set(t.id, t);
     }
 
+    const allSkillIds = [
+      ...new Set(streamAgents.flatMap((a) => [...(a.agentTypeSkillIds ?? []), ...(a.skillIds ?? [])])),
+    ];
+    const skillsMap = new Map<string, ISkillResponse>();
+    if (allSkillIds.length > 0) {
+      const fetchedSkills = await this.skillService.findByIds(allSkillIds);
+      for (const skill of fetchedSkills) skillsMap.set(skill.id, skill);
+    }
+
     // Batch-resolve models
     const allModelIds = [...new Set(
       streamAgents
@@ -727,60 +856,56 @@ export class AgentService {
       }
     }
 
-    const grpcAgents = streamAgents.map((agent) => {
-      const agentTools = agent.toolIds
-        .map((id) => toolsMap.get(id))
-        .filter(Boolean) as IToolResponse[];
+    const grpcAgents = await Promise.all(
+      streamAgents.map(async (agent) => {
+        const agentTools = agent.toolIds
+          .map((id) => toolsMap.get(id))
+          .filter(Boolean) as IToolResponse[];
 
-      const effectiveModelId = agent.model || fallbackModelId || '';
-      const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const effectiveModelId = agent.model || fallbackModelId || '';
+        const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
-      let prompt = '';
-      if (!agent.ignorePrePrompt && agent.agentTypeId) {
-        const resolvedKey = `${agent.agentTypeId}:${effectiveModelId}`;
-        const resolvedPrompt = promptMap.get(resolvedKey) || '';
-        prompt = resolvedPrompt;
-        if (agent.instruction) {
-          prompt += (prompt ? '\n\n' : '') + agent.instruction;
-        }
-      } else {
-        prompt = agent.instruction || '';
-      }
-
-      const grpcAgent: IGrpcAgent = {
-        id: agent.id,
-        name: agent.name,
-        description: agent.role || `you are the ${agent.name}`,
-        prompt,
-        agent_type: agent.agentTypeName.toLowerCase(),
-        save_memory: false,
-        tools: agentTools.map((t) => {
-          const toolObj: Record<string, unknown> = {
-            name: t.name,
-            description: t.description,
-          };
-          for (const attr of t.attributes || []) {
-            toolObj[attr.name] = attr.value;
+        let prompt = '';
+        if (!agent.ignorePrePrompt && agent.agentTypeId) {
+          const resolvedKey = `${agent.agentTypeId}:${effectiveModelId}`;
+          const resolvedPrompt = promptMap.get(resolvedKey) || '';
+          prompt = resolvedPrompt;
+          if (agent.instruction) {
+            prompt += (prompt ? '\n\n' : '') + agent.instruction;
           }
-          return toolObj;
-        }),
-        brain_context: agent.knowledgeBases.map((wsId) => ({
-          workspace_id: wsId,
-          workspace_documents: [],
-        })),
-        chatbot: {
-          model: litellmModel,
-        },
-        agent_params: {
-          params: {
-            user_id: userId,
-            ...(sessionId ? { session_id: sessionId } : {}),
-          },
-        },
-      };
+        } else {
+          prompt = agent.instruction || '';
+        }
 
-      return grpcAgent;
-    });
+        const grpcAgent: IGrpcAgent = {
+          id: agent.id,
+          name: agent.name,
+          description: agent.role || `you are the ${agent.name}`,
+          prompt,
+          agent_type: agent.agentTypeName.toLowerCase(),
+          save_memory: false,
+          tools: await this.buildToolsWithTokens(agentTools, userId),
+          skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
+          brain_context: agent.knowledgeBases.map((wsId) => ({
+            workspace_id: wsId,
+            workspace_documents: [],
+          })),
+          chatbot: {
+            model: litellmModel,
+          },
+          agent_params: {
+            params: {
+              user_id: userId,
+              ...(sessionId ? { session_id: sessionId } : {}),
+            },
+          },
+          connectorIds: agent.connectorIds || [],
+        };
+
+        return grpcAgent;
+      }),
+    );
 
     this.logger.log('gRPC agents built for playbook', {
       userId,
@@ -805,7 +930,7 @@ export class AgentService {
           { isDefault: true },
         ],
       })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .sort({ isDefault: -1, createdAt: -1 })
       .lean()
       .exec();
@@ -823,7 +948,7 @@ export class AgentService {
           { isDefault: true },
         ],
       })
-      .populate('agentType', 'name')
+      .populate('agentType', 'name skills')
       .lean()
       .exec();
 
@@ -946,6 +1071,13 @@ export class AgentService {
       tools: ((d.tools as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      skills: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      disabledSkills: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectors: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
       isActive: (d.isActive as boolean) ?? true,
@@ -970,6 +1102,10 @@ export class AgentService {
       populatedAgentType && typeof populatedAgentType === 'object' && populatedAgentType._id
         ? (populatedAgentType._id as { toString(): string }).toString()
         : '';
+    const agentTypeSkillIds =
+      populatedAgentType && typeof populatedAgentType === 'object' && Array.isArray(populatedAgentType.skills)
+        ? (populatedAgentType.skills as Array<{ toString(): string }>).map((id) => id.toString())
+        : [];
 
     return {
       id: (d._id as { toString(): string }).toString(),
@@ -989,8 +1125,83 @@ export class AgentService {
       toolIds: ((d.tools as Array<{ toString(): string }>) || []).map((id) =>
         id.toString(),
       ),
+      skillIds: ((d.skills as Array<{ toString(): string }>) || []).map((id) => id.toString()),
+      disabledSkillIds: ((d.disabledSkills as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      connectorIds: ((d.connectors as Array<{ toString(): string }>) || []).map((id) =>
+        id.toString(),
+      ),
+      agentTypeSkillIds,
       isDefault: (d.isDefault as boolean) || false,
       isDefaultForType: (d.isDefaultForType as boolean) || false,
     };
+  }
+
+  private resolveEffectiveSkills(
+    agent: IAgentForStream,
+    skillsMap: Map<string, ISkillResponse>,
+  ): ISkillResponse[] {
+    const disabled = new Set(agent.disabledSkillIds ?? []);
+    const skillIds = [...new Set([...(agent.agentTypeSkillIds ?? []), ...(agent.skillIds ?? [])])];
+
+    return skillIds
+      .filter((id) => !disabled.has(id))
+      .map((id) => skillsMap.get(id))
+      .filter(Boolean) as ISkillResponse[];
+  }
+
+  private toGrpcSkill(skill: ISkillResponse): Record<string, unknown> {
+    return {
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      instructions: skill.instructions,
+      license: skill.license,
+      compatibility: skill.compatibility,
+      metadata: skill.metadata,
+      allowed_tools: skill.allowedTools,
+      files: skill.files.map((file) => ({
+        path: file.path,
+        kind: file.kind,
+        mime_type: file.mimeType,
+        content: file.content,
+      })),
+    };
+  }
+
+  /**
+   * Build tool objects for gRPC with accessToken injection for tools that require connected apps.
+   */
+  private async buildToolsWithTokens(
+    tools: IToolResponse[],
+    userId: string,
+  ): Promise<Record<string, unknown>[]> {
+    return Promise.all(
+      tools.map(async (t) => {
+        const toolObj: Record<string, unknown> = {
+          name: t.name,
+          description: t.description,
+        };
+        for (const attr of t.attributes || []) {
+          toolObj[attr.name] = attr.value;
+        }
+        if (t.requiredAppKey) {
+          try {
+            toolObj.accessToken = await this.connectedAppTokenService.getValidToken(
+              userId,
+              t.requiredAppKey,
+            );
+          } catch {
+            this.logger.warn('Could not inject accessToken for tool', {
+              toolName: t.name,
+              appKey: t.requiredAppKey,
+              userId,
+            });
+          }
+        }
+        return toolObj;
+      }),
+    );
   }
 }

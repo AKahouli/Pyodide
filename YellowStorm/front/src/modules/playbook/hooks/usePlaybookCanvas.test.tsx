@@ -6,6 +6,8 @@ import { makePlaybook, makeTask } from '../test-utils';
 const storeFns = vi.hoisted(() => ({
   updateTasks: vi.fn(),
   updateEdges: vi.fn(),
+  captureSnapshot: vi.fn(),
+  canvasSyncVersion: 0,
 }));
 
 const currentPlaybookState = vi.hoisted(() => ({
@@ -68,6 +70,66 @@ describe('usePlaybookCanvas', () => {
     });
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
+  });
+
+  it('allows multiple port-to-port edges between the same two nodes', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [
+            { id: 'out-1', name: 'Out 1', artifactKind: 'document' },
+            { id: 'out-2', name: 'Out 2', artifactKind: 'document' },
+          ],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          inputPorts: [
+            { id: 'in-1', name: 'In 1', artifactKind: 'document', required: false },
+            { id: 'in-2', name: 'In 2', artifactKind: 'document', required: false },
+          ],
+        }),
+      ],
+      edges: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: 'task-1',
+        target: 'task-2',
+        sourceHandle: 'out-1',
+        targetHandle: 'in-1',
+      } as any);
+      result.current.onConnect({
+        source: 'task-1',
+        target: 'task-2',
+        sourceHandle: 'out-2',
+        targetHandle: 'in-2',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-task-1-out-1-task-2-in-1',
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'out-1',
+        targetInputPortId: 'in-1',
+      },
+      {
+        id: 'e-task-1-out-2-task-2-in-2',
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'out-2',
+        targetInputPortId: 'in-2',
+      },
+    ]);
   });
 
   it('removes node and linked edges and syncs both stores', () => {

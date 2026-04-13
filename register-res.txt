@@ -1,0 +1,1 @@
+{"success":true,"data":{"message":"Registration successful. Please check your email to verify your account.","userId":"69da078d92cf69800b43b40e"},"meta":{"timestamp":"2026-04-11T08:34:23.046Z","requestId":"9bee97d8-ddd7-442b-8ed3-49f6c8ba034a","path":"/api/v1/auth/register","duration":1671}}

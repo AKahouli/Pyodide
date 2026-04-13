@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { nanoid } from 'nanoid';
 import { Playbook, PlaybookDocument } from '../schemas/playbook.schema';
 import {
   PlaybookExecution,
@@ -60,6 +61,7 @@ export class PlaybookService {
       workspaces: (dto.workspaces || []).map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     this.logger.log('Playbook created', { playbookId: playbook._id, userId });
@@ -82,6 +84,7 @@ export class PlaybookService {
       workspaces: workspaceIds.map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     this.logger.log('Playbook created with tasks', {
@@ -111,6 +114,7 @@ export class PlaybookService {
       workspaces: source.workspaces || [],
       createdBy: new Types.ObjectId(targetUserId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     await this.cloneExecutionsForPlaybook(sourcePlaybookId, cloned._id.toString(), targetUserId);
@@ -163,8 +167,7 @@ export class PlaybookService {
       matchQuery[dateField] = dateRange;
     }
 
-    const needsExecutionLookup =
-      sortBy === 'lastExecutionAt' || dateField === 'lastExecutionAt';
+    const needsExecutionLookup = true;
 
     // Build aggregation pipeline
     const pipeline: any[] = [{ $match: matchQuery }];
@@ -193,7 +196,7 @@ export class PlaybookService {
               { $match: { $expr: { $eq: ['$playbookId', '$$pid'] } } },
               { $sort: { startedAt: -1 } },
               { $limit: 1 },
-              { $project: { startedAt: 1 } },
+              { $project: { startedAt: 1, status: 1 } },
             ],
             as: '_lastExec',
           },
@@ -202,6 +205,9 @@ export class PlaybookService {
           $addFields: {
             lastExecutionAt: {
               $ifNull: [{ $arrayElemAt: ['$_lastExec.startedAt', 0] }, null],
+            },
+            executionStatus: {
+              $ifNull: [{ $arrayElemAt: ['$_lastExec.status', 0] }, null],
             },
           },
         },
@@ -227,6 +233,7 @@ export class PlaybookService {
           { $limit: limit },
           {
             $project: {
+              integrationToken: 1,
               name: 1,
               description: 1,
               taskCount: 1,
@@ -246,6 +253,17 @@ export class PlaybookService {
     const [result] = await this.playbookModel.aggregate(pipeline);
     const total = result.metadata[0]?.total ?? 0;
     const playbooks = result.data as any[];
+
+    const missingTokenPlaybooks = playbooks.filter((p) => !p.integrationToken);
+    if (missingTokenPlaybooks.length > 0) {
+      await Promise.all(
+        missingTokenPlaybooks.map(async (p) => {
+          const integrationToken = nanoid(32);
+          await this.playbookModel.updateOne({ _id: p._id }, { $set: { integrationToken } }).exec();
+          p.integrationToken = integrationToken;
+        }),
+      );
+    }
 
     return {
       playbooks: playbooks.map((p) => this.mapToSummaryResponse(p)),
@@ -360,6 +378,32 @@ export class PlaybookService {
     const newValue = !playbook.isFavorite;
     await this.playbookModel.findByIdAndUpdate(playbookId, { $set: { isFavorite: newValue } });
     return { isFavorite: newValue };
+  }
+
+  async getOrCreateIntegrationToken(
+    playbookId: string,
+    userId: string,
+  ): Promise<{ token: string }> {
+    const playbook = await this.playbookModel.findOne({
+      _id: new Types.ObjectId(playbookId),
+      createdBy: new Types.ObjectId(userId),
+      isActive: true,
+    }).exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    if (!playbook.integrationToken) {
+      playbook.integrationToken = nanoid(32);
+      await playbook.save();
+    }
+
+    return { token: playbook.integrationToken };
+  }
+
+  async findByIntegrationToken(token: string): Promise<PlaybookDocument | null> {
+    return this.playbookModel.findOne({ integrationToken: token, isActive: true }).exec();
   }
 
   async findRawById(playbookId: string): Promise<PlaybookDocument | null> {
@@ -663,6 +707,8 @@ export class PlaybookService {
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
       scheduleEnabled: Boolean(playbook.scheduleEnabled),
+      executionStatus: playbook.executionStatus ?? null,
+      integrationToken: playbook.integrationToken || null,
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
@@ -720,6 +766,7 @@ export class PlaybookService {
         activeOutputFormatStatus: activeOutputFormats.get(t.id)?.generationStatus || null,
         activeOutputFormatError: activeOutputFormats.get(t.id)?.generationError || null,
         stepReplayMode: t.stepReplayMode || 'live',
+        toolBindings: t.toolBindings || [],
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,
@@ -767,6 +814,16 @@ export class PlaybookService {
       status: execution.status,
       executionMode: execution.executionMode || 'live',
       executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      reflectionEnabled: execution.reflectionEnabled !== false,
+      advisorAutopilotEnabled: execution.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: execution.advisorAutopilotTargetScore ?? 80,
+      advisorAutopilotMaxTurns: execution.advisorAutopilotMaxTurns ?? 2,
+      advisorAutopilotStatus: execution.advisorAutopilotStatus || 'idle',
+      advisorAutopilotTaskId: execution.advisorAutopilotTaskId ?? null,
+      advisorAutopilotAttemptCount: execution.advisorAutopilotAttemptCount ?? 0,
+      advisorAutopilotLastError: execution.advisorAutopilotLastError ?? null,
+      judgeSummaryStatus: execution.judgeSummaryStatus || 'idle',
+      judgeSummary: execution.judgeSummary || null,
       replaySourceByTask: execution.replaySourceByTask || null,
       taskResults: (execution.taskResults || []).map((tr: any) => ({
         taskId: tr.taskId,
@@ -791,6 +848,30 @@ export class PlaybookService {
         staleReason: tr.staleReason ?? null,
         invalidatedByTaskId: tr.invalidatedByTaskId ?? null,
         semanticMatch: tr.semanticMatch ?? null,
+        judgeStatus: tr.judgeStatus || 'idle',
+        judgeResult: tr.judgeResult ?? null,
+        judgeError: tr.judgeError ?? null,
+        advisorTurnCount: tr.advisorTurnCount ?? 0,
+        advisorTurnHistory: (tr.advisorTurnHistory || []).map((entry: any) => ({
+          turn: entry.turn,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+          score: entry.score ?? null,
+          recommendation: entry.recommendation ?? null,
+          safeAutoFixType: entry.safeAutoFixType ?? null,
+          actionType: entry.actionType,
+          stopReason: entry.stopReason ?? null,
+        })),
+        lastAdvisorAction: tr.lastAdvisorAction ?? null,
+        lastAdvisorScoreDelta: tr.lastAdvisorScoreDelta ?? null,
+        advisorStopReason: tr.advisorStopReason ?? null,
+        judgeHistory: (tr.judgeHistory || []).map((entry: any) => ({
+          id: entry.id,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+          attemptNumber: entry.attemptNumber ?? null,
+          model: entry.model ?? null,
+          judgeResult: entry.judgeResult,
+        })),
+        artifacts: tr.artifacts || [],
         evaluationHistory: (tr.evaluationHistory || []).map((entry: any) => ({
           id: entry.id,
           createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,

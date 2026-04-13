@@ -1,10 +1,10 @@
 # Dependencies
 node_modules/
-AGENTS.md
+
 # Build
 dist/
 build/
-
+graphify-out/
 # Environment
 .env
 .env.local

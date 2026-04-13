@@ -53,6 +53,9 @@ export function AgentList() {
           ignorePrePrompt: data.ignorePrePrompt,
           knowledgeBases: data.knowledgeBases,
           tools: data.tools,
+          skills: data.skills,
+          disabledSkills: data.disabledSkills,
+          connectors: data.connectors,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });
@@ -68,6 +71,9 @@ export function AgentList() {
           ignorePrePrompt: data.ignorePrePrompt,
           knowledgeBases: data.knowledgeBases,
           tools: data.tools,
+          skills: data.skills,
+          disabledSkills: data.disabledSkills,
+          connectors: data.connectors,
           isActive: data.isActive,
           isDefaultForType: data.isDefaultForType,
         });

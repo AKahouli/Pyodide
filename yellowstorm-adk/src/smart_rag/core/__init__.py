@@ -9,12 +9,21 @@ These services act as the primary interface between the API layer and
 the underlying processing engines.
 """
 
-from .chat_rag_service import ChatRAGService
-from .agent_team_service import AgentTeamService
-from .skills_service import SkillsService
-
 __all__ = [
     'ChatRAGService',
     'AgentTeamService',
     'SkillsService'
 ]
+
+
+def __getattr__(name: str):
+    if name == 'ChatRAGService':
+        from .chat_rag_service import ChatRAGService
+        return ChatRAGService
+    if name == 'AgentTeamService':
+        from .agent_team_service import AgentTeamService
+        return AgentTeamService
+    if name == 'SkillsService':
+        from .skills_service import SkillsService
+        return SkillsService
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

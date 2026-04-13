@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, IsObject, IsBoolean, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsObject, IsBoolean, IsNumber, MaxLength } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ExecutePlaybookDto {
@@ -28,4 +28,29 @@ export class ExecutePlaybookDto {
   @IsOptional()
   @IsBoolean()
   runEvaluation?: boolean;
+
+  @ApiPropertyOptional({ description: 'Run non-blocking node reflection after each completed step' })
+  @IsOptional()
+  @IsBoolean()
+  runNodeReflection?: boolean;
+
+  @ApiPropertyOptional({ description: 'Enable Advisor Autopilot for safe single-step remediation' })
+  @IsOptional()
+  @IsBoolean()
+  advisorAutopilotEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Advisor Autopilot target score threshold for single-step runs' })
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotTargetScore?: number;
+
+  @ApiPropertyOptional({ description: 'Maximum bounded remediation turns for Advisor Autopilot' })
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotMaxTurns?: number;
+
+  @ApiPropertyOptional({ description: 'Enable realtime step streaming for interactive runs' })
+  @IsOptional()
+  @IsBoolean()
+  streaming?: boolean;
 }
