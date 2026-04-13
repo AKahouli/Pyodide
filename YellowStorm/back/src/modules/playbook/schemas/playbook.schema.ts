@@ -92,7 +92,7 @@ export class PlaybookTask {
   @Prop({ type: String, required: true, trim: true, maxlength: 200 })
   title!: string;
 
-  @Prop({ type: String, trim: true, maxlength: 2000, default: '' })
+  @Prop({ type: String, trim: true, maxlength: 20000, default: '' })
   description!: string;
 
   @Prop({ type: Types.ObjectId, ref: 'Agent', default: null })
@@ -183,7 +183,7 @@ export class Playbook extends Document {
   @Prop({ type: String, required: true, trim: true, minlength: 2, maxlength: 100 })
   name!: string;
 
-  @Prop({ type: String, trim: true, maxlength: 2000, default: '' })
+  @Prop({ type: String, trim: true, maxlength: 20000, default: '' })
   description!: string;
 
   @Prop({ type: [PlaybookTaskSchema], default: [] })

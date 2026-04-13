@@ -297,7 +297,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('nodeEditor.descriptionPlaceholder')}
               rows={10}
-              maxLength={2000}
+              maxLength={20000}
             />
           </div>
 

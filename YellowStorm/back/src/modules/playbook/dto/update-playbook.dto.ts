@@ -112,7 +112,7 @@ export class UpdatePlaybookTaskDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(20000)
   description?: string;
 
   @IsOptional()
@@ -246,10 +246,10 @@ export class UpdatePlaybookDto {
   @MaxLength(100)
   name?: string;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
+  @ApiPropertyOptional({ maxLength: 20000 })
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(20000)
   description?: string;
 
   @ApiPropertyOptional({ type: [UpdatePlaybookTaskDto] })
