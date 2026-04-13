@@ -615,5 +615,13 @@
   "connector.saveBinding": "Save Binding",
   "connector.configure": "Configure {{name}}",
   "connector.noConnectors": "No connectors available",
-  "connector.noConnectorsSearch": "No connectors found"
+  "connector.noConnectorsSearch": "No connectors found",
+  "swiper.headerTitle": "Playbooks",
+  "dates.neverRun": "Never run",
+  "dates.unknown": "Unknown",
+  "swiper.card.stepsLabel": "Steps",
+  "swiper.card.lastRunLabel": "Last run",
+  "swiper.card.stepsUnit": "step",
+  "swiper.card.stepsUnit_plural": "steps",
+  "swiper.card.openAria": "Open playbook {{name}}"
 }
