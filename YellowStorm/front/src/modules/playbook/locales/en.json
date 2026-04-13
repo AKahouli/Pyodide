@@ -511,5 +511,14 @@
   "schedule.validation.monthOfYear": "Month must be 1–12",
   "schedule.validation.weekOfMonth": "Week of month must be 1–5",
   "schedule.validation.advanced": "Advanced options are incomplete",
-  "schedule.validation.interval": "Interval must be between 1 and 366 days"
+  "schedule.validation.interval": "Interval must be between 1 and 366 days",
+
+  "swiper.headerTitle": "Playbooks",
+  "dates.neverRun": "Never run",
+  "dates.unknown": "Unknown",
+  "swiper.card.stepsLabel": "Steps",
+  "swiper.card.lastRunLabel": "Last run",
+  "swiper.card.stepsUnit": "step",
+  "swiper.card.stepsUnit_plural": "steps",
+  "swiper.card.openAria": "Open playbook {{name}}"
 }

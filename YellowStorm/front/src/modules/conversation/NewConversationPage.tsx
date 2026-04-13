@@ -10,6 +10,7 @@ import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { GroupChatButton } from './components/GroupChatButton';
+import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
  
 export function NewConversationPage() {
   const createConversation = useConversationStore((s) => s.createConversation);
@@ -116,8 +117,9 @@ export function NewConversationPage() {
         </div>
         <div className='w-full max-w-3xl px-4'>
           <Input onSubmit={handleSubmit} status={isSending ? 'submitted' : 'ready'} disabled={isSending} submitDisabled={isUploading} onFilesAdded={handleFilesAdded} onFileRemoved={handleFileRemoved} uploadingFiles={uploadFiles} accept={ACCEPT_EXTENSIONS} maxFiles={5} showWorkspaceSelect={true} />
+          <GroupChatButton />
+          <PlaybooksCarousel />
         </div>
-        <GroupChatButton />
       </div>
     </>
   );

@@ -419,7 +419,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
   );
 
   return (
-    <div className='size-full'>
+    <div>
       <PromptInputProvider onFilesAdded={onFilesAdded} onFileRemoved={onFileRemoved} maxFiles={maxFiles} onError={(err) => toast.error(err.message)}>
         <PromptInput globalDrop multiple onSubmit={handleSubmit} accept={accept} maxFiles={maxFiles}>
           <PromptInputAttachments>
