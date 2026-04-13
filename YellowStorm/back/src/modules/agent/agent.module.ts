@@ -10,6 +10,7 @@ import { ToolModule } from '../tool/tool.module';
 import { ModelsModule } from '../models/models.module';
 import { SkillModule } from '../skill/skill.module';
 import { ConnectorModule } from '../connector/connector.module';
+import { ConnectedAppModule } from '../connected-app/connected-app.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { ConnectorModule } from '../connector/connector.module';
     ModelsModule,
     SkillModule,
     ConnectorModule,
+    ConnectedAppModule,
   ],
   controllers: [AgentController, AdminAgentController],
   providers: [AgentService],

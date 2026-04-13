@@ -43,6 +43,7 @@ export class ToolService {
       description: dto.description ?? '',
       defaultAgentTypes: dto.defaultAgentTypes ?? [],
       attributes: dto.attributes ?? [],
+      requiredAppKey: dto.requiredAppKey || null,
       isActive: dto.isActive ?? true,
     });
 
@@ -162,9 +163,14 @@ export class ToolService {
     if (dto.attributes?.length) {
       this.validateAttributes(dto.attributes);
     }
+    // Normalize requiredAppKey: empty string → null (clear the field)
+    const updateData = { ...dto };
+    if ('requiredAppKey' in updateData) {
+      (updateData as Record<string, unknown>).requiredAppKey = updateData.requiredAppKey || null;
+    }
 
     const tool = await this.toolModel
-      .findByIdAndUpdate(id, { $set: dto }, { new: true })
+      .findByIdAndUpdate(id, { $set: updateData }, { new: true })
       .lean()
       .exec();
 
@@ -267,6 +273,7 @@ export class ToolService {
         value: attr.value as string | number | boolean,
         options: attr.options as string[] | undefined,
       })),
+      requiredAppKey: (doc.requiredAppKey as string) || undefined,
       isActive: doc.isActive as boolean,
       createdAt: doc.createdAt as Date,
       updatedAt: doc.updatedAt as Date,

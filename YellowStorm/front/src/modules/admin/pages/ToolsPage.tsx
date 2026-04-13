@@ -123,6 +123,7 @@ export function ToolsPage() {
           description: data.description,
           defaultAgentTypes: data.defaultAgentTypes,
           attributes: data.attributes,
+          requiredAppKey: data.requiredAppKey || undefined,
           isActive: data.isActive,
         });
         toast.success(t("defaultTools.toasts.updated.title"), {
@@ -134,6 +135,7 @@ export function ToolsPage() {
           description: data.description,
           defaultAgentTypes: data.defaultAgentTypes,
           attributes: data.attributes,
+          requiredAppKey: data.requiredAppKey || undefined,
           isActive: data.isActive,
         });
         toast.success(t("defaultTools.toasts.created.title"), {

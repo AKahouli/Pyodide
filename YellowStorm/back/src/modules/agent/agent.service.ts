@@ -19,6 +19,7 @@ import { SkillService } from '../skill/skill.service';
 import { ISkillResponse } from '../skill/interfaces/skill.interface';
 import { ConnectorService } from '../connector/connector.service';
 import { ConnectorAuthService } from '../connector/interfaces/connector-auth.interface';
+import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 
 @Injectable()
 export class AgentService {
@@ -33,6 +34,7 @@ export class AgentService {
     private readonly connectorService: ConnectorService,
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
+    private readonly connectedAppTokenService: ConnectedAppTokenService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -723,7 +725,6 @@ export class AgentService {
 
       // Append Group Members info if provided
       const hasGroupMembers = groupMembers && groupMembers.length > 0;
-      const isManagerAgent = agent.agentTypeSlug === 'manager';
 
       if (hasGroupMembers) {
         let membersContext = '\n\nConversation Members Context:\n';
@@ -739,16 +740,7 @@ export class AgentService {
         prompt,
         agent_type: agent.agentTypeName.toLowerCase(),
         save_memory: false,
-        tools: agentTools.map((t) => {
-          const toolObj: Record<string, unknown> = {
-            name: t.name,
-            description: t.description,
-          };
-          for (const attr of t.attributes || []) {
-            toolObj[attr.name] = attr.value;
-          }
-          return toolObj;
-        }).concat(connectorToolDefs),
+        tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
         skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
         brain_context: agent.knowledgeBases.map((wsId) => ({
           workspace_id: wsId,
@@ -864,63 +856,56 @@ export class AgentService {
       }
     }
 
-    const grpcAgents = streamAgents.map((agent) => {
-      const agentTools = agent.toolIds
-        .map((id) => toolsMap.get(id))
-        .filter(Boolean) as IToolResponse[];
+    const grpcAgents = await Promise.all(
+      streamAgents.map(async (agent) => {
+        const agentTools = agent.toolIds
+          .map((id) => toolsMap.get(id))
+          .filter(Boolean) as IToolResponse[];
 
-      const effectiveModelId = agent.model || fallbackModelId || '';
-      const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
-      const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
+        const effectiveModelId = agent.model || fallbackModelId || '';
+        const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
-      let prompt = '';
-      if (!agent.ignorePrePrompt && agent.agentTypeId) {
-        const resolvedKey = `${agent.agentTypeId}:${effectiveModelId}`;
-        const resolvedPrompt = promptMap.get(resolvedKey) || '';
-        prompt = resolvedPrompt;
-        if (agent.instruction) {
-          prompt += (prompt ? '\n\n' : '') + agent.instruction;
-        }
-      } else {
-        prompt = agent.instruction || '';
-      }
-
-      const grpcAgent: IGrpcAgent = {
-        id: agent.id,
-        name: agent.name,
-        description: agent.role || `you are the ${agent.name}`,
-        prompt,
-        agent_type: agent.agentTypeName.toLowerCase(),
-        save_memory: false,
-        tools: agentTools.map((t) => {
-          const toolObj: Record<string, unknown> = {
-            name: t.name,
-            description: t.description,
-          };
-          for (const attr of t.attributes || []) {
-            toolObj[attr.name] = attr.value;
+        let prompt = '';
+        if (!agent.ignorePrePrompt && agent.agentTypeId) {
+          const resolvedKey = `${agent.agentTypeId}:${effectiveModelId}`;
+          const resolvedPrompt = promptMap.get(resolvedKey) || '';
+          prompt = resolvedPrompt;
+          if (agent.instruction) {
+            prompt += (prompt ? '\n\n' : '') + agent.instruction;
           }
-          return toolObj;
-        }),
-        skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
-        brain_context: agent.knowledgeBases.map((wsId) => ({
-          workspace_id: wsId,
-          workspace_documents: [],
-        })),
-        chatbot: {
-          model: litellmModel,
-        },
-        agent_params: {
-          params: {
-            user_id: userId,
-            ...(sessionId ? { session_id: sessionId } : {}),
-          },
-        },
-        connectorIds: agent.connectorIds || [],
-      };
+        } else {
+          prompt = agent.instruction || '';
+        }
 
-      return grpcAgent;
-    });
+        const grpcAgent: IGrpcAgent = {
+          id: agent.id,
+          name: agent.name,
+          description: agent.role || `you are the ${agent.name}`,
+          prompt,
+          agent_type: agent.agentTypeName.toLowerCase(),
+          save_memory: false,
+          tools: await this.buildToolsWithTokens(agentTools, userId),
+          skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
+          brain_context: agent.knowledgeBases.map((wsId) => ({
+            workspace_id: wsId,
+            workspace_documents: [],
+          })),
+          chatbot: {
+            model: litellmModel,
+          },
+          agent_params: {
+            params: {
+              user_id: userId,
+              ...(sessionId ? { session_id: sessionId } : {}),
+            },
+          },
+          connectorIds: agent.connectorIds || [],
+        };
+
+        return grpcAgent;
+      }),
+    );
 
     this.logger.log('gRPC agents built for playbook', {
       userId,
@@ -1183,5 +1168,40 @@ export class AgentService {
         content: file.content,
       })),
     };
+  }
+
+  /**
+   * Build tool objects for gRPC with accessToken injection for tools that require connected apps.
+   */
+  private async buildToolsWithTokens(
+    tools: IToolResponse[],
+    userId: string,
+  ): Promise<Record<string, unknown>[]> {
+    return Promise.all(
+      tools.map(async (t) => {
+        const toolObj: Record<string, unknown> = {
+          name: t.name,
+          description: t.description,
+        };
+        for (const attr of t.attributes || []) {
+          toolObj[attr.name] = attr.value;
+        }
+        if (t.requiredAppKey) {
+          try {
+            toolObj.accessToken = await this.connectedAppTokenService.getValidToken(
+              userId,
+              t.requiredAppKey,
+            );
+          } catch {
+            this.logger.warn('Could not inject accessToken for tool', {
+              toolName: t.name,
+              appKey: t.requiredAppKey,
+              userId,
+            });
+          }
+        }
+        return toolObj;
+      }),
+    );
   }
 }

@@ -14,6 +14,7 @@ export interface IToolResponse {
   description: string;
   defaultAgentTypes: string[];
   attributes: IToolAttribute[];
+  requiredAppKey?: string;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

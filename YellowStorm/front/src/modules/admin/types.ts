@@ -1085,6 +1085,7 @@ export interface ToolResponse {
   description: string;
   defaultAgentTypes: string[];
   attributes: ToolAttributeResponse[];
+  requiredAppKey?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1112,6 +1113,7 @@ export interface CreateToolRequest {
   description?: string;
   defaultAgentTypes?: string[];
   attributes?: ToolAttributeInput[];
+  requiredAppKey?: string;
   isActive?: boolean;
 }
 
@@ -1120,6 +1122,7 @@ export interface UpdateToolRequest {
   description?: string;
   defaultAgentTypes?: string[];
   attributes?: ToolAttributeInput[];
+  requiredAppKey?: string;
   isActive?: boolean;
 }
 

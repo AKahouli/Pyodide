@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-13 12:00:00 UTC] — Connected-app access token on gRPC tools (web app only)
+
+- **Feature:** `tool` / `conversation`
+- **Type:** `feat`
+- **Changed:** Backend `chatbot.proto` `Tool` adds optional `accessToken` and `guidelines`. Tools persist `requiredAppKey`; `AgentService` injects decrypted OAuth tokens into gRPC tool payloads via `ConnectedAppTokenService`. Admin tool dialog supports selecting a required connected app (i18n). Logger redaction extended for token-like keys. ADK / Python proto left unchanged (wire fields may be ignored until ADK is upgraded).
+- **Why:** Parity with main YellowStorm for tools that need a user’s connected-app OAuth token when calling the AI runtime over gRPC.
+- **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/tool/`, `YellowStorm/back/src/modules/agent/`, `YellowStorm/back/src/modules/logger/logger.service.ts`, `YellowStorm/front/src/modules/admin/` (types, tools pages, locales)
+
 ## [2026-04-13 09:30:00] — Allow admin slug editing in connector edit dialog
 
 - **Feature:** `connectors`

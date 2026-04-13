@@ -13,6 +13,7 @@ export type ToolFormValues = {
     value: string | number | boolean;
     options?: string[];
   }[];
+  requiredAppKey: string;
   isActive: boolean;
 };
 
@@ -89,6 +90,7 @@ export function createToolFormSchema(t: Translator) {
       .optional()
       .default(""),
     defaultAgentTypes: z.array(z.string()).default([]),
+    requiredAppKey: z.string().default(""),
     attributes: z.array(attributeSchema).default([]),
     isActive: z.boolean().default(true),
   });
@@ -98,6 +100,7 @@ export const defaultFormValues: ToolFormValues = {
   name: "",
   description: "",
   defaultAgentTypes: [],
+  requiredAppKey: "",
   attributes: [],
   isActive: true,
 };

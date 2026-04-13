@@ -17,6 +17,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 import { AttributeBuilder } from "./AttributeBuilder";
 import {
@@ -26,6 +33,8 @@ import {
 } from "./tool-form-schema";
 import type { ToolResponse, AgentTypeResponse } from "../../types";
 import { getActiveAgentTypes } from "../../api";
+import { getAvailableApps } from "@/modules/connected-app/api";
+import type { ConnectedAppWithStatus } from "@/modules/connected-app/types";
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
 
@@ -45,6 +54,7 @@ export function CreateEditToolDialog({
   saving,
 }: CreateEditToolDialogProps) {
   const [agentTypeOptions, setAgentTypeOptions] = useState<{ value: string; label: string }[]>([]);
+  const [connectedApps, setConnectedApps] = useState<ConnectedAppWithStatus[]>([]);
   const [loading, setLoading] = useState(false);
   const { t } = useModuleTranslation("admin");
   const { t: tCommon } = useModuleTranslation("common");
@@ -61,30 +71,32 @@ export function CreateEditToolDialog({
     if (open) {
       setLoading(true);
 
-      getActiveAgentTypes()
-        .then((types) => {
-          setAgentTypeOptions(types.map((t: AgentTypeResponse) => ({ value: t.name, label: t.name })));
-        })
-        .catch(() => {})
-        .finally(() => {
-          if (tool) {
-            reset({
-              name: tool.name,
-              description: tool.description || "",
-              defaultAgentTypes: tool.defaultAgentTypes as ToolFormValues["defaultAgentTypes"],
-              attributes: tool.attributes.map((attr) => ({
-                name: attr.name,
-                type: attr.type as ToolFormValues["attributes"][number]["type"],
-                value: attr.value,
-                options: attr.options,
-              })),
-              isActive: tool.isActive,
-            });
-          } else {
-            reset(defaultFormValues);
-          }
-          setLoading(false);
-        });
+      Promise.all([
+        getActiveAgentTypes().catch(() => [] as AgentTypeResponse[]),
+        getAvailableApps().catch(() => [] as ConnectedAppWithStatus[]),
+      ]).then(([types, apps]) => {
+        setAgentTypeOptions(types.map((at: AgentTypeResponse) => ({ value: at.name, label: at.name })));
+        setConnectedApps(apps);
+
+        if (tool) {
+          reset({
+            name: tool.name,
+            description: tool.description || "",
+            defaultAgentTypes: tool.defaultAgentTypes as ToolFormValues["defaultAgentTypes"],
+            requiredAppKey: tool.requiredAppKey || "",
+            attributes: tool.attributes.map((attr) => ({
+              name: attr.name,
+              type: attr.type as ToolFormValues["attributes"][number]["type"],
+              value: attr.value,
+              options: attr.options,
+            })),
+            isActive: tool.isActive,
+          });
+        } else {
+          reset(defaultFormValues);
+        }
+        setLoading(false);
+      });
     }
   }, [open, tool, reset]);
 
@@ -180,6 +192,32 @@ export function CreateEditToolDialog({
                       </div>
                     ))}
                   </div>
+                </div>
+
+                {/* Required connected app */}
+                <div className="space-y-2">
+                  <Label htmlFor="requiredAppKey">{t("defaultTools.form.requiredApp.label")}</Label>
+                  <Select
+                    value={watch("requiredAppKey") || "__none__"}
+                    onValueChange={(value) =>
+                      setValue("requiredAppKey", value === "__none__" ? "" : value)
+                    }
+                  >
+                    <SelectTrigger id="requiredAppKey">
+                      <SelectValue placeholder={t("defaultTools.form.requiredApp.placeholder")} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">{t("defaultTools.form.requiredApp.none")}</SelectItem>
+                      {connectedApps.map((app) => (
+                        <SelectItem key={app.appKey} value={app.appKey}>
+                          {app.displayName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {t("defaultTools.form.requiredApp.description")}
+                  </p>
                 </div>
 
                 {/* Active Switch */}
