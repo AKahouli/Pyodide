@@ -544,12 +544,29 @@ async def run_adk_evaluation_streaming(request: RunADKEvalRequest, queue: Queue)
                 agent_ans = AgentEvaluator._convert_content_to_text(next(r.inferences[0].final_response for r in successful if r.eval_case_id == case_res.eval_id))
                 ref_ans = request.test_cases[idx].reference_output['messages'][0]['content']
 
-                def _safe_float(m_val, default=0.0):
-                    return float(m_val) if m_val is not None else default
+                def _extract_metric_score(metric_name, alt_names=[]):
+                    metric = m_dict.get(metric_name)
+                    if not metric:
+                        for alt in alt_names:
+                            metric = m_dict.get(alt)
+                            if metric: break
+                    
+                    if not metric: return None
+                    
+                    # Try accessing .score attribute or ['score'] key
+                    if hasattr(metric, 'score'): return metric.score
+                    if isinstance(metric, dict) and 'score' in metric: return metric['score']
+                    if isinstance(metric, (int, float)): return metric
+                    return None
 
-                m_score = _safe_float(m_dict.get("final_response_match_v2").score, 0.0) if "final_response_match_v2" in m_dict and hasattr(m_dict.get("final_response_match_v2"), "score") else 0.0
-                h_score = _safe_float(m_dict.get("hallucinations_v1").score, 1.0) if "hallucinations_v1" in m_dict and hasattr(m_dict.get("hallucinations_v1"), "score") else 1.0
-                r_score = _safe_float(m_dict.get("response_match_score").score, 0.0) if "response_match_score" in m_dict and hasattr(m_dict.get("response_match_score"), "score") else 0.0
+                m_score = _extract_metric_score("final_response_match_v2", ["response_match_v2", "llm_judge"])
+                h_score = _extract_metric_score("hallucinations_v1", ["hallucination_v1", "hallucinations"])
+                r_score = _extract_metric_score("response_match_score", ["semantic_score", "response_match"])
+
+                # Fill defaults if missing
+                m_score = float(m_score) if m_score is not None else 0.0
+                h_score = float(h_score) if h_score is not None else 0.0
+                r_score = float(r_score) if r_score is not None else 0.0
                 
                 passed = (h_score >= threshold and m_score >= threshold)
                 test_res = TestResult(

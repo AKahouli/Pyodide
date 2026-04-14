@@ -369,12 +369,10 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
             prev.map((ev) => {
               if (ev.id === existingEval.id) {
                 const newIteration: EvaluationIteration = {
+                  ...testCase,
                   iterationIndex: ev.results.length + 1,
-                  responseMatchScore: { score: testCase.response_match_score, reasoning: testCase.evaluations?.trajectory_match?.reasoning },
-                  finalResponseMatchV2: { score: testCase.response_match_score, reasoning: testCase.evaluations?.trajectory_match?.reasoning },
-                  hallucinationsV1: { score: testCase.hallucination_score, reasoning: testCase.evaluations?.llm_judge?.reasoning },
                   timestamp: new Date().toISOString(),
-                  runIndex: testCase.run_index || 1,
+                  runIndex: testCase.runIndex || 1,
                 };
                 return { ...ev, results: [...ev.results, newIteration] };
               }
@@ -390,12 +388,9 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   ...ev,
                   status: 'completed',
                   results: final.details.map((d: any, idx: number) => ({
+                    ...d,
                     iterationIndex: idx + 1,
-                    responseMatchScore: { score: d.response_match_score, reasoning: d.evaluations?.trajectory_match?.reasoning },
-                    finalResponseMatchV2: { score: d.response_match_score, reasoning: d.evaluations?.trajectory_match?.reasoning },
-                    hallucinationsV1: { score: d.hallucination_score, reasoning: d.evaluations?.llm_judge?.reasoning },
                     timestamp: new Date().toISOString(),
-                    runIndex: d.run_index || 1,
                   })),
                 };
               }
@@ -470,15 +465,9 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
               
               if (isMatch) {
                 const newIteration: EvaluationIteration = {
-                   iterationIndex: testCase.test_number || (ev.results.length + 1),
-                   question: testCase.question,
-                   referenceAnswer: testCase.reference_answer,
-                   agentAnswer: testCase.agent_answer,
-                   responseMatchScore: { score: testCase.response_match_score || 0, reasoning: testCase.evaluations?.llm_judge?.reasoning },
-                   finalResponseMatchV2: { score: testCase.response_match_score || 0, reasoning: testCase.evaluations?.llm_judge?.reasoning },
-                   hallucinationsV1: { score: testCase.hallucination_score || 0, reasoning: testCase.evaluations?.llm_judge?.reasoning },
+                   ...testCase,
+                   iterationIndex: testCase.iterationIndex || (ev.results.length + 1),
                    timestamp: new Date().toISOString(),
-                   runIndex: testCase.runIndex || testCase.run_index || 1,
                 };
                 return { ...ev, results: [...ev.results, newIteration] };
               }

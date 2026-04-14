@@ -237,6 +237,28 @@ export class EvaluationService {
             }
 
             if (!evaluation) {
+                // Security check for very rapid duplicate launches (de-duplication)
+                // We check for ANY evaluation with same params created in the last 10 minutes
+                // (Relaxed from 'processing' only to avoid duplicates when first check finishes fast)
+                const tenMinutesAgo = new Date();
+                tenMinutesAgo.setMinutes(tenMinutesAgo.getMinutes() - 10);
+
+                const existingDuplicate = await this.evaluationModel.findOne({
+                    agentId: new Types.ObjectId(agentId),
+                    scenarioName,
+                    datasetId: new Types.ObjectId(datasetId),
+                    mode,
+                    createdBy: new Types.ObjectId(userId),
+                    createdAt: { $gte: tenMinutesAgo }
+                }).sort({ createdAt: -1 }).exec();
+
+                if (existingDuplicate) {
+                    this.logger.log(`De-duplication: Reusing recently created evaluation ${existingDuplicate._id} (Status: ${existingDuplicate.status})`);
+                    evaluation = existingDuplicate;
+                }
+            }
+
+            if (!evaluation) {
                 evaluation = await this.evaluationModel.create({
                     agentId: new Types.ObjectId(agentId),
                     scenarioName,
@@ -247,9 +269,10 @@ export class EvaluationService {
                     numRuns: numRuns || 1,
                 });
             } else {
-                // If resuming, clear old error and ensure status is processing
+                // If resuming or de-duplicating, clear old error, reset results, and ensure status is processing
                 evaluation.status = 'processing';
                 evaluation.error = undefined;
+                evaluation.results = []; // Reset results to avoid duplicates on retry
                 await evaluation.save();
             }
 
@@ -365,7 +388,7 @@ export class EvaluationService {
 
                                     allDetailedResults.push(transformedResult);
                                     this.evaluationModel.findByIdAndUpdate(evaluation._id, { $push: { results: transformedResult } }).catch(() => {});
-                                    yield data;
+                                    yield { ...data, test_case: transformedResult };
                                 } else if (data.type === 'heartbeat' || data.type === 'init' || data.type === 'partial_results') {
                                     yield data;
                                 }
@@ -397,7 +420,7 @@ export class EvaluationService {
 
                                     allDetailedResults.push(transformedResult);
                                     this.evaluationModel.findByIdAndUpdate(evaluation._id, { $push: { results: transformedResult } }).catch(() => {});
-                                    yield data;
+                                    yield { ...data, test_case: transformedResult };
                                 } else {
                                     yield data;
                                 }
@@ -477,7 +500,15 @@ export class EvaluationService {
 
     private extractScore(val: any): number {
         if (typeof val === 'number') return val;
-        if (val && typeof val === 'object' && typeof val.score === 'number') return val.score;
+        if (!val || typeof val !== 'object') return 0;
+        
+        // Try score property (MetricResult or ADK object)
+        if (typeof val.score === 'number') return val.score;
+        // Try camelCase alias from ADK
+        if (typeof val.responseMatchScore === 'number') return val.responseMatchScore;
+        if (typeof val.hallucinationScore === 'number') return val.hallucinationScore;
+        if (typeof val.semanticScore === 'number') return val.semanticScore;
+        
         return 0;
     }
 }

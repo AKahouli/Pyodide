@@ -45,11 +45,15 @@ class TestResult(BaseModel):
     coherence_score: Optional[float] = Field(0.0, description="Score de cohérence (0.0 à 1.0)")
     hallucination_score: Optional[float] = Field(0.0, description="Score d'hallucination ADK (0.0 à 1.0)")
     response_match_score: Optional[float] = Field(0.0, description="Score de correspondance de réponse ADK (0.0 à 1.0)")
+    # New metrics for LLM Judge V2
+    final_response_match_v2: Optional[Dict[str, Any]] = Field(None, description="Score détaillé final response match V2")
+    hallucinations_v1: Optional[Dict[str, Any]] = Field(None, description="Score détaillé hallucinations V1")
     # Alias camelCase pour le frontend (React)
     semanticScore: Optional[float] = Field(0.0, description="Alias camelCase")
     coherenceScore: Optional[float] = Field(0.0, description="Alias camelCase")
     hallucinationScore: Optional[float] = Field(0.0, description="Alias camelCase")
     responseMatchScore: Optional[float] = Field(0.0, description="Alias camelCase")
+    evaluation_id: Optional[str] = Field(None, description="ID de l'évaluation parente")
     error: Optional[str] = Field(None, description="Message d'erreur si le test a échoué")
 
 
