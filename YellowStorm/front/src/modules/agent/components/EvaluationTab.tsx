@@ -484,6 +484,11 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   ...ev,
                   id: final.evaluation_id || ev.id,
                   status: 'completed',
+                  results: (final.details || final.detailed_results || []).map((d: any, idx: number) => ({
+                    ...d,
+                    iterationIndex: idx + 1,
+                    timestamp: new Date().toISOString(),
+                  })),
                 };
               }
               return ev;
