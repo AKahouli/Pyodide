@@ -205,10 +205,12 @@ def create_langchain_tools(
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
+        agent_brain_ids = agent_config.get("brain_ids") or []
         mcp_tools = _create_connector_mcp_tools(
             step_connector_bindings,
             collector,
             output_workspace_id=output_workspace_id,
+            brain_ids=agent_brain_ids,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -1086,6 +1088,7 @@ def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
     output_workspace_id: str = "",
+    brain_ids: Optional[List[str]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1094,6 +1097,11 @@ def _create_connector_mcp_tools(
     """
     if not bindings:
         return []
+
+    brain_header: Dict[str, str] = {}
+    if brain_ids:
+        brain_header["X-Brain-ID"] = ",".join(brain_ids)
+
 
     tools: List[StructuredTool] = []
     for binding in bindings:
@@ -1183,7 +1191,7 @@ def _create_connector_mcp_tools(
                 sc: Dict[str, Any] = server_config,
                 fp: Dict[str, Any] = fixed_params,
                 tn: str = tool_name,
-                ah: Dict[str, str] = binding_auth_headers,
+                ah: Dict[str, str] = {**binding_auth_headers, **brain_header},
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
                 async def _execute_mcp(**kwargs: Any) -> str:
@@ -1241,6 +1249,8 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
+            brain_ids=brain_ids,
+            brain_header=brain_header,
         )
 
     return tools
