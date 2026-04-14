@@ -1,6 +1,44 @@
 # Changelog
 
-## [2026-04-13 18:00:00 UTC] — Connector transfer import with mode: file/files/folder
+## [2026-04-14 23:25:00 UTC] — Skills selector UI consistency and i18n cleanup
+
+- **Feature:** `skills`
+- **Type:** `refactor`
+- **Changed:** Ensured agent and agent-type skills selection uses the existing searchable multi-select component consistently. Moved remaining hardcoded user-facing skill selector strings into i18n locale files for admin and agent modules.
+- **Why:** Maintain UI一致性 and follow project i18n standards; hardcoded strings violate localization requirements.
+- **Impact:** Frontend locale files (admin and agent modules).
+
+## [2026-04-14 23:20:00 UTC] — Add dedicated import-to-workspace documentation
+
+- **Feature:** `import-to-workspace`
+- **Type:** `docs`
+- **Changed:** Added a dedicated feature doc for the agent-facing `<connector>_import_to_workspace` tool covering playbook/conversation runtime locations, accepted input forms, JWT auth model, workspace selection, backend endpoint contract, response rendering, common failure modes, and phase-1 limitations.
+- **Why:** The connectors doc covered the import flow broadly, but the runtime tool itself needed a focused reference for future debugging, onboarding, and follow-up work.
+- **Impact:** `docs/import-to-workspace/README.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-14 23:00:00 UTC] — Agent-driven workspace import for SharePoint/M365 files
+
+- **Feature:** `connectors`, `mcp-m365`
+- **Type:** `feat`
+- **Changed:** Agents can now search SharePoint via M365 MCP tools and import discovered files into workspace documents using an auto-generated `<connector>_import_to_workspace` tool. The ADK shared helper `import_connector_items_to_workspace_request()` calls the backend `POST /api/v1/connectors/transfer/import` endpoint with platform JWT auth. Supports single file, multiple files, and recursive folder import with flattened persistence. Workspace selection prefers real workspace IDs from `brain_documents` over transient `conversation_brain_id`. Import tool accepts multiple input forms (direct args, item ref, full MCP result object, path-based).
+- **Why:** Replace complex `workspacebridge_import_connector_item_to_workspace` MCP callback with a simple REST-based import that persists files as standard workspace documents consumable by code interpreter.
+- **Impact:** `yellowstorm-adk/src/smart_rag/tools/utilities/connector_tools.py`, `yellowstorm-adk/src/langgraph_engine/playbook_tool_factory.py`, `yellowstorm-adk/src/smart_rag/agents/factories/base_factory.py`, `yellowstorm-adk/src/smart_rag/agents/factories/delegation_factory_helper.py`, `yellowstorm-adk/src/config/settings.py`, `yellowstorm-adk/.env`
+
+## [2026-04-14 23:00:00 UTC] — M365 MCP richer item references and tool guidance
+
+- **Feature:** `mcp-m365`
+- **Type:** `feat`
+- **Changed:** M365 MCP search/browse tools now return richer item references including `siteId`, `webUrl`, `listItemUniqueId`, `listId`, and `siteUrl` to prevent LLM ID-mixing errors. `get_item_metadata` now requests `@microsoft.graph.downloadUrl` and includes `downloadUrl` in response for binary files. Tool docstrings guide agents to prefer `get_document_content` as the primary content access tool and to use full item objects as-is when passing to downstream import tools.
+- **Why:** Agents were mixing `driveId` from one search result with `itemId` from another, causing 404 errors on import.
+- **Impact:** `mcp-m365/graph_helpers.py`, `mcp-m365/document_tools.py`
+
+## [2026-04-14 23:00:00 UTC] — Platform JWT auth for connector import and adapter registry expansion
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** ADK import tool now signs JWTs using `NESTJS_JWT_SECRET` with required NestJS claims (`type: access`, `iss: yellostorm`, `aud: yellostorm-api`). Backend adapter registry expanded with `mcp-spo`, `mcp-m365`, `sharepoint` aliases so MCP-style connector slugs resolve to `M365TransferAdapter`. URL normalization ensures correct `/api/v1/` prefix regardless of `API_URL` trailing slash.
+- **Why:** ADK and NestJS used different JWT secrets; connector slug `mcp-spo` did not match registered adapter keys.
+- **Impact:** `yellowstorm-adk/src/smart_rag/tools/utilities/connector_tools.py`, `yellowstorm-adk/src/config/settings.py`, `YellowStorm/back/src/modules/connector/connector-transfer.service.ts`
 
 - **Feature:** `connectors`
 - **Type:** `feat`

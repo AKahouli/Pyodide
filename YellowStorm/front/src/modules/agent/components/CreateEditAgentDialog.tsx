@@ -400,8 +400,8 @@ export function CreateEditAgentDialog({
                 <TabsContent value="skills" forceMount className="mt-0 data-[state=inactive]:hidden">
                   <div className="grid gap-4">
                     <div className="space-y-2">
-                      <Label>Additional skills</Label>
-                      <p className="text-xs text-muted-foreground">Attach extra skills directly to this agent.</p>
+                      <Label>{t('createEdit.fields.additionalSkills')}</Label>
+                      <p className="text-xs text-muted-foreground">{t('createEdit.fields.additionalSkillsDescription')}</p>
                       <MultiSelect
                         options={availableSkills.map((skill) => ({
                           value: skill.id,
@@ -410,15 +410,15 @@ export function CreateEditAgentDialog({
                         }))}
                         value={watchedSkills}
                         onValueChange={(val) => setValue('skills', val)}
-                        placeholder="Select skills"
-                        searchPlaceholder="Search skills"
-                        emptyText="No skills found"
+                        placeholder={t('createEdit.fields.selectSkills')}
+                        searchPlaceholder={t('createEdit.fields.searchSkills')}
+                        emptyText={t('createEdit.fields.noSkillsFound')}
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Disabled inherited skills</Label>
-                      <p className="text-xs text-muted-foreground">Disable skills inherited from the selected agent type.</p>
+                      <Label>{t('createEdit.fields.disabledInheritedSkills')}</Label>
+                      <p className="text-xs text-muted-foreground">{t('createEdit.fields.disabledInheritedSkillsDescription')}</p>
                       <MultiSelect
                         options={availableSkills
                           .filter((skill) => inheritedSkillIds.includes(skill.id))
@@ -429,9 +429,9 @@ export function CreateEditAgentDialog({
                           }))}
                         value={watchedDisabledSkills}
                         onValueChange={(val) => setValue('disabledSkills', val)}
-                        placeholder="Select inherited skills to disable"
-                        searchPlaceholder="Search inherited skills"
-                        emptyText="No inherited skills available"
+                        placeholder={t('createEdit.fields.selectInheritedSkillsToDisable')}
+                        searchPlaceholder={t('createEdit.fields.searchInheritedSkills')}
+                        emptyText={t('createEdit.fields.noInheritedSkillsAvailable')}
                       />
                     </div>
                   </div>

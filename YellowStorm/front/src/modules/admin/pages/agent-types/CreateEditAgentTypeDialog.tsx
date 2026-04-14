@@ -145,8 +145,8 @@ export function CreateEditAgentTypeDialog({
               </div>
 
               <div className="space-y-2">
-                <Label>Skills</Label>
-                <p className="text-xs text-muted-foreground">Skills inherited by agents of this type by default.</p>
+                <Label>{t("agentTypes.form.skills.label")}</Label>
+                <p className="text-xs text-muted-foreground">{t("agentTypes.form.skills.helper")}</p>
                 <MultiSelect
                   options={availableSkills.map((skill) => ({
                     value: skill.id,
@@ -155,9 +155,9 @@ export function CreateEditAgentTypeDialog({
                   }))}
                   value={watch('skills')}
                   onValueChange={(val) => setValue('skills', val)}
-                  placeholder="Select skills"
-                  searchPlaceholder="Search skills"
-                  emptyText="No skills found"
+                  placeholder={t("agentTypes.form.skills.selectPlaceholder")}
+                  searchPlaceholder={t("agentTypes.form.skills.searchPlaceholder")}
+                  emptyText={t("agentTypes.form.skills.emptyText")}
                 />
               </div>
 
