@@ -5,7 +5,11 @@ import { memo } from 'react';
 const Usage = memo(function Usage() {
   const { status } = useUsage();
   if (!status) return null;
-  const isUnlimited = status?.tokens.isUnlimited || status?.plan.isUnlimited;
+  // Check if unlimited: remaining === -1 is the most reliable indicator from backend
+  const isUnlimited = status?.tokens.remaining === -1 || status?.tokens.isUnlimited || status?.plan.isUnlimited;
+  // Also hide if percentUsed is invalid (negative or > 100)
+  const hasValidUsage = status?.tokens.percentUsed >= 0 && status?.tokens.percentUsed <= 100;
+  const shouldShowUsage = !isUnlimited && hasValidUsage;
   return (
     <Context
       maxTokens={status?.tokens.limit}
@@ -20,7 +24,7 @@ const Usage = memo(function Usage() {
         outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
       }}
       usedTokens={status?.tokens.total}>
-      {!isUnlimited && <ContextTrigger />}
+      {shouldShowUsage && <ContextTrigger />}
       <ContextContent>
         <ContextContentHeader />
         <ContextContentBody>
