@@ -1,13 +1,11 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
-import { Observable } from 'rxjs';
 import axios from 'axios';
 import { Evaluation, EvaluationDocument } from './schemas/evaluation.schema';
 import { Dataset, DatasetDocument } from './schemas/dataset.schema';
 import { AgentService } from '../agent/agent.service';
-import { NotFoundException, ForbiddenException } from '@nestjs/common';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
 @Injectable()
@@ -44,6 +42,9 @@ export class EvaluationService {
     }
 
     async findDatasetById(id: string): Promise<Dataset> {
+        if (!id || id === 'undefined' || id === '') {
+            throw new NotFoundException('Dataset ID is missing or invalid');
+        }
         const dataset = await this.datasetModel.findById(id).exec();
         if (!dataset) throw new NotFoundException(ErrorCode.NOT_FOUND);
         return dataset;
@@ -64,36 +65,28 @@ export class EvaluationService {
         numRuns: number,
         mode: string,
         scenarioName: string,
-        idToken: string, // Needed for ADK auth if required
+        idToken: string,
         threshold?: number,
     ): Promise<Evaluation> {
-        // 1. Get Agent Config
         const agent = await this.agentService.findUserAgentById(userId, agentId);
         if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
 
-        // Build the agent suggestion as expected by ADK
         const agentConfig = await this.agentService.buildAgentsForStream(userId, undefined, [agentId]);
-        if (!agentConfig || agentConfig.length === 0) {
-            throw new Error('Failed to build agent configuration for evaluation');
-        }
-
-        // 2. Get Dataset
         const dataset = await this.findDatasetById(datasetId);
 
-        // 3. Create Evaluation entry in DB
         const evaluation = await this.evaluationModel.create({
             agentId: new Types.ObjectId(agentId),
             scenarioName,
+            datasetId: new Types.ObjectId(datasetId),
             mode,
             status: 'processing',
             createdBy: new Types.ObjectId(userId),
         });
 
-        // 4. Call ADK API
         try {
             const adkRequest = {
                 agent_id: agentId,
-                agent_config: agentConfig[0], // Pass the resolved agent config
+                agent_config: agentConfig[0],
                 dataset: dataset.items.map(item => ({
                     question: item.question,
                     reference_answer: item.reference_answer,
@@ -104,23 +97,14 @@ export class EvaluationService {
                 threshold: threshold || 0.7,
             };
 
-            this.logger.log(`Launching ADK evaluation for agent ${agentId}, ID: ${evaluation._id}`);
-
             const response = await axios.post(`${this.adkUrl}/evaluation-batch/launch`, adkRequest, {
-                headers: {
-                    Authorization: idToken.startsWith('Bearer ') ? idToken : `Bearer ${idToken}`,
-                },
-                timeout: 300000, // 5 minutes
+                headers: { Authorization: idToken.startsWith('Bearer ') ? idToken : `Bearer ${idToken}` },
+                timeout: 300000,
             });
 
-            const adkEvalId = response.data.evaluation_id;
-
-            // Start background polling (Simplified for POC)
-            this.pollEvaluationStatus(evaluation._id.toString(), adkEvalId, idToken);
-
+            this.pollEvaluationStatus(evaluation._id.toString(), response.data.evaluation_id, idToken);
             return evaluation;
         } catch (error: any) {
-            this.logger.error(`Failed to launch evaluation on ADK: ${error.message}`);
             evaluation.status = 'failed';
             evaluation.error = error.message;
             await evaluation.save();
@@ -132,35 +116,22 @@ export class EvaluationService {
         const poll = async () => {
             try {
                 const response = await axios.get(`${this.adkUrl}/evaluation-batch/status/${adkEvalId}`, {
-                    headers: {
-                        Authorization: idToken.startsWith('Bearer ') ? idToken : `Bearer ${idToken}`,
-                    },
+                    headers: { Authorization: idToken.startsWith('Bearer ') ? idToken : `Bearer ${idToken}` },
                 });
-
-                const adkStatus = response.data.status;
-                const results = response.data.results;
-
-                if (adkStatus === 'completed' || adkStatus === 'failed') {
-                    const evaluation = await this.evaluationModel.findById(evalId);
-                    if (evaluation) {
-                        evaluation.status = adkStatus === 'completed' ? 'completed' : 'failed';
-                        evaluation.results = results;
-                        if (adkStatus === 'failed') evaluation.error = response.data.error;
-                        await evaluation.save();
-                        this.logger.log(`Evaluation ${evalId} finished with status: ${adkStatus}`);
-                    }
-                    return; // Stop polling
+                const { status, results, error } = response.data;
+                if (status === 'completed' || status === 'failed') {
+                    await this.evaluationModel.findByIdAndUpdate(evalId, {
+                        status: status === 'completed' ? 'completed' : 'failed',
+                        results: results,
+                        error: error
+                    });
+                    return;
                 }
-
-                // Still processing, poll again later
                 setTimeout(poll, 5000);
-            } catch (error: any) {
-                this.logger.error(`Error polling evaluation ${evalId}: ${error.message}`);
-                // Optional: retry or fail after N attempts
+            } catch (err) {
                 setTimeout(poll, 10000);
             }
         };
-
         setTimeout(poll, 2000);
     }
 
@@ -179,17 +150,8 @@ export class EvaluationService {
         judgeModel?: string,
         threshold?: number,
     ) {
-        console.log('--- [START] executeEvaluationSync ---');
         const stream = this.executeEvaluationStreaming(
-            userId,
-            agentId,
-            datasetId,
-            numRuns,
-            mode,
-            scenarioName,
-            authHeader,
-            judgeModel,
-            threshold,
+            userId, agentId, datasetId, numRuns, mode, scenarioName, authHeader, judgeModel, threshold,
         );
 
         let capturedId = null;
@@ -197,25 +159,13 @@ export class EvaluationService {
 
         try {
             for await (const data of stream) {
-                // Capture ID from init chunk
-                if (data.type === 'init' && data.evaluation_id) {
-                    capturedId = data.evaluation_id;
-                }
-                // We just wait for iterations or final results
-                if (data.type === 'final' || data.results) {
-                    finalEvaluation = data;
-                }
+                if (data.type === 'init' && data.evaluation_id) capturedId = data.evaluation_id;
+                if (data.type === 'final' || data.results || data.type === 'completed') finalEvaluation = data;
             }
-            console.log('--- [SUCCESS] executeEvaluationSync Completed ---');
-            
-            // If we didn't get a final object but we have an ID, fetch what we have in DB
-            if (!finalEvaluation && capturedId) {
-                return await this.evaluationModel.findById(capturedId).exec();
-            }
-            
+            if (!finalEvaluation && capturedId) return await this.evaluationModel.findById(capturedId).exec();
             return finalEvaluation;
         } catch (error) {
-            console.error('--- [ERROR] executeEvaluationSync Failed ---', error);
+            this.logger.error('executeEvaluationSync Failed', error);
             throw error;
         }
     }
@@ -230,196 +180,304 @@ export class EvaluationService {
         idToken: string,
         judgeModel?: string,
         threshold?: number,
+        resumeId?: string,
     ): AsyncGenerator<any, void, unknown> {
-        // 1. Get Agent Config
-        const agent = await this.agentService.findUserAgentById(userId, agentId);
-        if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
-
-        const agentConfig = await this.agentService.buildAgentsForStream(userId, undefined, [agentId]);
-
-        // 2. Get Dataset
-        const dataset = await this.findDatasetById(datasetId);
-
-        // 3. Prepare ADK Request
-        const adkRequest = {
-            agent: agentConfig[0],
-            test_cases: dataset.items.map(item => ({
-                input: { messages: [{ role: 'user', content: item.question }] },
-                reference_output: { messages: [{ role: 'assistant', content: item.reference_answer }] },
-            })),
-            trajectory_match_mode: mode,
-            session_id: `eval_${uuidv4()}`,
-            user_id: userId,
-            threshold: threshold || 0.7,
-            num_runs: numRuns || 1,
-            judge_model: judgeModel ? { name: judgeModel } : (typeof agent.model === 'string' ? { name: agent.model } : agent.model),
-        };
-
-        // 4. Create Evaluation entry in DB (initially)
-        const evaluation = await this.evaluationModel.create({
-            agentId: new Types.ObjectId(agentId),
-            scenarioName,
-            mode,
-            status: 'processing',
-            createdBy: new Types.ObjectId(userId),
-        });
-
-        yield { type: 'init', evaluation_id: evaluation._id.toString() };
-
-        const detailedResults: any[] = [];
-        let finalEvaluation: any = null;
-        
-        const extractText = (val: any): string => {
-            if (!val) return "";
-            if (typeof val === 'string') return val;
-            if (Array.isArray(val)) {
-                return val.map(v => extractText(v)).join("\n");
-            }
-            if (typeof val === 'object') {
-                if (val.content) return val.content;
-                if (val.messages && Array.isArray(val.messages)) {
-                    return val.messages.map((m: any) => m.content || "").filter(Boolean).join("\n");
-                }
-                return JSON.stringify(val);
-            }
-            return String(val);
-        };
+        yield { type: 'init', status: 'connected', message: 'Evaluation request accepted' };
 
         try {
-            const response = await axios.post(`${this.adkUrl}/evaluation-batch/execute_agent_evaluator`, adkRequest, {
-                headers: {
-                    Authorization: idToken.startsWith('Bearer ') ? idToken : `Bearer ${idToken}`,
-                    Accept: 'text/event-stream',
-                },
-                responseType: 'stream',
-                timeout: 60000, // 60 seconds timeout
-            });
+            const agent = await this.agentService.findUserAgentById(userId, agentId);
+            if (!agent) throw new NotFoundException(ErrorCode.CUSTOM_AGENT_NOT_FOUND);
 
-            const stream = response.data;
-            let buffer = '';
+            const agentConfig = await this.agentService.buildAgentsForStream(userId, undefined, [agentId]);
+            
+            // Allow resuming without explicit datasetId if we can find it in the DB (once we start saving it)
+            let effectiveDatasetId = datasetId;
+            if (!effectiveDatasetId || effectiveDatasetId === '') {
+                // If it's a resume scenario (should have an evaluation_id mentioned somewhere)
+                // For now, let's just fail gracefully if datasetId is blank
+                throw new Error('Dataset ID is required to start or resume evaluation');
+            }
 
-            for await (const chunk of stream) {
-                try {
-                    buffer += chunk.toString();
-                    const lines = buffer.split('\n\n');
-                    buffer = lines.pop() || '';
+            const dataset = await this.findDatasetById(effectiveDatasetId);
 
-                    for (const line of lines) {
-                        const trimmed = line.trim();
-                        if (trimmed.startsWith('data: ')) {
-                            const data = JSON.parse(trimmed.substring(6));
+            const adkRequest = {
+                agent: agentConfig[0],
+                test_cases: dataset.items.map(item => ({
+                    input: { messages: [{ role: 'user', content: item.question }] },
+                    reference_output: { messages: [{ role: 'assistant', content: item.reference_answer }] },
+                })),
+                trajectory_match_mode: mode,
+                session_id: `eval_${this.uuidv4()}`,
+                user_id: userId,
+                threshold: threshold || 0.7,
+                num_runs: numRuns || 1,
+                judge_model: (() => {
+                // Priority 1: explicit judgeModel from the request
+                const jm = (judgeModel || '').trim();
+                if (jm) return { name: jm };
+                // Priority 2: agent.model field
+                if (typeof agent.model === 'string' && agent.model.trim()) return { name: agent.model.trim() };
+                if (agent.model && typeof agent.model === 'object') {
+                    const modelObj = agent.model as any;
+                    const name = (modelObj.name || modelObj.model || '').trim();
+                    const provider = (modelObj.provider || '').trim();
+                    if (name) return { name, provider: provider || undefined };
+                }
+                // Fallback: let the Python ADK use its own default
+                return { name: 'gpt-5.4-mini' };
+            })(),
+            };
 
-                            // Capture final results for consolidated mapping
-                            if (data.type === 'final' || data.results) {
-                                finalEvaluation = data;
-                            }
-
-                            if (data.type === 'progress') {
-                                const res = data.test_case;
-                                const responseMatch = res.response_match_score ?? res.responseMatchScore ?? 0;
-                                const hallucination = res.hallucination_score ?? res.hallucinationScore ?? 0;
-                                
-                                const matchReasoning = res.evaluations?.trajectory_match?.reasoning || res.evaluations?.llm_judge?.reasoning;
-                                const reasoning = typeof matchReasoning === 'string' ? matchReasoning : (res.error || "No reasoning provided");
-
-                                const matchV2Score = res.evaluations?.final_response_match_v2?.score ?? res.final_response_match_v2?.score ?? responseMatch;
-                                const matchV2Reasoning = res.evaluations?.final_response_match_v2?.reasoning || res.final_response_match_v2?.reasoning || reasoning;
-
-                                const newIteration = {
-                                    iterationIndex: res.test_number || (detailedResults.length + 1),
-                                    question: extractText(res.question || res.input || res.user_input || res.user_msg || (typeof res.input === 'object' ? JSON.stringify(res.input) : "---")),
-                                    agentAnswer: extractText(res.agent_answer || res.agentAnswer || res.actual || res.actual_output || res.agent_ans || res.actualOutput || ""),
-                                    referenceAnswer: extractText(res.reference_answer || res.expectedAnswer || res.expected || res.expected_output || res.ref_msg || res.expected_answer || res.expectedOutput || ""),
-                                    responseMatchScore: { score: responseMatch, reasoning: reasoning },
-                                    finalResponseMatchV2: { score: matchV2Score, reasoning: matchV2Reasoning },
-                                    hallucinationsV1: { score: hallucination, reasoning: typeof res.evaluations?.llm_judge?.reasoning === 'string' ? res.evaluations?.llm_judge?.reasoning : null },
-                                    timestamp: new Date().toISOString()
-                                };
-
-                                detailedResults.push(res);
-                                data.test_case = { ...res, ...newIteration };
-                                yield data;
-
-                                this.evaluationModel.findByIdAndUpdate(evaluation._id, {
-                                    $push: { results: newIteration }
-                                }).catch(err => this.logger.error(`Failed to save progress to DB: ${err.message}`));
-                            } else {
-                                yield data;
-                            }
-                        }
-                    }
-                } catch (innerError: any) {
-                    this.logger.error(`Error processing stream chunk: ${innerError.message}`);
-                    continue; // Skip faulty chunk instead of crashing
+            let evaluation: any;
+            if (resumeId && resumeId !== '') {
+                evaluation = await this.evaluationModel.findById(resumeId);
+                if (!evaluation) {
+                    this.logger.warn(`Resume ID ${resumeId} provided but not found in DB. Creating new evaluation.`);
                 }
             }
 
-            evaluation.status = 'completed';
+            if (!evaluation) {
+                evaluation = await this.evaluationModel.create({
+                    agentId: new Types.ObjectId(agentId),
+                    scenarioName,
+                    datasetId: new Types.ObjectId(datasetId),
+                    mode,
+                    status: 'processing',
+                    createdBy: new Types.ObjectId(userId),
+                    numRuns: numRuns || 1,
+                });
+            } else {
+                // If resuming, clear old error and ensure status is processing
+                evaluation.status = 'processing';
+                evaluation.error = undefined;
+                await evaluation.save();
+            }
 
-            // Intelligently merge results: take the final packet if complete, otherwise use accumulated detailedResults
-            const finalResultsArray = finalEvaluation?.details || finalEvaluation?.detailed_results || [];
-            const resultsToMap = finalResultsArray.length >= detailedResults.length ? finalResultsArray : detailedResults;
-            
-            evaluation.results = resultsToMap.map((res: any, index: number) => {
-                const responseMatch = res.response_match_score ?? res.responseMatchScore ?? 0;
-                const hallucination = res.hallucination_score ?? res.hallucinationScore ?? 0;
-                
-                const matchReasoning = res.evaluations?.trajectory_match?.reasoning || res.evaluations?.llm_judge?.reasoning || res.error || "No reasoning provided";
-                const reasoning = typeof matchReasoning === 'string' ? matchReasoning : (res.error || "No reasoning provided");
+            yield { type: 'init', evaluation_id: evaluation._id.toString(), message: 'Syncing agent configuration...' };
 
-                const matchV2Score = res.evaluations?.final_response_match_v2?.score ?? res.final_response_match_v2?.score ?? responseMatch;
-                const matchV2Reasoning = res.evaluations?.final_response_match_v2?.reasoning || res.final_response_match_v2?.reasoning || reasoning;
+            const totalRuns = numRuns || 1;
+            const allDetailedResults: any[] = [];
+            let finalBaseEvaluation: any = null;
 
-                return {
-                    iterationIndex: res.test_number || (index + 1),
-                    question: extractText(res.question || res.input || res.user_input || res.user_msg),
-                    agentAnswer: extractText(res.agent_answer || res.agentAnswer || res.actual || res.actual_output || res.agent_ans || res.actualOutput),
-                    referenceAnswer: extractText(res.reference_answer || res.expectedAnswer || res.expected || res.expected_output || res.ref_msg || res.expected_answer || res.expectedOutput),
-                    responseMatchScore: { score: responseMatch, reasoning: reasoning },
-                    finalResponseMatchV2: { score: matchV2Score, reasoning: matchV2Reasoning },
-                    hallucinationsV1: { score: hallucination, reasoning: typeof res.evaluations?.llm_judge?.reasoning === 'string' ? res.evaluations?.llm_judge?.reasoning : null },
-                    timestamp: new Date().toISOString()
+            for (let runIndex = 0; runIndex < totalRuns; runIndex++) {
+                // Update session ID and force num_runs to 1 for the ADK payload
+                const currentAdkRequest = {
+                    ...adkRequest,
+                    session_id: `eval_${this.uuidv4()}_run_${runIndex + 1}`,
+                    num_runs: 1,
                 };
-            });
-            await evaluation.save();
+
+                const adkCall = axios.post(`${this.adkUrl}/evaluation-batch/execute_agent_evaluator`, currentAdkRequest, {
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${idToken}` },
+                    responseType: 'stream',
+                    timeout: 900000,
+                });
+
+                let response: any;
+                let setupDone = false;
+                
+                const waitForResponse = async () => {
+                    response = await adkCall;
+                    setupDone = true;
+                };
+                
+                const responsePromise = waitForResponse();
+                
+                while (!setupDone) {
+                    yield { type: 'heartbeat', message: `ADK processing run ${runIndex + 1}/${totalRuns}...` };
+                    const result = await Promise.race([
+                        responsePromise,
+                        new Promise((_, reject) => setTimeout(() => reject('timeout_internal'), 5000))
+                    ]).catch(err => err);
+                    
+                    if (result !== 'timeout_internal') {
+                        if (result instanceof Error) throw result;
+                        break; 
+                    }
+                }
+
+                if (!response) {
+                    throw new Error(`ADK evaluation failed on run ${runIndex + 1}: Connection could not be established.`);
+                }
+
+                const stream = response.data;
+                let lastHeartbeat = Date.now();
+                let runFinalEval: any = null;
+
+                const streamToAsyncGenerator = async function* (stream: any) {
+                    const chunks: any[] = [];
+                    let done = false;
+                    stream.on('data', (chunk: any) => chunks.push(chunk));
+                    stream.on('end', () => done = true);
+                    stream.on('error', (err: any) => { throw err; });
+
+                    while (!done || chunks.length > 0) {
+                        if (chunks.length > 0) {
+                            yield chunks.shift();
+                            lastHeartbeat = Date.now();
+                        } else {
+                            if (Date.now() - lastHeartbeat > 15000) {
+                                yield { type: 'heartbeat', message: `ADK processing run ${runIndex + 1}/${totalRuns}...` };
+                                lastHeartbeat = Date.now();
+                            }
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
+                    }
+                };
+
+                let buffer = '';
+                for await (const chunk of streamToAsyncGenerator(stream)) {
+                    try {
+                        buffer += chunk.toString();
+                        const lines = buffer.split('\n\n');
+                        buffer = lines.pop() || '';
+
+                        for (const line of lines) {
+                            const trimmed = line.trim();
+                            if (!trimmed) continue;
+
+                            if (trimmed.startsWith('data: ')) {
+                                const data = JSON.parse(trimmed.substring(6));
+                                if (data.type === 'completed' || data.type === 'final') {
+                                    runFinalEval = data;
+                                } else if (data.type === 'progress') {
+                                    // Transform test_case to match EvaluationIteration schema
+                                    const transformedResult = {
+                                        iterationIndex: data.test_case.test_number || 0,
+                                        question: data.test_case.question || '',
+                                        agentAnswer: data.test_case.agent_answer || '',
+                                        referenceAnswer: data.test_case.reference_answer || '',
+                                        responseMatchScore: {
+                                            score: this.extractScore(data.test_case.response_match_score || data.test_case.semantic_score),
+                                            reasoning: data.test_case.evaluations?.trajectory_match?.reasoning || ''
+                                        },
+                                        finalResponseMatchV2: {
+                                            score: this.extractScore(data.test_case.final_response_match_v2 || data.test_case.response_match_score),
+                                            reasoning: data.test_case.final_response_match_v2?.reasoning || data.test_case.evaluations?.llm_judge?.reasoning || ''
+                                        },
+                                        hallucinationsV1: {
+                                            score: this.extractScore(data.test_case.hallucinations_v1 || data.test_case.hallucination_score),
+                                            reasoning: data.test_case.hallucinations_v1?.reasoning || ''
+                                        },
+                                        timestamp: new Date().toISOString(),
+                                        runIndex: runIndex + 1
+                                    };
+
+                                    allDetailedResults.push(transformedResult);
+                                    this.evaluationModel.findByIdAndUpdate(evaluation._id, { $push: { results: transformedResult } }).catch(() => {});
+                                    yield data;
+                                } else if (data.type === 'heartbeat' || data.type === 'init' || data.type === 'partial_results') {
+                                    yield data;
+                                }
+                            } else if (trimmed.startsWith('{')) {
+                                const data = JSON.parse(trimmed);
+                                if (data.type === 'completed' || data.type === 'final') {
+                                    runFinalEval = data;
+                                } else if (data.type === 'progress') {
+                                    const transformedResult = {
+                                        iterationIndex: data.test_case.test_number || 0,
+                                        question: data.test_case.question || '',
+                                        agentAnswer: data.test_case.agent_answer || '',
+                                        referenceAnswer: data.test_case.reference_answer || '',
+                                        responseMatchScore: {
+                                            score: this.extractScore(data.test_case.response_match_score || data.test_case.semantic_score),
+                                            reasoning: data.test_case.evaluations?.trajectory_match?.reasoning || ''
+                                        },
+                                        finalResponseMatchV2: {
+                                            score: this.extractScore(data.test_case.final_response_match_v2 || data.test_case.response_match_score),
+                                            reasoning: data.test_case.final_response_match_v2?.reasoning || data.test_case.evaluations?.llm_judge?.reasoning || ''
+                                        },
+                                        hallucinationsV1: {
+                                            score: this.extractScore(data.test_case.hallucinations_v1 || data.test_case.hallucination_score),
+                                            reasoning: data.test_case.hallucinations_v1?.reasoning || ''
+                                        },
+                                        timestamp: new Date().toISOString(),
+                                        runIndex: runIndex + 1
+                                    };
+
+                                    allDetailedResults.push(transformedResult);
+                                    this.evaluationModel.findByIdAndUpdate(evaluation._id, { $push: { results: transformedResult } }).catch(() => {});
+                                    yield data;
+                                } else {
+                                    yield data;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        this.logger.warn('Failed to parse stream line', e);
+                    }
+                }
+                
+                if (runFinalEval) {
+                    finalBaseEvaluation = runFinalEval;
+                }
+            }
+
+            if (finalBaseEvaluation) {
+                const totalTestsCount = allDetailedResults.length;
+                let accumulatedScore = 0;
+                let scoredCount = 0;
+                allDetailedResults.forEach(r => {
+                    const ts = r.finalResponseMatchV2?.score || r.responseMatchScore?.score;
+                    if (typeof ts === 'number') {
+                        accumulatedScore += ts;
+                        scoredCount++;
+                    }
+                });
+                const accurateMeanScore = scoredCount > 0 ? (accumulatedScore / scoredCount) : 0;
+
+                const finalConsolidated = {
+                    ...finalBaseEvaluation,
+                    total_tests: totalTestsCount,
+                    score: accurateMeanScore,
+                    details: allDetailedResults,
+                    detailed_results: allDetailedResults,
+                    type: 'completed'
+                };
+                
+                if (finalConsolidated.summary && finalConsolidated.summary.overall) {
+                    finalConsolidated.summary.overall.total_tests = totalTestsCount;
+                    finalConsolidated.summary.overall.success_rate = accurateMeanScore;
+                }
+
+                await this.evaluationModel.findByIdAndUpdate(evaluation._id, {
+                    status: 'completed',
+                    results: allDetailedResults
+                });
+
+                yield finalConsolidated;
+            }
 
         } catch (error: any) {
-            this.logger.error(`SSE proxy error: ${error.message}`);
-            evaluation.status = 'failed';
-            evaluation.error = error.message;
-            await evaluation.save();
+            this.logger.error(`SSE Stream Error: ${error.message}`);
             yield { type: 'error', error: error.message };
         }
     }
 
     async findEvaluationsByAgent(agentId: string): Promise<Evaluation[]> {
-        return this.evaluationModel
-            .find({ agentId: new Types.ObjectId(agentId) })
-            .sort({ createdAt: -1 })
-            .exec();
+        return this.evaluationModel.find({ agentId: new Types.ObjectId(agentId) }).sort({ createdAt: -1 }).exec();
     }
 
     async deleteEvaluation(userId: string, id: string): Promise<void> {
         const evaluation = await this.evaluationModel.findById(id).exec();
-        if (!evaluation) {
-            throw new NotFoundException(ErrorCode.NOT_FOUND);
-        }
-
-        // Simple ownership check: either direct creator or has access to the agent
+        if (!evaluation) throw new NotFoundException(ErrorCode.NOT_FOUND);
         if (evaluation.createdBy && evaluation.createdBy.toString() !== userId) {
             const agent = await this.agentService.findUserAgentById(userId, evaluation.agentId.toString());
-            if (!agent) {
-                throw new ForbiddenException(ErrorCode.FORBIDDEN);
-            }
+            if (!agent) throw new ForbiddenException(ErrorCode.FORBIDDEN);
         }
-
         await this.evaluationModel.findByIdAndDelete(id).exec();
     }
-}
 
-function uuidv4() {
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-        var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-        return v.toString(16);
-    });
+    private uuidv4() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+            var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+
+    private extractScore(val: any): number {
+        if (typeof val === 'number') return val;
+        if (val && typeof val === 'object' && typeof val.score === 'number') return val.score;
+        return 0;
+    }
 }

@@ -14,6 +14,21 @@ logger = get_logger(__name__)
 app_settings = get_settings()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 
+class SafeRedis:
+    """Mock Redis client that doesn't crash if server is down."""
+    async def get(self, *args, **kwargs): return None
+    async def set(self, *args, **kwargs): return True
+    async def delete(self, *args, **kwargs): return True
+    async def ping(self, *args, **kwargs): return True
+    async def hget(self, *args, **kwargs): return None
+    async def hset(self, *args, **kwargs): return True
+    async def close(self, *args, **kwargs): pass
+    def __getattr__(self, name):
+        async def mock_method(*args, **kwargs):
+            logger.warning(f"Auth Redis unavailable: Mocking call to '{name}'")
+            return None
+        return mock_method
+
 class RedisConnectionManager:
     _instance: Optional['RedisConnectionManager'] = None
     _redis_pool: Optional[aioredis.ConnectionPool] = None
@@ -23,31 +38,31 @@ class RedisConnectionManager:
             cls._instance = super().__new__(cls)
         return cls._instance
     
-    async def get_connection_pool(self) -> aioredis.ConnectionPool:
+    async def get_connection_pool(self) -> Optional[aioredis.ConnectionPool]:
         if self._redis_pool is None:
             try:
                 if app_settings.ENABLE_REDIS_SSL:
-                    logger.info(f"Creating Redis SSL connection pool to {app_settings.REDIS_HOST}:{app_settings.REDIS_PORT}")
+                    logger.info(f"Creating Redis SSL connection pool to {app_settings.REDIS_HOST}")
                     connection_url = f"rediss://{app_settings.REDIS_USER}:{app_settings.REDIS_PASSWORD}@{app_settings.REDIS_HOST}:{app_settings.REDIS_PORT}/{app_settings.REDIS_DB}"
                 else:
-                    logger.info(f"Creating Redis connection pool to {app_settings.REDIS_HOST}:{app_settings.REDIS_PORT}")
+                    logger.info(f"Creating Redis connection pool to {app_settings.REDIS_HOST}")
                     connection_url = f"redis://{app_settings.REDIS_USER}:{app_settings.REDIS_PASSWORD}@{app_settings.REDIS_HOST}:{app_settings.REDIS_PORT}/{app_settings.REDIS_DB}"
                 
                 self._redis_pool = aioredis.ConnectionPool.from_url(
                     connection_url,
                     max_connections=20,
                     retry_on_timeout=True,
-                    socket_connect_timeout=2  # Don't wait forever if redis is down
+                    socket_connect_timeout=2
                 )
-                logger.info("Redis connection pool created successfully")
             except Exception as e:
-                logger.error(f"Failed to create Redis connection pool: {e}. Authentication will be degraded.")
+                logger.warning(f"Auth Redis pool failed: {e}. Using SafeRedis.")
                 self._redis_pool = None
-                raise
         return self._redis_pool
     
     async def get_redis_connection(self) -> aioredis.Redis:
         pool = await self.get_connection_pool()
+        if pool is None:
+            return SafeRedis()
         return aioredis.Redis(connection_pool=pool)
     
     async def close_pool(self):

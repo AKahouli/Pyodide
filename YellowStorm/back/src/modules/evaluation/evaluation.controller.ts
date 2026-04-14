@@ -11,6 +11,7 @@ import {
     HttpStatus,
     Sse,
     MessageEvent,
+    UnauthorizedException,
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import {
@@ -22,12 +23,17 @@ import {
 import { EvaluationService } from './evaluation.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
+import { Public } from '../auth/decorators/public.decorator';
+import { JwtService } from '@nestjs/jwt';
 
 @ApiTags('Evaluation')
 @ApiBearerAuth()
 @Controller('evaluation')
 export class EvaluationController {
-    constructor(private readonly evaluationService: EvaluationService) { }
+    constructor(
+        private readonly evaluationService: EvaluationService,
+        private readonly jwtService: JwtService,
+    ) { }
 
     // ==========================================
     // Dataset Endpoints
@@ -91,8 +97,6 @@ export class EvaluationController {
         @Body() body: any,
     ) {
         console.log('--- [EXEC] executeEvaluation CALLED (Sync Mode) ---');
-        // Simple synchronous execution: wait for all results then return
-        // We use the same parameters as before but in the Body
         const tempUserId = "69cbe735e514ddfb1bd496ee"; 
         return this.evaluationService.executeEvaluationSync(
             tempUserId,
@@ -105,6 +109,64 @@ export class EvaluationController {
             body.judgeModel,
             body.threshold,
         );
+    }
+
+    @Public()
+    @Sse('execute/stream')
+    @ApiOperation({ summary: 'Stream evaluation results in real-time' })
+    executeEvaluationStream(
+        @Query('token') token: string,
+        @Query('agentId') agentId: string,
+        @Query('datasetId') datasetId: string,
+        @Query('numRuns') numRuns: string,
+        @Query('mode') mode: string,
+        @Query('scenarioName') scenarioName: string,
+        @Query('judgeModel') judgeModel?: string,
+        @Query('threshold') threshold?: string,
+        @Query('resumeId') resumeId?: string,
+    ): Observable<MessageEvent> {
+        // Validate Token and Extract User ID manually since we bypass the global guard for SSE
+        let userId: string;
+        try {
+            if (!token) throw new UnauthorizedException('Token missing');
+            const payload = this.jwtService.verify(token);
+            userId = payload.sub;
+            if (!userId) throw new UnauthorizedException('Invalid token payload');
+        } catch (error: any) {
+            throw new UnauthorizedException('Authentication failed for streaming: ' + error.message);
+        }
+
+        const nRuns = parseInt(numRuns || '1') || 1;
+        const thresh = parseFloat(threshold || '0.7') || 0.7;
+
+        return new Observable((observer) => {
+            const run = async () => {
+                try {
+                    const generator = this.evaluationService.executeEvaluationStreaming(
+                        userId,
+                        agentId,
+                        datasetId,
+                        nRuns,
+                        mode,
+                        scenarioName,
+                        token,
+                        judgeModel,
+                        thresh,
+                        resumeId,
+                    );
+
+                    for await (const chunk of generator) {
+                        observer.next({ data: chunk } as MessageEvent);
+                    }
+                    observer.complete();
+                } catch (error: any) {
+                    console.error(`--- [SSE] CONTROLLER ERROR --- ${error.message}`);
+                    observer.next({ data: { type: 'error', error: error.message } } as MessageEvent);
+                    observer.complete();
+                }
+            };
+            run();
+        });
     }
 
 

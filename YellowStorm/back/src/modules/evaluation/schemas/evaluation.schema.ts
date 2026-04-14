@@ -37,6 +37,9 @@ class EvaluationIteration {
 
     @Prop({ required: true })
     timestamp!: string;
+
+    @Prop({ default: 1 })
+    runIndex!: number;
 }
 
 @Schema({
@@ -50,11 +53,17 @@ export class Evaluation extends Document {
     @Prop({ required: true, trim: true })
     scenarioName!: string;
 
+    @Prop({ type: Types.ObjectId, ref: 'Dataset', required: false, index: true })
+    datasetId?: Types.ObjectId;
+
     @Prop({ required: true, enum: ['strict', 'non_strict'], default: 'non_strict' })
     mode!: string;
 
     @Prop({ type: [EvaluationIteration], default: [] })
     results!: EvaluationIteration[];
+
+    @Prop({ default: 1 })
+    numRuns!: number;
 
     @Prop({ required: true, enum: ['processing', 'completed', 'failed'], default: 'processing' })
     status!: string;

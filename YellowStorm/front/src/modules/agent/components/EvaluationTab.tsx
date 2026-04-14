@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Plus, Pencil, Trash2, ChevronDown, Play, Eye, Table as TableIcon, LineChart, Loader2, Save, FileDown, X, Cpu } from 'lucide-react';
+import { Plus, Pencil, Trash2, ChevronDown, Play, Eye, Table as TableIcon, LineChart, Loader2, Save, FileDown, X, Cpu, ArrowLeft } from 'lucide-react';
 import apiClient from '@/lib/api/client';
 import { API_CONFIG } from '@/lib/api/config';
 import { useModuleTranslation } from '@/modules/localization';
@@ -55,6 +55,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   const [judgeModel, setJudgeModel] = React.useState<string>('');
   const [threshold, setThreshold] = React.useState<number>(0.7);
   const [selectedEvalForDetail, setSelectedEvalForDetail] = React.useState<Evaluation | null>(null);
+  const [selectedRunIndex, setSelectedRunIndex] = React.useState<number | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -74,12 +75,6 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
         // We keep the first one as active internally, but don't apply it to the form
         const first = scs[0];
         setActiveScenario(first);
-      }
-
-      // Auto-resume if an evaluation is processing
-      const processingEval = ev.find((e) => e.status === 'processing');
-      if (processingEval && !launching) {
-        handleResumeEvaluation(processingEval);
       }
 
       // Ensure models are fetched
@@ -260,75 +255,114 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
     }
   };
 
-  // SSE streaming function for evaluation
-  const executeEvaluationStream = async (data: LaunchEvaluationData, onProgress: (testCase: any) => void, onComplete: (final: any) => void, onError: (error: string) => void): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      const token = localStorage.getItem('yellostorm_access_token');
-      if (!token) {
-        onError('No authentication token');
-        reject(new Error('No authentication token'));
-        return;
-      }
+  const executeEvaluationStream = async (data: LaunchEvaluationData, onInit: (id: string) => void, onProgress: (testCase: any) => void, onComplete: (final: any) => void, onError: (error: string) => void): Promise<void> => {
+    let retryCount = 0;
+    const maxRetries = 3;
+    let currentId = '';
 
-      const url = `${API_CONFIG.baseURL}/evaluation/execute/stream?token=${encodeURIComponent(token)}`;
-      const eventSource = new EventSource(url);
+    const connect = () => {
+      return new Promise<void>((resolve, reject) => {
+        const token = localStorage.getItem('yellostorm_access_token');
+        if (!token) {
+          onError('No authentication token');
+          reject(new Error('No authentication token'));
+          return;
+        }
 
-      // Send the evaluation data as a POST request first to initiate the evaluation
-      apiClient
-        .post('/evaluation/execute/stream', data, { timeout: 300000 })
-        .then(() => {
-          // EventSource will handle the streaming updates
-        })
-        .catch((error) => {
-          onError(error.message || 'Failed to launch evaluation');
-          eventSource.close();
-          reject(error);
+        const params = new URLSearchParams({
+          token,
+          agentId: data.agentId,
+          datasetId: data.datasetId || '',
+          numRuns: String(data.numRuns),
+          mode: data.mode,
+          scenarioName: data.scenarioName,
+          judgeModel: data.judgeModel || '',
+          threshold: String(data.threshold || 0.7),
+          // Add resumeId if we are reconnecting
+          ...(currentId ? { resumeId: currentId } : {}),
         });
 
-      eventSource.onmessage = (event) => {
-        try {
-          const parsed = JSON.parse(event.data);
-          const { type, data: eventData } = parsed;
+        const url = `${API_CONFIG.baseURL}/evaluation/execute/stream?${params.toString()}`;
+        console.log(`[EvaluationStream] Connecting to ${url} (Retry: ${retryCount})`);
+        const eventSource = new EventSource(url);
 
-          switch (type) {
-            case 'evaluation_progress':
-              onProgress(eventData);
-              break;
-            case 'evaluation_complete':
-              onComplete(eventData);
-              eventSource.close();
-              resolve();
-              break;
-            case 'evaluation_error':
-              onError(eventData.error || 'Evaluation failed');
-              eventSource.close();
-              reject(new Error(eventData.error || 'Evaluation failed'));
-              break;
+        eventSource.onmessage = (event) => {
+          try {
+            const eventData = JSON.parse(event.data);
+
+            switch (eventData.type) {
+              case 'init':
+                if (eventData.evaluation_id) {
+                  currentId = eventData.evaluation_id;
+                  onInit(eventData.evaluation_id);
+                }
+                break;
+              case 'heartbeat':
+                console.log('[EvaluationStream] Heartbeat received');
+                break;
+              case 'progress':
+                if (eventData.test_case) {
+                  onProgress(eventData.test_case);
+                }
+                break;
+              case 'final':
+              case 'completed':
+                onComplete(eventData);
+                eventSource.close();
+                resolve();
+                break;
+              case 'error':
+                onError(eventData.error || 'Evaluation failed');
+                eventSource.close();
+                reject(new Error(eventData.error || 'Evaluation failed'));
+                break;
+            }
+          } catch (error) {
+            console.error('[EvaluationStream] Failed to parse event:', error);
           }
-        } catch (error) {
-          console.error('[EvaluationStream] Failed to parse event:', error);
-        }
-      };
+        };
 
-      eventSource.onerror = () => {
-        eventSource.close();
-        onError('Connection error');
-        reject(new Error('Connection error'));
-      };
-    });
+        eventSource.onerror = (err) => {
+          console.error('[EvaluationStream] EventSource error:', err);
+          eventSource.close();
+          
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`[EvaluationStream] Attempting reconnect ${retryCount}/${maxRetries}...`);
+            setTimeout(() => {
+              connect().then(resolve).catch(reject);
+            }, 2000);
+          } else {
+            onError('Connection lost after multiple attempts');
+            reject(new Error('Connection lost'));
+          }
+        };
+      });
+    };
+
+    return connect();
   };
 
   // Launch
   const handleResumeEvaluation = async (existingEval: Evaluation) => {
+    if (!existingEval.datasetId) {
+      toast.error("Impossible de reprendre cette ancienne évaluation. L'identifiant du dataset n'a pas été sauvegardé à l'époque. Veuillez en lancer une nouvelle.");
+      return;
+    }
+    
     setLaunching(true);
     try {
       await executeEvaluationStream(
         {
           agentId: existingEval.agentId,
-          datasetId: '', // Not strictly needed for resume if backend already has it, but interface requires it
-          numRuns: 1,
+          datasetId: existingEval.datasetId || '',
+          numRuns: existingEval.numRuns || 1,
           mode: existingEval.mode,
           scenarioName: existingEval.scenarioName,
+        },
+        (id) => {
+           // On resume, ID should match
+           console.log('[EvaluationStream] Resumed ID:', id);
         },
         (testCase) => {
           setEvaluations((prev) =>
@@ -340,6 +374,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   finalResponseMatchV2: { score: testCase.response_match_score, reasoning: testCase.evaluations?.trajectory_match?.reasoning },
                   hallucinationsV1: { score: testCase.hallucination_score, reasoning: testCase.evaluations?.llm_judge?.reasoning },
                   timestamp: new Date().toISOString(),
+                  runIndex: testCase.run_index || 1,
                 };
                 return { ...ev, results: [...ev.results, newIteration] };
               }
@@ -360,6 +395,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                     finalResponseMatchV2: { score: d.response_match_score, reasoning: d.evaluations?.trajectory_match?.reasoning },
                     hallucinationsV1: { score: d.hallucination_score, reasoning: d.evaluations?.llm_judge?.reasoning },
                     timestamp: new Date().toISOString(),
+                    runIndex: d.run_index || 1,
                   })),
                 };
               }
@@ -399,56 +435,93 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
       scenarioName: runName,
       mode: runMode as any,
       status: 'processing',
+      numRuns: numRuns,
       results: [],
       createdAt: new Date().toISOString(),
     };
     setEvaluations((prev) => [optimisticEval, ...prev]);
 
     try {
-      const finalResult = await executeEvaluation({
-        agentId: agent.id,
-        datasetId: selectedDatasetId,
-        numRuns: numRuns,
-        mode: runMode,
-        scenarioName: runName,
-        judgeModel: judgeModel,
-        threshold: threshold,
-      });
-
-      // Replace the optimistic row with the real final result
-      if (finalResult) {
-        setEvaluations((prev) => {
-          const next = prev.map((ev) => (ev ? (ev.id === tempId ? finalResult : ev) : ev));
-          // Update the details view if it is currently open for this eval
-          if (selectedEvalForDetail?.id === tempId) {
-            setSelectedEvalForDetail(finalResult);
-          }
-          return next;
-        });
-      }
-
-      setLaunching(false);
-      toast.success('Evaluation completed');
-    } catch (error: any) {
-      const errorMsg = error.response?.data?.message || error.message || 'Unknown error';
-
-      // Mark the optimistic row as failed instead of removing it
-      setEvaluations((prev) => {
-        const updated = prev.map((ev) => {
-          if (ev && ev.id === tempId) {
-            const failedEval = { ...ev, status: 'failed' as const, error: errorMsg };
+      await executeEvaluationStream(
+        {
+          agentId: agent.id,
+          datasetId: selectedDatasetId,
+          numRuns: numRuns,
+          mode: runMode,
+          scenarioName: runName,
+          judgeModel: judgeModel,
+          threshold: threshold,
+        },
+        (realId) => {
+          // Sync tempId with realId immediately
+          setEvaluations((prev) =>
+            prev.map((ev) => (ev.id === tempId ? { ...ev, id: realId } : ev))
+          );
+          // If the user opened the modal for tempId, update the reference
+          setSelectedEvalForDetail((curr) => (curr?.id === tempId ? { ...curr, id: realId } : curr));
+        },
+        (testCase) => {
+          // Real-time update using the latest state of evaluations
+          setEvaluations((prev) =>
+            prev.map((ev) => {
+              // Note: it might be realId now, but it could still be tempId for a split second
+              // We check both to be safe, but ideally only the realId.
+              const isMatch = ev.id === tempId || (ev.id.startsWith('optimistic-') === false && ev.scenarioName === runName && ev.status === 'processing');
+              
+              if (isMatch) {
+                const newIteration: EvaluationIteration = {
+                   iterationIndex: testCase.test_number || (ev.results.length + 1),
+                   question: testCase.question,
+                   referenceAnswer: testCase.reference_answer,
+                   agentAnswer: testCase.agent_answer,
+                   responseMatchScore: { score: testCase.response_match_score || 0, reasoning: testCase.evaluations?.llm_judge?.reasoning },
+                   finalResponseMatchV2: { score: testCase.response_match_score || 0, reasoning: testCase.evaluations?.llm_judge?.reasoning },
+                   hallucinationsV1: { score: testCase.hallucination_score || 0, reasoning: testCase.evaluations?.llm_judge?.reasoning },
+                   timestamp: new Date().toISOString(),
+                   runIndex: testCase.runIndex || testCase.run_index || 1,
+                };
+                return { ...ev, results: [...ev.results, newIteration] };
+              }
+              return ev;
+            })
+          );
+        },
+        (final) => {
+          // Replace with real ID and final status
+          setEvaluations((prev) => {
+            const next = prev.map((ev) => {
+              if (ev.id === tempId) {
+                return {
+                  ...ev,
+                  id: final.evaluation_id || ev.id,
+                  status: 'completed',
+                };
+              }
+              return ev;
+            });
+            // Update details view if needed
             if (selectedEvalForDetail?.id === tempId) {
-              setSelectedEvalForDetail(failedEval);
+               const updated = next.find(e => e.id === (final.evaluation_id || tempId));
+               if (updated) setSelectedEvalForDetail(updated);
             }
-            return failedEval;
-          }
-          return ev;
-        });
-        return updated;
-      });
-
+            return next;
+          });
+          setLaunching(false);
+          toast.success('Evaluation completed');
+        },
+        (error) => {
+          setEvaluations((prev) =>
+            prev.map((ev) => {
+              if (ev.id === tempId) return { ...ev, status: 'failed', error };
+              return ev;
+            })
+          );
+          setLaunching(false);
+          toast.error('Evaluation Error: ' + error);
+        }
+      );
+    } catch (error: any) {
       setLaunching(false);
-      toast.error('Launch error: ' + errorMsg);
     }
   };
 
@@ -815,33 +888,48 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   <tbody className='divide-y divide-muted'>
                     {evaluations.length > 0 ? (
                       evaluations.filter(Boolean).map((ev) => {
+                        const totalRuns = ev.numRuns || 1;
+                        
+                        // Compute averages across ALL runs for the summary row
                         const avgResp = ev.results.length > 0 ? ev.results.reduce((acc, r) => acc + (r.responseMatchScore?.score || 0), 0) / ev.results.length : 0;
                         const avgFinal = ev.results.length > 0 ? ev.results.reduce((acc, r) => acc + (r.finalResponseMatchV2?.score || 0), 0) / ev.results.length : 0;
                         const avgHallu = ev.results.length > 0 ? ev.results.reduce((acc, r) => acc + (r.hallucinationsV1?.score || 0), 0) / ev.results.length : 0;
+                        
+                        const isFinished = ev.status === 'completed';
+                        const isProcessing = ev.status === 'processing';
+                        
                         return (
-                          <tr key={ev.id || Math.random().toString()} className='hover:bg-muted/30 transition-colors'>
+                          <tr key={ev.id} className='hover:bg-muted/30 transition-colors'>
                             <td className='px-4 py-3 font-medium'>
-                              {ev.scenarioName} {ev.status === 'processing' && <Loader2 className='inline ml-2 h-3 w-3 animate-spin text-primary' />}
+                              <div className='flex items-center gap-2'>
+                                {ev.scenarioName}
+                                {isProcessing && <Loader2 className='inline ml-2 h-3 w-3 animate-spin text-primary' />}
+                                {totalRuns > 1 && <Badge variant='secondary' className='text-[10px] px-1.5 py-0'>{totalRuns} Runs</Badge>}
+                              </div>
                             </td>
                             <td className='px-4 py-3 text-xs text-muted-foreground'>{new Date(ev.createdAt).toLocaleString()}</td>
                             <td className='px-4 py-3 text-center'>
                               <Badge variant='outline' className='text-primary border-border'>
-                                {Math.round(avgResp * 100)}%
+                                {ev.results.length > 0 ? `${Math.round(avgResp * 100)}%` : '---'}
                               </Badge>
                             </td>
                             <td className='px-4 py-3 text-center'>
                               <Badge variant='outline' className='text-primary border-border'>
-                                {Math.round(avgFinal * 100)}%
+                                {ev.results.length > 0 ? `${Math.round(avgFinal * 100)}%` : '---'}
                               </Badge>
                             </td>
                             <td className='px-4 py-3 text-center'>
                               <Badge variant='outline' className='text-primary border-border'>
-                                {Math.round(avgHallu * 100)}%
+                                {ev.results.length > 0 ? `${Math.round(avgHallu * 100)}%` : '---'}
                               </Badge>
                             </td>
                             <td className='px-4 py-3 text-center'>
                               <div className='flex justify-center gap-1'>
-                                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground' onClick={() => setSelectedEvalForDetail(ev)}>
+                                <Button type='button' variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground' onClick={() => {
+                                  // Default to run 1 when opening from main table
+                                  (ev as any)._selectedRunIndex = 1; 
+                                  setSelectedEvalForDetail(ev);
+                                }}>
                                   <Eye className='h-4 w-4' />
                                 </Button>
                                 <Button type='button' variant='ghost' size='icon' className='h-8 w-8 text-muted-foreground hover:text-destructive' onClick={(e) => handleDeleteEval(ev.id, e)}>
@@ -887,86 +975,188 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
       </Accordion>
 
       {/* Evaluation Detail Modal */}
-      <Dialog open={!!selectedEvalForDetail} onOpenChange={(open) => !open && setSelectedEvalForDetail(null)}>
+      <Dialog 
+        open={!!selectedEvalForDetail} 
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedEvalForDetail(null);
+            setSelectedRunIndex(null);
+          }
+        }}
+      >
         <DialogContent className='max-w-6xl max-h-[90vh] overflow-hidden flex flex-col'>
-          <DialogHeader>
-            <DialogTitle>Détails de l'évaluation: {selectedEvalForDetail?.scenarioName}</DialogTitle>
-            <DialogDescription>Analyse détaillée par question et itération.</DialogDescription>
+          <DialogHeader className='flex-row items-center justify-start gap-4 space-y-0'>
+            {selectedEvalForDetail && selectedEvalForDetail.numRuns && selectedEvalForDetail.numRuns > 1 && selectedRunIndex !== null && (
+              <Button 
+                variant='ghost' 
+                size='icon' 
+                className='h-8 w-8' 
+                onClick={() => setSelectedRunIndex(null)}
+              >
+                <ArrowLeft className='h-4 w-4' />
+              </Button>
+            )}
+            <div>
+              <DialogTitle>
+                Détails de l'évaluation: {selectedEvalForDetail?.scenarioName}
+                {selectedRunIndex !== null && ` - Run #${selectedRunIndex}`}
+              </DialogTitle>
+              <DialogDescription>
+                {selectedRunIndex === null && selectedEvalForDetail && (selectedEvalForDetail.numRuns || 1) > 1 
+                  ? 'Résumé des scores par exécution.' 
+                  : 'Analyse détaillée par question.'}
+              </DialogDescription>
+            </div>
           </DialogHeader>
 
           <div className='flex-1 overflow-auto mt-4 pr-1'>
-            <Table>
-              <TableHeader>
-                <TableRow className='bg-muted/50 border-border'>
-                  <TableHead className='w-10 text-[10px] font-black uppercase tracking-tighter'>#</TableHead>
-                  <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Question</TableHead>
-                  <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Réponse Attendue</TableHead>
-                  <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Réponse Obtenue</TableHead>
-                  <TableHead className='w-25 text-center text-[10px] font-black uppercase tracking-widest text-primary'>Scores</TableHead>
-                  <TableHead className='min-w-62.5 text-[10px] font-black uppercase tracking-widest text-primary'>Raisonnement / Détails</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(() => {
-                  // Find the live evaluation object to ensure real-time updates in the dialog
-                  const liveEval = evaluations.find((e) => e.id === selectedEvalForDetail?.id);
-                  let resultsToDisplay = liveEval?.results || selectedEvalForDetail?.results || [];
+            {(() => {
+              if (!selectedEvalForDetail) return null;
+              
+              const liveEval = evaluations.find(e => e.id === selectedEvalForDetail.id);
+              const results = liveEval?.results || selectedEvalForDetail.results || [];
+              const isMultiRun = (selectedEvalForDetail.numRuns || 1) > 1;
 
-                  // Sort by index to ensure 1, 2, 3... order
-                  resultsToDisplay = [...resultsToDisplay].sort((a, b) => (a.iterationIndex || 0) - (b.iterationIndex || 0));
+              // Level 1: Multi-run summary view
+              if (isMultiRun && selectedRunIndex === null) {
+                // Group results by runIndex to show averages
+                const runsSummary = Array.from({ length: selectedEvalForDetail.numRuns || 1 }, (_, i) => i + 1).map(runIdx => {
+                  const runResults = results.filter(r => r.runIndex === runIdx);
+                  const avgResp = runResults.length > 0 ? runResults.reduce((sum, r) => sum + r.responseMatchScore.score, 0) / runResults.length : 0;
+                  const avgHallu = runResults.length > 0 ? runResults.reduce((sum, r) => sum + r.hallucinationsV1.score, 0) / runResults.length : 0;
+                  const avgFinal = runResults.length > 0 ? runResults.reduce((sum, r) => sum + r.finalResponseMatchV2.score, 0) / runResults.length : 0;
+                  
+                  return {
+                    runIdx,
+                    count: runResults.length,
+                    avgResp,
+                    avgHallu,
+                    avgFinal
+                  };
+                });
 
-                  if (resultsToDisplay.length === 0) {
-                    return (
+                return (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className='bg-muted/50 border-border'>
+                        <TableHead className='w-20 text-[10px] font-black uppercase tracking-widest text-primary'>Run #</TableHead>
+                        <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Questions</TableHead>
+                        <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Moy. Resp Match</TableHead>
+                        <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Moy. Final Match</TableHead>
+                        <TableHead className='text-center text-[10px] font-black uppercase tracking-widest text-primary'>Moy. Hallu</TableHead>
+                        <TableHead className='w-20 text-right text-[10px] font-black uppercase tracking-widest text-primary'>Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {runsSummary.map((run) => (
+                        <TableRow key={run.runIdx} className='hover:bg-primary/5 transition-colors'>
+                          <TableCell className='font-bold py-4'>Run {run.runIdx}</TableCell>
+                          <TableCell className='text-center font-mono py-4 text-xs'>{run.count}</TableCell>
+                          <TableCell className='text-center py-4'>
+                            <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', run.avgResp >= 0.7 ? 'bg-green-500/10 text-green-500' : 'bg-primary/10 text-primary')}>
+                              {Math.round(run.avgResp * 100)}%
+                            </Badge>
+                          </TableCell>
+                          <TableCell className='text-center py-4'>
+                            <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', run.avgFinal >= 0.7 ? 'bg-green-500/10 text-green-500' : 'bg-primary/10 text-primary')}>
+                              {Math.round(run.avgFinal * 100)}%
+                            </Badge>
+                          </TableCell>
+                          <TableCell className='text-center py-4'>
+                            <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', run.avgHallu <= 0.3 ? 'bg-green-500/10 text-green-500' : 'bg-destructive/10 text-destructive')}>
+                              {Math.round(run.avgHallu * 100)}%
+                            </Badge>
+                          </TableCell>
+                          <TableCell className='text-right py-4'>
+                            <Button variant='outline' size='sm' className='h-7 text-[10px] font-bold' onClick={() => setSelectedRunIndex(run.runIdx)}>
+                              Détails
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                );
+              }
+
+              // Level 2: Question details view
+              const effectiveRunIdx = isMultiRun ? selectedRunIndex : 1;
+              let resultsToDisplay = results.filter(r => r.runIndex === effectiveRunIdx);
+              
+              const seenIndices = new Set();
+              resultsToDisplay = resultsToDisplay.filter(r => {
+                const key = `${r.iterationIndex}`;
+                if (seenIndices.has(key)) return false;
+                seenIndices.add(key);
+                return true;
+              });
+
+              resultsToDisplay = [...resultsToDisplay].sort((a, b) => (a.iterationIndex || 0) - (b.iterationIndex || 0));
+
+              return (
+                <Table>
+                  <TableHeader>
+                    <TableRow className='bg-muted/50 border-border'>
+                      <TableHead className='w-10 text-[10px] font-black uppercase tracking-tighter'>#</TableHead>
+                      <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Question</TableHead>
+                      <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Réponse Attendue</TableHead>
+                      <TableHead className='min-w-50 text-[10px] font-black uppercase tracking-widest text-primary'>Réponse Obtenue</TableHead>
+                      <TableHead className='w-25 text-center text-[10px] font-black uppercase tracking-widest text-primary'>Scores</TableHead>
+                      <TableHead className='min-w-62.5 text-[10px] font-black uppercase tracking-widest text-primary'>Raisonnement / Détails</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {resultsToDisplay.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={6} className='text-center py-8 text-muted-foreground'>
                           Aucun détail disponible pour cette évaluation. {liveEval?.status === 'processing' && '(En cours...)'}
                         </TableCell>
                       </TableRow>
-                    );
-                  }
-
-                  return resultsToDisplay.map((res) => (
-                    <TableRow key={`${selectedEvalForDetail?.id}-${res.iterationIndex}`} className='group hover:bg-primary/5 transition-colors border-border/50'>
-                      <TableCell className='font-mono text-[10px] py-4'>{res.iterationIndex}</TableCell>
-                      <TableCell className='py-4'>
-                        <div className='text-xs leading-relaxed max-w-75 whitespace-pre-wrap'>{res.question || <span className='text-muted-foreground/30 italic'>N/A</span>}</div>
-                      </TableCell>
-                      <TableCell className='py-4'>
-                        <div className='text-xs leading-relaxed max-w-75 whitespace-pre-wrap text-muted-foreground'>{res.referenceAnswer || <span className='text-muted-foreground/30 italic'>N/A</span>}</div>
-                      </TableCell>
-                      <TableCell className='py-4'>
-                        <div className={cn('text-xs leading-relaxed p-3 rounded-lg border max-w-75 whitespace-pre-wrap', res.status === 'failed' ? 'bg-destructive/10 border-destructive/20 text-destructive' : 'bg-card border-border/50 shadow-sm')}>{res.agentAnswer || (liveEval?.status === 'processing' ? <Loader2 className='h-3 w-3 animate-spin text-primary' /> : <span className='text-muted-foreground/30 italic'>Aucune réponse</span>)}</div>
-                      </TableCell>
-                      <TableCell className='py-4'>
-                        <div className='flex flex-col gap-1.5 items-center'>
-                          <div className='flex flex-col items-center gap-0.5'>
-                            <span className='text-[8px] font-black uppercase text-muted-foreground/50'>Match</span>
-                            <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', res.responseMatchScore.score >= 0.7 ? 'bg-green-500/10 text-green-500' : 'bg-primary/10 text-primary')}>
-                              {Math.round(res.responseMatchScore.score * 100)}%
-                            </Badge>
-                          </div>
-                          <div className='flex flex-col items-center gap-0.5'>
-                            <span className='text-[8px] font-black uppercase text-muted-foreground/50'>Hallu</span>
-                            <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', res.hallucinationsV1.score <= 0.3 ? 'bg-green-500/10 text-green-500' : 'bg-destructive/10 text-destructive')}>
-                              {Math.round(res.hallucinationsV1.score * 100)}%
-                            </Badge>
-                          </div>
-                          <div className='flex flex-col items-center gap-0.5'>
-                            <span className='text-[8px] font-black uppercase text-muted-foreground/50'>Match V2</span>
-                            <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', res.finalResponseMatchV2.score >= 0.7 ? 'bg-green-500/10 text-green-500' : 'bg-primary/10 text-primary')}>
-                              {Math.round(res.finalResponseMatchV2.score * 100)}%
-                            </Badge>
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className='py-4 align-top'>
-                        <div className='text-[11px] leading-relaxed space-y-2'>{res.responseMatchScore.reasoning || res.hallucinationsV1.reasoning ? <div className='bg-muted/30 p-3 rounded-lg border border-border/50 text-muted-foreground italic font-serif max-h-37.5 overflow-y-auto custom-scrollbar'>{res.hallucinationsV1.reasoning || res.responseMatchScore.reasoning}</div> : res.error ? <div className='bg-destructive/5 text-destructive p-2 rounded border border-destructive/10 text-[10px]'>{res.error}</div> : <span className='text-muted-foreground/20 italic'>Aucun raisonnement disponible</span>}</div>
-                      </TableCell>
-                    </TableRow>
-                  ));
-                })()}
-              </TableBody>
-            </Table>
+                    ) : (
+                      resultsToDisplay.map((res) => (
+                        <TableRow key={`${selectedEvalForDetail?.id}-${res.iterationIndex}`} className='group hover:bg-primary/5 transition-colors border-border/50'>
+                          <TableCell className='font-mono text-[10px] py-4'>{res.iterationIndex}</TableCell>
+                          <TableCell className='py-4'>
+                            <div className='text-xs leading-relaxed max-w-75 whitespace-pre-wrap'>{res.question || <span className='text-muted-foreground/30 italic'>N/A</span>}</div>
+                          </TableCell>
+                          <TableCell className='py-4'>
+                            <div className='text-xs leading-relaxed max-w-75 whitespace-pre-wrap text-muted-foreground'>{res.referenceAnswer || <span className='text-muted-foreground/30 italic'>N/A</span>}</div>
+                          </TableCell>
+                          <TableCell className='py-4'>
+                            <div className={cn('text-xs leading-relaxed p-3 rounded-lg border max-w-75 whitespace-pre-wrap', res.status === 'failed' ? 'bg-destructive/10 border-destructive/20 text-destructive' : 'bg-card border-border/50 shadow-sm')}>{res.agentAnswer || (liveEval?.status === 'processing' ? <Loader2 className='h-3 w-3 animate-spin text-primary' /> : <span className='text-muted-foreground/30 italic'>Aucune réponse</span>)}</div>
+                          </TableCell>
+                          <TableCell className='py-4'>
+                            <div className='flex flex-col gap-1.5 items-center'>
+                              <div className='flex flex-col items-center gap-0.5'>
+                                <span className='text-[8px] font-black uppercase text-muted-foreground/50'>Match</span>
+                                <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', res.responseMatchScore.score >= 0.7 ? 'bg-green-500/10 text-green-500' : 'bg-primary/10 text-primary')}>
+                                  {Math.round(res.responseMatchScore.score * 100)}%
+                                </Badge>
+                              </div>
+                              <div className='flex flex-col items-center gap-0.5'>
+                                <span className='text-[8px] font-black uppercase text-muted-foreground/50'>Hallu</span>
+                                <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', res.hallucinationsV1.score <= 0.3 ? 'bg-green-500/10 text-green-500' : 'bg-destructive/10 text-destructive')}>
+                                  {Math.round(res.hallucinationsV1.score * 100)}%
+                                </Badge>
+                              </div>
+                              <div className='flex flex-col items-center gap-0.5'>
+                                <span className='text-[8px] font-black uppercase text-muted-foreground/50'>Match V2</span>
+                                <Badge variant='outline' className={cn('text-[10px] px-1.5 h-5 font-bold border-none', res.finalResponseMatchV2.score >= 0.7 ? 'bg-green-500/10 text-green-500' : 'bg-primary/10 text-primary')}>
+                                  {Math.round(res.finalResponseMatchV2.score * 100)}%
+                                </Badge>
+                              </div>
+                            </div>
+                          </TableCell>
+                          <TableCell className='py-4 align-top'>
+                            <div className='text-[11px] leading-relaxed space-y-2'>{res.responseMatchScore.reasoning || res.hallucinationsV1.reasoning ? <div className='bg-muted/30 p-3 rounded-lg border border-border/50 text-muted-foreground italic font-serif max-h-37.5 overflow-y-auto custom-scrollbar'>{res.hallucinationsV1.reasoning || res.responseMatchScore.reasoning}</div> : res.error ? <div className='bg-destructive/5 text-destructive p-2 rounded border border-destructive/10 text-[10px]'>{res.error}</div> : <span className='text-muted-foreground/20 italic'>Aucun raisonnement disponible</span>}</div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              );
+            })()}
           </div>
         </DialogContent>
       </Dialog>

@@ -38,6 +38,8 @@ class TestResult(BaseModel):
     status: str = Field(..., description="Statut global du test (success, failed, error)")
     result: str = Field(..., description="Alias de status pour le frontend")
     id: str = Field(..., description="ID unique pour React key")
+    run_index: int = Field(1, description="Index de l'itération (run)")
+    runIndex: int = Field(1, description="Alias camelCase pour run_index")
     # Scores ADK (snake_case pour calculs et DB)
     semantic_score: Optional[float] = Field(0.0, description="Score sémantique global du test (0.0 à 100.0)")
     coherence_score: Optional[float] = Field(0.0, description="Score de cohérence (0.0 à 1.0)")

@@ -67,6 +67,10 @@ class RunADKEvalRequest(BaseModel):
         None,
         description="Model configuration to use as judge (ex: {'name': 'gpt-4', 'provider': 'azure/gpt-4o'})"
     )
+    num_runs: int = Field(
+        1,
+        description="Number of evaluation runs to perform"
+    )
 
 
 class EvaluationScore(BaseModel):
@@ -88,6 +92,7 @@ class TestCaseEvaluations(BaseModel):
 class TestResult(BaseModel):
     """Detailed result for a test case."""
     test_number: int = Field(..., description="Test number")
+    run_index: int = Field(1, description="Run index for multi-run evaluations")
     question: str = Field(..., description="Question asked to the agent")
     reference_answer: str = Field(..., description="Expected reference answer")
     agent_answer: Optional[str] = Field(None, description="Agent response")

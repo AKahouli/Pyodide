@@ -22,7 +22,12 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     }
 
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+        (req) => {
+          return req?.query?.token;
+        },
+      ]),
       ignoreExpiration: false,
       secretOrKey: secret,
       issuer: configService.get<string>('jwt.issuer'),

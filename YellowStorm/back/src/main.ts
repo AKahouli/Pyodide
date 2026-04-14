@@ -127,8 +127,8 @@ async function bootstrap() {
   const port = configService.get<number>('PORT', 3000);
   const server = await app.listen(port, '0.0.0.0');
 
-  // Request Timeout (60 seconds)
-  server.setTimeout(60000);
+  // Request Timeout (5 minutes - better for parallel evaluations)
+  server.setTimeout(300000);
 
   logger.log(`Application running on: http://localhost:${port}/${apiPrefix}`);
   if (configService.get<string>('NODE_ENV') !== 'production') {

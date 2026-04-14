@@ -26,6 +26,7 @@ export interface EvaluationIteration {
     finalResponseMatchV2: MetricResult;
     hallucinationsV1: MetricResult;
     timestamp: string;
+    runIndex: number;
     status?: 'success' | 'failed';
     error?: string;
 }
@@ -36,6 +37,8 @@ export interface Evaluation {
     scenarioName: string;
     mode: 'strict' | 'non_strict';
     status: 'processing' | 'completed' | 'failed';
+    numRuns?: number;
+    datasetId?: string;
     results: EvaluationIteration[];
     error?: string;
     createdAt: string;

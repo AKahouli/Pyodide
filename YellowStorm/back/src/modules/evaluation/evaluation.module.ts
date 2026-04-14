@@ -8,6 +8,7 @@ import { Evaluation, EvaluationSchema } from './schemas/evaluation.schema';
 import { Dataset, DatasetSchema } from './schemas/dataset.schema';
 import { Scenario, ScenarioSchema } from './schemas/scenario.schema';
 import { AgentModule } from '../agent/agent.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
     imports: [
@@ -17,6 +18,7 @@ import { AgentModule } from '../agent/agent.module';
             { name: Scenario.name, schema: ScenarioSchema },
         ]),
         AgentModule,
+        AuthModule,
     ],
     controllers: [EvaluationController, ScenarioController],
     providers: [EvaluationService, ScenarioService],
