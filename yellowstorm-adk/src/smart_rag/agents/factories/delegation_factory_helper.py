@@ -292,6 +292,7 @@ def create_search_agent_with_tools(
                 create_connector_tools(
                     connector_bindings,
                     workspace_id=connector_workspace_id,
+                    brain_ids=final_brain_ids,
                 )
             )
         except Exception as e:

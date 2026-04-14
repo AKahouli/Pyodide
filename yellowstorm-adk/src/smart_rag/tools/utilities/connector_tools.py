@@ -330,10 +330,15 @@ def _build_signature(parameter_schema: Dict[str, Any]) -> inspect.Signature:
 def create_connector_tools(
     bindings: List[Dict[str, Any]],
     workspace_id: Optional[str] = None,
+    brain_ids: Optional[List[str]] = None,
 ) -> List[Any]:
     tools: List[Any] = []
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
+
+    brain_header: Dict[str, str] = {}
+    if brain_ids:
+        brain_header["X-Brain-ID"] = ",".join(brain_ids)
 
     for binding in bindings or []:
         connector_id = str(binding.get("connector_id") or "").strip()
@@ -512,7 +517,7 @@ def create_connector_tools(
                 _server_config: Dict[str, Any] = server_config,
                 _action_key: str = action_key,
                 _fixed_params: Dict[str, Any] = fixed_params,
-                _auth_headers: Dict[str, str] = binding_auth_headers,
+                _auth_headers: Dict[str, str] = {**binding_auth_headers, **brain_header},
                 _auth_env: Dict[str, str] = binding_auth_env,
                 **kwargs: Any,
             ) -> str:
@@ -539,6 +544,13 @@ def create_connector_tools(
                     auth_env=_auth_env,
                 )
 
+            logger.info(
+                "connector_tool_created tool_name=%s action_key=%s auth_headers=%s",
+                tool_name,
+                action_key,
+                {**binding_auth_headers, **brain_header},
+            )
+
             _connector_tool.__name__ = tool_name
             _connector_tool.__signature__ = signature
             _connector_tool.__annotations__ = {
@@ -547,10 +559,11 @@ def create_connector_tools(
             tools.append(SearchToolADK(_connector_tool, schema))
 
         logger.info(
-            "conversation_connector_tools_created connector_id=%s connector_name=%s tool_count=%s",
+            "conversation_connector_tools_created connector_id=%s connector_name=%s tool_count=%s brain_ids=%s",
             connector_id,
             connector_name,
             len(binding.get("actions") or []),
+            brain_ids,
         )
 
     return tools

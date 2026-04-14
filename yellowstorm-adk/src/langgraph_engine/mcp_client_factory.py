@@ -34,6 +34,13 @@ async def call_mcp_tool(
     merged_headers = _build_headers(server_config, auth_headers)
     merged_env = _build_env(server_config, auth_env)
 
+    logger.info(
+        "mcp_call_tool action=%s transport=%s headers=%s",
+        action_key,
+        transport_type,
+        merged_headers,
+    )
+
     try:
         if transport_type == "stdio":
             from mcp.client.stdio import stdio_client, StdioServerParameters
@@ -100,6 +107,7 @@ async def call_mcp_tool(
         if hasattr(result, "isError") and result.isError:
             content_parts = getattr(result, "content", []) or []
             error_texts = [p.text for p in content_parts if hasattr(p, "text")]
+            logger.error("mcp_tool_error action=%s error_text=%s", action_key, "; ".join(error_texts) or "Unknown error")
             return f"Connector action '{action_key}' failed: {'; '.join(error_texts) or 'Unknown error'}"
 
         content_parts = getattr(result, "content", []) or []
@@ -111,9 +119,18 @@ async def call_mcp_tool(
                 texts.append(part.get("text", str(part)))
             else:
                 texts.append(str(part))
-        return "\n".join(texts) if texts else str(result)
+        response_text = "\n".join(texts) if texts else str(result)
+        logger.info("mcp_tool_response action=%s response_length=%s preview=%s", action_key, len(response_text), response_text[:500])
+        return response_text
     except Exception as e:
         logger.error("MCP tool call failed: action=%s error=%s", action_key, str(e))
+        # Unwrap ExceptionGroup / TaskGroup sub-exceptions for visibility
+        if isinstance(e, BaseExceptionGroup):
+            for sub in e.exceptions:
+                logger.error("MCP sub-exception: action=%s type=%s error=%s", action_key, type(sub).__name__, str(sub))
+                if isinstance(sub, BaseExceptionGroup):
+                    for nested in sub.exceptions:
+                        logger.error("MCP nested-exception: action=%s type=%s error=%s", action_key, type(nested).__name__, str(nested))
         return f"Connector action '{action_key}' failed: {str(e)}"
 
 
