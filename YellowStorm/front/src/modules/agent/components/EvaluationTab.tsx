@@ -502,6 +502,8 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
           });
           setLaunching(false);
           toast.success('Evaluation completed');
+          // Refresh all data from database to ensure consistency
+          fetchData();
         },
         (error) => {
           setEvaluations((prev) =>

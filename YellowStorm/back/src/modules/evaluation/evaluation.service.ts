@@ -511,4 +511,11 @@ export class EvaluationService {
         
         return 0;
     }
+
+    private extractReasoning(val: any): string {
+        if (typeof val === 'string') return val;
+        if (!val || typeof val !== 'object') return '';
+        
+        return val.reasoning || val.comment || '';
+    }
 }
