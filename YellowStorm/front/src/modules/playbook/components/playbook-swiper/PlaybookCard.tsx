@@ -20,11 +20,11 @@ export function PlaybookCard({ playbook, accentClass, isVisible, onClick }: Play
   return (
     <button type='button' onClick={onClick} className={cn('flex h-full w-full flex-col gap-4 rounded-2xl border bg-card/80 p-4 text-left shadow-sm transition-all duration-300', 'hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-xl', isVisible ? 'opacity-100' : 'opacity-70')} aria-label={t('swiper.card.openAria', { name: playbook.name })}>
       <div className='flex items-start justify-between gap-3'>
-        <div className='flex items-center gap-3'>
-          <div className={cn('flex h-11 w-11 items-center justify-center rounded-2xl bg-linear-to-br text-sm font-semibold uppercase shadow-inner', accentClass)}>{getInitials(playbook.name)}</div>
-          <div className='min-w-0'>
-            <p className='truncate text-sm font-semibold'>{playbook.name}</p>
-            <p className='text-xs text-muted-foreground'>{createdAtLabel}</p>
+        <div className='flex min-w-0 flex-1 items-center gap-3'>
+          <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br text-sm font-semibold uppercase shadow-inner', accentClass)}>{getInitials(playbook.name)}</div>
+          <div className='min-w-0 flex-1'>
+            <p className='truncate text-sm font-semibold' title={playbook.name}>{playbook.name}</p>
+            <p className='truncate text-xs text-muted-foreground'>{createdAtLabel}</p>
           </div>
         </div>
         {playbook.isFavorite && <Star className='h-4 w-4 text-yellow-500' />}
