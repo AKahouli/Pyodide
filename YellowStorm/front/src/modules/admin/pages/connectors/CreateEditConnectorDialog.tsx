@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { MultiSelect } from '@/components/ui/multi-select';
 import {
   Select,
   SelectContent,
@@ -18,12 +19,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { ConnectorResponse, ConnectorActionResponse } from '../../types';
+import type { ConnectorResponse, ConnectorActionResponse, SkillResponse } from '../../types';
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
 import { Loader2, TestTube2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { inspectMcp } from '../../api';
+import { getSkills, inspectMcp } from '../../api';
+import { useModuleTranslation } from '@/modules/localization';
 
 const AUTH_SOURCE_TYPES = [
   { value: 'credential', label: 'Credential' },
@@ -48,15 +50,20 @@ export function CreateEditConnectorDialog({
   connector: ConnectorResponse | null;
   onSave: (data: ConnectorFormValues) => void;
 }) {
+  const { t } = useModuleTranslation('admin');
   const [form, setForm] = useState<ConnectorFormValues>({ ...defaultConnectorFormValues });
   const [inspecting, setInspecting] = useState(false);
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [inspectTools, setInspectTools] = useState<Array<{ name: string; description?: string }>>([]);
+  const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
 
   useEffect(() => {
     if (open) {
       setInspectError(null);
       setInspectTools([]);
+      getSkills({ isActive: true, limit: 1000 })
+        .then((result) => setAvailableSkills(result.data || []))
+        .catch(() => setAvailableSkills([]));
       if (connector) {
         setForm({
           slug: connector.slug,
@@ -74,7 +81,7 @@ export function CreateEditConnectorDialog({
           mcpServerUrl: connector.mcpServerUrl || '',
           mcpServerConfig: connector.mcpServerConfig ? JSON.stringify(connector.mcpServerConfig, null, 2) : '',
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
-          referencedSkillIds: (connector.referencedSkillIds || []).join(', '),
+          referencedSkillIds: connector.referencedSkillIds || [],
           isActive: connector.isActive,
         });
       } else {
@@ -310,8 +317,19 @@ export function CreateEditConnectorDialog({
           </div>
 
           <div>
-            <Label>Referenced Skill IDs (comma-separated)</Label>
-            <Input placeholder='skill-id-1, skill-id-2' value={form.referencedSkillIds} onChange={(e) => setForm({ ...form, referencedSkillIds: e.target.value })} />
+            <Label>{t('connectors.form.referencedSkills.label')}</Label>
+            <MultiSelect
+              options={availableSkills.map((skill) => ({
+                value: skill.id,
+                label: skill.name,
+                description: skill.description,
+              }))}
+              value={form.referencedSkillIds}
+              onValueChange={(value) => setForm({ ...form, referencedSkillIds: value })}
+              placeholder={t('connectors.form.referencedSkills.selectPlaceholder')}
+              searchPlaceholder={t('connectors.form.referencedSkills.searchPlaceholder')}
+              emptyText={t('connectors.form.referencedSkills.emptyText')}
+            />
           </div>
 
           <div className='flex items-center gap-2'>

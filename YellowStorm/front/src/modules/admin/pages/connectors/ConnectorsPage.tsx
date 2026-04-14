@@ -91,7 +91,7 @@ export function ConnectorsPage() {
         mcpServerUrl: data.mcpServerUrl || undefined,
         mcpServerConfig: typeof data.mcpServerConfig === 'string' ? (data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) : undefined) : (data.mcpServerConfig || undefined),
         actions: parsedActions,
-        referencedSkillIds: data.referencedSkillIds ? data.referencedSkillIds.split(',').map((s) => s.trim()).filter(Boolean) : undefined,
+        referencedSkillIds: data.referencedSkillIds.length > 0 ? data.referencedSkillIds : undefined,
         isActive: data.isActive,
       };
       if (editingConnector) {

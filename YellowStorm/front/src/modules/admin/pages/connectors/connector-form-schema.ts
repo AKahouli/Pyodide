@@ -12,7 +12,7 @@ export interface ConnectorFormValues {
   mcpServerUrl: string;
   mcpServerConfig: string;
   actionsJson: string;
-  referencedSkillIds: string;
+  referencedSkillIds: string[];
   isActive: boolean;
 }
 
@@ -30,6 +30,6 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   mcpServerUrl: '',
   mcpServerConfig: '',
   actionsJson: '',
-  referencedSkillIds: '',
+  referencedSkillIds: [],
   isActive: true,
 };

@@ -1,11 +1,19 @@
 # Changelog
 
+## [2026-04-14 23:35:00 UTC] — Connector editor skill selector and form shape update
+
+- **Feature:** `connectors`
+- **Type:** `refactor`
+- **Changed:** Connector editor now selects referenced skills via a searchable multi-select component instead of a comma-separated text field. The submit/edit form shape now uses string arrays directly for skill IDs.
+- **Why:** Improve UX for multi-skill selection with searchability and align form data structure with the backend API contract.
+- **Impact:** `YellowStorm/front/src/modules/admin/pages/connectors/` (editor component)
+
 ## [2026-04-14 23:25:00 UTC] — Skills selector UI consistency and i18n cleanup
 
 - **Feature:** `skills`
 - **Type:** `refactor`
 - **Changed:** Ensured agent and agent-type skills selection uses the existing searchable multi-select component consistently. Moved remaining hardcoded user-facing skill selector strings into i18n locale files for admin and agent modules.
-- **Why:** Maintain UI一致性 and follow project i18n standards; hardcoded strings violate localization requirements.
+- **Why:** Maintain UI consistency and follow project i18n standards; hardcoded strings violate localization requirements.
 - **Impact:** Frontend locale files (admin and agent modules).
 
 ## [2026-04-14 23:20:00 UTC] — Add dedicated import-to-workspace documentation
@@ -54,7 +62,7 @@
 - **Why:** Parity with main YellowStorm for tools that need a user’s connected-app OAuth token when calling the AI runtime over gRPC.
 - **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/tool/`, `YellowStorm/back/src/modules/agent/`, `YellowStorm/back/src/modules/logger/logger.service.ts`, `YellowStorm/front/src/modules/admin/` (types, tools pages, locales)
 
-## [2026-04-13 09:30:00] — Allow admin slug editing in connector edit dialog
+## [2026-04-13 09:30:00 UTC] — Allow admin slug editing in connector edit dialog
 
 - **Feature:** `connectors`
 - **Type:** `fix`
