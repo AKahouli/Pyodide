@@ -5,6 +5,7 @@ import { memo } from 'react';
 const Usage = memo(function Usage() {
   const { status } = useUsage();
   if (!status) return null;
+  const isUnlimited = status?.tokens.isUnlimited || status?.plan.isUnlimited;
   return (
     <Context
       maxTokens={status?.tokens.limit}
@@ -19,7 +20,7 @@ const Usage = memo(function Usage() {
         outputTokenDetails: { textTokens: 0, reasoningTokens: 0 },
       }}
       usedTokens={status?.tokens.total}>
-      <ContextTrigger />
+      {!isUnlimited && <ContextTrigger />}
       <ContextContent>
         <ContextContentHeader />
         <ContextContentBody>

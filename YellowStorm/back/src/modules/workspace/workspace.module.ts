@@ -20,6 +20,7 @@ import {
 import { WorkspaceController } from './workspace.controller';
 import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
+import { WorkspaceIngestController } from './workspace-ingest.controller';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceSettingService } from './workspace-setting.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
@@ -55,6 +56,7 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceController,
     WorkspaceSettingController,
     WorkspaceDocumentController,
+    WorkspaceIngestController,
   ],
   providers: [
     WorkspaceService,

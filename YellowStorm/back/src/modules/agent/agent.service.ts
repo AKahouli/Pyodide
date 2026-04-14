@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model, FilterQuery, Types } from 'mongoose';
 import { LoggerService } from '../logger';
 import { Agent, AgentDocument } from './schemas/agent.schema';
@@ -35,6 +36,7 @@ export class AgentService {
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
+    private readonly configService: ConfigService,
   ) {
     this.logger.setContext(AgentService.name);
   }
@@ -753,6 +755,8 @@ export class AgentService {
           params: {
             user_id: userId,
             connector_bindings_json: JSON.stringify(connectorBindings),
+            platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
+            platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
           },
         },
         connectorIds: agent.connectorIds || [],
@@ -898,6 +902,8 @@ export class AgentService {
             params: {
               user_id: userId,
               ...(sessionId ? { session_id: sessionId } : {}),
+              platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
+              platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             },
           },
           connectorIds: agent.connectorIds || [],

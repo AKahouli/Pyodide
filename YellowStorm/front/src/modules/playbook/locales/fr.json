@@ -615,5 +615,13 @@
   "connector.saveBinding": "Enregistrer la liaison",
   "connector.configure": "Configurer {{name}}",
   "connector.noConnectors": "Aucun connecteur disponible",
-  "connector.noConnectorsSearch": "Aucun connecteur trouvé"
+  "connector.noConnectorsSearch": "Aucun connecteur trouvé",
+  "swiper.headerTitle": "Playbooks",
+  "dates.neverRun": "Jamais exécuté",
+  "dates.unknown": "Inconnu",
+  "swiper.card.stepsLabel": "Étapes",
+  "swiper.card.lastRunLabel": "Dernière exéc",
+  "swiper.card.stepsUnit": "étape",
+  "swiper.card.stepsUnit_plural": "étapes",
+  "swiper.card.openAria": "Ouvrir le playbook {{name}}"
 }
