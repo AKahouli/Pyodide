@@ -1,7 +1,7 @@
 ---
 description: Blocking quality gate. Reviews code changes for correctness, security, and performance in a single pass. Must return PASS before a task can close.
 mode: subagent
-model: azure/gpt-5.4-oc
+model: LiteLLM/gpt-5.4 OC
 tools:
   write: false
   edit: false

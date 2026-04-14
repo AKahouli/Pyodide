@@ -281,7 +281,16 @@ def create_search_agent_with_tools(
 
     if connector_bindings:
         try:
-            agent.tools.extend(create_connector_tools(connector_bindings))
+            connector_workspace_id = agent_factory._resolve_connector_workspace_id(
+                config.brain_ids[0] if config.brain_ids else None,
+                agent_config.get("brain_documents", []),
+            )
+            agent.tools.extend(
+                create_connector_tools(
+                    connector_bindings,
+                    workspace_id=connector_workspace_id,
+                )
+            )
         except Exception as e:
             logger.exception("Error adding connector tools to search agent: %s", e)
 

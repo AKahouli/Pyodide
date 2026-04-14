@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-13 18:00:00 UTC] — Connector transfer import with mode: file/files/folder
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** Connector transfer import now supports `mode: 'file' | 'files' | 'folder'`. Folder mode recursively enumerates SharePoint/M365 files via `resolveImportCandidates`. Phase 1 flattens all imports into workspace documents. Filename collisions resolved using path-derived suffix.
+- **Why:** Enable users to import single files, batches, or entire SharePoint folders into workspace for consumption by workspace context/code interpreter flow.
+- **Impact:** `YellowStorm/back/src/modules/connector/interfaces/connector-transfer.interface.ts`, `YellowStorm/back/src/modules/connector/dto/connector-transfer.dto.ts`, `YellowStorm/back/src/modules/connector/connector-transfer.service.ts`, `YellowStorm/back/src/modules/connector/adapters/m365-transfer.adapter.ts`, `YellowStorm/back/src/modules/connector/connector.controller.ts`
+
 ## [2026-04-13 12:00:00 UTC] — Connected-app access token on gRPC tools (web app only)
 
 - **Feature:** `tool` / `conversation`

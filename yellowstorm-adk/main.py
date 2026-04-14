@@ -1,19 +1,21 @@
 """Application entry point for the Smart ADK API."""
+
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from src.logger.setup_logging import setup_logging
-from src.logger.logging import configure_logging, CorrelationIdFilter
-from azure.monitor.opentelemetry import configure_azure_monitor
-from src.logger.logging import get_logger
 from os import getenv
+
 from fastapi.exceptions import RequestValidationError
-from starlette.responses import JSONResponse
-from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
-from src.middleware import add_middleware
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.requests import Request
-#from src.config.settings import get_settings
+from starlette.responses import JSONResponse
+from starlette.status import HTTP_422_UNPROCESSABLE_CONTENT
+
+from src.logger.setup_logging import setup_logging
+from src.logger.logging import configure_logging, CorrelationIdFilter
+from src.logger.logging import get_logger
+from src.middleware import add_middleware
+# from src.config.settings import get_settings
 
 import uvicorn
 from fastapi import FastAPI
@@ -26,7 +28,10 @@ from src.routers.similarity_search import router as similarity_search_router
 from src.routers.authentification import router as auth_router
 from src.routers.playbook import playbook_router
 from src.routers.evaluation import router as evaluation_router
-from src.smart_rag.infrastructure.session.manager import get_shared_engine, dispose_shared_engine
+from src.smart_rag.infrastructure.session.manager import (
+    get_shared_engine,
+    dispose_shared_engine,
+)
 from google.adk.sessions.database_session_service import Base
 
 # Import gRPC server
@@ -42,21 +47,35 @@ logger = get_logger("api.main")
 async def lifespan(app: FastAPI):
     logger.info("Starting router chatbot (UP)...")
     if app_settings.APPLICATION_INSIGHTS_LOG:
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+        except ImportError as exc:
+            logger.error(
+                "APPLICATION_INSIGHTS_LOG is enabled but azure-monitor-opentelemetry is not installed"
+            )
+            raise RuntimeError(
+                "Missing optional dependency 'azure-monitor-opentelemetry' required for Application Insights logging"
+            ) from exc
+
         # logging in application insights
         configure_logging()
         logger.addFilter(CorrelationIdFilter())
         configure_azure_monitor(
             connection_string=app_settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
-            logger_name="api"
+            logger_name="api",
         )
         logger.warning("azure.core.pipeline.policies.http_logging_policy")
-        logger.warning('azure.monitor.opentelemetry.exporter.export._base')
+        logger.warning("azure.monitor.opentelemetry.exporter.export._base")
     else:
         # logging in elastic search or locally
-        LOG_JSON_FORMAT = TypeAdapter(bool).validate_python(getenv("LOG_JSON_FORMAT", False))
+        LOG_JSON_FORMAT = TypeAdapter(bool).validate_python(
+            getenv("LOG_JSON_FORMAT", False)
+        )
         COLOR_LOGS = TypeAdapter(bool).validate_python(getenv("COLOR_LOGS", True))
         LOG_LEVEL = getenv("LOG_LEVEL", "INFO")
-        setup_logging(json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS)
+        setup_logging(
+            json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS
+        )
 
     # Pre-initialize shared database engine for parallel access
     logger.info("Pre-initializing shared database engine...")
@@ -89,19 +108,34 @@ async def lifespan(app: FastAPI):
                 except asyncio.CancelledError:
                     pass  # Task was cancelled during shutdown, this is expected
                 except Exception as e:
-                    logger.error(f"[gRPC] Background task failed: {str(e)}", exc_info=True)
+                    logger.error(
+                        f"[gRPC] Background task failed: {str(e)}", exc_info=True
+                    )
 
             grpc_server_task.add_done_callback(_grpc_task_error_callback)
 
-            # Give the gRPC server a moment to start and bind to the port
-            await asyncio.sleep(0.5)
+            # Wait briefly so immediate startup failures surface in logs without
+            # blocking the FastAPI app forever if gRPC initialization hangs.
+            try:
+                await asyncio.wait_for(asyncio.shield(grpc_server_task), timeout=0.5)
+            except asyncio.TimeoutError:
+                logger.info(
+                    "gRPC server startup still in progress; continuing FastAPI startup"
+                )
 
-            logger.info(f"✅ gRPC server task started (running in background)")
+            if grpc_server_task.done():
+                grpc_server_task.result()
+
+            logger.info("✅ gRPC server task started (running in background)")
         except Exception as e:
             logger.error(f"Failed to start gRPC server: {str(e)}", exc_info=True)
-            logger.warning("Continuing without gRPC support. Only REST/SSE endpoints will be available.")
+            logger.warning(
+                "Continuing without gRPC support. Only REST/SSE endpoints will be available."
+            )
     else:
-        logger.info("gRPC server disabled (GRPC_ENABLED=false). Only REST/SSE endpoints available.")
+        logger.info(
+            "gRPC server disabled (GRPC_ENABLED=false). Only REST/SSE endpoints available."
+        )
 
     # Application startup logic ends here
     yield
@@ -129,15 +163,13 @@ app = FastAPI(
     title="YellowStorm Smart ADK API",
     summary="YellowStorm Smart ADK API - Chat with ADK endpoint",
     version="V1",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.exception(
-        "Validation error on request"
-    )
+    logger.exception("Validation error on request")
     return JSONResponse(
         status_code=HTTP_422_UNPROCESSABLE_CONTENT,
         content={"detail": exc.errors()},
@@ -149,7 +181,11 @@ if app_settings.APPLICATION_INSIGHTS_LOG:
     FastAPIInstrumentor.instrument_app(app)
 
 
-config_path = app_settings.APPLICATION_INSIGHTS_LOG_CONFIG_PATH if app_settings.APPLICATION_INSIGHTS_LOG else app_settings.LOG_CONFIG_PATH
+config_path = (
+    app_settings.APPLICATION_INSIGHTS_LOG_CONFIG_PATH
+    if app_settings.APPLICATION_INSIGHTS_LOG
+    else app_settings.LOG_CONFIG_PATH
+)
 
 # Main router that includes both sub-routers
 app.include_router(chatbot_router)
@@ -161,7 +197,7 @@ app.include_router(evaluation_router)
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host= app_settings.HOST,
+        host=app_settings.HOST,
         log_config=config_path,
         workers=app_settings.UVICORN_WORKERS,
         port=app_settings.PORT,

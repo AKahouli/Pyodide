@@ -94,8 +94,10 @@ def register_document_tools(mcp: Any) -> None:
     ) -> str:
         """Search for documents by content and metadata across Microsoft 365.
 
-        Returns matching files and folders. Use the returned item references
-        (driveId, itemId) for subsequent read or write operations.
+        Returns matching files and folders. Use the returned full item object
+        as-is for subsequent read, metadata, or workspace import operations.
+        Avoid manually mixing a driveId from one result with an itemId from
+        another result.
 
         Args:
             query: Search query. Supports keywords, file properties, and KQL syntax.
@@ -263,8 +265,21 @@ def register_document_tools(mcp: Any) -> None:
         """Get metadata for a specific file or folder.
 
         Returns detailed information including size, MIME type, dates,
-        and parent reference. Use this to resolve an item before read,
-        update, or delete operations.
+        parent reference, and a short-lived download URL for binary files when
+        Microsoft Graph provides one. Use this to resolve an item before read,
+        import, update, or delete operations.
+
+        Prefer this tool when you need to inspect properties such as file type,
+        size, timestamps, parent folder, or web URL.
+
+        For text-based files, use `get_document_content` to read the content.
+        For binary/Office files, either use the returned `downloadUrl` from this
+        tool or call `get_document_content`, which also returns a `downloadUrl`
+        when inline text is not available.
+
+        If the user asks to download, open, read, or process the file content,
+        prefer `get_document_content` first. That tool is the primary content
+        access entry point.
 
         Args:
             drive_id: The drive ID.
@@ -274,7 +289,10 @@ def register_document_tools(mcp: Any) -> None:
         try:
             ref = build_item_ref(drive_id, item_id, path)
             params = {
-                "$select": DRIVE_ITEM_SELECT + ",description,createdBy,lastModifiedBy"
+                "$select": (
+                    DRIVE_ITEM_SELECT
+                    + ",description,createdBy,lastModifiedBy,@microsoft.graph.downloadUrl"
+                )
             }
             data, status, _ = await graph_get(ref, graph_headers(), params)
             if status != 200:
@@ -283,6 +301,10 @@ def register_document_tools(mcp: Any) -> None:
             item["description"] = data.get("description", "")
             parent_ref = data.get("parentReference") or {}
             item["parentPath"] = parent_ref.get("path", "")
+            if "folder" not in data:
+                download_url = data.get("@microsoft.graph.downloadUrl", "")
+                if download_url:
+                    item["downloadUrl"] = download_url
             return success_response({"item": item})
         except Exception as e:
             return error_response(str(e))
@@ -302,6 +324,13 @@ def register_document_tools(mcp: Any) -> None:
           Returns a short-lived download URL. Use the platform transfer
           tools to import the file into the current workspace for
           processing with the code interpreter.
+
+        Prefer `get_document_content` when you want either inline text for text
+        files or a fallback `downloadUrl` for binary files in one step.
+
+        Use this tool first when the user asks to open a file, read it,
+        download it, inspect its actual contents, or prepare it for workspace
+        import and downstream processing.
 
         Args:
             drive_id: The drive ID.

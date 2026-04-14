@@ -1,11 +1,214 @@
 import inspect
 import re
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+import jwt
+import requests
+
+from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
 
 logger = get_logger("api.smart_rag.tools.connector_tools")
+_platform_access_token: Optional[str] = None
+_platform_access_token_expires_at = 0.0
+
+
+def _build_connector_import_url(backend_url: str) -> str:
+    normalized = backend_url.rstrip("/")
+    if normalized.endswith("/api/v1"):
+        return f"{normalized}/connectors/transfer/import"
+    if normalized.endswith("/api"):
+        return f"{normalized}/v1/connectors/transfer/import"
+    return f"{normalized}/api/v1/connectors/transfer/import"
+
+
+def _get_platform_access_token() -> str:
+    global _platform_access_token, _platform_access_token_expires_at
+
+    now = time.time()
+    if _platform_access_token and now < _platform_access_token_expires_at - 60:
+        return _platform_access_token
+
+    settings = get_settings()
+    expire_minutes = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    jwt_secret = getattr(settings, "NESTJS_JWT_SECRET", None) or settings.SECRET_KEY
+    _platform_access_token = jwt.encode(
+        {
+            "sub": settings.AUTH_USERNAME,
+            "type": "access",
+            "iss": "yellostorm",
+            "aud": "yellostorm-api",
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=expire_minutes),
+        },
+        jwt_secret,
+        algorithm=settings.ALGORITHM,
+    )
+    _platform_access_token_expires_at = now + (expire_minutes * 60)
+    return _platform_access_token
+
+
+def import_connector_items_to_workspace_request(
+    *,
+    backend_url: str,
+    connector_id: str,
+    connector_name: str,
+    workspace_id: str,
+    auth_headers: Dict[str, str],
+    mode: str,
+    item_ref: Optional[Dict[str, Any]] = None,
+    item_refs: Optional[List[Dict[str, Any]]] = None,
+    recursive: bool = True,
+) -> str:
+    def _coerce_item_ref(value: Any) -> Dict[str, Any]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        if not isinstance(value, dict):
+            return {}
+        if value.get("driveId") and (value.get("itemId") or value.get("path")):
+            return {
+                key: value[key]
+                for key in (
+                    "driveId",
+                    "itemId",
+                    "path",
+                    "siteId",
+                    "webUrl",
+                    "listItemUniqueId",
+                    "listId",
+                    "siteUrl",
+                )
+                if key in value and value[key]
+            }
+        for nested_key in ("item", "data", "result"):
+            nested = value.get(nested_key)
+            if isinstance(nested, dict):
+                result = _coerce_item_ref(nested)
+                if result:
+                    return result
+            if isinstance(nested, str):
+                try:
+                    nested = json.loads(nested)
+                    if isinstance(nested, dict):
+                        result = _coerce_item_ref(nested)
+                        if result:
+                            return result
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        for key, val in value.items():
+            if (
+                isinstance(val, dict)
+                and val.get("driveId")
+                and (val.get("itemId") or val.get("path"))
+            ):
+                return {
+                    k: val[k]
+                    for k in (
+                        "driveId",
+                        "itemId",
+                        "path",
+                        "siteId",
+                        "webUrl",
+                        "listItemUniqueId",
+                        "listId",
+                        "siteUrl",
+                    )
+                    if k in val and val[k]
+                }
+        return {}
+
+    normalized_mode = str(mode or "").strip().lower()
+    if normalized_mode not in {"file", "files", "folder"}:
+        return "Error: mode must be one of 'file', 'files', or 'folder'"
+    if not backend_url:
+        return "Error: backend API URL is not configured"
+    if not workspace_id:
+        return "Error: no workspace_id is available for connector import"
+
+    normalized_item_ref = _coerce_item_ref(item_ref)
+    normalized_item_refs = [_coerce_item_ref(item) for item in (item_refs or [])]
+    normalized_item_refs = [item for item in normalized_item_refs if item]
+
+    if not normalized_item_ref and not normalized_item_refs:
+        ref_preview = str(item_ref)[:200] if item_ref else "None"
+        refs_preview = str(item_refs)[:200] if item_refs else "None"
+        return (
+            f"Error: could not extract driveId/itemId from the provided item reference. "
+            f"item_ref={ref_preview}, item_refs={refs_preview}. "
+            f"Expected an object with driveId and itemId fields."
+        )
+
+    payload: Dict[str, Any] = {
+        "connectorId": connector_id,
+        "workspaceId": workspace_id,
+        "mode": normalized_mode,
+        "recursive": recursive,
+        "flatten": True,
+    }
+    if normalized_mode == "files":
+        payload["itemRefs"] = normalized_item_refs
+    else:
+        payload["itemRef"] = normalized_item_ref
+
+    if normalized_mode == "files" and not payload["itemRefs"]:
+        return "Error: item_refs is required when mode='files'"
+    if normalized_mode in {"file", "folder"} and not payload["itemRef"]:
+        return f"Error: item_ref is required when mode='{normalized_mode}'"
+
+    try:
+        response = requests.post(
+            _build_connector_import_url(backend_url),
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {_get_platform_access_token()}",
+                "Content-Type": "application/json",
+            },
+            timeout=120,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except requests.RequestException as exc:
+        response = getattr(exc, "response", None)
+        details = (
+            f" | backend body: {response.text[:500]}"
+            if response is not None and getattr(response, "text", None)
+            else ""
+        )
+        return f"Error: failed to import connector items to workspace: {exc}{details}"
+
+    result_payload = data.get("data") if isinstance(data.get("data"), dict) else data
+    summary = result_payload.get("summary") or {}
+    imported = result_payload.get("imported") or []
+    errors = result_payload.get("errors") or []
+    imported_lines = []
+    for item in imported[:10]:
+        if item.get("success"):
+            imported_lines.append(
+                f"- {item.get('finalFilename') or item.get('filename')} -> workspaceDocumentId={item.get('workspaceDocumentId')}"
+            )
+        else:
+            imported_lines.append(
+                f"- FAILED {item.get('sourcePath') or item.get('filename')}: {item.get('error')}"
+            )
+    error_lines = [
+        f"- {err.get('sourcePath') or 'item'}: {err.get('error')}"
+        for err in errors[:10]
+    ]
+
+    parts = [
+        f"Imported connector items from {connector_name} into workspace {workspace_id}.",
+        f"Requested: {summary.get('requested', 0)}, imported: {summary.get('imported', 0)}, failed: {summary.get('failed', 0)}.",
+    ]
+    if imported_lines:
+        parts.append("Imported items:\n" + "\n".join(imported_lines))
+    if error_lines:
+        parts.append("Errors:\n" + "\n".join(error_lines))
+    return "\n\n".join(parts)
 
 
 def _schema_type_to_adk_property(schema: Dict[str, Any]) -> Dict[str, Any]:
@@ -124,8 +327,13 @@ def _build_signature(parameter_schema: Dict[str, Any]) -> inspect.Signature:
     return inspect.Signature(parameters)
 
 
-def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
+def create_connector_tools(
+    bindings: List[Dict[str, Any]],
+    workspace_id: Optional[str] = None,
+) -> List[Any]:
     tools: List[Any] = []
+    settings = get_settings()
+    backend_url = getattr(settings, "API_URL", None)
 
     for binding in bindings or []:
         connector_id = str(binding.get("connector_id") or "").strip()
@@ -141,6 +349,143 @@ def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
         if not connector_id:
             continue
 
+        if workspace_id and binding_auth_headers.get("Authorization"):
+            slug = re.sub(r"[^a-z0-9-]", "", connector_slug.lower())[:24] or "connector"
+            tool_name = f"{slug}_import_to_workspace".lower()[:64]
+            schema = {
+                "function": {
+                    "name": tool_name,
+                    "description": (
+                        f"Import one file, multiple files, or a folder from {connector_name} into the current workspace after you identify the target items with the connector search or browse tools. "
+                        "Use a connector discovery tool first to get driveId/itemId references, then call this import tool before asking downstream tools like the code interpreter to process the files. "
+                        "You can pass direct drive_id/item_id arguments, a direct item_ref like {driveId, itemId}, or the full item object returned by connector tools."
+                    ),
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "enum": ["file", "files", "folder"],
+                                "description": "Import mode.",
+                            },
+                            "drive_id": {
+                                "type": "string",
+                                "description": "Optional direct drive ID for simple file or folder import calls.",
+                            },
+                            "item_id": {
+                                "type": "string",
+                                "description": "Optional direct item ID for simple file or folder import calls.",
+                            },
+                            "path": {
+                                "type": "string",
+                                "description": "Optional direct path for simple file or folder import calls when item_id is not available.",
+                            },
+                            "item_ref": {
+                                "type": "object",
+                                "description": "Single item reference for file or folder import. Accepts either {driveId, itemId} or a full MCP result object containing an item field.",
+                            },
+                            "item_refs": {
+                                "type": "array",
+                                "description": "Multiple item references for batch import. Each entry can be either {driveId, itemId} or a full MCP result object containing an item field.",
+                                "items": {"type": "object"},
+                            },
+                            "recursive": {
+                                "type": "boolean",
+                                "description": "Recursively import folder contents when mode is 'folder'.",
+                            },
+                        },
+                        "required": ["mode"],
+                        "additionalProperties": False,
+                    },
+                }
+            }
+            signature = inspect.Signature(
+                [
+                    inspect.Parameter(
+                        "mode", inspect.Parameter.KEYWORD_ONLY, annotation=Optional[str]
+                    ),
+                    inspect.Parameter(
+                        "drive_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[str],
+                    ),
+                    inspect.Parameter(
+                        "item_id",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[str],
+                    ),
+                    inspect.Parameter(
+                        "path",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[str],
+                    ),
+                    inspect.Parameter(
+                        "item_ref",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[Dict[str, Any]],
+                    ),
+                    inspect.Parameter(
+                        "item_refs",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=None,
+                        annotation=Optional[List[Any]],
+                    ),
+                    inspect.Parameter(
+                        "recursive",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=True,
+                        annotation=Optional[bool],
+                    ),
+                ]
+            )
+
+            async def _import_tool(
+                _connector_id: str = connector_id,
+                _connector_name: str = connector_name,
+                _workspace_id: str = workspace_id,
+                _auth_headers: Dict[str, str] = binding_auth_headers,
+                _backend_url: Optional[str] = backend_url,
+                mode: Optional[str] = None,
+                drive_id: Optional[str] = None,
+                item_id: Optional[str] = None,
+                path: Optional[str] = None,
+                item_ref: Optional[Dict[str, Any]] = None,
+                item_refs: Optional[List[Any]] = None,
+                recursive: bool = True,
+            ) -> str:
+                normalized_item_refs = [
+                    item for item in (item_refs or []) if isinstance(item, dict)
+                ]
+                direct_item_ref = item_ref
+                if not direct_item_ref and drive_id and (item_id or path):
+                    direct_item_ref = {
+                        "driveId": drive_id,
+                        **({"itemId": item_id} if item_id else {}),
+                        **({"path": path} if path else {}),
+                    }
+                return import_connector_items_to_workspace_request(
+                    backend_url=_backend_url or "",
+                    connector_id=_connector_id,
+                    connector_name=_connector_name,
+                    workspace_id=_workspace_id,
+                    auth_headers=_auth_headers,
+                    mode=mode or "",
+                    item_ref=direct_item_ref,
+                    item_refs=normalized_item_refs,
+                    recursive=recursive,
+                )
+
+            _import_tool.__name__ = tool_name
+            _import_tool.__signature__ = signature
+            _import_tool.__annotations__ = {
+                p.name: p.annotation for p in signature.parameters.values()
+            }
+            tools.append(SearchToolADK(_import_tool, schema))
+
         for action in binding.get("actions") or []:
             action_key = str(action.get("action_key") or "").strip()
             if not action_key:
@@ -152,6 +497,10 @@ def create_connector_tools(bindings: List[Dict[str, Any]]) -> List[Any]:
                 action.get("description")
                 or f"Connector action '{action_key}' from {connector_name}"
             ).strip()
+            description = (
+                f"{description} Use this tool to search, browse, or inspect remote items first. "
+                "If the files need to be processed in the current workspace, call the matching import_to_workspace tool afterward with the returned item references."
+            )
             parameter_schema = action.get("parameter_schema") or {}
             schema = _build_function_schema(tool_name, description, parameter_schema)
             signature = _build_signature(parameter_schema)

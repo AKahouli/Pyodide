@@ -13,6 +13,11 @@ from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
+from src.config.settings import get_settings
+from src.smart_rag.tools.utilities.connector_tools import (
+    import_connector_items_to_workspace_request,
+)
+
 logger = get_logger(__name__)
 
 _GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
@@ -140,6 +145,36 @@ class ActivateSkillInput(BaseModel):
     name: str = Field(description="The exact skill name to activate.")
 
 
+class ConnectorImportInput(BaseModel):
+    mode: str = Field(
+        description="Import mode: 'file', 'files', or 'folder'.",
+    )
+    drive_id: Optional[str] = Field(
+        default=None,
+        description="Optional direct drive ID for simple file or folder import calls.",
+    )
+    item_id: Optional[str] = Field(
+        default=None,
+        description="Optional direct item ID for simple file or folder import calls.",
+    )
+    path: Optional[str] = Field(
+        default=None,
+        description="Optional direct path for simple file or folder import calls when item_id is not available.",
+    )
+    item_ref: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Single connector item reference for file or folder import.",
+    )
+    item_refs: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Multiple connector item references for batch file import.",
+    )
+    recursive: bool = Field(
+        default=True,
+        description="Recursively import folder contents when mode is 'folder'.",
+    )
+
+
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
@@ -170,7 +205,11 @@ def create_langchain_tools(
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
-        mcp_tools = _create_connector_mcp_tools(step_connector_bindings, collector)
+        mcp_tools = _create_connector_mcp_tools(
+            step_connector_bindings,
+            collector,
+            output_workspace_id=output_workspace_id,
+        )
 
     tool_configs = agent_config.get("tools", [])
 
@@ -1042,6 +1081,7 @@ def _format_search_result(result: Dict[str, Any]) -> str:
 def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
+    output_workspace_id: str = "",
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1065,6 +1105,19 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
+        if (
+            connector_id
+            and output_workspace_id
+            and binding_auth_headers.get("Authorization")
+        ):
+            tools.append(
+                _create_connector_import_tool(
+                    connector_id=connector_id,
+                    connector_name=connector_name,
+                    auth_headers=binding_auth_headers,
+                    workspace_id=output_workspace_id,
+                )
+            )
         actions = (
             [
                 {
@@ -1167,7 +1220,11 @@ def _create_connector_mcp_tools(
 
                 return StructuredTool(
                     name=tn,
-                    description=f"{ad} (connector: {cn}, action: {al})",
+                    description=(
+                        f"{ad} (connector: {cn}, action: {al}). "
+                        "Use this connector action to search, browse, or inspect remote items first. "
+                        "When you need those files inside the current workspace for downstream processing, call the matching import_to_workspace tool with the returned item references."
+                    ),
                     func=None,
                     coroutine=_execute_mcp,
                     args_schema=arg_schema,
@@ -1183,3 +1240,53 @@ def _create_connector_mcp_tools(
         )
 
     return tools
+
+
+def _create_connector_import_tool(
+    connector_id: str,
+    connector_name: str,
+    auth_headers: Dict[str, str],
+    workspace_id: str,
+) -> StructuredTool:
+    settings = get_settings()
+    backend_url = getattr(settings, "API_URL", None)
+
+    async def _import_connector_items(
+        mode: str,
+        drive_id: Optional[str] = None,
+        item_id: Optional[str] = None,
+        path: Optional[str] = None,
+        item_ref: Optional[Dict[str, Any]] = None,
+        item_refs: Optional[List[Dict[str, Any]]] = None,
+        recursive: bool = True,
+    ) -> str:
+        direct_item_ref = item_ref
+        if not direct_item_ref and drive_id and (item_id or path):
+            direct_item_ref = {
+                "driveId": drive_id,
+                **({"itemId": item_id} if item_id else {}),
+                **({"path": path} if path else {}),
+            }
+        return import_connector_items_to_workspace_request(
+            backend_url=backend_url or "",
+            connector_id=connector_id,
+            connector_name=connector_name,
+            workspace_id=workspace_id,
+            auth_headers=auth_headers,
+            mode=mode,
+            item_ref=direct_item_ref,
+            item_refs=item_refs,
+            recursive=recursive,
+        )
+
+    return StructuredTool(
+        name=f"{re.sub(r'[^a-z0-9-]', '', connector_name.lower())[:24] or 'connector'}_import_to_workspace",
+        description=(
+            f"Import one file, multiple files, or a folder from {connector_name} into the current workspace. "
+            "Use the connector search or browse tools first to discover the target driveId/itemId values, then call this import tool so downstream tools like the code interpreter can access the files from workspace. "
+            "You can pass direct drive_id/item_id arguments, a direct item_ref like {driveId, itemId}, or the full item object returned by connector tools."
+        ),
+        func=None,
+        coroutine=_import_connector_items,
+        args_schema=ConnectorImportInput,
+    )
