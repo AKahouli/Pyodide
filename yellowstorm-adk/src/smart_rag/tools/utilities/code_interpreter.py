@@ -85,39 +85,67 @@ async def python_interpreter(
     brain_id = None
     user_id = None
     file_paths_base64 = None
+    resolved_workspace_id = None
 
     if tool_context:
         session_id = tool_context.state.get(_STATE_KEY_SESSION_ID)
         brain_id = tool_context.state.get(_STATE_KEY_BRAIN_ID)
         user_id = tool_context.state.get(_STATE_KEY_USER_ID)
         brain_documents = tool_context.state.get(_STATE_KEY_BRAIN_DOCS)
+        previously_generated = tool_context.state.get(_STATE_KEY_GENERATED_FILES, [])
+
+        # Fix 4: Resolve workspace_id from brain_documents first (like connector tools do),
+        # then fall back to the frozen conversation_brain_id.
+        resolved_workspace_id = brain_id
+        if brain_documents:
+            for doc in brain_documents:
+                ws_id = str(doc.get("workspace_id") or "").strip()
+                if ws_id:
+                    resolved_workspace_id = ws_id
+                    break
 
         if session_id:
             logger.info(f"[PYTHON TOOL] Using session_id from state: {session_id}")
         if brain_id:
-            logger.info(f"[PYTHON TOOL] Using brain_id from state: {brain_id}")
+            logger.info(f"[PYTHON TOOL] Using brain_id from state: {brain_id}, resolved_workspace_id: {resolved_workspace_id}")
         if user_id:
             logger.info(f"[PYTHON TOOL] Using user_id from state: {user_id}")
-        if brain_documents:
-            file_paths_list = []
-            for doc in brain_documents:
-                # Use filepath directly as azure_path
-                azure_path = doc.get("filepath", "")
-                filename = doc.get("filename", "")
 
-                # Only add if we have both azure_path and filename
-                if azure_path and filename:
-                    file_paths_list.append({
-                        "azure_path": azure_path,
-                        "filename": filename
-                    })
+        # Build file_paths from brain_documents + previously generated files
+        file_paths_list = []
+        seen_filenames = set()
 
-            if file_paths_list:
-                file_paths_json = json.dumps(file_paths_list)
-                file_paths_base64 = base64.b64encode(file_paths_json.encode('utf-8')).decode('utf-8')
-                logger.info(f"[PYTHON TOOL] Sending {len(file_paths_list)} file paths to backend v2")
-            else:
-                logger.warning("[PYTHON TOOL] No valid file paths to send (missing filepath or filename)")
+        # 1. Original brain documents
+        for doc in brain_documents or []:
+            azure_path = doc.get("filepath", "")
+            filename = doc.get("filename", "")
+
+            if azure_path and filename:
+                file_paths_list.append({
+                    "azure_path": azure_path,
+                    "filename": filename
+                })
+                seen_filenames.add(filename)
+
+        # 2. Previously generated files (from earlier code interpreter calls in this session)
+        for gf in previously_generated:
+            gf_filename = gf.get("filename", "")
+            gf_azure_path = gf.get("azure_path", "")
+            if gf_filename and gf_azure_path and gf_filename not in seen_filenames:
+                file_paths_list.append({
+                    "azure_path": gf_azure_path,
+                    "filename": gf_filename
+                })
+                seen_filenames.add(gf_filename)
+
+        if file_paths_list:
+            file_paths_json = json.dumps(file_paths_list)
+            file_paths_base64 = base64.b64encode(file_paths_json.encode('utf-8')).decode('utf-8')
+            generated_count = sum(1 for gf in previously_generated if gf.get("filename") in seen_filenames)
+            logger.info(f"[PYTHON TOOL] Sending {len(file_paths_list)} file paths to backend v2 "
+                        f"({len(file_paths_list) - generated_count} original + {generated_count} previously generated)")
+        else:
+            logger.warning("[PYTHON TOOL] No valid file paths to send (missing filepath or filename)")
 
     try:
         # Run sync request inside async tool
@@ -126,7 +154,7 @@ async def python_interpreter(
             f"{backend_url}/tool/python_interpreter_v2",
             json={
                 "user_id": user_id,
-                "workspace_id": brain_id,
+                "workspace_id": resolved_workspace_id,
                 "session_id": session_id,
                 "code": code,
                 "timeout_seconds": timeout_seconds,
@@ -194,6 +222,24 @@ async def python_interpreter(
 
             tool_context.state[_STATE_KEY_GENERATED_FILES] = existing_files
             logger.info(f"[PYTHON TOOL] Files in session state: {files_added} added, {files_updated} updated (total: {len(existing_files)})")
+
+            # Fix 2: Merge generated files into brain_docs so subsequent calls can access them
+            current_brain_docs = tool_context.state.get(_STATE_KEY_BRAIN_DOCS, [])
+            existing_doc_paths = {d.get("filepath") for d in current_brain_docs}
+            docs_added = 0
+            for f in generated_files:
+                azure_path = f.get("azure_path", "")
+                if azure_path and azure_path not in existing_doc_paths:
+                    current_brain_docs.append({
+                        "filename": f["name"],
+                        "filepath": azure_path,
+                        "workspace_id": resolved_workspace_id or "",
+                    })
+                    existing_doc_paths.add(azure_path)
+                    docs_added += 1
+            if docs_added:
+                tool_context.state[_STATE_KEY_BRAIN_DOCS] = current_brain_docs
+                logger.info(f"[PYTHON TOOL] Merged {docs_added} generated file(s) into brain_docs for subsequent calls")
         # Stats
         if result.get("time"):
             output.append(f"\n*Execution time: {result['time']}s*")

@@ -500,7 +500,7 @@ if __name__ == "__main__":
     import sys
 
     transport = os.getenv("M365_MCP_TRANSPORT", "sse")
-    port = int(os.getenv("MCP_PORT", os.getenv("PORT", "8001")))
+    port = int(os.getenv("MCP_PORT", os.getenv("PORT", "8012")))
 
     middleware = [Middleware(TokenExtractorMiddleware)]
 
