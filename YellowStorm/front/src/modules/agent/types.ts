@@ -69,6 +69,7 @@ export interface Evaluation {
   mode: 'strict' | 'non_strict';
   status: 'processing' | 'completed' | 'failed';
   numRuns?: number;
+  completedRuns?: number;
   datasetId?: string;
   results: EvaluationIteration[];
   error?: string;
@@ -105,6 +106,16 @@ export interface LaunchEvaluationData {
   threshold?: number;
 }
 
+export interface RunEvaluationParams {
+  agentId: string;
+  datasetId: string;
+  numRuns: number;
+  mode: string;
+  scenarioName: string;
+  judgeModel?: string;
+  threshold?: number;
+}
+
 export interface AgentActions {
   fetchAgents: () => Promise<void>;
   fetchAgentTypes: () => Promise<void>;
@@ -127,7 +138,8 @@ export interface AgentActions {
   fetchEvaluations: (agentId: string) => Promise<void>;
   updateEvaluation: (id: string, data: Partial<Evaluation>) => void;
   deleteEvaluation: (id: string) => Promise<void>;
-  
+  runEvaluation: (params: RunEvaluationParams) => void;
+
   reset: () => void;
 }
 

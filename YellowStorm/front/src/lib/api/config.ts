@@ -229,6 +229,8 @@ export const API_ENDPOINTS = {
     datasets: '/evaluation/datasets',
     datasetById: (id: string) => `/evaluation/datasets/${id}`,
     launch: '/evaluation/launch',
+    run: '/evaluation/run',
+    finalize: (id: string) => `/evaluation/results/${id}/finalize`,
     results: (agentId: string) => `/evaluation/results/${agentId}`,
     resultById: (id: string) => `/evaluation/results/${id}`,
     scenarios: '/evaluation/scenarios',

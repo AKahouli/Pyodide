@@ -2,29 +2,22 @@ import {
     Controller,
     Get,
     Post,
+    Patch,
     Delete,
     Body,
     Param,
-    Query,
     Headers,
     HttpCode,
     HttpStatus,
-    Sse,
-    MessageEvent,
-    UnauthorizedException,
 } from '@nestjs/common';
-import { Observable } from 'rxjs';
 import {
     ApiTags,
     ApiOperation,
-    ApiResponse,
     ApiBearerAuth,
 } from '@nestjs/swagger';
 import { EvaluationService } from './evaluation.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
-import { Public } from '../auth/decorators/public.decorator';
-import { JwtService } from '@nestjs/jwt';
 
 @ApiTags('Evaluation')
 @ApiBearerAuth()
@@ -32,7 +25,6 @@ import { JwtService } from '@nestjs/jwt';
 export class EvaluationController {
     constructor(
         private readonly evaluationService: EvaluationService,
-        private readonly jwtService: JwtService,
     ) { }
 
     // ==========================================
@@ -66,17 +58,15 @@ export class EvaluationController {
     // ==========================================
 
     @Post('launch')
-    @ApiOperation({ summary: 'Launch a batch evaluation' })
+    @ApiOperation({ summary: 'Create an evaluation record' })
     async launch(
         @CurrentUser() user: UserDocument,
-        @Headers('authorization') authHeader: string,
         @Body() body: {
             agentId: string;
             datasetId: string;
             numRuns: number;
             mode: string;
             scenarioName: string;
-            threshold?: number;
         },
     ) {
         return this.evaluationService.launchEvaluation(
@@ -86,50 +76,59 @@ export class EvaluationController {
             body.numRuns,
             body.mode,
             body.scenarioName,
-            authHeader,
-            body.threshold,
         );
     }
 
-    @Post('execute')
-    async executeEvaluation(
+    @Post('run')
+    @ApiOperation({ summary: 'Run a single evaluation run and return results when done' })
+    async runSingleEvaluation(
+        @CurrentUser() user: UserDocument,
         @Headers('authorization') authHeader: string,
-        @Body() body: any,
+        @Body() body: {
+            agentId: string;
+            datasetId: string;
+            mode: string;
+            scenarioName: string;
+            evaluationId: string;
+            runIndex: number;
+            judgeModel?: string;
+            threshold?: number;
+        },
     ) {
-        console.log('--- [EXEC] executeEvaluation CALLED (Sync Mode) ---');
-        const tempUserId = "69cbe735e514ddfb1bd496ee"; 
-        return this.evaluationService.executeEvaluationSync(
-            tempUserId,
+        return this.evaluationService.runSingleEvaluation(
+            user._id.toString(),
             body.agentId,
             body.datasetId,
-            body.numRuns,
             body.mode,
             body.scenarioName,
+            body.evaluationId,
+            body.runIndex,
             authHeader,
             body.judgeModel,
             body.threshold,
         );
     }
 
-    @Public()
-    @Sse('execute/stream')
-    @ApiOperation({ summary: 'Stream evaluation results in real-time' })
-    executeEvaluationStream(
-        @Query('token') token: string,
-    ): Observable<MessageEvent> {
-        let userId: string;
-        try {
-            if (!token) throw new UnauthorizedException('Token missing');
-            const payload = this.jwtService.verify(token);
-            userId = payload.sub;
-            if (!userId) throw new UnauthorizedException('Invalid token payload');
-        } catch (error: any) {
-            throw new UnauthorizedException('Authentication failed for streaming: ' + error.message);
-        }
-
-        return this.evaluationService.getEvaluationUpdates(userId);
+    @Patch('results/:id/finalize')
+    @ApiOperation({ summary: 'Mark an evaluation as completed or failed' })
+    async finalizeEvaluation(
+        @CurrentUser() user: UserDocument,
+        @Param('id') id: string,
+        @Body() body: { status: 'completed' | 'failed'; error?: string },
+    ) {
+        return this.evaluationService.finalizeEvaluation(
+            user._id.toString(),
+            id,
+            body.status,
+            body.error,
+        );
     }
 
+    @Get('results/single/:id')
+    @ApiOperation({ summary: 'Get a single evaluation by ID' })
+    async getEvaluationById(@Param('id') id: string) {
+        return this.evaluationService.findEvaluationById(id);
+    }
 
     @Get('results/:agentId')
     @ApiOperation({ summary: 'Get evaluation results for an agent' })

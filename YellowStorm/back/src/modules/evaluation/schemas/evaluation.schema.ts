@@ -65,6 +65,9 @@ export class Evaluation extends Document {
     @Prop({ default: 1 })
     numRuns!: number;
 
+    @Prop({ default: 0 })
+    completedRuns!: number;
+
     @Prop({ required: true, enum: ['processing', 'completed', 'failed'], default: 'processing' })
     status!: string;
 

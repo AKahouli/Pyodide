@@ -7,8 +7,9 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import type { AgentStore, AgentState, Agent } from './types';
+import type { AgentStore, AgentState, Agent, RunEvaluationParams } from './types';
 import * as api from './api';
+import * as evalApi from './evaluation-api';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 
 function tAgent(key: string, fallback: string, options?: Record<string, unknown>) {
@@ -135,7 +136,7 @@ export const useAgentStore = create<AgentStore>()(
       fetchDatasets: async () => {
         set({ isEvaluationLoading: true });
         try {
-          const datasets = await api.getDatasets();
+          const datasets = await evalApi.getDatasets();
           set({ datasets, isEvaluationLoading: false });
         } catch (err) {
           set({ isEvaluationLoading: false, error: err instanceof Error ? err.message : 'Failed to fetch datasets' });
@@ -143,14 +144,14 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       createDataset: async (name, items) => {
-        const dataset = await api.createDataset(name, items);
+        const dataset = await evalApi.createDataset(name, items);
         set((state) => ({ datasets: [...state.datasets, dataset] }));
         toast.success(tAgent('store.toasts.datasetCreated', 'Dataset created'));
         return dataset;
       },
 
       deleteDataset: async (id) => {
-        await api.deleteDataset(id);
+        await evalApi.deleteDataset(id);
         set((state) => ({ datasets: state.datasets.filter((d) => d.id !== id) }));
         toast.success(tAgent('store.toasts.datasetDeleted', 'Dataset deleted'));
       },
@@ -158,7 +159,7 @@ export const useAgentStore = create<AgentStore>()(
       fetchScenarios: async (agentId) => {
         set({ isEvaluationLoading: true });
         try {
-          const scenarios = await api.getScenarios(agentId);
+          const scenarios = await evalApi.getScenarios(agentId);
           set({ scenarios, isEvaluationLoading: false });
         } catch (err) {
           set({ isEvaluationLoading: false, error: err instanceof Error ? err.message : 'Failed to fetch scenarios' });
@@ -166,14 +167,14 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       createScenario: async (data) => {
-        const scenario = await api.createScenario(data);
+        const scenario = await evalApi.createScenario(data);
         set((state) => ({ scenarios: [...state.scenarios, scenario] }));
         toast.success(tAgent('store.toasts.scenarioCreated', 'Scenario created'));
         return scenario;
       },
 
       updateScenario: async (id, data) => {
-        const scenario = await api.updateScenario(id, data);
+        const scenario = await evalApi.updateScenario(id, data);
         set((state) => ({
           scenarios: state.scenarios.map((s) => (s.id === id ? scenario : s)),
         }));
@@ -182,7 +183,7 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       deleteScenario: async (id) => {
-        await api.deleteScenario(id);
+        await evalApi.deleteScenario(id);
         set((state) => ({ scenarios: state.scenarios.filter((s) => s.id !== id) }));
         toast.success(tAgent('store.toasts.scenarioDeleted', 'Scenario deleted'));
       },
@@ -190,7 +191,7 @@ export const useAgentStore = create<AgentStore>()(
       fetchEvaluations: async (agentId) => {
         set({ isEvaluationLoading: true });
         try {
-          const evaluations = await api.getAgentEvaluations(agentId);
+          const evaluations = await evalApi.getAgentEvaluations(agentId);
           set({ evaluations, isEvaluationLoading: false });
         } catch (err) {
           set({ isEvaluationLoading: false, error: err instanceof Error ? err.message : 'Failed to fetch evaluations' });
@@ -204,9 +205,99 @@ export const useAgentStore = create<AgentStore>()(
       },
 
       deleteEvaluation: async (id) => {
-        await api.deleteEvaluation(id);
+        await evalApi.deleteEvaluation(id);
         set((state) => ({ evaluations: state.evaluations.filter((e) => e.id !== id) }));
         toast.success(tAgent('store.toasts.evaluationDeleted', 'Evaluation deleted'));
+      },
+
+      /**
+       * Orchestrates an evaluation: creates the DB record, then runs each run sequentially.
+       * Runs as a detached async operation - survives component unmounts.
+       */
+      runEvaluation: (params: RunEvaluationParams) => {
+        const { agentId, datasetId, numRuns, mode, scenarioName, judgeModel, threshold } = params;
+
+        // Fire-and-forget: the async work lives in the store closure
+        (async () => {
+          let evaluationId: string | null = null;
+
+          try {
+            // Step 1: Create evaluation record
+            const evaluation = await evalApi.launchEvaluation({
+              agentId,
+              datasetId,
+              numRuns,
+              mode,
+              scenarioName,
+            });
+            evaluationId = evaluation.id;
+
+            // Add to store immediately
+            set((state) => ({
+              evaluations: [evaluation, ...state.evaluations],
+            }));
+
+            // Step 2: Run each run sequentially
+            for (let i = 1; i <= numRuns; i++) {
+              try {
+                const { results } = await evalApi.runSingleEvaluation({
+                  evaluationId,
+                  agentId,
+                  datasetId,
+                  mode,
+                  scenarioName,
+                  runIndex: i,
+                  judgeModel,
+                  threshold,
+                });
+
+                // Merge results into store evaluation
+                set((state) => ({
+                  evaluations: state.evaluations.map((ev) => {
+                    if (ev.id !== evaluationId) return ev;
+                    return {
+                      ...ev,
+                      results: [...ev.results, ...results],
+                      completedRuns: i,
+                    };
+                  }),
+                }));
+              } catch (runError: any) {
+                console.error(`Evaluation run ${i} failed:`, runError);
+                toast.error(`Run ${i}/${numRuns} failed: ${runError.message || 'Unknown error'}`);
+                // Continue with next runs despite failure
+              }
+            }
+
+            // Step 3: Finalize
+            const finalEval = await evalApi.finalizeEvaluation(evaluationId, 'completed');
+            set((state) => ({
+              evaluations: state.evaluations.map((ev) =>
+                ev.id === evaluationId ? { ...ev, ...finalEval, status: 'completed' as const } : ev
+              ),
+            }));
+
+            toast.success(`Evaluation "${scenarioName}" completed`);
+          } catch (error: any) {
+            console.error('Evaluation failed:', error);
+            toast.error(`Evaluation failed: ${error.message || 'Unknown error'}`);
+
+            if (evaluationId) {
+              // Try to mark as failed in DB
+              try {
+                await evalApi.finalizeEvaluation(evaluationId, 'failed', error.message);
+              } catch {
+                // best effort
+              }
+
+              set((state) => ({
+                evaluations: state.evaluations.map((ev) =>
+                  ev.id === evaluationId ? { ...ev, status: 'failed' as const, error: error.message } : ev
+                ),
+              }));
+            }
+          }
+        })();
       },
 
       reset: () => set(initialState),

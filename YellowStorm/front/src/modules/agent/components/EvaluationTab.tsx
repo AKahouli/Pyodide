@@ -1,7 +1,5 @@
 import * as React from 'react';
 import { Plus, Pencil, Trash2, ChevronDown, Play, Eye, Table as TableIcon, LineChart, Loader2, Save, FileDown, X, Cpu, ArrowLeft } from 'lucide-react';
-import apiClient from '@/lib/api/client';
-import { API_CONFIG, AUTH_STORAGE_KEYS } from '@/lib/api/config';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,7 +16,7 @@ import { toast } from 'sonner';
 import * as ExcelJS from 'exceljs';
 import { LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-import { Dataset, Evaluation, DatasetItem, Scenario, EvaluationIteration, type LaunchEvaluationData, launchEvaluation } from '../evaluation-api';
+import type { Dataset, Evaluation, DatasetItem, Scenario, EvaluationIteration } from '../evaluation-api';
 import { useModels, useModelsStore } from '@/modules/models/store';
 import { useAgentStore, useEvaluationDatasets, useEvaluationScenarios, useEvaluations, useEvaluationLoading } from '../store';
 import type { Agent } from '../types';
@@ -35,11 +33,11 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   const evaluations = useEvaluations();
   const scenarios = useEvaluationScenarios();
   const isEvaluationLoading = useEvaluationLoading();
-  const { 
-    fetchDatasets, fetchEvaluations, fetchScenarios, 
+  const {
+    fetchDatasets, fetchEvaluations, fetchScenarios,
     createDataset: storeCreateDataset, deleteDataset: storeDeleteDataset,
     createScenario: storeCreateScenario, updateScenario: storeUpdateScenario, deleteScenario: storeDeleteScenario,
-    deleteEvaluation: storeDeleteEvaluation, updateEvaluation: storeUpdateEvaluation
+    deleteEvaluation: storeDeleteEvaluation, runEvaluation,
   } = useAgentStore();
 
   const [activeScenario, setActiveScenario] = React.useState<Scenario | null>(null);
@@ -52,7 +50,6 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   const [manualDatasetName, setManualDatasetName] = React.useState<string>('');
 
   // Data State
-  const [launching, setLaunching] = React.useState(false);
 
   const models = useModels();
   // Form State (linked to active scenario or temporary)
@@ -252,122 +249,39 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   };
 
 
-  /**
-   * Listen for background evaluation completions via SSE
-   */
-  React.useEffect(() => {
-    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
-    if (!token) return;
-
-    const url = `${API_CONFIG.baseURL}/evaluation/execute/stream?token=${token}`;
-    const eventSource = new EventSource(url);
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'completed' && data.evaluation) {
-          // Update the global store with the final result
-          storeUpdateEvaluation(data.evaluation_id, data.evaluation);
-          
-          if (selectedEvalForDetail?.id === data.evaluation_id) {
-            setSelectedEvalForDetail(data.evaluation);
-          }
-          
-          toast.success(`Evaluation "${data.evaluation.scenarioName}" completed`);
-          if (agent) fetchEvaluations(agent.id); // Refresh all to be sure
-        }
-      } catch (err) {
-        console.error('[SSE Observer] Parse error:', err);
-      }
-    };
-
-    eventSource.onerror = (err) => {
-      console.warn('[SSE Observer] Connection error:', err);
-      // EventSource auto-reconnects by default
-    };
-
-    return () => {
-      eventSource.close();
-    };
-  }, [agent, fetchEvaluations, storeUpdateEvaluation, selectedEvalForDetail]);
-
   // Launch
-  const handleResumeEvaluation = async (existingEval: Evaluation) => {
+  const handleResumeEvaluation = (existingEval: Evaluation) => {
     if (!existingEval.datasetId) {
       toast.error("Impossible de reprendre cette ancienne évaluation. L'identifiant du dataset n'a pas été sauvegardé à l'époque. Veuillez en lancer une nouvelle.");
       return;
     }
-    
-    setLaunching(true);
-    try {
-      const result = await launchEvaluation({
-        agentId: existingEval.agentId,
-        datasetId: existingEval.datasetId || '',
-        numRuns: existingEval.numRuns || 1,
-        mode: existingEval.mode,
-        scenarioName: existingEval.scenarioName,
-      });
 
-      // Update the existing entry or refresh
-      fetchEvaluations(existingEval.agentId);
-      toast.info('Evaluation restarted in background...');
-    } catch (error: any) {
-      toast.error('Failed to resume evaluation: ' + (error.message || error));
-    } finally {
-      setLaunching(false);
-    }
+    runEvaluation({
+      agentId: existingEval.agentId,
+      datasetId: existingEval.datasetId,
+      numRuns: existingEval.numRuns || 1,
+      mode: existingEval.mode,
+      scenarioName: existingEval.scenarioName,
+    });
+    toast.info('Evaluation relaunched in background...');
   };
 
-  const handleLaunch = async () => {
+  const handleLaunch = () => {
     if (!agent || !selectedDatasetId) {
       toast.error('Select a dataset first');
       return;
     }
 
-    setLaunching(true);
-
-    const tempId = `optimistic-${Date.now()}`;
-    const optimisticEval: Evaluation = {
-      id: tempId,
+    runEvaluation({
       agentId: agent.id,
-      scenarioName: runName,
-      mode: runMode as any,
-      status: 'processing',
-      numRuns: numRuns,
       datasetId: selectedDatasetId,
-      results: [],
-      createdAt: new Date().toISOString(),
-    };
-    
-    // Add to store for immediate feedback
-    useAgentStore.setState((state) => ({ evaluations: [optimisticEval, ...state.evaluations] }));
-
-    try {
-      const result = await launchEvaluation({
-        agentId: agent.id,
-        datasetId: selectedDatasetId,
-        numRuns: numRuns,
-        mode: runMode,
-        scenarioName: runName,
-        judgeModel: judgeModel,
-        threshold: threshold,
-      });
-
-      // Update the optimistic entry with the real server-side ID
-      useAgentStore.setState((state) => ({
-        evaluations: state.evaluations.map((ev) => (ev.id === tempId ? result : ev))
-      }));
-      
-      toast.info('Evaluation launched in background...');
-    } catch (error: any) {
-      toast.error('Failed to launch evaluation: ' + (error.message || error));
-      // Rollback optimistic update
-      useAgentStore.setState((state) => ({
-        evaluations: state.evaluations.filter((ev) => ev.id !== tempId)
-      }));
-    } finally {
-      setLaunching(false);
-    }
+      numRuns,
+      mode: runMode,
+      scenarioName: runName,
+      judgeModel,
+      threshold,
+    });
+    toast.info('Evaluation launched in background...');
   };
 
   const handleDeleteEval = async (id: string, e: React.MouseEvent) => {
@@ -684,8 +598,8 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                   <Slider value={[threshold]} min={0} max={1} step={0.1} onValueChange={(vals) => setThreshold(vals[0])} className='cursor-pointer' />
                 </div>
               </div>
-              <Button type='button' className='bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-6 min-w-35 shadow-lg' onClick={handleLaunch} disabled={launching || !selectedDatasetId}>
-                {launching ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Play className='mr-2 h-4 w-4 fill-current' />}
+              <Button type='button' className='bg-primary hover:bg-primary/90 text-primary-foreground h-9 px-6 min-w-35 shadow-lg' onClick={handleLaunch} disabled={!selectedDatasetId}>
+                <Play className='mr-2 h-4 w-4 fill-current' />
                 {t('evaluation.evaluations.launch')}
               </Button>
             </div>

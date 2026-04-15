@@ -1,5 +1,5 @@
 import apiClient, { type ApiResponse } from '@/lib/api/client';
-import { API_ENDPOINTS, AUTH_STORAGE_KEYS, API_CONFIG } from '@/lib/api/config';
+import { API_ENDPOINTS } from '@/lib/api/config';
 
 export interface DatasetItem {
     question: string;
@@ -38,6 +38,7 @@ export interface Evaluation {
     mode: 'strict' | 'non_strict';
     status: 'processing' | 'completed' | 'failed';
     numRuns?: number;
+    completedRuns?: number;
     datasetId?: string;
     results: EvaluationIteration[];
     error?: string;
@@ -69,14 +70,40 @@ export interface LaunchEvaluationData {
     numRuns: number;
     mode: string;
     scenarioName: string;
-    judgeModel?: string;
-    threshold?: number;
 }
 
 export async function launchEvaluation(data: LaunchEvaluationData): Promise<Evaluation> {
     const response = await apiClient.post<ApiResponse<Evaluation>>(
         API_ENDPOINTS.evaluation.launch,
         data
+    );
+    return response.data.data;
+}
+
+export interface RunSingleEvaluationData {
+    evaluationId: string;
+    agentId: string;
+    datasetId: string;
+    mode: string;
+    scenarioName: string;
+    runIndex: number;
+    judgeModel?: string;
+    threshold?: number;
+}
+
+export async function runSingleEvaluation(data: RunSingleEvaluationData): Promise<{ results: EvaluationIteration[]; runIndex: number }> {
+    const response = await apiClient.post<ApiResponse<{ results: EvaluationIteration[]; runIndex: number }>>(
+        API_ENDPOINTS.evaluation.run,
+        data,
+        { timeout: 900000 } // 15 minutes
+    );
+    return response.data.data;
+}
+
+export async function finalizeEvaluation(evaluationId: string, status: 'completed' | 'failed', error?: string): Promise<Evaluation> {
+    const response = await apiClient.patch<ApiResponse<Evaluation>>(
+        API_ENDPOINTS.evaluation.finalize(evaluationId),
+        { status, error }
     );
     return response.data.data;
 }
@@ -126,13 +153,4 @@ export async function getAgentEvaluations(agentId: string): Promise<Evaluation[]
 
 export async function deleteEvaluation(id: string): Promise<void> {
     await apiClient.delete(API_ENDPOINTS.evaluation.resultById(id));
-}
-
-export async function executeEvaluation(data: LaunchEvaluationData): Promise<Evaluation> {
-    const response = await apiClient.post<ApiResponse<Evaluation>>(
-        '/evaluation/execute',
-        data,
-        { timeout: 300000 } // 5 minutes timeout for evaluations
-    );
-    return response.data.data;
 }
