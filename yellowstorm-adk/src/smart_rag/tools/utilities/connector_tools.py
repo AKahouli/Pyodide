@@ -1,4 +1,5 @@
 import inspect
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
@@ -6,10 +7,12 @@ from typing import Any, Dict, List, Optional
 
 import jwt
 import requests
+from google.adk.tools.tool_context import ToolContext
 
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
 from src.smart_rag.tools.search.tools import SearchToolADK
+from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
 
 logger = get_logger("api.smart_rag.tools.connector_tools")
 _platform_access_token: Optional[str] = None
@@ -633,6 +636,7 @@ def create_platform_tools(agent_params: Dict[str, Any]) -> List[Any]:
     signature = _build_signature(_SAVE_FILE_PARAMETER_SCHEMA)
 
     async def _save_file_to_workspace(
+        tool_context: ToolContext = None,
         _api_url: str = platform_api_url,
         _api_token: str = platform_api_token,
         _uid: str = user_id,
@@ -674,6 +678,31 @@ def create_platform_tools(agent_params: Dict[str, Any]) -> List[Any]:
                     return f"Error saving file to workspace: HTTP {resp.status_code} - {resp.text}"
                 data = resp.json()
                 doc = data.get("document", {})
+
+                # Fix 3: Propagate saved file to code interpreter brain_docs
+                # so subsequent python_interpreter calls can access it in the same session.
+                if tool_context and doc:
+                    file_path = doc.get("filePath") or doc.get("azurePath") or ""
+                    saved_filename = doc.get("originalName") or filename
+                    if file_path and workspace_id:
+                        try:
+                            brain_docs = tool_context.state.get(_STATE_KEY_BRAIN_DOCS, [])
+                            existing_paths = {d.get("filepath") for d in brain_docs}
+                            if file_path not in existing_paths:
+                                brain_docs.append({
+                                    "filename": saved_filename,
+                                    "filepath": file_path,
+                                    "workspace_id": workspace_id,
+                                })
+                                tool_context.state[_STATE_KEY_BRAIN_DOCS] = brain_docs
+                                logger.info(
+                                    "save_file_to_workspace propagated file to brain_docs: "
+                                    "filename=%s, workspace_id=%s",
+                                    saved_filename, workspace_id,
+                                )
+                        except Exception as state_err:
+                            logger.warning("Failed to update brain_docs state: %s", state_err)
+
                 return (
                     f"File saved to workspace successfully. "
                     f"Document ID: {doc.get('id')}, "

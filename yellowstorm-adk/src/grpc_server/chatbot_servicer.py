@@ -20,6 +20,8 @@ import aiohttp
 import aiofiles
 from azure.storage.filedatalake.aio import DataLakeServiceClient
 from typing import AsyncGenerator, Dict, Any, Optional, List
+
+from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
 from src.routers.authentification import create_access_token
@@ -61,6 +63,17 @@ class ChatbotServicer(
         self._token_expires_at: float = 0
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
 
+    @staticmethod
+    def _serialize_run_agent_team_request(
+            request: "chatbot_pb2.RunAgentTeamRequest"
+    ) -> Dict[str, Any]:
+        """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
+        return MessageToDict(
+            request,
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
+        )
+
     async def RunAgentTeam(
         self,
         request: "chatbot_pb2.RunAgentTeamRequest",
@@ -83,8 +96,19 @@ class ChatbotServicer(
         Yields:
             StreamChunk: Protobuf messages containing text chunks and metadata
         """
+        request_payload = self._serialize_run_agent_team_request(request)
         logger.info(
-            f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}"
+            "[gRPC IN] RunAgentTeam request received",
+            user_id=request.user_context.user_id,
+            username=request.user_context.username,
+            conversation_id=request.conversation_id,
+            agent_mode=request.agent_mode,
+            query_length=len(request.query or ""),
+            agent_count=len(request.agents),
+            workspace_count=len(request.workspace_context),
+            attached_file_count=len(request.attached_files),
+            previous_attached_file_count=len(request.previous_attached_files),
+            request_payload=request_payload,
         )
 
         # Create asyncio queue
