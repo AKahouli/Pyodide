@@ -1861,6 +1861,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   advisorTurnHistory: data.advisorTurnHistoryEntry
                     ? [...(tr.advisorTurnHistory || []), data.advisorTurnHistoryEntry]
                     : tr.advisorTurnHistory || [],
+                  advisorOptimizationHistory: data.advisorOptimizationHistoryEntry
+                    ? [...(tr.advisorOptimizationHistory || []), data.advisorOptimizationHistoryEntry]
+                    : tr.advisorOptimizationHistory || [],
                 }
                 : tr,
             )

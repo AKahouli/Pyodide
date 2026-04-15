@@ -122,6 +122,12 @@ function getVisibleExecutionStatus(execution?: PlaybookExecution | null): Playbo
   return execution.status;
 }
 
+function getSnapshotTask(execution?: PlaybookExecution | null, taskId?: string | null): PlaybookTask | null {
+  if (!execution || !taskId) return null;
+  const snapshotTasks = ((execution.playbookSnapshot as { tasks?: PlaybookTask[] } | null)?.tasks) || [];
+  return snapshotTasks.find((task) => task.id === taskId) || null;
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -801,6 +807,12 @@ function PlaybookCanvasInner() {
     [currentExecution, execution, id, nodes],
   );
 
+  const activeExecutionForEditor = (currentExecution?.playbookId === id ? currentExecution : null) || execution || null;
+  const effectiveEditingTask = useMemo(() => {
+    if (!editingTask?.id) return editingTask;
+    return getSnapshotTask(activeExecutionForEditor, editingTask.id) || editingTask;
+  }, [activeExecutionForEditor, editingTask]);
+
   const nodeContextMenuActions = useMemo<NodeContextMenuActions>(
     () => ({
       onEdit: handleEditNode,
@@ -1226,7 +1238,7 @@ function PlaybookCanvasInner() {
       {/* Node Editor Sheet */}
       <PlaybookNodeEditor
         playbookId={playbook.id}
-        task={editingTask}
+        task={effectiveEditingTask}
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}

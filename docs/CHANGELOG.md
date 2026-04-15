@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-15 19:05:00 UTC] — Show execution snapshot task data in node editor during step runs
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The playbook canvas node editor now prefers the active execution's `playbookSnapshot` task when a step is selected during execution, so sidebar task fields like description reflect Advisor Autopilot rewrites for that execution instead of stale canvas task data.
+- **Why:** Clicking a node after an autopilot optimization still showed the original step description in the right sidebar because the editor sheet was bound to the pre-run canvas task object.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`
+
 ## [2026-04-15 16:05:00 UTC] — Show applied Advisor Autopilot step rewrites
 
 - **Feature:** `playbook-advisor`

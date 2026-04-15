@@ -4828,6 +4828,8 @@ ${detailUrl
       },
     ).exec();
 
+    const taskResult = await this.getExecutionTaskResult(executionId, taskId);
+
     this.streamGateway.sendToUser(userId, {
       type: 'playbook_advisor_autopilot_updated',
       data: {
@@ -4841,6 +4843,18 @@ ${detailUrl
           ...historyEntry,
           createdAt: historyEntry.createdAt.toISOString(),
         },
+        advisorOptimizationHistoryEntry: taskResult?.advisorOptimizationHistory?.length
+          ? (() => {
+            const latestOptimization = taskResult.advisorOptimizationHistory[taskResult.advisorOptimizationHistory.length - 1];
+            return {
+              turn: latestOptimization.turn,
+              createdAt: latestOptimization.createdAt?.toISOString?.() || latestOptimization.createdAt,
+              changedFields: latestOptimization.changedFields || [],
+              beforeTask: latestOptimization.beforeTask || {},
+              afterTask: latestOptimization.afterTask || {},
+            };
+          })()
+          : null,
       },
     });
   }

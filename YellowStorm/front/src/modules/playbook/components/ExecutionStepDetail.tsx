@@ -284,7 +284,12 @@ export function ExecutionStepDetail({
   const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
-  const currentTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
+  const executionSnapshotTask = useMemo(() => {
+    const snapshot = execution?.playbookSnapshot as { tasks?: Array<Record<string, unknown>> } | null;
+    const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
+    return tasks.find((task) => task.id === step?.taskId) || null;
+  }, [execution?.playbookSnapshot, step?.taskId]);
+  const currentTask = (executionSnapshotTask || currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null) as any;
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
@@ -295,6 +300,25 @@ export function ExecutionStepDetail({
   const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
   const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
   const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const selectedOptimizationEntry = useMemo(() => {
+    if (!advisorOptimizationHistory.length) return null;
+    if (!selectedJudgeHistory) return advisorOptimizationHistory[advisorOptimizationHistory.length - 1] || null;
+
+    const selectedTime = new Date(selectedJudgeHistory.createdAt).getTime();
+    let best: typeof advisorOptimizationHistory[number] | null = null;
+    let bestDelta = Infinity;
+
+    for (const entry of advisorOptimizationHistory) {
+      const entryTime = new Date(entry.createdAt).getTime();
+      const delta = Math.abs(entryTime - selectedTime);
+      if (Math.abs(delta) < Math.abs(bestDelta)) {
+        bestDelta = delta;
+        best = entry;
+      }
+    }
+
+    return best || advisorOptimizationHistory[advisorOptimizationHistory.length - 1] || null;
+  }, [advisorOptimizationHistory, selectedJudgeHistory]);
   const issueSections = useMemo(() => {
     if (!stepJudgeResult) return [];
     return [
@@ -420,6 +444,7 @@ export function ExecutionStepDetail({
     ? 'border-red-500/30 bg-red-50 text-red-700'
     : 'border-sky-500/30 bg-sky-100 text-sky-700';
   const isLiveStreaming = step?.status === 'running' || step?.status === 'interrupted';
+  const isResultsTabActive = activeTab === 'results';
   const [isNearBottom, setIsNearBottom] = useState(true);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -571,7 +596,7 @@ export function ExecutionStepDetail({
     setSelectedJudgeHistoryId((current) => {
       if (!judgeHistory.length) return null;
       const latestJudgeHistoryId = judgeHistory[judgeHistory.length - 1].id;
-      if (current === latestJudgeHistoryId) return current;
+      if (current && judgeHistory.some((entry) => entry.id === current)) return current;
       return latestJudgeHistoryId;
     });
   }, [judgeHistory, step?.taskId]);
@@ -1201,50 +1226,68 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            {advisorOptimizationHistory.length > 0 && (
+            {advisorAutopilotActive && (
               <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t('detail.autopilot.appliedOptimizations')}
-                </div>
-                <div className="space-y-3">
-                  {[...advisorOptimizationHistory].reverse().map((entry) => (
-                    <div key={`${entry.turn}-${entry.createdAt}`} className="rounded-md border bg-background p-3">
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                        <span>{t('detail.autopilot.turnLabel', { turn: entry.turn })}</span>
-                        <span>{new Date(entry.createdAt).toLocaleString()}</span>
+                <Collapsible defaultOpen={false} className="rounded-md border bg-background">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left">
+                    <div>
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        {t('detail.autopilot.appliedOptimizations')}
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {entry.changedFields.length > 0 ? entry.changedFields.map((field) => (
-                          <Badge key={field} variant="outline" className="rounded-full px-2 py-0 text-xs">
-                            {t(`detail.autopilot.field.${field}` as any)}
-                          </Badge>
-                        )) : (
-                          <div className="text-xs text-muted-foreground">{t('detail.autopilot.noVisibleChanges')}</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {advisorOptimizationHistory.length > 0
+                          ? selectedOptimizationEntry
+                            ? t('detail.autopilot.showingTurn', { turn: selectedOptimizationEntry.turn, count: advisorOptimizationHistory.length })
+                            : t('detail.autopilot.optimizationCount', { count: advisorOptimizationHistory.length })
+                          : t('detail.autopilot.noAppliedOptimizations')}
+                      </div>
+                    </div>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="border-t px-4 py-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                    {selectedOptimizationEntry ? (
+                      <div className="rounded-md border bg-background p-3">
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                          <span>{t('detail.autopilot.turnLabel', { turn: selectedOptimizationEntry.turn })}</span>
+                          <span>{new Date(selectedOptimizationEntry.createdAt).toLocaleString()}</span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {selectedOptimizationEntry.changedFields.length > 0 ? selectedOptimizationEntry.changedFields.map((field) => (
+                            <Badge key={field} variant="outline" className="rounded-full px-2 py-0 text-xs">
+                              {t(`detail.autopilot.field.${field}` as any)}
+                            </Badge>
+                          )) : (
+                            <div className="text-xs text-muted-foreground">{t('detail.autopilot.noVisibleChanges')}</div>
+                          )}
+                        </div>
+                        {selectedOptimizationEntry.changedFields.length > 0 && (
+                          <div className="mt-3 space-y-3">
+                            {selectedOptimizationEntry.changedFields.map((field) => (
+                              <div key={field} className="grid gap-3 md:grid-cols-2">
+                                <div>
+                                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.before')}</div>
+                                  <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
+                                    {formatOptimizationValue(selectedOptimizationEntry.beforeTask?.[field])}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.after')}</div>
+                                  <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
+                                    {formatOptimizationValue(selectedOptimizationEntry.afterTask?.[field])}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         )}
                       </div>
-                      {entry.changedFields.length > 0 && (
-                        <div className="mt-3 space-y-3">
-                          {entry.changedFields.map((field) => (
-                            <div key={field} className="grid gap-3 md:grid-cols-2">
-                              <div>
-                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.before')}</div>
-                                <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
-                                  {formatOptimizationValue(entry.beforeTask?.[field])}
-                                </div>
-                              </div>
-                              <div>
-                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.after')}</div>
-                                <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
-                                  {formatOptimizationValue(entry.afterTask?.[field])}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                    ) : (
+                      <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
+                        {t('detail.autopilot.noAppliedOptimizations')}
+                      </div>
+                    )}
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             )}
 
@@ -1300,9 +1343,12 @@ export function ExecutionStepDetail({
                   </p>
                 </div>
 
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
-                  <div className="mt-2 space-y-2 text-sm">
+                <Collapsible defaultOpen={true} className="rounded-lg border bg-background p-4">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-2 space-y-2 text-sm data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
                     {stepJudgeResult.rewriteHints.length > 0 ? (
                       stepJudgeResult.rewriteHints.map((hint, idx) => (
                         <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
@@ -1310,21 +1356,27 @@ export function ExecutionStepDetail({
                     ) : (
                       <div className="text-muted-foreground">{t('detail.judge.none')}</div>
                     )}
-                  </div>
-                </div>
+                  </CollapsibleContent>
+                </Collapsible>
 
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {issueSections.map((section) => (
-                    <IssueSection
-                      key={section.title}
-                      title={section.title}
-                      badge={section.badge}
-                      badgeClassName={section.badgeClassName}
-                      items={section.items}
-                      emptyLabel={t('detail.judge.none')}
-                    />
-                  ))}
-                </div>
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.issueSections')}</div>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                    {issueSections.map((section) => (
+                      <IssueSection
+                        key={section.title}
+                        title={section.title}
+                        badge={section.badge}
+                        badgeClassName={section.badgeClassName}
+                        items={section.items}
+                        emptyLabel={t('detail.judge.none')}
+                      />
+                    ))}
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             ) : stepJudgeStatus === 'failed' ? (
               <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
@@ -1557,7 +1609,7 @@ export function ExecutionStepDetail({
         </Tabs>
       </div>
 
-      {isLiveStreaming && !isNearBottom && (
+      {isLiveStreaming && isResultsTabActive && !isNearBottom && (
         <Button
           type="button"
           size="sm"

@@ -250,7 +250,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
   });
 
-  it('renders applied optimization diffs for advisor autopilot turns', () => {
+  it('renders applied optimization diffs for advisor autopilot turns', async () => {
     render(
       <ExecutionStepDetail
         step={{
@@ -291,6 +291,7 @@ describe('ExecutionStepDetail', () => {
     );
 
     expect(screen.getByText('detail.autopilot.appliedOptimizations')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('detail.autopilot.appliedOptimizations'));
     expect(screen.getByText('detail.autopilot.field.description')).toBeInTheDocument();
     expect(screen.getByText('Old prompt')).toBeInTheDocument();
     expect(screen.getByText('New prompt')).toBeInTheDocument();
