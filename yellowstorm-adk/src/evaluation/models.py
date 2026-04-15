@@ -5,6 +5,7 @@ This module defines SQLAlchemy models for persisting evaluation data
 to a dedicated evaluation database.
 """
 from datetime import datetime
+from typing import Optional, List
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Text, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.dialects.postgresql import UUID

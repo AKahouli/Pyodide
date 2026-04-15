@@ -1,158 +1,232 @@
-"""Service for batch evaluation of agents using AgentEvaluator."""
+"""Service for batch evaluation of agents using the ADK evaluation pipeline.
+
+This module wraps the streaming evaluation pipeline from agent_evaluator.py
+into a synchronous batch execution model, collecting all results and returning
+them as a complete response.
+"""
 
 import asyncio
+import uuid
+from asyncio import Queue
 from datetime import datetime
-from typing import List, Dict, Any, Optional
-from google.adk.evaluation.agent_evaluator import AgentEvaluator
-from google.adk.evaluation.eval_metrics import PrebuiltMetrics, ToolTrajectoryCriterion
-from google.adk import Agent
+from typing import List, Dict, Any, Optional, Callable
 
 from src.logger.logging import get_logger
-from src.schema.evaluation_schema import EvaluationBatchRequest, EvaluationIterationResult, MetricResult
-from src.smart_rag.core.single_agent_service import SingleAgentService
-from src.schema.chatbot_schema import RunSingleAgentRequest, AgentSuggestion
+from src.schema.evaluator import RunADKEvalRequest
+from src.schema.chatbot_schema import AgentSuggestion
+from src.evaluation.agent_evaluator import run_adk_evaluation_streaming
 
 logger = get_logger("api.evaluation.batch_evaluator")
 
+
 class BatchEvaluator:
-    """Service to run batch evaluations using ADK AgentEvaluator."""
+    """Service to run batch evaluations using the ADK evaluation pipeline.
+    
+    Instead of reimplementing evaluation logic, this class delegates to
+    run_adk_evaluation_streaming (the proven pipeline) and collects
+    results from the async queue into a final synchronous response.
+    """
 
-    def __init__(self):
-        self.single_agent_service = SingleAgentService()
-
-    async def run_batch_evaluation(
-        self, 
-        request: EvaluationBatchRequest, 
-        user_id: str,
-        on_progress = None
-    ) -> List[EvaluationIterationResult]:
+    async def run_evaluation(
+        self,
+        agent_config: dict,
+        dataset: List[Dict[str, str]],
+        num_runs: int = 1,
+        mode: str = "non_strict",
+        judge_model: Optional[Dict[str, str]] = None,
+        threshold: float = 0.7,
+        user_id: str = "batch_user",
+        session_id: Optional[str] = None,
+        on_progress: Optional[Callable] = None,
+    ) -> Dict[str, Any]:
+        """Run a complete evaluation using the ADK pipeline.
+        
+        Args:
+            agent_config: Agent configuration dict (from NestJS buildAgentsForStream)
+            dataset: List of {"question": ..., "reference_answer": ...}
+            num_runs: Number of evaluation iterations
+            mode: Evaluation mode (strict / non_strict)
+            judge_model: Judge model config {"name": ..., "provider": ...}
+            threshold: Success threshold (0.0 to 1.0)
+            user_id: User ID for the evaluation
+            session_id: Optional session ID
+            on_progress: Optional callback for progress updates
+            
+        Returns:
+            Complete evaluation result dict with scores, details, and summary
         """
-        Run a batch evaluation for an agent.
-        """
-        logger.info(f"Starting batch evaluation for agent {request.agent_id}")
-        
-        # 1. Prepare Agent
-        # In a real scenario, we would fetch the agent config from a database.
-        # For now, we assume the agent configuration is part of the request or handled by SingleAgentService.
-        # This is a bit tricky because AgentEvaluator needs an initialized Agent object.
-        
-        # Mock request for agent creation
-        # We need to adapt this to how agents are actually stored/retrieved.
-        # For now, let's assume we can create it.
-        
-        # 2. Format Dataset for AgentEvaluator
-        # AgentEvaluator expects: [{"question": "...", "reference_answer": "..."}]
-        formatted_dataset = [
-            {"question": item.question, "reference_answer": item.reference_answer}
-            for item in request.dataset
-        ]
+        logger.info(f"Starting batch evaluation for agent '{agent_config.get('name', 'unknown')}' "
+                     f"with {len(dataset)} test cases, {num_runs} run(s)")
 
-        # 3. Define Metrics
-        # Mapping my internal modes to ADK ToolTrajectoryCriterion.MatchType
-        traj_mode = ToolTrajectoryCriterion.MatchType.EXACT if request.mode == "strict" else ToolTrajectoryCriterion.MatchType.ANY_ORDER
-        
-        metrics = [
-            PrebuiltMetrics.RESPONSE_MATCH_SCORE,
-            PrebuiltMetrics.FINAL_RESPONSE_MATCH_V2,
-            PrebuiltMetrics.HALLUCINATIONS_V1,
-            # We can also add trajectery eval if needed
-            (PrebuiltMetrics.TOOL_TRAJECTORY_AVG_SCORE, traj_mode)
-        ]
+        # Build the RunADKEvalRequest from the batch parameters
+        # Transform dataset items into ADK test_cases format
+        test_cases = []
+        for item in dataset:
+            test_cases.append({
+                "input": {"messages": [{"role": "user", "content": item["question"]}]},
+                "reference_output": {"messages": [{"role": "assistant", "content": item["reference_answer"]}]},
+            })
 
-        results = []
-        
-        # 4. Run Iterations
-        for i in range(request.num_runs):
-            logger.info(f"Running iteration {i+1}/{request.num_runs}")
-            
-            # Reset agent state/memory if needed for each run
-            # For each iteration, we run the evaluator over the whole dataset
-            
-            # NOTE: AgentEvaluator.evaluate_dataset is synchronous in some ADK versions, 
-            # but we should check if it can be run per question to provide better progress.
-            
-            # Re-creating the agent for each run to ensure clean state
-            # This is a simplification.
-            agent = await self._get_agent_instance(request.agent_config, user_id)
-            if not agent:
-                raise ValueError(f"Could not initialize agent {request.agent_id}")
+        # Build AgentSuggestion from agent_config dict
+        agent_suggestion = AgentSuggestion(**agent_config) if isinstance(agent_config, dict) else agent_config
 
-            evaluator = AgentEvaluator(agent=agent, dataset=formatted_dataset, metrics=metrics)
-            
-            # Run evaluation (this might be slow)
-            # We wrap it in a thread if it's blocking
-            loop = asyncio.get_event_loop()
-            eval_summary = await loop.run_in_executor(None, evaluator.evaluate_dataset)
-            
-            # 5. Process Results
-            # eval_summary.results is usually a list of results (one per question)
-            # We aggregate or return the summary per iteration
-            
-            # For simplicity, we take the average scores of this run
-            avg_scores = self._calculate_average_scores(eval_summary)
-            
-            iteration_result = EvaluationIterationResult(
-                iterationIndex=i + 1,
-                responseMatchScore=MetricResult(score=avg_scores.get("response_match_score", 0.0)),
-                finalResponseMatchV2=MetricResult(score=avg_scores.get("final_response_match_v2", 0.0)),
-                hallucinationsV1=MetricResult(score=avg_scores.get("hallucinations_v1", 0.0)),
-                timestamp=datetime.now().isoformat()
-            )
-            
-            results.append(iteration_result)
-            
-            if on_progress:
-                await on_progress(iteration_result)
+        # Run evaluation for each run iteration
+        all_detailed_results = []
+        final_summary = None
+        final_score = 0
+        final_agent_name = agent_config.get("name", "unknown")
+        evaluation_id = None
 
-        return results
-
-    async def _get_agent_instance(self, agent_config: AgentSuggestion, user_id: str) -> Optional[Agent]:
-        """
-        Retrieves an ADK Agent instance using the provided configuration.
-        """
-        try:
-            # We create a mock request to reuse SingleAgentService logic if possible
-            # But it's better to just implement the relevant parts here or make it a utility
+        for run_index in range(num_runs):
+            logger.info(f"--- Starting run {run_index + 1}/{num_runs} ---")
             
-            # For this POC, we'll use a simplified version of agent creation
-            # similar to what's in SingleAgentService
+            run_session_id = f"eval_batch_{uuid.uuid4().hex[:8]}_run_{run_index + 1}"
             
-            # 1. Create RunSingleAgentRequest-like object
-            from src.schema.chatbot_schema import RunSingleAgentRequest
-            mock_request = RunSingleAgentRequest(
+            adk_request = RunADKEvalRequest(
+                agent=agent_suggestion,
+                test_cases=test_cases,
+                trajectory_match_mode=mode,
+                session_id=run_session_id,
                 user_id=user_id,
-                session_id="eval_session",
-                message="eval",
-                agent=agent_config
+                threshold=threshold,
+                num_runs=1,  # Always 1 per run - we handle multi-runs here
+                judge_model=judge_model,
             )
-            
-            agent = await self.single_agent_service._create_agent_from_request(mock_request)
-            return agent
-        except Exception as e:
-            logger.error(f"Failed to create agent instance for evaluation: {str(e)}")
-            return None
 
-    def _calculate_average_scores(self, eval_summary) -> Dict[str, float]:
-        """Aggrège les scores d'un eval_summary."""
-        # Simple implementation based on AgentEvaluator output structure
-        scores = {
-            "response_match_score": 0.0,
-            "final_response_match_v2": 0.0,
-            "hallucinations_v1": 0.0
+            # Use a queue to collect results from the streaming pipeline
+            queue: Queue = Queue()
+            
+            # Run the streaming evaluation in background
+            eval_task = asyncio.create_task(run_adk_evaluation_streaming(adk_request, queue))
+
+            # Collect all results from the queue
+            run_final_result = None
+            error_msg = None
+
+            try:
+                while True:
+                    event = await asyncio.wait_for(queue.get(), timeout=600)  # 10 min timeout
+                    if event is None:
+                        break  # Sentinel: evaluation finished
+
+                    event_type = event.get("type", "")
+                    
+                    if event_type == "progress" and on_progress:
+                        # Tag progress and test_case with run index for frontend consistency
+                        run_idx = run_index + 1
+                        event["run_index"] = run_idx
+                        event["runIndex"] = run_idx # CamelCase for frontend
+                        if "test_case" in event:
+                            event["test_case"]["run_index"] = run_idx
+                            event["test_case"]["runIndex"] = run_idx
+                        await on_progress(event)
+                    
+                    if event_type == "completed" or event_type == "final":
+                        run_final_result = event
+                    elif event_type == "error":
+                        error_msg = event.get("error", "Unknown evaluation error")
+            except asyncio.TimeoutError:
+                error_msg = f"Run {run_index + 1} timed out after 10 minutes"
+                logger.error(error_msg)
+            
+            # Ensure the background task is done
+            if not eval_task.done():
+                eval_task.cancel()
+                try:
+                    await eval_task
+                except asyncio.CancelledError:
+                    pass
+
+            if error_msg:
+                logger.error(f"Run {run_index + 1} failed: {error_msg}")
+                continue  # Skip this run, try次の
+
+            if run_final_result:
+                # Collect detailed results and tag them with run_index
+                run_details = run_final_result.get("detailed_results") or run_final_result.get("details") or []
+                for detail in run_details:
+                    d = detail if isinstance(detail, dict) else (detail.model_dump() if hasattr(detail, "model_dump") else detail)
+                    d["run_index"] = run_index + 1
+                    all_detailed_results.append(d)
+                
+                final_summary = run_final_result.get("summary")
+                final_score = run_final_result.get("score", 0)
+                final_agent_name = run_final_result.get("agent_name", final_agent_name)
+                evaluation_id = run_final_result.get("evaluation_id", evaluation_id)
+                
+                logger.info(f"Run {run_index + 1} completed: {len(run_details)} test results, score={final_score}")
+
+        # Build final aggregated response
+        if not all_detailed_results:
+            return {
+                "status": "failed",
+                "error": "All evaluation runs failed",
+                "results": [],
+            }
+
+        # Calculate aggregated score across all runs
+        scored_count = 0
+        total_score = 0
+        for d in all_detailed_results:
+            frm = d.get("final_response_match_v2", {})
+            s = frm.get("score", 0) if isinstance(frm, dict) else 0
+            if isinstance(s, (int, float)):
+                total_score += s
+                scored_count += 1
+        mean_score = total_score / scored_count if scored_count > 0 else 0
+
+        logger.info(f"Batch evaluation completed: {len(all_detailed_results)} total test results "
+                     f"across {num_runs} run(s), mean score={mean_score:.3f}")
+
+        return {
+            "status": "completed",
+            "results": self._transform_results_from_details(all_detailed_results),
+            "summary": final_summary,
+            "score": mean_score,
+            "total_tests": len(all_detailed_results),
+            "agent_name": final_agent_name,
+            "evaluation_id": evaluation_id,
         }
+
+    def _transform_results_from_details(self, details: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Transform ADK detail results into the format expected by the NestJS backend.
         
-        if not eval_summary.results:
-            return scores
+        The NestJS backend expects results as a list of iteration results with:
+        - iterationIndex, question, agentAnswer, referenceAnswer
+        - responseMatchScore: {score, reasoning}
+        - finalResponseMatchV2: {score, reasoning}
+        - hallucinationsV1: {score, reasoning}
+        - timestamp, runIndex
+        """
+        transformed = []
+        
+        for detail in details:
+            # Handle both dict and Pydantic model
+            d = detail if isinstance(detail, dict) else detail.model_dump() if hasattr(detail, "model_dump") else detail
             
-        count = len(eval_summary.results)
-        for res in eval_summary.results:
-            # ADK result structure usually has a metrics dict
-            m = res.metrics
-            scores["response_match_score"] += m.get(PrebuiltMetrics.RESPONSE_MATCH_SCORE, 0.0)
-            scores["final_response_match_v2"] += m.get(PrebuiltMetrics.FINAL_RESPONSE_MATCH_V2, 0.0)
-            scores["hallucinations_v1"] += m.get(PrebuiltMetrics.HALLUCINATIONS_V1, 0.0)
+            # Extract scores robustly
+            frm_v2 = d.get("final_response_match_v2", {})
+            hallu = d.get("hallucinations_v1", {})
             
-        for k in scores:
-            scores[k] /= count
-            
-        return scores
+            transformed.append({
+                "iterationIndex": d.get("test_number", 0),
+                "question": d.get("question", ""),
+                "agentAnswer": d.get("agent_answer", ""),
+                "referenceAnswer": d.get("reference_answer", ""),
+                "responseMatchScore": {
+                    "score": d.get("response_match_score", 0) if isinstance(d.get("response_match_score"), (int, float)) else (d.get("response_match_score", {}).get("score", 0) if isinstance(d.get("response_match_score"), dict) else 0),
+                    "reasoning": ""
+                },
+                "finalResponseMatchV2": {
+                    "score": frm_v2.get("score", 0) if isinstance(frm_v2, dict) else 0,
+                    "reasoning": frm_v2.get("reasoning", "") if isinstance(frm_v2, dict) else ""
+                },
+                "hallucinationsV1": {
+                    "score": hallu.get("score", 0) if isinstance(hallu, dict) else 0,
+                    "reasoning": hallu.get("reasoning", "") if isinstance(hallu, dict) else ""
+                },
+                "timestamp": d.get("timestamp", datetime.now().isoformat()),
+                "runIndex": d.get("runIndex") or d.get("run_index", 1),
+            })
+        
+        return transformed

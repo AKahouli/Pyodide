@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from starlette.responses import StreamingResponse
 import json
 
-from src.authentification.get_current_user import get_current_active_user, get_current_active_user_optional
+from src.authentification.get_current_user import get_current_active_user, get_current_active_user_optional, get_current_user_optional
 from src.logger.logging import get_logger
 from src.schema.authentification_schema import User
 from src.schema.evaluator import RunADKEvalRequest # New schema
 from src.schema.evaluation_schema import EvaluationBatchRequest, EvaluationBatchResponse # Old schemas still used
 from src.evaluation.agent_evaluator import run_adk_evaluation_streaming # New evaluator
-from src.evaluation.batch_evaluator import BatchEvaluator # Old evaluator
+from src.evaluation.batch_evaluator import BatchEvaluator # Refactored evaluator
 
 logger = get_logger("api.routers.evaluation_batch")
 
@@ -25,29 +25,60 @@ router = APIRouter(
 # In production, this would be a database (Mongoose/MongoDB)
 evaluations_store: Dict[str, Dict[str, Any]] = {}
 
-async def _background_evaluation(evaluation_id: str, request: EvaluationBatchRequest, user_id: str):
-    """Background task to run the batch evaluation."""
-    try:
-        evaluator = BatchEvaluator()
-        
-        async def on_progress(iteration_result):
-            evaluations_store[evaluation_id]["results"].append(iteration_result.model_dump())
-            evaluations_store[evaluation_id]["completed_runs"] += 1
-            logger.info(f"Progress for {evaluation_id}: {evaluations_store[evaluation_id]['completed_runs']}/{evaluations_store[evaluation_id]['total_runs']}")
+# Shared BatchEvaluator instance
+_batch_evaluator = BatchEvaluator()
 
-        results = await evaluator.run_batch_evaluation(request, user_id, on_progress=on_progress)
+
+async def _background_evaluation(evaluation_id: str, request: EvaluationBatchRequest, user_id: str):
+    """Background task to run the batch evaluation using the real ADK pipeline."""
+    try:
+        # Resolve judge_model
+        judge_model = None
+        if request.judge_model:
+            judge_model = request.judge_model
+
+        async def on_progress(event):
+            """Callback for progress updates from the evaluation pipeline."""
+            event_type = event.get("type", "")
+            if event_type == "progress" and "test_case" in event:
+                # Append the individual test result
+                evaluations_store[evaluation_id]["results"].append(event["test_case"])
+                evaluations_store[evaluation_id]["completed_runs"] = len(evaluations_store[evaluation_id]["results"])
+                logger.info(f"Progress for {evaluation_id}: {evaluations_store[evaluation_id]['completed_runs']} test cases completed")
+
+        result = await _batch_evaluator.run_evaluation(
+            agent_config=request.agent_config.model_dump(),
+            dataset=[{"question": item.question, "reference_answer": item.reference_answer} for item in request.dataset],
+            num_runs=request.num_runs,
+            mode=request.mode,
+            judge_model=judge_model,
+            threshold=0.7,
+            user_id=user_id,
+            on_progress=on_progress,
+        )
+
+        # Update store with final results
+        evaluations_store[evaluation_id]["status"] = result.get("status", "completed")
+        evaluations_store[evaluation_id]["results"] = result.get("results", [])
+        evaluations_store[evaluation_id]["summary"] = result.get("summary")
+        evaluations_store[evaluation_id]["score"] = result.get("score", 0)
+        evaluations_store[evaluation_id]["total_tests"] = result.get("total_tests", 0)
+        evaluations_store[evaluation_id]["error"] = result.get("error")
         
-        evaluations_store[evaluation_id]["status"] = "completed"
+        logger.info(f"Evaluation {evaluation_id} completed with status: {result.get('status')}")
     except Exception as e:
+        import traceback
         logger.error(f"Error in background evaluation {evaluation_id}: {str(e)}")
+        logger.error(traceback.format_exc())
         evaluations_store[evaluation_id]["status"] = "failed"
         evaluations_store[evaluation_id]["error"] = str(e)
+
 
 @router.post("/launch", response_model=EvaluationBatchResponse)
 async def launch_batch_evaluation(
     request: EvaluationBatchRequest,
     background_tasks: BackgroundTasks,
-    current_user: Annotated[User, Depends(get_current_active_user)],
+    current_user: Annotated[User, Depends(get_current_active_user_optional)],
 ):
     """Launch a batch evaluation task."""
     try:
@@ -57,14 +88,15 @@ async def launch_batch_evaluation(
         evaluations_store[evaluation_id] = {
             "status": "processing",
             "results": [],
-            "total_runs": request.num_runs,
+            "numRuns": request.num_runs,
             "completed_runs": 0,
             "agent_id": request.agent_id,
             "scenario_name": request.scenario_name
         }
         
         # Add to background tasks
-        background_tasks.add_task(_background_evaluation, evaluation_id, request, current_user.username)
+        user_id = current_user.username if current_user else "anonymous"
+        background_tasks.add_task(_background_evaluation, evaluation_id, request, user_id)
         
         return EvaluationBatchResponse(
             evaluation_id=evaluation_id,
@@ -80,7 +112,7 @@ async def launch_batch_evaluation(
 @router.get("/status/{evaluation_id}")
 async def get_evaluation_status(
     evaluation_id: str,
-    current_user: Annotated[User, Depends(get_current_active_user)],
+    current_user: Annotated[User, Depends(get_current_active_user_optional)],
 ):
     """Get the status and results of an evaluation."""
     if evaluation_id not in evaluations_store:
@@ -91,7 +123,7 @@ async def get_evaluation_status(
 @router.delete("/{evaluation_id}")
 async def delete_evaluation(
     evaluation_id: str,
-    current_user: Annotated[User, Depends(get_current_active_user)],
+    current_user: Annotated[User, Depends(get_current_active_user_optional)],
 ):
     """Delete an evaluation from the store."""
     if evaluation_id in evaluations_store:

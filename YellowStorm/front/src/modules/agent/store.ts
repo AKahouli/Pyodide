@@ -30,7 +30,11 @@ function tAgent(key: string, fallback: string, options?: Record<string, unknown>
 const initialState: AgentState = {
   agents: [],
   agentTypes: [],
+  datasets: [],
+  evaluations: [],
+  scenarios: [],
   isLoading: false,
+  isEvaluationLoading: false,
   isInitialized: false,
   error: null,
   lastFetchedAt: null,
@@ -127,6 +131,84 @@ export const useAgentStore = create<AgentStore>()(
         await get().fetchAgents();
       },
 
+      // ===== Evaluation Implementation =====
+      fetchDatasets: async () => {
+        set({ isEvaluationLoading: true });
+        try {
+          const datasets = await api.getDatasets();
+          set({ datasets, isEvaluationLoading: false });
+        } catch (err) {
+          set({ isEvaluationLoading: false, error: err instanceof Error ? err.message : 'Failed to fetch datasets' });
+        }
+      },
+
+      createDataset: async (name, items) => {
+        const dataset = await api.createDataset(name, items);
+        set((state) => ({ datasets: [...state.datasets, dataset] }));
+        toast.success(tAgent('store.toasts.datasetCreated', 'Dataset created'));
+        return dataset;
+      },
+
+      deleteDataset: async (id) => {
+        await api.deleteDataset(id);
+        set((state) => ({ datasets: state.datasets.filter((d) => d.id !== id) }));
+        toast.success(tAgent('store.toasts.datasetDeleted', 'Dataset deleted'));
+      },
+
+      fetchScenarios: async (agentId) => {
+        set({ isEvaluationLoading: true });
+        try {
+          const scenarios = await api.getScenarios(agentId);
+          set({ scenarios, isEvaluationLoading: false });
+        } catch (err) {
+          set({ isEvaluationLoading: false, error: err instanceof Error ? err.message : 'Failed to fetch scenarios' });
+        }
+      },
+
+      createScenario: async (data) => {
+        const scenario = await api.createScenario(data);
+        set((state) => ({ scenarios: [...state.scenarios, scenario] }));
+        toast.success(tAgent('store.toasts.scenarioCreated', 'Scenario created'));
+        return scenario;
+      },
+
+      updateScenario: async (id, data) => {
+        const scenario = await api.updateScenario(id, data);
+        set((state) => ({
+          scenarios: state.scenarios.map((s) => (s.id === id ? scenario : s)),
+        }));
+        toast.success(tAgent('store.toasts.scenarioUpdated', 'Scenario updated'));
+        return scenario;
+      },
+
+      deleteScenario: async (id) => {
+        await api.deleteScenario(id);
+        set((state) => ({ scenarios: state.scenarios.filter((s) => s.id !== id) }));
+        toast.success(tAgent('store.toasts.scenarioDeleted', 'Scenario deleted'));
+      },
+
+      fetchEvaluations: async (agentId) => {
+        set({ isEvaluationLoading: true });
+        try {
+          const evaluations = await api.getAgentEvaluations(agentId);
+          set({ evaluations, isEvaluationLoading: false });
+        } catch (err) {
+          set({ isEvaluationLoading: false, error: err instanceof Error ? err.message : 'Failed to fetch evaluations' });
+        }
+      },
+
+      updateEvaluation: (id, data) => {
+        set((state) => ({
+          evaluations: state.evaluations.map((e) => (e.id === id ? { ...e, ...data } : e)),
+        }));
+      },
+
+      deleteEvaluation: async (id) => {
+        await api.deleteEvaluation(id);
+        set((state) => ({ evaluations: state.evaluations.filter((e) => e.id !== id) }));
+        toast.success(tAgent('store.toasts.evaluationDeleted', 'Evaluation deleted'));
+      },
+
       reset: () => set(initialState),
     }),
     { name: 'agent-store' },
@@ -153,3 +235,11 @@ export const useAgentById = (id: string) =>
   useAgentStore(useShallow((state) => state.agents.find((a) => a.id === id)));
 
 export const useAgentTypes = () => useAgentStore(useShallow((state) => state.agentTypes));
+
+export const useEvaluationDatasets = () => useAgentStore(useShallow((state) => state.datasets));
+
+export const useEvaluationScenarios = () => useAgentStore(useShallow((state) => state.scenarios));
+
+export const useEvaluations = () => useAgentStore(useShallow((state) => state.evaluations));
+
+export const useEvaluationLoading = () => useAgentStore((state) => state.isEvaluationLoading);

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Plus, Pencil, Trash2, ChevronDown, Play, Eye, Table as TableIcon, LineChart, Loader2, Save, FileDown, X, Cpu, ArrowLeft } from 'lucide-react';
 import apiClient from '@/lib/api/client';
-import { API_CONFIG } from '@/lib/api/config';
+import { API_CONFIG, AUTH_STORAGE_KEYS } from '@/lib/api/config';
 import { useModuleTranslation } from '@/modules/localization';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -18,8 +18,9 @@ import { toast } from 'sonner';
 import * as ExcelJS from 'exceljs';
 import { LineChart as ReLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 
-import { getDatasets, createDataset, getAgentEvaluations, deleteEvaluation, getScenarios, createScenario, updateScenario, deleteScenario, executeEvaluation, Dataset, Evaluation, DatasetItem, Scenario, EvaluationIteration, type LaunchEvaluationData } from '../evaluation-api';
+import { Dataset, Evaluation, DatasetItem, Scenario, EvaluationIteration, type LaunchEvaluationData, launchEvaluation } from '../evaluation-api';
 import { useModels, useModelsStore } from '@/modules/models/store';
+import { useAgentStore, useEvaluationDatasets, useEvaluationScenarios, useEvaluations, useEvaluationLoading } from '../store';
 import type { Agent } from '../types';
 
 interface EvaluationTabProps {
@@ -29,8 +30,18 @@ interface EvaluationTabProps {
 export function EvaluationTab({ agent }: EvaluationTabProps) {
   const { t } = useModuleTranslation('agent');
 
-  // Scenarios State
-  const [scenarios, setScenarios] = React.useState<Scenario[]>([]);
+  // Store Hooks
+  const datasets = useEvaluationDatasets();
+  const evaluations = useEvaluations();
+  const scenarios = useEvaluationScenarios();
+  const isEvaluationLoading = useEvaluationLoading();
+  const { 
+    fetchDatasets, fetchEvaluations, fetchScenarios, 
+    createDataset: storeCreateDataset, deleteDataset: storeDeleteDataset,
+    createScenario: storeCreateScenario, updateScenario: storeUpdateScenario, deleteScenario: storeDeleteScenario,
+    deleteEvaluation: storeDeleteEvaluation, updateEvaluation: storeUpdateEvaluation
+  } = useAgentStore();
+
   const [activeScenario, setActiveScenario] = React.useState<Scenario | null>(null);
   const [isScenarioInlineOpen, setIsScenarioInlineOpen] = React.useState(false);
   const [scenarioForm, setScenarioForm] = React.useState<Partial<Scenario>>({ name: '', numRuns: 1, mode: 'non_strict' });
@@ -41,8 +52,6 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   const [manualDatasetName, setManualDatasetName] = React.useState<string>('');
 
   // Data State
-  const [datasets, setDatasets] = React.useState<Dataset[]>([]);
-  const [evaluations, setEvaluations] = React.useState<Evaluation[]>([]);
   const [launching, setLaunching] = React.useState(false);
 
   const models = useModels();
@@ -64,18 +73,11 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
     if (!agent) return;
 
     try {
-      const [ds, ev, scs] = await Promise.all([getDatasets(), getAgentEvaluations(agent.id), getScenarios(agent.id)]);
-      setDatasets(ds);
-      setEvaluations(ev);
-      setScenarios(scs);
-
-      // Remove automatic scenario application on load to respect user choice
-      // and show "Choisir un dataset" by default.
-      if (scs.length > 0 && !launching && ev.length > 0 && !activeScenario) {
-        // We keep the first one as active internally, but don't apply it to the form
-        const first = scs[0];
-        setActiveScenario(first);
-      }
+      await Promise.all([
+        fetchDatasets(), 
+        fetchEvaluations(agent.id), 
+        fetchScenarios(agent.id)
+      ]);
 
       // Ensure models are fetched
       useModelsStore
@@ -85,7 +87,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
     } catch (error) {
       console.error('Failed to fetch evaluation data', error);
     }
-  }, [agent]);
+  }, [agent, fetchDatasets, fetchEvaluations, fetchScenarios]);
 
   React.useEffect(() => {
     fetchData();
@@ -119,10 +121,8 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   };
 
   const handleDeleteScenario = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
     try {
-      await deleteScenario(id);
-      setScenarios((prev) => prev.filter((s) => s.id !== id));
+      await storeDeleteScenario(id);
       if (activeScenario?.id === id) {
         setActiveScenario(null);
       }
@@ -140,23 +140,21 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
     }
     try {
       if (isEditingScenario && scenarioForm.id) {
-        const updated = await updateScenario(scenarioForm.id, {
+        const updated = await storeUpdateScenario(scenarioForm.id, {
           ...scenarioForm,
           datasetId: selectedDatasetId,
         });
-        setScenarios((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
         if (activeScenario?.id === updated.id) {
           setActiveScenario(updated);
           applyScenario(updated);
         }
         toast.success('Scenario updated');
       } else {
-        const created = await createScenario({
+        const created = await storeCreateScenario({
           ...scenarioForm,
           agentId: agent.id,
           datasetId: selectedDatasetId,
         });
-        setScenarios((prev) => [...prev, created]);
         setActiveScenario(created);
         applyScenario(created);
         toast.success('Scenario created');
@@ -196,8 +194,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
       return;
     }
     try {
-      const created = await createDataset(manualDatasetName, manualItems);
-      setDatasets((prev) => [...prev, created]);
+      const created = await storeCreateDataset(manualDatasetName, manualItems);
       setSelectedDatasetId(created.id);
       setManualItems([]);
       setManualDatasetName('');
@@ -245,8 +242,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
       }
 
       if (items.length > 0) {
-        const newDs = await createDataset(file.name, items);
-        setDatasets((prev) => [...prev, newDs]);
+        const newDs = await storeCreateDataset(file.name, items);
         setSelectedDatasetId(newDs.id);
         toast.success(`Dataset "${file.name}" imported`);
       }
@@ -255,93 +251,45 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
     }
   };
 
-  const executeEvaluationStream = async (data: LaunchEvaluationData, onInit: (id: string) => void, onProgress: (testCase: any) => void, onComplete: (final: any) => void, onError: (error: string) => void): Promise<void> => {
-    let retryCount = 0;
-    const maxRetries = 3;
-    let currentId = '';
 
-    const connect = () => {
-      return new Promise<void>((resolve, reject) => {
-        const token = localStorage.getItem('yellostorm_access_token');
-        if (!token) {
-          onError('No authentication token');
-          reject(new Error('No authentication token'));
-          return;
-        }
+  /**
+   * Listen for background evaluation completions via SSE
+   */
+  React.useEffect(() => {
+    const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
+    if (!token) return;
 
-        const params = new URLSearchParams({
-          token,
-          agentId: data.agentId,
-          datasetId: data.datasetId || '',
-          numRuns: String(data.numRuns),
-          mode: data.mode,
-          scenarioName: data.scenarioName,
-          judgeModel: data.judgeModel || '',
-          threshold: String(data.threshold || 0.7),
-          // Add resumeId if we are reconnecting
-          ...(currentId ? { resumeId: currentId } : {}),
-        });
+    const url = `${API_CONFIG.baseURL}/evaluation/execute/stream?token=${token}`;
+    const eventSource = new EventSource(url);
 
-        const url = `${API_CONFIG.baseURL}/evaluation/execute/stream?${params.toString()}`;
-        console.log(`[EvaluationStream] Connecting to ${url} (Retry: ${retryCount})`);
-        const eventSource = new EventSource(url);
-
-        eventSource.onmessage = (event) => {
-          try {
-            const eventData = JSON.parse(event.data);
-
-            switch (eventData.type) {
-              case 'init':
-                if (eventData.evaluation_id) {
-                  currentId = eventData.evaluation_id;
-                  onInit(eventData.evaluation_id);
-                }
-                break;
-              case 'heartbeat':
-                console.log('[EvaluationStream] Heartbeat received');
-                break;
-              case 'progress':
-                if (eventData.test_case) {
-                  onProgress(eventData.test_case);
-                }
-                break;
-              case 'final':
-              case 'completed':
-                onComplete(eventData);
-                eventSource.close();
-                resolve();
-                break;
-              case 'error':
-                onError(eventData.error || 'Evaluation failed');
-                eventSource.close();
-                reject(new Error(eventData.error || 'Evaluation failed'));
-                break;
-            }
-          } catch (error) {
-            console.error('[EvaluationStream] Failed to parse event:', error);
-          }
-        };
-
-        eventSource.onerror = (err) => {
-          console.error('[EvaluationStream] EventSource error:', err);
-          eventSource.close();
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'completed' && data.evaluation) {
+          // Update the global store with the final result
+          storeUpdateEvaluation(data.evaluation_id, data.evaluation);
           
-          if (retryCount < maxRetries) {
-            retryCount++;
-            console.log(`[EvaluationStream] Attempting reconnect ${retryCount}/${maxRetries}...`);
-            setTimeout(() => {
-              connect().then(resolve).catch(reject);
-            }, 2000);
-          } else {
-            onError('Connection lost after multiple attempts');
-            reject(new Error('Connection lost'));
+          if (selectedEvalForDetail?.id === data.evaluation_id) {
+            setSelectedEvalForDetail(data.evaluation);
           }
-        };
-      });
+          
+          toast.success(`Evaluation "${data.evaluation.scenarioName}" completed`);
+          if (agent) fetchEvaluations(agent.id); // Refresh all to be sure
+        }
+      } catch (err) {
+        console.error('[SSE Observer] Parse error:', err);
+      }
     };
 
-    return connect();
-  };
+    eventSource.onerror = (err) => {
+      console.warn('[SSE Observer] Connection error:', err);
+      // EventSource auto-reconnects by default
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [agent, fetchEvaluations, storeUpdateEvaluation, selectedEvalForDetail]);
 
   // Launch
   const handleResumeEvaluation = async (existingEval: Evaluation) => {
@@ -352,64 +300,20 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
     
     setLaunching(true);
     try {
-      await executeEvaluationStream(
-        {
-          agentId: existingEval.agentId,
-          datasetId: existingEval.datasetId || '',
-          numRuns: existingEval.numRuns || 1,
-          mode: existingEval.mode,
-          scenarioName: existingEval.scenarioName,
-        },
-        (id) => {
-           // On resume, ID should match
-           console.log('[EvaluationStream] Resumed ID:', id);
-        },
-        (testCase) => {
-          setEvaluations((prev) =>
-            prev.map((ev) => {
-              if (ev.id === existingEval.id) {
-                const newIteration: EvaluationIteration = {
-                  ...testCase,
-                  iterationIndex: ev.results.length + 1,
-                  timestamp: new Date().toISOString(),
-                  runIndex: testCase.runIndex || 1,
-                };
-                return { ...ev, results: [...ev.results, newIteration] };
-              }
-              return ev;
-            }),
-          );
-        },
-        (final) => {
-          setEvaluations((prev) =>
-            prev.map((ev) => {
-              if (ev.id === existingEval.id) {
-                return {
-                  ...ev,
-                  status: 'completed',
-                  results: final.details.map((d: any, idx: number) => ({
-                    ...d,
-                    iterationIndex: idx + 1,
-                    timestamp: new Date().toISOString(),
-                  })),
-                };
-              }
-              return ev;
-            }),
-          );
-          setLaunching(false);
-        },
-        (error) => {
-          setEvaluations((prev) =>
-            prev.map((ev) => {
-              if (ev.id === existingEval.id) return { ...ev, status: 'failed', error };
-              return ev;
-            }),
-          );
-          setLaunching(false);
-        },
-      );
-    } catch (err) {
+      const result = await launchEvaluation({
+        agentId: existingEval.agentId,
+        datasetId: existingEval.datasetId || '',
+        numRuns: existingEval.numRuns || 1,
+        mode: existingEval.mode,
+        scenarioName: existingEval.scenarioName,
+      });
+
+      // Update the existing entry or refresh
+      fetchEvaluations(existingEval.agentId);
+      toast.info('Evaluation restarted in background...');
+    } catch (error: any) {
+      toast.error('Failed to resume evaluation: ' + (error.message || error));
+    } finally {
       setLaunching(false);
     }
   };
@@ -422,7 +326,6 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
 
     setLaunching(true);
 
-    // Add optimistic evaluation so user sees a "Running" row immediately
     const tempId = `optimistic-${Date.now()}`;
     const optimisticEval: Evaluation = {
       id: tempId,
@@ -431,92 +334,38 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
       mode: runMode as any,
       status: 'processing',
       numRuns: numRuns,
+      datasetId: selectedDatasetId,
       results: [],
       createdAt: new Date().toISOString(),
     };
-    setEvaluations((prev) => [optimisticEval, ...prev]);
+    
+    // Add to store for immediate feedback
+    useAgentStore.setState((state) => ({ evaluations: [optimisticEval, ...state.evaluations] }));
 
     try {
-      await executeEvaluationStream(
-        {
-          agentId: agent.id,
-          datasetId: selectedDatasetId,
-          numRuns: numRuns,
-          mode: runMode,
-          scenarioName: runName,
-          judgeModel: judgeModel,
-          threshold: threshold,
-        },
-        (realId) => {
-          // Sync tempId with realId immediately
-          setEvaluations((prev) =>
-            prev.map((ev) => (ev.id === tempId ? { ...ev, id: realId } : ev))
-          );
-          // If the user opened the modal for tempId, update the reference
-          setSelectedEvalForDetail((curr) => (curr?.id === tempId ? { ...curr, id: realId } : curr));
-        },
-        (testCase) => {
-          // Real-time update using the latest state of evaluations
-          setEvaluations((prev) =>
-            prev.map((ev) => {
-              // Note: it might be realId now, but it could still be tempId for a split second
-              // We check both to be safe, but ideally only the realId.
-              const isMatch = ev.id === tempId || (ev.id.startsWith('optimistic-') === false && ev.scenarioName === runName && ev.status === 'processing');
-              
-              if (isMatch) {
-                const newIteration: EvaluationIteration = {
-                   ...testCase,
-                   iterationIndex: testCase.iterationIndex || (ev.results.length + 1),
-                   timestamp: new Date().toISOString(),
-                };
-                return { ...ev, results: [...ev.results, newIteration] };
-              }
-              return ev;
-            })
-          );
-        },
-        (final) => {
-          // Replace with real ID and final status
-          setEvaluations((prev) => {
-            const next = prev.map((ev) => {
-              if (ev.id === tempId) {
-                return {
-                  ...ev,
-                  id: final.evaluation_id || ev.id,
-                  status: 'completed',
-                  results: (final.details || final.detailed_results || []).map((d: any, idx: number) => ({
-                    ...d,
-                    iterationIndex: idx + 1,
-                    timestamp: new Date().toISOString(),
-                  })),
-                };
-              }
-              return ev;
-            });
-            // Update details view if needed
-            if (selectedEvalForDetail?.id === tempId) {
-               const updated = next.find(e => e.id === (final.evaluation_id || tempId));
-               if (updated) setSelectedEvalForDetail(updated);
-            }
-            return next;
-          });
-          setLaunching(false);
-          toast.success('Evaluation completed');
-          // Refresh all data from database to ensure consistency
-          fetchData();
-        },
-        (error) => {
-          setEvaluations((prev) =>
-            prev.map((ev) => {
-              if (ev.id === tempId) return { ...ev, status: 'failed', error };
-              return ev;
-            })
-          );
-          setLaunching(false);
-          toast.error('Evaluation Error: ' + error);
-        }
-      );
+      const result = await launchEvaluation({
+        agentId: agent.id,
+        datasetId: selectedDatasetId,
+        numRuns: numRuns,
+        mode: runMode,
+        scenarioName: runName,
+        judgeModel: judgeModel,
+        threshold: threshold,
+      });
+
+      // Update the optimistic entry with the real server-side ID
+      useAgentStore.setState((state) => ({
+        evaluations: state.evaluations.map((ev) => (ev.id === tempId ? result : ev))
+      }));
+      
+      toast.info('Evaluation launched in background...');
     } catch (error: any) {
+      toast.error('Failed to launch evaluation: ' + (error.message || error));
+      // Rollback optimistic update
+      useAgentStore.setState((state) => ({
+        evaluations: state.evaluations.filter((ev) => ev.id !== tempId)
+      }));
+    } finally {
       setLaunching(false);
     }
   };
@@ -524,9 +373,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
   const handleDeleteEval = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await deleteEvaluation(id);
-      setEvaluations((prev) => prev.filter((ev) => ev.id !== id));
-      toast.success('Evaluation deleted');
+      await storeDeleteEvaluation(id);
     } catch (error) {
       toast.error('Failed to delete evaluation');
     }

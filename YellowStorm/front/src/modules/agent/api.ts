@@ -53,3 +53,7 @@ export async function getActiveTools(): Promise<ToolOption[]> {
   );
   return response.data.data;
 }
+
+// Re-export evaluation API functions
+export * from './evaluation-api';
+

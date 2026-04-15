@@ -1,4 +1,6 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, MessageEvent } from '@nestjs/common';
+import { Subject, Observable } from 'rxjs';
+import { filter, map } from 'rxjs/operators';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -12,6 +14,7 @@ import { ErrorCode } from '../exceptions/constants/error-codes';
 export class EvaluationService {
     private readonly logger = new Logger(EvaluationService.name);
     private readonly adkUrl: string;
+    private readonly evaluationSubject = new Subject<{ userId: string; data: any }>();
 
     constructor(
         @InjectModel(Evaluation.name)
@@ -81,6 +84,7 @@ export class EvaluationService {
             mode,
             status: 'processing',
             createdBy: new Types.ObjectId(userId),
+            numRuns: numRuns || 1,
         });
 
         try {
@@ -102,7 +106,7 @@ export class EvaluationService {
                 timeout: 300000,
             });
 
-            this.pollEvaluationStatus(evaluation._id.toString(), response.data.evaluation_id, idToken);
+            this.pollEvaluationStatus(userId, evaluation._id.toString(), response.data.evaluation_id, idToken);
             return evaluation;
         } catch (error: any) {
             evaluation.status = 'failed';
@@ -112,27 +116,47 @@ export class EvaluationService {
         }
     }
 
-    async pollEvaluationStatus(evalId: string, adkEvalId: string, idToken: string) {
+    async pollEvaluationStatus(userId: string, evalId: string, adkEvalId: string, idToken: string) {
         const poll = async () => {
             try {
                 const response = await axios.get(`${this.adkUrl}/evaluation-batch/status/${adkEvalId}`, {
                     headers: { Authorization: idToken.startsWith('Bearer ') ? idToken : `Bearer ${idToken}` },
                 });
+                
                 const { status, results, error } = response.data;
                 if (status === 'completed' || status === 'failed') {
-                    await this.evaluationModel.findByIdAndUpdate(evalId, {
+                    const updated = await this.evaluationModel.findByIdAndUpdate(evalId, {
                         status: status === 'completed' ? 'completed' : 'failed',
                         results: results,
                         error: error
+                    }, { new: true });
+                    
+                    // Notify via SSE
+                    this.evaluationSubject.next({
+                        userId,
+                        data: {
+                            type: 'completed',
+                            evaluation_id: evalId,
+                            evaluation: updated
+                        }
                     });
+
                     return;
                 }
                 setTimeout(poll, 5000);
             } catch (err) {
+                this.logger.error(`Polling failed for ${adkEvalId}`, err);
                 setTimeout(poll, 10000);
             }
         };
         setTimeout(poll, 2000);
+    }
+
+    getEvaluationUpdates(userId: string): Observable<MessageEvent> {
+        return this.evaluationSubject.asObservable().pipe(
+            filter(event => event.userId === userId),
+            map(event => ({ data: event.data } as MessageEvent))
+        );
     }
 
     /**

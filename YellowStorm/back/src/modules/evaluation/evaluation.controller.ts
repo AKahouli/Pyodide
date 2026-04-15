@@ -116,16 +116,7 @@ export class EvaluationController {
     @ApiOperation({ summary: 'Stream evaluation results in real-time' })
     executeEvaluationStream(
         @Query('token') token: string,
-        @Query('agentId') agentId: string,
-        @Query('datasetId') datasetId: string,
-        @Query('numRuns') numRuns: string,
-        @Query('mode') mode: string,
-        @Query('scenarioName') scenarioName: string,
-        @Query('judgeModel') judgeModel?: string,
-        @Query('threshold') threshold?: string,
-        @Query('resumeId') resumeId?: string,
     ): Observable<MessageEvent> {
-        // Validate Token and Extract User ID manually since we bypass the global guard for SSE
         let userId: string;
         try {
             if (!token) throw new UnauthorizedException('Token missing');
@@ -136,37 +127,7 @@ export class EvaluationController {
             throw new UnauthorizedException('Authentication failed for streaming: ' + error.message);
         }
 
-        const nRuns = parseInt(numRuns || '1') || 1;
-        const thresh = parseFloat(threshold || '0.7') || 0.7;
-
-        return new Observable((observer) => {
-            const run = async () => {
-                try {
-                    const generator = this.evaluationService.executeEvaluationStreaming(
-                        userId,
-                        agentId,
-                        datasetId,
-                        nRuns,
-                        mode,
-                        scenarioName,
-                        token,
-                        judgeModel,
-                        thresh,
-                        resumeId,
-                    );
-
-                    for await (const chunk of generator) {
-                        observer.next({ data: chunk } as MessageEvent);
-                    }
-                    observer.complete();
-                } catch (error: any) {
-                    console.error(`--- [SSE] CONTROLLER ERROR --- ${error.message}`);
-                    observer.next({ data: { type: 'error', error: error.message } } as MessageEvent);
-                    observer.complete();
-                }
-            };
-            run();
-        });
+        return this.evaluationService.getEvaluationUpdates(userId);
     }
 
 

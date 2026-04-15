@@ -253,13 +253,15 @@ class SingleAgentService:
         try:
             agent_config = request.agent
 
-            # Extract chatbot_name - handle dict or string format
-            chatbot_name_raw = agent_config.chatbot_name
-            if isinstance(chatbot_name_raw, dict):
-                # Extract the name from dict
-                chatbot_name = chatbot_name_raw.get('name', chatbot_name_raw.get('provider', 'gpt-5.4-mini'))
+            # Extract chatbot_name - handle dict or string format with robustness
+            # Support both chatbot_name (standard) and chatbot (NestJS alias)
+            chatbot_config = agent_config.chatbot_name or agent_config.chatbot or {}
+            
+            if isinstance(chatbot_config, dict):
+                # Extract the name from dict, fallback to provider, then to a default
+                chatbot_name = chatbot_config.get('name') or chatbot_config.get('provider') or agent_config.model or 'gpt-5.4-mini'
             else:
-                chatbot_name = chatbot_name_raw
+                chatbot_name = chatbot_config or agent_config.model or 'gpt-5.4-mini'
 
             # Determine what tools to enable based on agent configuration
             calculator_tool = False
