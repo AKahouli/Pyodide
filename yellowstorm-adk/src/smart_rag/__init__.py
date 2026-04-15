@@ -38,6 +38,15 @@ await service.process_team_request(request, queue)
 - `/agentic/run_agent_team` � `core.AgentTeamService` � `engines.multi_agent`
 """
 
+def __getattr__(name):
+    if name == "ChatRAGService":
+        from .core.chat_rag_service import ChatRAGService
+        return ChatRAGService
+    if name == "AgentTeamService":
+        from .core.agent_team_service import AgentTeamService
+        return AgentTeamService
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
 __all__ = [
     'ChatRAGService',
     'AgentTeamService',

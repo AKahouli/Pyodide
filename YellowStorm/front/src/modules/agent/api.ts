@@ -54,6 +54,8 @@ export async function getActiveTools(): Promise<ToolOption[]> {
   return response.data.data;
 }
 
+
+
 export async function getActiveSkills(): Promise<SkillOption[]> {
   const response = await apiClient.get<ApiResponse<SkillOption[]>>(
     API_ENDPOINTS.skills.active
@@ -73,3 +75,7 @@ export async function getActiveConnectors(): Promise<ConnectorOption[]> {
   );
   return response.data.data;
 }
+
+
+// Re-export evaluation API functions
+export * from './evaluation-api';

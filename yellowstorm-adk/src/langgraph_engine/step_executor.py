@@ -496,6 +496,8 @@ async def _execute_step_direct(
     task_id = task.get("id", "unknown")
     start_time = time.time()
 
+    agent_instructions = agent.get("instructions") or agent.get("prompt", "")
+    model_name = agent.get("model") or "gpt-5.4-mini"
     agent_instructions = inject_skill_catalog(
         agent.get("instructions") or agent.get("prompt", ""),
         agent.get("skills") or [],
@@ -916,7 +918,7 @@ async def _execute_replay_tool_calls(
         if adaptive:
             tool_args = await _adapt_replay_tool_args(
                 settings=settings,
-                model_name=model_name or "gpt-4.1",
+                model_name=model_name or "gpt-5.4-mini",
                 recorded_call=recorded_call,
                 adaptation_context=adaptation_context or {},
                 previous_outputs=synthesis_entries,

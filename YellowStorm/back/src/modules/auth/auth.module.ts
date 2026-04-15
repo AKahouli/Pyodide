@@ -36,6 +36,6 @@ import { AuthorizationModule } from '../authorization/authorization.module';
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],
-  exports: [AuthService, JwtAuthGuard, JwtStrategy],
+  exports: [AuthService, JwtAuthGuard, JwtStrategy, JwtModule],
 })
 export class AuthModule {}

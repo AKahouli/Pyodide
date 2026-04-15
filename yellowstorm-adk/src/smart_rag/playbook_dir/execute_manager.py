@@ -24,7 +24,7 @@ from src.smart_rag.engines.multi_agent.streaming_processor import StreamingEvent
 from src.smart_rag.infrastructure.memory.memory_service import MemoryService
 
 # Constants
-DEFAULT_MODEL = 'gpt-4'
+DEFAULT_MODEL = 'gpt-5.4-mini'
 AGENT_MODE_PREFIX = "Agent_mode_"
 MANAGER_EXECUTION_TIMEOUT = 600  # 10 minutes in seconds
 

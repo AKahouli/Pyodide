@@ -35,6 +35,7 @@ import {
   defaultFormValues,
   type UserAgentFormValues,
 } from "./AgentFormSchema";
+import { EvaluationTab } from "./EvaluationTab";
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
 import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
@@ -88,8 +89,8 @@ export function CreateEditAgentDialog({
       setLoading(true);
 
       Promise.all([
-        useAgentStore.getState().fetchAgentTypes().catch(() => {}),
-        useModelsStore.getState().fetchModels().catch(() => {}),
+        useAgentStore.getState().fetchAgentTypes().catch(() => { }),
+        useModelsStore.getState().fetchModels().catch(() => { }),
         getActiveTools().catch(() => [] as ToolOption[]),
         getActiveSkills().catch(() => [] as SkillOption[]),
         getActiveConnectors().catch(() => [] as ConnectorOption[]),
@@ -177,227 +178,225 @@ export function CreateEditAgentDialog({
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : (
-        <form
-          onSubmit={handleSubmit(onSave, scrollToFirstError)}
-          className="flex flex-col min-h-0 flex-1"
-        >
-          <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
-            <TabsList className="shrink-0 w-full">
-              <TabsTrigger value="identity">{t('createEdit.tabs.identity')}</TabsTrigger>
-              <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
-              <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
-              <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
-              <TabsTrigger value="skills">Skills</TabsTrigger>
-              <TabsTrigger value="connectors">Connectors</TabsTrigger>
-            </TabsList>
-
-            <ScrollArea className="flex-1 min-h-0 mt-4">
-              <div className="pr-4">
-                {/* Identity Tab */}
-                <TabsContent value="identity" forceMount className="mt-0 data-[state=inactive]:hidden">
-                  <div className="grid gap-4">
-                    {/* Name */}
-                    <div className="space-y-2">
-                      <Label htmlFor="user-agent-name">{t('createEdit.fields.name')}</Label>
-                      <Input
-                        id="user-agent-name"
-                        placeholder={t('createEdit.fields.namePlaceholder')}
-                        {...register("name")}
-                      />
-                      {errors.name && (
-                        <p className="text-xs text-destructive">{errors.name.message}</p>
-                      )}
-                    </div>
-
-                    {/* Agent Type */}
-                    <div className="space-y-2" data-field="agentType">
-                      <Label>{t('createEdit.fields.agentType')}</Label>
-                      <Select
-                        value={watch("agentType")}
-                        onValueChange={(value) => setValue("agentType", value)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder={t('createEdit.fields.agentTypePlaceholder')} />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {agentTypes.map((at) => (
-                            <SelectItem key={at.id} value={at.id}>
-                              {at.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      {errors.agentType && (
-                        <p className="text-xs text-destructive">{errors.agentType.message}</p>
-                      )}
-                    </div>
-
-                    {/* Default for Type */}
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label>{t('createEdit.fields.defaultForType')}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t('createEdit.fields.defaultForTypeDescription')}
-                        </p>
+          <form
+            onSubmit={handleSubmit(onSave, scrollToFirstError)}
+            className="flex flex-col min-h-0 flex-1"
+          >
+            <Tabs defaultValue="identity" className="flex-1 min-h-0 flex flex-col">
+              <TabsList className="shrink-0 w-full">
+                <TabsTrigger value="identity">{t('createEdit.tabs.identity')}</TabsTrigger>
+                <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
+                <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
+                <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
+                <TabsTrigger value="skills">Skills</TabsTrigger>
+                <TabsTrigger value="connectors">Connectors</TabsTrigger>
+                <TabsTrigger value="evaluation">{t('createEdit.tabs.evaluation')}</TabsTrigger>
+              </TabsList>
+              <ScrollArea className="flex-1 min-h-0 mt-4">
+                <div className="pr-4">
+                  {/* Identity Tab */}
+                  <TabsContent value="identity" forceMount className="mt-0 data-[state=inactive]:hidden">
+                    <div className="grid gap-4">
+                      {/* Name */}
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-name">{t('createEdit.fields.name')}</Label>
+                        <Input
+                          id="user-agent-name"
+                          placeholder={t('createEdit.fields.namePlaceholder')}
+                          {...register("name")}
+                        />
+                        {errors.name && (
+                          <p className="text-xs text-destructive">{errors.name.message}</p>
+                        )}
                       </div>
-                      <Switch
-                        checked={watch("isDefaultForType")}
-                        onCheckedChange={(checked) => setValue("isDefaultForType", checked)}
-                      />
-                    </div>
 
-                    {/* Role */}
-                    <div className="space-y-2">
-                      <Label htmlFor="user-agent-role">{t('createEdit.fields.role')}</Label>
-                      <Textarea
-                        id="user-agent-role"
-                        placeholder={t('createEdit.fields.rolePlaceholder')}
-                        rows={6}
-                        {...register("role")}
-                      />
-                      {errors.role && (
-                        <p className="text-xs text-destructive">{errors.role.message}</p>
-                      )}
-                    </div>
-
-                    {/* Description */}
-                    <div className="space-y-2">
-                      <Label htmlFor="user-agent-description">{t('createEdit.fields.description')}</Label>
-                      <Textarea
-                        id="user-agent-description"
-                        placeholder={t('createEdit.fields.descriptionPlaceholder')}
-                        rows={2}
-                        {...register("description")}
-                      />
-                    </div>
-
-                    {/* Active Switch */}
-                    <div className="flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <Label>{t('createEdit.fields.active')}</Label>
-                        <p className="text-xs text-muted-foreground">
-                          {t('createEdit.fields.activeDescription')}
-                        </p>
+                      {/* Agent Type */}
+                      <div className="space-y-2" data-field="agentType">
+                        <Label>{t('createEdit.fields.agentType')}</Label>
+                        <Select
+                          value={watch("agentType")}
+                          onValueChange={(value) => setValue("agentType", value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={t('createEdit.fields.agentTypePlaceholder')} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {agentTypes.map((at) => (
+                              <SelectItem key={at.id} value={at.id}>
+                                {at.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {errors.agentType && (
+                          <p className="text-xs text-destructive">{errors.agentType.message}</p>
+                        )}
                       </div>
-                      <Switch
-                        checked={watch("isActive")}
-                        onCheckedChange={(checked) => setValue("isActive", checked)}
-                      />
-                    </div>
-                  </div>
-                </TabsContent>
 
-                {/* Behaviour Tab */}
-                <TabsContent value="behaviour" forceMount className="mt-0 data-[state=inactive]:hidden">
-                  <div className="grid gap-4">
-                    {/* Temperature */}
-                    <div className="space-y-2">
-                      <Label>{t('createEdit.fields.creativity')}{temperature.toFixed(1)}</Label>
-                      <Slider
-                        value={[temperature]}
-                        onValueChange={([val]) => setValue("temperature", val)}
-                        min={0}
-                        max={1}
-                        step={0.1}
-                        className="w-full"
-                      />
-                    </div>
+                      {/* Default for Type */}
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>{t('createEdit.fields.defaultForType')}</Label>
+                          <p className="text-xs text-muted-foreground">
+                            {t('createEdit.fields.defaultForTypeDescription')}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={watch("isDefaultForType")}
+                          onCheckedChange={(checked) => setValue("isDefaultForType", checked)}
+                        />
+                      </div>
 
-                    {/* Instruction */}
-                    <div className="space-y-2">
-                      <Label htmlFor="user-agent-instruction">{t('createEdit.fields.additionalInstruction')}</Label>
-                      <Textarea
-                        id="user-agent-instruction"
-                        placeholder={t('createEdit.fields.instructionPlaceholder')}
-                        rows={6}
-                        {...register("instruction")}
-                      />
-                    </div>
+                      {/* Role */}
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-role">{t('createEdit.fields.role')}</Label>
+                        <Textarea
+                          id="user-agent-role"
+                          placeholder={t('createEdit.fields.rolePlaceholder')}
+                          rows={6}
+                          {...register("role")}
+                        />
+                        {errors.role && (
+                          <p className="text-xs text-destructive">{errors.role.message}</p>
+                        )}
+                      </div>
 
-                    {/* Ignore Pre-prompt */}
-                    <div className="flex items-center space-x-2">
-                      <Checkbox
-                        id="user-ignore-preprompt"
-                        checked={watch("ignorePrePrompt")}
-                        onCheckedChange={(checked) =>
-                          setValue("ignorePrePrompt", checked === true)
-                        }
-                      />
-                      <label
-                        htmlFor="user-ignore-preprompt"
-                        className="text-sm font-medium leading-none"
-                      >
-                        {t('createEdit.fields.ignorePrePrompt')}
-                      </label>
-                    </div>
+                      {/* Description */}
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-description">{t('createEdit.fields.description')}</Label>
+                        <Textarea
+                          id="user-agent-description"
+                          placeholder={t('createEdit.fields.descriptionPlaceholder')}
+                          rows={2}
+                          {...register("description")}
+                        />
+                      </div>
 
-                    {/* Model */}
-                    <div className="space-y-2">
-                      <Label>{t('createEdit.fields.model')}</Label>
-                      <SearchableSelect
-                        options={[
-                          { value: "__none__", label: t('createEdit.fields.modelDefault') },
-                          ...models.map((m) => ({ value: m.id, label: m.name })),
-                        ]}
-                        value={watch("model") || "__none__"}
-                        onValueChange={(val) => setValue("model", val === "__none__" ? "" : val)}
-                        placeholder={t('createEdit.fields.modelDefault')}
-                        searchPlaceholder={t('createEdit.fields.searchModels')}
-                        emptyText={t('createEdit.fields.noModelsFound')}
-                      />
+                      {/* Active Switch */}
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>{t('createEdit.fields.active')}</Label>
+                          <p className="text-xs text-muted-foreground">
+                            {t('createEdit.fields.activeDescription')}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={watch("isActive")}
+                          onCheckedChange={(checked) => setValue("isActive", checked)}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </TabsContent>
+                  </TabsContent>
 
-                {/* Knowledge Tab */}
-                <TabsContent value="knowledge" forceMount className="mt-0 data-[state=inactive]:hidden">
-                  <div className="grid gap-4">
-                    <div className="space-y-2">
-                      <Label>{t('createEdit.fields.knowledgeBases')}</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {t('createEdit.fields.knowledgeBasesDescription')}
-                      </p>
-                      <MultiSelect
-                        options={workspaces.map((ws) => ({
-                          value: ws.id,
-                          label: ws.name,
-                          description: ws.description,
-                        }))}
-                        value={watchedKBs}
-                        onValueChange={(val) => setValue("knowledgeBases", val)}
-                        placeholder={t('createEdit.fields.selectWorkspaces')}
-                        searchPlaceholder={t('createEdit.fields.searchWorkspaces')}
-                        emptyText={t('createEdit.fields.noWorkspacesFound')}
-                      />
+                  {/* Behaviour Tab */}
+                  <TabsContent value="behaviour" forceMount className="mt-0 data-[state=inactive]:hidden">
+                    <div className="grid gap-4">
+                      {/* Temperature */}
+                      <div className="space-y-2">
+                        <Label>{t('createEdit.fields.creativity')}{temperature.toFixed(1)}</Label>
+                        <Slider
+                          value={[temperature]}
+                          onValueChange={([val]) => setValue("temperature", val)}
+                          min={0}
+                          max={1}
+                          step={0.1}
+                          className="w-full"
+                        />
+                      </div>
+
+                      {/* Instruction */}
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-instruction">{t('createEdit.fields.additionalInstruction')}</Label>
+                        <Textarea
+                          id="user-agent-instruction"
+                          placeholder={t('createEdit.fields.instructionPlaceholder')}
+                          rows={6}
+                          {...register("instruction")}
+                        />
+                      </div>
+
+                      {/* Ignore Pre-prompt */}
+                      <div className="flex items-center space-x-2">
+                        <Checkbox
+                          id="user-ignore-preprompt"
+                          checked={watch("ignorePrePrompt")}
+                          onCheckedChange={(checked) =>
+                            setValue("ignorePrePrompt", checked === true)
+                          }
+                        />
+                        <label
+                          htmlFor="user-ignore-preprompt"
+                          className="text-sm font-medium leading-none"
+                        >
+                          {t('createEdit.fields.ignorePrePrompt')}
+                        </label>
+                      </div>
+
+                      {/* Model */}
+                      <div className="space-y-2">
+                        <Label>{t('createEdit.fields.model')}</Label>
+                        <SearchableSelect
+                          options={[
+                            { value: "__none__", label: t('createEdit.fields.modelDefault') },
+                            ...models.map((m) => ({ value: m.id, label: m.name })),
+                          ]}
+                          value={watch("model") || "__none__"}
+                          onValueChange={(val) => setValue("model", val === "__none__" ? "" : val)}
+                          placeholder={t('createEdit.fields.modelDefault')}
+                          searchPlaceholder={t('createEdit.fields.searchModels')}
+                          emptyText={t('createEdit.fields.noModelsFound')}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </TabsContent>
+                  </TabsContent>
 
-                {/* Tools Tab */}
-                <TabsContent value="tools" forceMount className="mt-0 data-[state=inactive]:hidden">
-                  <div className="grid gap-4">
-                    <div className="space-y-2">
-                      <Label>{t('createEdit.fields.tools')}</Label>
-                      <p className="text-xs text-muted-foreground">
-                        {t('createEdit.fields.toolsDescription')}
-                      </p>
-                      <MultiSelect
-                        options={availableTools.map((tool) => ({
-                          value: tool.id,
-                          label: tool.name,
-                          description: tool.description,
-                        }))}
-                        value={watchedTools}
-                        onValueChange={(val) => setValue("tools", val)}
-                        placeholder={t('createEdit.fields.selectTools')}
-                        searchPlaceholder={t('createEdit.fields.searchTools')}
-                        emptyText={t('createEdit.fields.noToolsFound')}
-                      />
+                  {/* Knowledge Tab */}
+                  <TabsContent value="knowledge" forceMount className="mt-0 data-[state=inactive]:hidden">
+                    <div className="grid gap-4">
+                      <div className="space-y-2">
+                        <Label>{t('createEdit.fields.knowledgeBases')}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t('createEdit.fields.knowledgeBasesDescription')}
+                        </p>
+                        <MultiSelect
+                          options={workspaces.map((ws) => ({
+                            value: ws.id,
+                            label: ws.name,
+                            description: ws.description,
+                          }))}
+                          value={watchedKBs}
+                          onValueChange={(val) => setValue("knowledgeBases", val)}
+                          placeholder={t('createEdit.fields.selectWorkspaces')}
+                          searchPlaceholder={t('createEdit.fields.searchWorkspaces')}
+                          emptyText={t('createEdit.fields.noWorkspacesFound')}
+                        />
+                      </div>
                     </div>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="skills" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  </TabsContent>
+                  {/* Tools Tab */}
+                  <TabsContent value="tools" forceMount className="mt-0 data-[state=inactive]:hidden">
+                    <div className="grid gap-4">
+                      <div className="space-y-2">
+                        <Label>{t('createEdit.fields.tools')}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t('createEdit.fields.toolsDescription')}
+                        </p>
+                        <MultiSelect
+                          options={availableTools.map((tool) => ({
+                            value: tool.id,
+                            label: tool.name,
+                            description: tool.description,
+                          }))}
+                          value={watchedTools}
+                          onValueChange={(val) => setValue("tools", val)}
+                          placeholder={t('createEdit.fields.selectTools')}
+                          searchPlaceholder={t('createEdit.fields.searchTools')}
+                          emptyText={t('createEdit.fields.noToolsFound')}
+                        />
+                      </div>
+                    </div>
+                  </TabsContent>
+<TabsContent value="skills" forceMount className="mt-0 data-[state=inactive]:hidden">
                   <div className="grid gap-4">
                     <div className="space-y-2">
                       <Label>Additional skills</Label>
@@ -459,33 +458,37 @@ export function CreateEditAgentDialog({
                     </div>
                   </div>
                 </TabsContent>
-              </div>
-            </ScrollArea>
-          </Tabs>
+                  {/* Evaluation Tab */}
+                  <TabsContent value="evaluation" forceMount className="mt-0 data-[state=inactive]:hidden">
+                    <EvaluationTab agent={agent} />
+                  </TabsContent>
+                </div>
+              </ScrollArea>
+            </Tabs>
 
-          <DialogFooter className="pt-4 shrink-0">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={saving}
-            >
-              {t('createEdit.actions.cancel')}
-            </Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {t('createEdit.actions.saving')}
-                </>
-              ) : agent ? (
-                t('createEdit.actions.saveChanges')
-              ) : (
-                t('createEdit.actions.createAgent')
-              )}
-            </Button>
-          </DialogFooter>
-        </form>
+            <DialogFooter className="pt-4 shrink-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={saving}
+              >
+                {t('createEdit.actions.cancel')}
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {t('createEdit.actions.saving')}
+                  </>
+                ) : agent ? (
+                  t('createEdit.actions.saveChanges')
+                ) : (
+                  t('createEdit.actions.createAgent')
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
         )}
       </DialogContent>
     </Dialog>

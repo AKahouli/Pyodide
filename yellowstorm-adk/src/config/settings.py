@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     API_URL: str
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
-    ATTRIBUT_EXTRACT_MODEL: str = "gpt-4.1"
+    ATTRIBUT_EXTRACT_MODEL: str = "gpt-5.4-mini"
     EXCEL_MCP_URL: str
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None

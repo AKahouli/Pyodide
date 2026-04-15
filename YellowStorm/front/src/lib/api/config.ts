@@ -272,5 +272,17 @@ export const API_ENDPOINTS = {
     clearDefault: (id: string) => `/admin/models/${id}/clear-default`,
     sync: '/admin/models/sync',
     default: '/admin/models/default',
-  }
+  },
+  evaluation: {
+    datasets: '/evaluation/datasets',
+    datasetById: (id: string) => `/evaluation/datasets/${id}`,
+    launch: '/evaluation/launch',
+    run: '/evaluation/run',
+    finalize: (id: string) => `/evaluation/results/${id}/finalize`,
+    results: (agentId: string) => `/evaluation/results/${agentId}`,
+    resultById: (id: string) => `/evaluation/results/${id}`,
+    scenarios: '/evaluation/scenarios',
+    scenariosByAgent: (agentId: string) => `/evaluation/scenarios/agent/${agentId}`,
+    scenarioById: (id: string) => `/evaluation/scenarios/${id}`,
+  },
 } as const;

@@ -41,6 +41,7 @@ import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
 import { PlaybookModule } from './modules/playbook/playbook.module';
+import { EvaluationModule } from './modules/evaluation/evaluation.module';
 import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
@@ -93,6 +94,7 @@ import { ConnectorModule } from './modules/connector/connector.module';
     ConnectedAppModule,
     ConnectorModule,
     HealthModule,
+    EvaluationModule,
   ],
   providers: [
     // Global JWT Auth Guard - all routes require authentication by default
@@ -103,4 +105,4 @@ import { ConnectorModule } from './modules/connector/connector.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule { }

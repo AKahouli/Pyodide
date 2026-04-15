@@ -49,7 +49,11 @@ class AgentSuggestion(BaseModel):
     name: str
     description: str
     prompt: str
+    instruction: Optional[str] = None # Compatibility alias for prompt
+    model: Optional[str] = None       # Compatibility alias for chatbot_name['name']
     tools: Optional[List[Dict]] = None
+    brain_ids: Optional[List[str]] = None
+    knowledge_bases: Optional[List[str]] = None # Compatibility alias for brain_ids
     skills: Optional[List[Skill]] = None
     #tools example : [{"name": "search_web","prompt":"","description": "Useful for when you need to answer questions about current events or the web. Input should be a search query.", "top_k": 3}]
     html: Optional[bool] = False
@@ -58,6 +62,7 @@ class AgentSuggestion(BaseModel):
     brain_documents: Optional[List] = []
     brain_relations: Optional[Dict] = {'nodes': [], 'relationships': []}
     chatbot_name: Optional[dict] = None  # If not provided, will inherit from RunAgentTeamRequest.chatbot_name
+    chatbot: Optional[dict] = None  # NestJS compatibility alias for chatbot_name
     agent_params: Optional[Dict] = None
     agent_type: Optional[str] = None  # Can be "normal" or "manager"
     save_memory: Optional[bool] = False

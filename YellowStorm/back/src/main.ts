@@ -60,6 +60,8 @@ async function bootstrap() {
       'X-Requested-With',
       'X-Correlation-ID',
       'X-Request-ID',
+      'Cache-Control',
+      'Connection',
     ],
     exposedHeaders: ['Set-Cookie'],
     preflightContinue: false,
@@ -81,8 +83,8 @@ async function bootstrap() {
     }),
   );
 
-  // Compression
-  app.use(compression({ threshold: 1024 }));
+  // Compression - Disabled temporarily to ensure SSE streaming is not buffered
+  // app.use(compression({ threshold: 1024 }));
 
   // Body Size Limits
   app.use(json({ limit: '10mb' }));
@@ -149,8 +151,8 @@ async function bootstrap() {
   const port = configService.get<number>('PORT', 3000);
   const server = await app.listen(port, '0.0.0.0');
 
-  // Request Timeout (60 seconds)
-  server.setTimeout(60000);
+  // Request Timeout (5 minutes - better for parallel evaluations)
+  server.setTimeout(300000);
 
   logger.log(`Application running on: http://localhost:${port}/${apiPrefix}`);
   if (configService.get<string>('NODE_ENV') !== 'production') {
