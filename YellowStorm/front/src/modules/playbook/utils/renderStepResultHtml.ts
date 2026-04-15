@@ -1,4 +1,4 @@
-import type { TaskResult, PlaybookComponent, SemanticMatchResult, ToolTraceItem } from '../types';
+import type { TaskResult, PlaybookComponent, SemanticMatchResult, ToolTraceItem, PlaybookExecution } from '../types';
 import type { MessageComponent } from '@/modules/conversation/types';
 
 function escapeHtml(text: string): string {
@@ -313,22 +313,10 @@ function renderEvaluation(evalData: SemanticMatchResult): string {
   </div>`;
 }
 
-export function renderStepResultHtml(step: TaskResult, options?: { includeToolTrace?: boolean; includeEvaluation?: boolean; includePrompts?: boolean }): string {
+function renderStepResultBody(step: TaskResult, options?: { includeToolTrace?: boolean; includeEvaluation?: boolean; includePrompts?: boolean }): string {
   const includeToolTrace = options?.includeToolTrace ?? true;
   const includeEvaluation = options?.includeEvaluation ?? true;
   const includePrompts = options?.includePrompts ?? false;
-
-  const statusColor = getStatusColor(step.status);
-  const statusLabel = getStatusLabel(step.status);
-
-  const metadataRows = [
-    step.agentName ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Agent</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(step.agentName)}</td></tr>` : '',
-    `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Started</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDateTime(step.startedAt)}</td></tr>`,
-    step.completedAt ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Completed</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDateTime(step.completedAt)}</td></tr>` : '',
-    `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Duration</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDuration(step.durationMs)}</td></tr>`,
-    step.modelName ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Model</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(step.modelName)}</td></tr>` : '',
-    step.totalTokens != null ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Tokens</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${step.totalTokens.toLocaleString()}</td></tr>` : '',
-  ].filter(Boolean).join('');
 
   let mainContent = '';
 
@@ -364,6 +352,32 @@ export function renderStepResultHtml(step: TaskResult, options?: { includeToolTr
     mainContent += `<div style="margin:16px 0;"><h3 style="font-size:14px;font-weight:600;margin-bottom:8px;color:#374151;">LLM Prompts</h3>${promptsHtml}</div>`;
   }
 
+  return mainContent;
+}
+
+function renderStepResultSection(step: TaskResult, options?: { includeToolTrace?: boolean; includeEvaluation?: boolean; includePrompts?: boolean }): string {
+  const statusColor = getStatusColor(step.status);
+  const statusLabel = getStatusLabel(step.status);
+  const metadataRows = [
+    step.agentName ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Agent</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(step.agentName)}</td></tr>` : '',
+    `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Started</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDateTime(step.startedAt)}</td></tr>`,
+    step.completedAt ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Completed</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDateTime(step.completedAt)}</td></tr>` : '',
+    `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Duration</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDuration(step.durationMs)}</td></tr>`,
+    step.modelName ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Model</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(step.modelName)}</td></tr>` : '',
+    step.totalTokens != null ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Tokens</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${step.totalTokens.toLocaleString()}</td></tr>` : '',
+  ].filter(Boolean).join('');
+
+  return `<div style="border-top:1px solid #e5e5e5;padding-top:20px;margin-top:20px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <h2 style="font-size:18px;font-weight:700;">${escapeHtml(step.nodeTitle)}</h2>
+      <span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;color:white;background:${statusColor};">${statusLabel}</span>
+    </div>
+    <table style="border-collapse:collapse;">${metadataRows}</table>
+    <div style="padding:0;">${renderStepResultBody(step, options)}</div>
+  </div>`;
+}
+
+export function renderStepResultHtml(step: TaskResult, options?: { includeToolTrace?: boolean; includeEvaluation?: boolean; includePrompts?: boolean }): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -380,13 +394,71 @@ export function renderStepResultHtml(step: TaskResult, options?: { includeToolTr
   <div style="border-bottom:2px solid #e5e5e5;padding-bottom:16px;margin-bottom:20px;">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
       <h1 style="font-size:20px;font-weight:700;">${escapeHtml(step.nodeTitle)}</h1>
-      <span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;color:white;background:${statusColor};">${statusLabel}</span>
+      <span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;color:white;background:${getStatusColor(step.status)};">${getStatusLabel(step.status)}</span>
     </div>
-    <table style="border-collapse:collapse;">${metadataRows}</table>
+    <table style="border-collapse:collapse;">${[step.agentName ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Agent</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(step.agentName)}</td></tr>` : '',
+      `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Started</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDateTime(step.startedAt)}</td></tr>`,
+      step.completedAt ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Completed</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDateTime(step.completedAt)}</td></tr>` : '',
+      `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Duration</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDuration(step.durationMs)}</td></tr>`,
+      step.modelName ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Model</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(step.modelName)}</td></tr>` : '',
+      step.totalTokens != null ? `<tr><td style="padding:4px 0;color:#6b7280;font-size:13px;">Tokens</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${step.totalTokens.toLocaleString()}</td></tr>` : '',
+    ].filter(Boolean).join('')}</table>
   </div>
 
   <div style="padding:0;">
-    ${mainContent}
+    ${renderStepResultBody(step, options)}
+  </div>
+
+  <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e5e5;font-size:11px;color:#9ca3af;text-align:center;">
+    Generated on ${new Date().toLocaleString()} &middot; YellowStorm Playbook
+  </div>
+</body>
+</html>`;
+}
+
+export function renderWorkflowExecutionResultsHtml(execution: PlaybookExecution): string {
+  const sortedResults = [...(execution.taskResults || [])].sort((a, b) => a.order - b.order);
+  const completedAt = execution.completedAt ? new Date(execution.completedAt).toLocaleString() : '-';
+  const startedAt = execution.startedAt ? new Date(execution.startedAt).toLocaleString() : '-';
+  const statusColor = getStatusColor(execution.status);
+  const statusLabel = getStatusLabel(execution.status);
+
+  const stepSections = sortedResults.map((step) => renderStepResultSection(step, {
+    includeToolTrace: true,
+    includeEvaluation: true,
+    includePrompts: false,
+  })).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow Results - ${escapeHtml(execution.playbookId)}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: #111827; background: white; padding: 32px; max-width: 1100px; margin: 0 auto; }
+    @media print { body { padding: 16px; } }
+  </style>
+</head>
+<body>
+  <div style="border-bottom:2px solid #e5e5e5;padding-bottom:16px;margin-bottom:20px;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
+      <h1 style="font-size:20px;font-weight:700;">Workflow Results</h1>
+      <span style="display:inline-block;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600;color:white;background:${statusColor};">${statusLabel}</span>
+    </div>
+    <table style="border-collapse:collapse;">
+      <tr><td style="padding:4px 16px 4px 0;color:#6b7280;font-size:13px;">Execution</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(execution.id)}</td></tr>
+      <tr><td style="padding:4px 16px 4px 0;color:#6b7280;font-size:13px;">Playbook</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${escapeHtml(execution.playbookId)}</td></tr>
+      <tr><td style="padding:4px 16px 4px 0;color:#6b7280;font-size:13px;">Started</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${startedAt}</td></tr>
+      <tr><td style="padding:4px 16px 4px 0;color:#6b7280;font-size:13px;">Completed</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${completedAt}</td></tr>
+      <tr><td style="padding:4px 16px 4px 0;color:#6b7280;font-size:13px;">Duration</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${formatDuration(execution.durationMs)}</td></tr>
+      <tr><td style="padding:4px 16px 4px 0;color:#6b7280;font-size:13px;">Steps</td><td style="padding:4px 0;font-size:13px;font-weight:500;">${sortedResults.length.toLocaleString()}</td></tr>
+    </table>
+  </div>
+
+  <div>
+    ${stepSections || '<p style="color:#6b7280;font-size:14px;">No step results available.</p>'}
   </div>
 
   <div style="margin-top:32px;padding-top:12px;border-top:1px solid #e5e5e5;font-size:11px;color:#9ca3af;text-align:center;">
@@ -403,6 +475,19 @@ export function downloadStepResultHtml(step: TaskResult, filename?: string): voi
   const link = document.createElement('a');
   link.href = url;
   link.download = filename || `${sanitizeFilename(step.nodeTitle)}-result.html`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+export function downloadWorkflowExecutionResultsHtml(execution: PlaybookExecution, filename?: string): void {
+  const html = renderWorkflowExecutionResultsHtml(execution);
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename || `workflow-${sanitizeFilename(execution.id)}-results.html`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

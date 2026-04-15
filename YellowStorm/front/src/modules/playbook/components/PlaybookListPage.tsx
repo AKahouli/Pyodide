@@ -413,11 +413,11 @@ export function PlaybookListPage() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-6">
         {loading && playbooks.length === 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-40 rounded-lg bg-muted animate-pulse" />
-            ))}
-          </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="h-40 rounded-lg bg-muted animate-pulse" />
+              ))}
+            </div>
         ) : showEmpty ? (
           <div className="flex flex-col items-center justify-center h-64 text-center">
             <p className="text-muted-foreground mb-4">
@@ -439,7 +439,7 @@ export function PlaybookListPage() {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
               {playbooks.map((playbook) => (
               <PlaybookCard
                 key={playbook.id}

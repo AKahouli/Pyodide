@@ -10,6 +10,13 @@ export const configValidationSchema = Joi.object({
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug', 'verbose').default('info'),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
+  // Encryption
+  ENCRYPTION_KEY: Joi.string().hex().length(64).when('NODE_ENV', {
+    is: 'production',
+    then: Joi.required(),
+    otherwise: Joi.optional().allow(''),
+  }),
+
   // AI Service
   AI_SERVICE_URL: Joi.string().uri().optional(),
   AI_API_KEY: Joi.string().optional(),
@@ -143,6 +150,9 @@ export const configValidationSchema = Joi.object({
   LITELLM_RECONNECT_MAX_DELAY_MS: Joi.number().min(1000).default(30000),
   LITELLM_RECONNECT_MAX_ATTEMPTS: Joi.number().min(0).default(0),
   LITELLM_RECONNECT_MULTIPLIER: Joi.number().min(1).max(10).default(2),
+
+  // Playbook
+  PLAYBOOK_PROMPT_REWRITE_SYSTEM_PROMPT: Joi.string().optional(),
 
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),

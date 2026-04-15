@@ -3,15 +3,31 @@ from typing import Dict, Any, Optional, List
 
 from src.smart_rag.tools import build_tree
 from src.smart_rag.tools.utilities import calculator, python_interpreter
+from src.smart_rag.tools.utilities.connector_tools import create_connector_tools
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
-from src.smart_rag.infrastructure.processing.sandbox_callbacks import create_sandbox_callbacks
+from src.smart_rag.infrastructure.processing.sandbox_callbacks import (
+    create_sandbox_callbacks,
+)
 from src.logger.logging import get_logger
+import json
+
 logger = get_logger("api.smart_rag.agents.factories.delegation_factory_helper")
 
-def create_agent_for_delegation(helper,tool_helper,agent_factory,config,agent_config: Dict[str, Any], tools: List[str],
-                                 base_enhanced_prompt: str, expected_output: str,
-                                 agent_name: str,chatbot_name:str, search_web: Optional[bool] = False,
-                                 citation_manager=None) -> Any:
+
+def create_agent_for_delegation(
+    helper,
+    tool_helper,
+    agent_factory,
+    config,
+    agent_config: Dict[str, Any],
+    tools: List[str],
+    base_enhanced_prompt: str,
+    expected_output: str,
+    agent_name: str,
+    chatbot_name: str,
+    search_web: Optional[bool] = False,
+    citation_manager=None,
+) -> Any:
     """Create appropriate agent based on configuration.
 
     Determines the correct agent type (regular) based on configuration
@@ -28,12 +44,36 @@ def create_agent_for_delegation(helper,tool_helper,agent_factory,config,agent_co
     Returns:
         Any: Tuple of (agent, toolkit) for the created agent.
     """
-    return create_regular_agent(helper,tool_helper,agent_factory, config,agent_config , tools, base_enhanced_prompt, expected_output, agent_name,chatbot_name,
-                                          search_web,citation_manager)
+    return create_regular_agent(
+        helper,
+        tool_helper,
+        agent_factory,
+        config,
+        agent_config,
+        tools,
+        base_enhanced_prompt,
+        expected_output,
+        agent_name,
+        chatbot_name,
+        search_web,
+        citation_manager,
+    )
 
-def create_regular_agent(helper,tool_helper,agent_factory,config,agent_config: Dict[str, Any], tools: List[str],
-                          base_enhanced_prompt: str, expected_output: str, agent_name: str,chatbot_name:str,
-                          search_web: Optional[bool] = False,citation_manager=None) -> Any:
+
+def create_regular_agent(
+    helper,
+    tool_helper,
+    agent_factory,
+    config,
+    agent_config: Dict[str, Any],
+    tools: List[str],
+    base_enhanced_prompt: str,
+    expected_output: str,
+    agent_name: str,
+    chatbot_name: str,
+    search_web: Optional[bool] = False,
+    citation_manager=None,
+) -> Any:
     """Create regular (non-HTML) agent.
 
     Creates a standard agent for text-based responses and general task execution,
@@ -50,22 +90,49 @@ def create_regular_agent(helper,tool_helper,agent_factory,config,agent_config: D
     Returns:
         Any: Tuple of (agent, toolkit) for the created regular agent.
     """
-    search=False
+    search = False
     tools_config = agent_config.get("tools", [])
     for tool in tools_config:
-        if isinstance(tool,dict) and tool.get("name") == "search":
-            search=True
+        if isinstance(tool, dict) and tool.get("name") == "search":
+            search = True
     if search:
-         return create_search_agent_with_tools(
-            helper,agent_factory,config,agent_config, tools, base_enhanced_prompt, expected_output, agent_name,chatbot_name ,search_web, citation_manager
+        return create_search_agent_with_tools(
+            helper,
+            agent_factory,
+            config,
+            agent_config,
+            tools,
+            base_enhanced_prompt,
+            expected_output,
+            agent_name,
+            chatbot_name,
+            search_web,
+            citation_manager,
         )
     else:
         return create_standard_agent_with_tools(
-            helper,agent_factory,config,agent_config, tools, base_enhanced_prompt, expected_output, agent_name,chatbot_name,search_web, citation_manager
+            helper,
+            agent_factory,
+            config,
+            agent_config,
+            tools,
+            base_enhanced_prompt,
+            expected_output,
+            agent_name,
+            chatbot_name,
+            search_web,
+            citation_manager,
         )
 
-def prepare_agent_data(helper,config,agent_config: Dict[str, Any], tools: List[str],
-                        base_enhanced_prompt: str,chatbot_name) -> tuple:
+
+def prepare_agent_data(
+    helper,
+    config,
+    agent_config: Dict[str, Any],
+    tools: List[str],
+    base_enhanced_prompt: str,
+    chatbot_name,
+) -> tuple:
     """Prepare common data needed for agent creation.
 
     Processes agent configuration to extract and prepare all necessary data
@@ -83,8 +150,8 @@ def prepare_agent_data(helper,config,agent_config: Dict[str, Any], tools: List[s
     """
     try:
         doc_tree, brain_tree = build_tree(
-            agent_config.get('brain_documents', []),
-            agent_config.get('brain_relations', {})
+            agent_config.get("brain_documents", []),
+            agent_config.get("brain_relations", {}),
         )
     except Exception as e:
         logger.error(f"Failed to build trees: {str(e)}")
@@ -106,39 +173,86 @@ def prepare_agent_data(helper,config,agent_config: Dict[str, Any], tools: List[s
     if tool_prompts:
         enhanced_prompt = enhanced_prompt + "\n\n" + "\n\n".join(tool_prompts)
 
-    final_brain_ids = agent_config.get('brain_ids') or config.brain_ids
-    vectorstore_name = agent_config.get('vectorstore_name', config.vectorstore_name)
-    chatbot_name = agent_config.get('chatbot_name', chatbot_name)
+    final_brain_ids = agent_config.get("brain_ids") or config.brain_ids
+    vectorstore_name = agent_config.get("vectorstore_name", config.vectorstore_name)
+    chatbot_name = agent_config.get("chatbot_name", chatbot_name)
     if isinstance(chatbot_name, dict):
-        chatbot_name = str(chatbot_name.get('provider'))
+        chatbot_name = str(chatbot_name.get("provider"))
 
-    return doc_tree, brain_tree, enhanced_prompt, final_brain_ids, vectorstore_name, chatbot_name
-
-def get_enhanced_prompt(helper,doc_tree, brain_tree, tools: List[str], base_enhanced_prompt: str) -> str:
-        """Get enhanced prompt with document tree info if needed."""
-        enhanced_prompt = base_enhanced_prompt
-        if "search" in tools and doc_tree:
-            enhanced_prompt += helper.get_document_tree_info(doc_tree, brain_tree)
-        return enhanced_prompt
-
-def create_search_agent_with_tools(helper,agent_factory,config,agent_config: Dict[str, Any], tools: List[str],
-                                    base_enhanced_prompt: str, expected_output: str,
-                                    agent_name: str,chatbot_name:str, search_web: Optional[bool],
-                                    citation_manager=None) -> Any:
-    """Create search agent and add additional tools if needed."""
-    doc_tree, brain_tree, enhanced_prompt, final_brain_ids, vectorstore_name, chatbot_name = prepare_agent_data(helper,
-        config,agent_config, tools, base_enhanced_prompt,chatbot_name
+    return (
+        doc_tree,
+        brain_tree,
+        enhanced_prompt,
+        final_brain_ids,
+        vectorstore_name,
+        chatbot_name,
     )
 
-    temp = agent_config.get("agent_params").get("temperature", 0.0) if agent_config and agent_config.get("agent_params") else 0.0
+
+def get_enhanced_prompt(
+    helper, doc_tree, brain_tree, tools: List[str], base_enhanced_prompt: str
+) -> str:
+    """Get enhanced prompt with document tree info if needed."""
+    enhanced_prompt = base_enhanced_prompt
+    if "search" in tools and doc_tree:
+        enhanced_prompt += helper.get_document_tree_info(doc_tree, brain_tree)
+    return enhanced_prompt
+
+
+def create_search_agent_with_tools(
+    helper,
+    agent_factory,
+    config,
+    agent_config: Dict[str, Any],
+    tools: List[str],
+    base_enhanced_prompt: str,
+    expected_output: str,
+    agent_name: str,
+    chatbot_name: str,
+    search_web: Optional[bool],
+    citation_manager=None,
+) -> Any:
+    """Create search agent and add additional tools if needed."""
+    (
+        doc_tree,
+        brain_tree,
+        enhanced_prompt,
+        final_brain_ids,
+        vectorstore_name,
+        chatbot_name,
+    ) = prepare_agent_data(
+        helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name
+    )
+
+    temp = (
+        agent_config.get("agent_params").get("temperature", 0.0)
+        if agent_config and agent_config.get("agent_params")
+        else 0.0
+    )
     if agent_config.get("agent_type") == "visualizer":
-        max_tokens = agent_config.get("agent_params").get("max_tokens", 30000) if agent_config and agent_config.get(
-            "agent_params") else 30000
+        max_tokens = (
+            agent_config.get("agent_params").get("max_tokens", 30000)
+            if agent_config and agent_config.get("agent_params")
+            else 30000
+        )
     else:
-        max_tokens = agent_config.get("agent_params").get("max_tokens", 20000) if agent_config and agent_config.get(
-            "agent_params") else 20000
+        max_tokens = (
+            agent_config.get("agent_params").get("max_tokens", 20000)
+            if agent_config and agent_config.get("agent_params")
+            else 20000
+        )
     top_k = 1
     tools_config = agent_config.get("tools", [])
+    connector_bindings = []
+    raw_connector_bindings = agent_config.get("agent_params", {}).get(
+        "connector_bindings_json"
+    )
+    if raw_connector_bindings:
+        try:
+            connector_bindings = json.loads(raw_connector_bindings)
+        except Exception as e:
+            logger.exception("Failed to parse connector_bindings_json: %s", e)
+
     for tool in tools_config:
         if tool.get("name") == "search":
             top_k = tool.get("top_k")
@@ -159,11 +273,17 @@ def create_search_agent_with_tools(helper,agent_factory,config,agent_config: Dic
         temperature=temp,
         max_tokens=max_tokens,
         top_k=top_k,
-        citation_manager=citation_manager
+        citation_manager=citation_manager,
     )
 
     # Store toolkit for source handling
     agent._toolkit = toolkit
+
+    if connector_bindings:
+        try:
+            agent.tools.extend(create_connector_tools(connector_bindings))
+        except Exception as e:
+            logger.exception("Error adding connector tools to search agent: %s", e)
 
     if "calculator" in tools:
         agent.tools.append(calculator)
@@ -181,14 +301,18 @@ def create_search_agent_with_tools(helper,agent_factory,config,agent_config: Dic
             _code_interpreter_state = {
                 "_code_interpreter_brain_docs": minimal_docs,
                 "_code_interpreter_session_id": config.session_id,
-                "_code_interpreter_brain_id": config.brain_ids[0] if config.brain_ids else None,
+                "_code_interpreter_brain_id": config.brain_ids[0]
+                if config.brain_ids
+                else None,
                 "_code_interpreter_user_id": config.user_id,
             }
             agent._code_interpreter_state = _code_interpreter_state
 
             # 4. Register tool
             agent.tools.append(python_interpreter)
-            logger.info("Added python_interpreter with brain_docs, session_id, brain_id, and user_id (params will be passed via session state)")
+            logger.info(
+                "Added python_interpreter with brain_docs, session_id, brain_id, and user_id (params will be passed via session state)"
+            )
 
         except Exception as e:
             logger.exception("Error adding python_interpreter to search agent: %s", e)
@@ -196,43 +320,91 @@ def create_search_agent_with_tools(helper,agent_factory,config,agent_config: Dic
     return agent, toolkit
 
 
-def create_standard_agent_with_tools(helper,agent_factory,config,agent_config: Dict[str, Any], tools: List[str],
-                                      base_enhanced_prompt: str, expected_output: str,
-                                      agent_name: str,chatbot_name:str, search_web: Optional[bool],citation_manager=None) -> Any:
+def create_standard_agent_with_tools(
+    helper,
+    agent_factory,
+    config,
+    agent_config: Dict[str, Any],
+    tools: List[str],
+    base_enhanced_prompt: str,
+    expected_output: str,
+    agent_name: str,
+    chatbot_name: str,
+    search_web: Optional[bool],
+    citation_manager=None,
+) -> Any:
     """Create standard agent with configured tools."""
-    temp = agent_config.get("agent_params").get("temperature", 0.0) if agent_config and agent_config.get("agent_params") else 0.0
-    if agent_config.get("agent_type")=="visualizer":
-        max_tokens=agent_config.get("agent_params").get("max_tokens", 30000) if agent_config and agent_config.get("agent_params") else 30000
+    temp = (
+        agent_config.get("agent_params").get("temperature", 0.0)
+        if agent_config and agent_config.get("agent_params")
+        else 0.0
+    )
+    if agent_config.get("agent_type") == "visualizer":
+        max_tokens = (
+            agent_config.get("agent_params").get("max_tokens", 30000)
+            if agent_config and agent_config.get("agent_params")
+            else 30000
+        )
     else:
-        max_tokens=agent_config.get("agent_params").get("max_tokens", 20000) if agent_config and agent_config.get("agent_params") else 20000
+        max_tokens = (
+            agent_config.get("agent_params").get("max_tokens", 20000)
+            if agent_config and agent_config.get("agent_params")
+            else 20000
+        )
     top_k = 1
     in_memory_tool_description = None
     html_tool_config = {}
 
     for tool in agent_config.get("tools", []):
-        if isinstance(tool, dict) and tool.get("name")=="search":
-            top_k = tool.get("top_k",4)
-
+        if isinstance(tool, dict) and tool.get("name") == "search":
+            top_k = tool.get("top_k", 4)
 
             return create_search_agent_with_tools(
-                helper,agent_factory,config,agent_config, tools, base_enhanced_prompt, expected_output, agent_name,chatbot_name, search_web,citation_manager
+                helper,
+                agent_factory,
+                config,
+                agent_config,
+                tools,
+                base_enhanced_prompt,
+                expected_output,
+                agent_name,
+                chatbot_name,
+                search_web,
+                citation_manager,
             )
 
         if isinstance(tool, dict) and tool.get("name") == "in_memory":
             in_memory_tool_description = tool.get("description")
 
-        if isinstance(tool,dict) and tool.get("name")=="html_design":
+        if isinstance(tool, dict) and tool.get("name") == "html_design":
             # Extract prompt and instructions from tool if available
-            html_visualization_prompt = tool.get("prompt","")
-            html_visualization_instructions = tool.get("instructions","")
-            html_tool_config["prompt"]=html_visualization_prompt
-            html_tool_config["instructions"]=html_visualization_instructions
+            html_visualization_prompt = tool.get("prompt", "")
+            html_visualization_instructions = tool.get("instructions", "")
+            html_tool_config["prompt"] = html_visualization_prompt
+            html_tool_config["instructions"] = html_visualization_instructions
             html_tool_config.update(tool.get("config", {}))
             agent_factory.set_diagram_tool_config(html_tool_config)
 
-    doc_tree, brain_tree, enhanced_prompt, final_brain_ids, vectorstore_name, chatbot_name = prepare_agent_data(helper,config,
-        agent_config, tools, base_enhanced_prompt,chatbot_name
+    (
+        doc_tree,
+        brain_tree,
+        enhanced_prompt,
+        final_brain_ids,
+        vectorstore_name,
+        chatbot_name,
+    ) = prepare_agent_data(
+        helper, config, agent_config, tools, base_enhanced_prompt, chatbot_name
     )
+
+    connector_bindings = []
+    raw_connector_bindings = agent_config.get("agent_params", {}).get(
+        "connector_bindings_json"
+    )
+    if raw_connector_bindings:
+        try:
+            connector_bindings = json.loads(raw_connector_bindings)
+        except Exception as e:
+            logger.exception("Failed to parse connector_bindings_json: %s", e)
 
     agent = agent_factory.create_agent(
         name=agent_name,
@@ -248,6 +420,7 @@ def create_standard_agent_with_tools(helper,agent_factory,config,agent_config: D
         snowflake_tool=True if "snowflake connector" in tools else False,
         dataviz_tool=True if "dataviz" in tools else False,
         formviz_tool=True if "formviz" in tools else False,
+        skills=agent_config.get("skills", []),
         doc_tree=doc_tree,
         brain_tree=brain_tree,
         top_k=top_k,
@@ -257,9 +430,10 @@ def create_standard_agent_with_tools(helper,agent_factory,config,agent_config: D
         temperature=temp,
         max_tokens=max_tokens,
         session_id=config.session_id,
-        brain_documents=agent_config.get('brain_documents', []),
+        brain_documents=agent_config.get("brain_documents", []),
         conversation_brain_id=config.brain_ids[0] if config.brain_ids else None,
         user_id=config.user_id,
+        connector_bindings=connector_bindings,
     )
 
     return agent, None
@@ -286,15 +460,17 @@ def _extract_original_expected_output(task_description: str) -> tuple:
 
     # Pattern to match ##original_expected_output##...##/original_expected_output##
     # (?s) is the inline flag equivalent to re.DOTALL, making . match newlines
-    pattern = r'(?s)##original_expected_output##(.*?)##/original_expected_output##'
+    pattern = r"(?s)##original_expected_output##(.*?)##/original_expected_output##"
 
     match = re.search(pattern, task_description)
 
     if match:
         original_expected_output = match.group(1).strip()
-        cleaned_task_description = re.sub(pattern, '', task_description).strip()
+        cleaned_task_description = re.sub(pattern, "", task_description).strip()
         return cleaned_task_description, original_expected_output
 
     # If no marker found, return task_description as is with empty original_expected_output
-    logger.debug(f"[EXTRACTION] No original_expected_output marker found in task_description")
+    logger.debug(
+        f"[EXTRACTION] No original_expected_output marker found in task_description"
+    )
     return task_description, ""

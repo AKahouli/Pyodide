@@ -44,6 +44,9 @@ export class Tool extends Document {
   @Prop({ type: [ToolAttributeSchema], default: [] })
   attributes!: ToolAttribute[];
 
+  @Prop({ default: null })
+  requiredAppKey?: string;
+
   @Prop({ default: true })
   isActive!: boolean;
 

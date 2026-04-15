@@ -548,6 +548,39 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     ],
   },
   {
+    namespace: 'skills',
+    labelKey: 'roles.permissions.groups.skills.label',
+    descriptionKey: 'roles.permissions.groups.skills.description',
+    disabled: false,
+    permissions: [
+      {
+        value: 'skills.read',
+        labelKey: 'roles.permissions.items.skills.read.label',
+        descriptionKey: 'roles.permissions.items.skills.read.description',
+      },
+      {
+        value: 'skills.create',
+        labelKey: 'roles.permissions.items.skills.create.label',
+        descriptionKey: 'roles.permissions.items.skills.create.description',
+      },
+      {
+        value: 'skills.update',
+        labelKey: 'roles.permissions.items.skills.update.label',
+        descriptionKey: 'roles.permissions.items.skills.update.description',
+      },
+      {
+        value: 'skills.delete',
+        labelKey: 'roles.permissions.items.skills.delete.label',
+        descriptionKey: 'roles.permissions.items.skills.delete.description',
+      },
+      {
+        value: 'skills.*',
+        labelKey: 'roles.permissions.items.skills.all.label',
+        descriptionKey: 'roles.permissions.items.skills.all.description',
+      },
+    ],
+  },
+  {
     namespace: 'agent_types',
     labelKey: 'roles.permissions.groups.agent_types.label',
     descriptionKey: 'roles.permissions.groups.agent_types.description',
@@ -866,6 +899,36 @@ export interface SyncModelsResponse {
   total: number;
 }
 
+// Playbook Prompt Types
+
+export interface PlaybookPromptResponse {
+  id: string;
+  key: string;
+  title: string;
+  category: string;
+  description?: string;
+  systemTemplate: string;
+  userTemplate: string;
+  enabled: boolean;
+  version: number;
+  isBuiltIn: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlaybookPromptListResponse {
+  items: PlaybookPromptResponse[];
+}
+
+export interface UpsertPlaybookPromptRequest {
+  title: string;
+  category: string;
+  description?: string;
+  systemTemplate?: string;
+  userTemplate?: string;
+  enabled?: boolean;
+}
+
 // Agent Type Types
 
 export interface AgentTypeResponse {
@@ -873,6 +936,7 @@ export interface AgentTypeResponse {
   name: string;
   slug: string;
   defaultPrompt: string;
+  skills?: string[];
   promptCount: number;
   isActive: boolean;
   createdAt: string;
@@ -892,12 +956,14 @@ export interface AgentTypeListResponse {
 export interface CreateAgentTypeRequest {
   name: string;
   defaultPrompt?: string;
+  skills?: string[];
   isActive?: boolean;
 }
 
 export interface UpdateAgentTypeRequest {
   name?: string;
   defaultPrompt?: string;
+  skills?: string[];
   isActive?: boolean;
 }
 
@@ -935,6 +1001,9 @@ export interface AgentResponse {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   tools: string[];
+  skills?: string[];
+  disabledSkills?: string[];
+  connectors?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -964,6 +1033,9 @@ export interface CreateAgentRequest {
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -979,6 +1051,9 @@ export interface UpdateAgentRequest {
   ignorePrePrompt?: boolean;
   knowledgeBases?: string[];
   tools?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
+  connectors?: string[];
   isActive?: boolean;
   isDefaultForType?: boolean;
 }
@@ -1010,6 +1085,7 @@ export interface ToolResponse {
   description: string;
   defaultAgentTypes: string[];
   attributes: ToolAttributeResponse[];
+  requiredAppKey?: string;
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -1037,6 +1113,7 @@ export interface CreateToolRequest {
   description?: string;
   defaultAgentTypes?: string[];
   attributes?: ToolAttributeInput[];
+  requiredAppKey?: string;
   isActive?: boolean;
 }
 
@@ -1045,6 +1122,7 @@ export interface UpdateToolRequest {
   description?: string;
   defaultAgentTypes?: string[];
   attributes?: ToolAttributeInput[];
+  requiredAppKey?: string;
   isActive?: boolean;
 }
 
@@ -1054,4 +1132,174 @@ export interface ToolQueryParams {
   search?: string;
   agentType?: string;
   isActive?: boolean;
+}
+
+export type SkillFileKind = 'reference' | 'asset';
+
+export interface SkillFileResponse {
+  path: string;
+  kind: SkillFileKind;
+  mimeType: string;
+  content: string;
+}
+
+export interface SkillResponse {
+  id: string;
+  name: string;
+  description: string;
+  license: string;
+  compatibility: string;
+  metadata: Record<string, string>;
+  allowedTools: string[];
+  instructions: string;
+  files: SkillFileResponse[];
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SkillListResponse {
+  data: SkillResponse[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface SkillFileInput {
+  path: string;
+  kind: SkillFileKind;
+  mimeType?: string;
+  content?: string;
+}
+
+export interface CreateSkillRequest {
+  name: string;
+  description: string;
+  license?: string;
+  compatibility?: string;
+  metadata?: Record<string, string>;
+  allowedTools?: string[];
+  instructions?: string;
+  files?: SkillFileInput[];
+  isActive?: boolean;
+}
+
+export interface UpdateSkillRequest {
+  name?: string;
+  description?: string;
+  license?: string;
+  compatibility?: string;
+  metadata?: Record<string, string>;
+  allowedTools?: string[];
+  instructions?: string;
+  files?: SkillFileInput[];
+  isActive?: boolean;
+}
+
+export interface SkillQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  isActive?: boolean;
+}
+
+// === Connector ===
+
+export interface ConnectorActionResponse {
+  key: string;
+  label: string;
+  description: string;
+  parameterSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  safety: string;
+  supportsBatch: boolean;
+  supportsIteration: boolean;
+  isEnabled: boolean;
+}
+
+export interface ConnectorResponse {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  icon: string;
+  color: string;
+  authType: string;
+  authConfigSchema: Record<string, unknown>;
+  authSourceType: string;
+  connectedAppKey: string;
+  runtimeAuthConfig: Record<string, unknown>;
+  mcpTransportType: string;
+  mcpServerUrl: string;
+  mcpServerConfig: Record<string, unknown>;
+  actions: ConnectorActionResponse[];
+  referencedSkillIds: string[];
+  isActive: boolean;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConnectorListResponse {
+  data: ConnectorResponse[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+}
+
+export interface CreateConnectorRequest {
+  slug: string;
+  name: string;
+  description: string;
+  icon?: string;
+  color?: string;
+  authType?: string;
+  authConfigSchema?: Record<string, unknown>;
+  authSourceType?: string;
+  connectedAppKey?: string;
+  runtimeAuthConfig?: Record<string, unknown>;
+  mcpTransportType?: string;
+  mcpServerUrl?: string;
+  mcpServerConfig?: Record<string, unknown>;
+  actions?: Array<{
+    key: string;
+    label: string;
+    description?: string;
+    parameterSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    safety?: string;
+    supportsBatch?: boolean;
+    supportsIteration?: boolean;
+    isEnabled?: boolean;
+  }>;
+  referencedSkillIds?: string[];
+  isActive?: boolean;
+}
+
+export interface UpdateConnectorRequest extends Partial<CreateConnectorRequest> {}
+
+export interface ConnectorQueryParams {
+  page?: number;
+  limit?: number;
+  search?: string;
+  isActive?: boolean;
+}
+
+export interface McpToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface McpInspectResult {
+  serverName: string;
+  tools: McpToolDefinition[];
+  error?: string;
 }

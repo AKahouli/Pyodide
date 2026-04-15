@@ -10,6 +10,9 @@ export interface IAgentResponse {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   tools: string[];
+  connectors?: string[];
+  skills?: string[];
+  disabledSkills?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
   isActive: boolean;
@@ -32,6 +35,10 @@ export interface IAgentForStream {
   ignorePrePrompt: boolean;
   knowledgeBases: string[];
   toolIds: string[];
+  connectorIds?: string[];
+  skillIds?: string[];
+  disabledSkillIds?: string[];
+  agentTypeSkillIds?: string[];
   isDefault: boolean;
   isDefaultForType: boolean;
 }
@@ -58,6 +65,7 @@ export interface IGrpcAgent {
   agent_type: string;
   save_memory: boolean;
   tools: Record<string, unknown>[];
+  skills?: Array<Record<string, unknown>>;
   brain_context: IGrpcWorkspaceContext[];
   chatbot: {
     model: string;
@@ -65,4 +73,5 @@ export interface IGrpcAgent {
   agent_params?: {
     params: Record<string, string>;
   };
+  connectorIds?: string[];
 }

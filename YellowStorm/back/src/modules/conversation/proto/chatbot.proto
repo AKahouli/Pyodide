@@ -47,10 +47,31 @@ message Tool {
     string prompt = 2;
     string description = 3;
     int32 top_k = 4;
+    string accessToken = 5; // optional  
+    string guidelines = 6;
 }
 
 message AgentParams {
     map<string, string> params = 1;
+}
+
+message SkillFile {
+    string path = 1;
+    string kind = 2;
+    string mime_type = 3;
+    string content = 4;
+}
+
+message Skill {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    string instructions = 4;
+    string license = 5;
+    string compatibility = 6;
+    map<string, string> metadata = 7;
+    repeated string allowed_tools = 8;
+    repeated SkillFile files = 9;
 }
 
 message Document {
@@ -100,6 +121,7 @@ message Agent {
     AgentParams agent_params = 8;
     string agent_type = 9;
     bool save_memory = 10;
+    repeated Skill skills = 11;
 }
 
 // ===== V2 REQUEST MESSAGES =====
@@ -134,12 +156,14 @@ message GenerateConversationNameResponse {
 // Component type definitions
 message TextComponent {
     string content = 1;          // Text/Markdown content
+    string output_port_id = 2;   // Optional target playbook output port
 }
 
 message CodeComponent {
     string content = 1;          // The code itself
     string language = 2;         // e.g., "typescript", "python"
     string filename = 3;         // Optional filename
+    string output_port_id = 4;   // Optional target playbook output port
 }
 
 message ReasoningComponent {
@@ -227,6 +251,9 @@ message WebPreviewComponent {
 message ArtifactComponent {
     string file_path = 1;        // Path to the generated file
     string filename = 2;         // Name of the generated file
+    string output_port_id = 3;   // Optional target playbook output port
+    string artifact_kind = 4;    // Optional artifact kind override
+    string mime_type = 5;        // Optional file MIME type
 }
 
 message TextSourceData {
@@ -307,6 +334,7 @@ service ChatbotService {
     rpc RunPlaybookWorkflow(RunPlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
     rpc ResumePlaybookWorkflow(ResumePlaybookWorkflowRequest) returns (stream PlaybookStreamChunk);
     rpc RunStep(RunStepRequest) returns (StepResponse);
+    rpc RunStepStream(RunStepRequest) returns (stream PlaybookStreamChunk);
     rpc ResumeStep(ResumeStepRequest) returns (StepResponse);
     rpc EvaluateSemanticMatch(EvaluateSemanticMatchRequest) returns (EvaluateSemanticMatchResponse);
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
@@ -323,6 +351,11 @@ message MCPToolConfig {
     map<string, string> headers = 5;
 }
 
+message PortDocumentBinding {
+    string port_id = 1;           // The input port ID this document is bound to
+    repeated string document_ids = 2;  // Document external_ids bound to this port
+}
+
 message PlaybookTaskConfig {
     string id = 1;
     string title = 2;
@@ -336,12 +369,68 @@ message PlaybookTaskConfig {
     int32 max_clarifications = 10;
     repeated string input_keys = 11;
     string output_key = 12;
-    repeated string input_files = 13;  // Document IDs for this task
+    repeated string input_files = 13;  // List of document external_ids to restrict search to (legacy flat list)
+    repeated TaskInputPort input_ports = 14;
+    repeated TaskOutputPort output_ports = 15;
+    string task_type = 16;
+    repeated PortDocumentBinding input_files_by_port = 17;  // Port-aware document bindings
+    repeated ToolBinding tool_bindings = 18;
+}
+
+message ToolBindingAction {
+    string action_key = 1;
+    string label = 2;
+    string description = 3;
+    google.protobuf.Struct parameter_schema = 4;
+    string parameter_schema_json = 5;
+}
+
+message ToolBinding {
+    string id = 1;
+    string connector_id = 2;
+    repeated ToolBindingAction actions = 3;
+    string credential_id = 4;
+    map<string, string> fixed_params = 5;
+    bool disable_auto_skills = 6;
+    string connector_name = 7;
+    string mcp_transport_type = 8;
+    string mcp_server_url = 9;
+    google.protobuf.Struct mcp_server_config = 10;
+    map<string, string> auth_headers = 11;
+    map<string, string> auth_env = 12;
+    string connector_slug = 13;
+}
+
+message TaskOutputPort {
+    string id = 1;
+    string name = 2;
+    string artifact_kind = 3;
+    string description = 4;
+}
+
+message TaskInputPort {
+    string id = 1;
+    string name = 2;
+    string artifact_kind = 3;
+    bool required = 4;
+    string description = 5;
+}
+
+message TaskArtifact {
+    string port_id = 1;
+    string artifact_kind = 2;
+    string content = 3;
+    string url = 4;
+    string filename = 5;
+    string mime_type = 6;
+    int64 size = 7;
 }
 
 message PlaybookEdgeConfig {
     string source_id = 1;
     string target_id = 2;
+    string source_output_port_id = 3;
+    string target_input_port_id = 4;
 }
 
 message PlaybookNodeConfig {
@@ -359,6 +448,9 @@ message PlaybookNodeConfig {
     int32 max_clarifications = 12;
     repeated string input_keys = 13;
     string output_key = 14;
+    repeated TaskInputPort input_ports = 15;
+    repeated TaskOutputPort output_ports = 16;
+    string task_type = 17;
 }
 
 message ExistingPlaybook {
@@ -372,6 +464,7 @@ message GeneratePlaybookRequest {
     repeated WorkspaceContext workspace_context = 3;
     ExistingPlaybook existing_playbook = 4;   // Vide pour creation, rempli pour modification
     string model = 5;                         // Modele LLM (ex: "azure/gpt-4.1")
+    map<string, string> prompt_overrides = 6;
 }
 
 message GeneratePlaybookResponse {
@@ -393,6 +486,7 @@ message RunPlaybookWorkflowRequest {
     string execution_mode = 9;
     repeated ValidatedTaskReplay validated_replays = 10;
     map<string, string> step_execution_modes = 11;
+    map<string, string> prompt_overrides = 12;
 }
 
 message ResumePlaybookWorkflowRequest {
@@ -412,6 +506,9 @@ message RunStepRequest {
     repeated WorkspaceContext workspace_context = 7;
     string execution_mode = 8;
     ValidatedTaskReplay validated_replay = 9;
+    repeated PlaybookEdgeConfig edges = 10;
+    repeated PlaybookTaskResult upstream_results = 11;
+    map<string, string> prompt_overrides = 12;
 }
 
 message ResumeStepRequest {
@@ -435,8 +532,8 @@ message StopPlaybookWorkflowResponse {
 // --- Human-in-the-loop messages ---
 
 message HumanResponse {
-    string action = 1;               // "reply" | "approve" | "reject" | "skip"
-    string message = 2;              // Free-form user reply for conversational HITL
+    string action = 1;                 // "reply" | "approve" | "reject" | "skip"
+    string message = 2;                // Free-form user reply for conversational HITL
     bool approved = 3;               // Legacy compatibility: whether the human approved or rejected
     string reason = 4;               // Legacy compatibility: reason for rejection
     string feedback = 5;             // Legacy compatibility: review/clarification feedback
@@ -491,6 +588,7 @@ message PlaybookTaskResult {
     repeated ToolTraceItem tool_trace = 8;
     SemanticMatch semantic_match = 9;
     repeated LLMPromptTraceItem llm_prompt_trace = 10;
+    repeated TaskArtifact artifacts = 11;
 }
 
 message InterruptPayload {
@@ -508,7 +606,7 @@ message InterruptPayload {
 }
 
 message PlaybookWorkflowResponse {
-    string status = 1;              // "completed" | "interrupted" | "failed"
+    string status = 1;              // "completed" | "suspended" | "failed"
     repeated PlaybookTaskResult task_results = 2;
     InterruptPayload interrupt = 3;
     string thread_id = 4;
@@ -529,7 +627,7 @@ message PlaybookStreamChunk {
 }
 
 message StepResponse {
-    string status = 1;              // "completed" | "interrupted" | "failed"
+    string status = 1;              // "completed" | "suspended" | "failed"
     PlaybookTaskResult result = 2;
     InterruptPayload interrupt = 3;
     string thread_id = 4;

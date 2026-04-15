@@ -20,12 +20,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
-import { Loader2, X } from 'lucide-react';
+import { Loader2, X, Plus, Trash2 } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
-import type { PlaybookTask, ValidatedTaskReplay } from '../types';
+import type { PlaybookTask, ValidatedTaskReplay, TaskInputPort, TaskOutputPort, ArtifactKind } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
+import { PORT_COLORS } from '../utils/port-colors';
+import { getPortColor } from '../utils/port-colors';
 
 interface Props {
   playbookId: string | null;
@@ -74,6 +76,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [preserveFormatDraft, setPreserveFormatDraft] = useState(false);
   const [savingFormatGuide, setSavingFormatGuide] = useState(false);
   const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
+  const [inputPorts, setInputPorts] = useState<TaskInputPort[]>([]);
+  const [outputPorts, setOutputPorts] = useState<TaskOutputPort[]>([]);
 
   useEffect(() => {
     if (task) {
@@ -89,6 +93,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       setEmailInput('');
       setEmailError('');
       setHasInitializedDraft(false);
+      setInputPorts(task.inputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }]);
+      setOutputPorts(task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }]);
     }
   }, [task]);
 
@@ -105,6 +111,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
         enabled,
         notifyOnComplete,
         notifyEmails: notifyOnComplete ? notifyEmails : [],
+        inputPorts: [...inputPorts],
+        outputPorts: [...outputPorts],
       });
     }, 350);
 
@@ -115,12 +123,14 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     description,
     enabled,
     hasInitializedDraft,
+    inputPorts,
     interruptAfter,
     interruptBefore,
     notifyEmails,
     notifyOnComplete,
     onSave,
     open,
+    outputPorts,
     task,
     title,
   ]);
@@ -299,6 +309,140 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </div>
             </div>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium">{t('ports.inputPorts')}</h4>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  const id = `in-${crypto.randomUUID().slice(0, 8)}`;
+                  setInputPorts((prev) => [...prev, { id, name: 'Input', artifactKind: 'text', required: false }]);
+                }}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {t('ports.addInput')}
+              </Button>
+            </div>
+            {inputPorts.length === 0 && (
+              <p className="text-xs text-muted-foreground">No input ports defined.</p>
+            )}
+            {inputPorts.map((port, idx) => (
+              <div key={port.id} className="flex items-center gap-2 rounded-md border p-2">
+                <div className={`w-3 h-3 rounded-full shrink-0 ${getPortColor(port.artifactKind)}`} />
+                <input
+                  type="text"
+                  value={port.name}
+                  onChange={(e) => {
+                    const updated = [...inputPorts];
+                    updated[idx] = { ...updated[idx], name: e.target.value };
+                    setInputPorts(updated);
+                  }}
+                  className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-transparent focus:border-primary"
+                  placeholder={t('ports.portName')}
+                />
+                <select
+                  value={port.artifactKind}
+                  onChange={(e) => {
+                    const updated = [...inputPorts];
+                    updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
+                    setInputPorts(updated);
+                  }}
+                  className="h-7 text-xs rounded border bg-background px-1"
+                >
+                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
+                    <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const updated = [...inputPorts];
+                    updated[idx] = { ...updated[idx], required: !updated[idx].required };
+                    setInputPorts(updated);
+                  }}
+                  className={`text-xs px-1.5 py-0.5 rounded border ${port.required ? 'bg-primary/10 text-primary border-primary/30' : 'text-muted-foreground border-muted'}`}
+                  title={port.required ? t('ports.required') : t('ports.optional')}
+                >
+                  {port.required ? t('ports.required') : t('ports.optional')}
+                </button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                  onClick={() => setInputPorts((prev) => prev.filter((_, i) => i !== idx))}
+                  title={t('ports.removePort')}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <div className="flex items-center justify-between">
+              <h4 className="text-sm font-medium">{t('ports.outputPorts')}</h4>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  const id = `out-${crypto.randomUUID().slice(0, 8)}`;
+                  setOutputPorts((prev) => [...prev, { id, name: 'Output', artifactKind: 'text' }]);
+                }}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                {t('ports.addOutput')}
+              </Button>
+            </div>
+            {outputPorts.length === 0 && (
+              <p className="text-xs text-muted-foreground">No output ports defined.</p>
+            )}
+            {outputPorts.map((port, idx) => (
+              <div key={port.id} className="flex items-center gap-2 rounded-md border p-2">
+                <div className={`w-3 h-3 rounded-full shrink-0 ${getPortColor(port.artifactKind)}`} />
+                <input
+                  type="text"
+                  value={port.name}
+                  onChange={(e) => {
+                    const updated = [...outputPorts];
+                    updated[idx] = { ...updated[idx], name: e.target.value };
+                    setOutputPorts(updated);
+                  }}
+                  className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-transparent focus:border-primary"
+                  placeholder={t('ports.portName')}
+                />
+                <select
+                  value={port.artifactKind}
+                  onChange={(e) => {
+                    const updated = [...outputPorts];
+                    updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
+                    setOutputPorts(updated);
+                  }}
+                  className="h-7 text-xs rounded border bg-background px-1"
+                >
+                  {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
+                    <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
+                  ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
+                  onClick={() => setOutputPorts((prev) => prev.filter((_, i) => i !== idx))}
+                  title={t('ports.removePort')}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            ))}
           </div>
 
           <div className="space-y-2">

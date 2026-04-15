@@ -38,6 +38,15 @@ export class Agent extends Document {
   @Prop({ type: [Types.ObjectId], ref: 'Tool', default: [] })
   tools!: Types.ObjectId[];
 
+  @Prop({ type: [Types.ObjectId], ref: 'Skill', default: [] })
+  skills!: Types.ObjectId[];
+
+  @Prop({ type: [Types.ObjectId], ref: 'Skill', default: [] })
+  disabledSkills!: Types.ObjectId[];
+
+  @Prop({ type: [Types.ObjectId], ref: 'Connector', default: [] })
+  connectors!: Types.ObjectId[];
+
   @Prop({ default: false, index: true })
   isDefault!: boolean;
 

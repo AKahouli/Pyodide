@@ -49,8 +49,18 @@ def __getattr__(name):
 
 __all__ = [
     'ChatRAGService',
-    'AgentTeamService'
+    'AgentTeamService',
 ]
+
+
+def __getattr__(name: str):
+    if name == 'ChatRAGService':
+        from .core.chat_rag_service import ChatRAGService
+        return ChatRAGService
+    if name == 'AgentTeamService':
+        from .core.agent_team_service import AgentTeamService
+        return AgentTeamService
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __version__ = "1.0.0"
 __author__ = "SmartRAG Team"

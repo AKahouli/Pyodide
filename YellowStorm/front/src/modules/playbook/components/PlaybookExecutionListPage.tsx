@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { usePlaybookStore, useCurrentPlaybook, useCurrentPlaybookLoading, useExecutionHistory, useExecutionsLoading } from '../store';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { useModuleTranslation } from '@/modules/localization';
+import { formatPlaybookDateTime } from '../utils/formatPlaybookDateTime';
 
 function formatDuration(ms: number | null): string {
   if (ms === null) return '-';
@@ -16,10 +17,6 @@ function formatDuration(ms: number | null): string {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}m ${remainingSeconds}s`;
-}
-
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString();
 }
 
 export function PlaybookExecutionListPage() {
@@ -148,7 +145,13 @@ export function PlaybookExecutionListPage() {
                         {t('execution.run')} #{exec.executionNumber}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {formatDate(exec.createdAt)}
+                        {formatPlaybookDateTime(exec.createdAt, {
+                          timeZone: playbook?.executionSchedule?.timezone,
+                        })}{' '}
+                        ·{' '}
+                        {exec.executionTrigger === 'scheduled'
+                          ? t('execution.trigger.scheduled')
+                          : t('execution.trigger.manual')}
                       </div>
                     </div>
                   </div>

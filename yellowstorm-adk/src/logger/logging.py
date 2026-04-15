@@ -1,5 +1,6 @@
 import logging
 import os
+from typing import Any, TYPE_CHECKING
 
 from logging import Filter, LogRecord
 from pydantic import parse_obj_as
@@ -18,6 +19,16 @@ def get_elastic_search_logging():
 def get_setup_logging():
     from src.logger.setup_logging import setup_logging
     return setup_logging
+from src.logger.setup_logging import setup_logging
+
+if TYPE_CHECKING:
+    from elasticsearch import Elasticsearch
+
+try:
+    from src.logger.elastic_search import elastic_search_logging
+except Exception:  # pragma: no cover - optional dependency
+    def elastic_search_logging(*args: Any, **kwargs: Any) -> None:  # type: ignore[no-redef]
+        return None
 
 class CorrelationIdFilter(Filter):
     """

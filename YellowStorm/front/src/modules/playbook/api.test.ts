@@ -12,11 +12,16 @@ import {
   getPlaybooks,
   toggleFavorite,
   updatePlaybook,
+  upsertPlaybookSchedule,
+  clearPlaybookSchedule,
+  rerunPlaybookStep,
+  resumePlaybookFromStep,
 } from './api';
 
 const apiClientMock = vi.hoisted(() => ({
   get: vi.fn(),
   post: vi.fn(),
+  put: vi.fn(),
   patch: vi.fn(),
   delete: vi.fn(),
 }));
@@ -56,6 +61,66 @@ describe('playbook api', () => {
     expect(playbook.id).toBe('p1');
   });
 
+  it('strips client-only task flags before updating a playbook', async () => {
+    const task = {
+      id: 'task-1',
+      title: 'Step 1',
+      description: 'desc',
+      assignedAgentId: 'agent-1',
+      executionOrder: 0,
+      positionX: 10,
+      positionY: 20,
+      interruptBefore: false,
+      interruptAfter: false,
+      allowClarification: true,
+      clarificationPrompt: 'ask',
+      maxClarifications: 3,
+      inputKeys: ['input'],
+      outputKey: 'output',
+      enabled: true,
+      notifyOnComplete: false,
+      notifyEmails: ['a@example.com'],
+      stepReplayMode: 'live',
+      inputFiles: [],
+      taskType: 'generic',
+      inputPorts: [],
+      outputPorts: [],
+      isSavingReplayBaseline: true,
+      hasValidatedReplay: true,
+      activeReplayId: 'replay-1',
+    } as any;
+
+    apiClientMock.patch.mockResolvedValueOnce({ data: { data: { id: 'p1' } } });
+    await updatePlaybook('p1', { tasks: [task] });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.byId('p1'), {
+      tasks: [{
+        id: 'task-1',
+        title: 'Step 1',
+        description: 'desc',
+        assignedAgentId: 'agent-1',
+        executionOrder: 0,
+        positionX: 10,
+        positionY: 20,
+        interruptBefore: false,
+        interruptAfter: false,
+        allowClarification: true,
+        clarificationPrompt: 'ask',
+        maxClarifications: 3,
+        inputKeys: ['input'],
+        outputKey: 'output',
+        enabled: true,
+        notifyOnComplete: false,
+        notifyEmails: ['a@example.com'],
+        stepReplayMode: 'live',
+        inputFiles: [],
+        taskType: 'generic',
+        inputPorts: [],
+        outputPorts: [],
+      }],
+    });
+  });
+
   it('executes and gets execution details', async () => {
     apiClientMock.post.mockResolvedValueOnce({ data: { data: { executionId: 'e1' } } });
     const started = await executePlaybook('p1', { query: 'test run' });
@@ -65,6 +130,26 @@ describe('playbook api', () => {
     apiClientMock.get.mockResolvedValueOnce({ data: { data: { id: 'e1' } } });
     await getExecution('p1', 'e1');
     expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.execution('p1', 'e1'));
+  });
+
+  it('upserts and clears playbook schedule', async () => {
+    apiClientMock.put.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
+    await upsertPlaybookSchedule('p1', {
+      enabled: true,
+      timezone: 'UTC',
+      type: 'daily',
+      daily: { timesLocal: ['09:00'] },
+    });
+    expect(apiClientMock.put).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'), {
+      enabled: true,
+      timezone: 'UTC',
+      type: 'daily',
+      daily: { timesLocal: ['09:00'] },
+    });
+
+    apiClientMock.delete.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
+    await clearPlaybookSchedule('p1');
+    expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'));
   });
 
   it('toggles favorite, bulk deletes, clones, and clone-shares', async () => {
@@ -90,5 +175,21 @@ describe('playbook api', () => {
     const result = await deleteAllExecutions('p1');
     expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.deleteAllExecutions('p1'));
     expect(result).toEqual({ deleted: 3, kept: 1 });
+  });
+
+  it('targets the rerun and resume-from-step routes', async () => {
+    apiClientMock.post.mockResolvedValue({ data: { data: { status: 'running', executionId: 'e1' } } });
+
+    await rerunPlaybookStep('p1', 'e1', { taskId: 't1', runEvaluation: true, executionMode: 'live', streaming: false });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.rerunStep('p1', 'e1'),
+      { taskId: 't1', runEvaluation: true, executionMode: 'live', streaming: false },
+    );
+
+    await resumePlaybookFromStep('p1', 'e1', { taskId: 't2', streaming: true });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.resumeFromStep('p1', 'e1'),
+      { taskId: 't2', streaming: true },
+    );
   });
 });

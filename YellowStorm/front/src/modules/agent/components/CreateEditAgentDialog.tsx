@@ -38,10 +38,11 @@ import {
 import { EvaluationTab } from "./EvaluationTab";
 import { useAgentTypes, useAgentStore } from "../store";
 import { useModels, useModelsStore } from "@/modules/models/store";
-import { getActiveTools, type ToolOption } from "../api";
+import { getActiveSkills, getActiveTools, getActiveConnectors, type ToolOption, type ConnectorOption } from "../api";
 import { getWorkspaces } from "@/modules/workspace";
 import type { Workspace } from "@/modules/workspace/types";
 import type { Agent } from "../types";
+import type { SkillOption } from '../types';
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
 
@@ -63,6 +64,8 @@ export function CreateEditAgentDialog({
   const agentTypes = useAgentTypes();
   const models = useModels();
   const [availableTools, setAvailableTools] = useState<ToolOption[]>([]);
+  const [availableSkills, setAvailableSkills] = useState<SkillOption[]>([]);
+  const [availableConnectors, setAvailableConnectors] = useState<ConnectorOption[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(false);
   const loadedAgentTypeId = useRef<string | null>(null);
@@ -89,9 +92,13 @@ export function CreateEditAgentDialog({
         useAgentStore.getState().fetchAgentTypes().catch(() => { }),
         useModelsStore.getState().fetchModels().catch(() => { }),
         getActiveTools().catch(() => [] as ToolOption[]),
+        getActiveSkills().catch(() => [] as SkillOption[]),
+        getActiveConnectors().catch(() => [] as ConnectorOption[]),
         getWorkspaces({ limit: 100 }).then((res) => res.workspaces).catch(() => [] as Workspace[]),
-      ]).then(([, , tools, ws]) => {
+      ]).then(([, , tools, skills, connectors, ws]) => {
         setAvailableTools(tools || []);
+        setAvailableSkills(skills || []);
+        setAvailableConnectors(connectors || []);
         setWorkspaces(ws || []);
 
         if (agent) {
@@ -106,6 +113,9 @@ export function CreateEditAgentDialog({
             ignorePrePrompt: agent.ignorePrePrompt,
             knowledgeBases: agent.knowledgeBases || [],
             tools: agent.tools || [],
+            skills: agent.skills || [],
+            disabledSkills: agent.disabledSkills || [],
+            connectors: agent.connectors || [],
             isActive: agent.isActive,
             isDefaultForType: agent.isDefaultForType || false,
           });
@@ -137,6 +147,17 @@ export function CreateEditAgentDialog({
   const temperature = watch("temperature");
   const watchedTools = watch("tools");
   const watchedKBs = watch("knowledgeBases");
+  const watchedSkills = watch('skills');
+  const watchedDisabledSkills = watch('disabledSkills');
+  const watchedConnectors = watch('connectors');
+  const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
+
+  useEffect(() => {
+    const validDisabledSkills = watchedDisabledSkills.filter((id) => inheritedSkillIds.includes(id));
+    if (validDisabledSkills.length !== watchedDisabledSkills.length) {
+      setValue('disabledSkills', validDisabledSkills);
+    }
+  }, [inheritedSkillIds, setValue, watchedDisabledSkills]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -167,9 +188,10 @@ export function CreateEditAgentDialog({
                 <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
                 <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
                 <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
+                <TabsTrigger value="skills">Skills</TabsTrigger>
+                <TabsTrigger value="connectors">Connectors</TabsTrigger>
                 <TabsTrigger value="evaluation">{t('createEdit.tabs.evaluation')}</TabsTrigger>
               </TabsList>
-
               <ScrollArea className="flex-1 min-h-0 mt-4">
                 <div className="pr-4">
                   {/* Identity Tab */}
@@ -351,7 +373,6 @@ export function CreateEditAgentDialog({
                       </div>
                     </div>
                   </TabsContent>
-
                   {/* Tools Tab */}
                   <TabsContent value="tools" forceMount className="mt-0 data-[state=inactive]:hidden">
                     <div className="grid gap-4">
@@ -375,7 +396,68 @@ export function CreateEditAgentDialog({
                       </div>
                     </div>
                   </TabsContent>
+<TabsContent value="skills" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <Label>Additional skills</Label>
+                      <p className="text-xs text-muted-foreground">Attach extra skills directly to this agent.</p>
+                      <MultiSelect
+                        options={availableSkills.map((skill) => ({
+                          value: skill.id,
+                          label: skill.name,
+                          description: skill.description,
+                        }))}
+                        value={watchedSkills}
+                        onValueChange={(val) => setValue('skills', val)}
+                        placeholder="Select skills"
+                        searchPlaceholder="Search skills"
+                        emptyText="No skills found"
+                      />
+                    </div>
 
+                    <div className="space-y-2">
+                      <Label>Disabled inherited skills</Label>
+                      <p className="text-xs text-muted-foreground">Disable skills inherited from the selected agent type.</p>
+                      <MultiSelect
+                        options={availableSkills
+                          .filter((skill) => inheritedSkillIds.includes(skill.id))
+                          .map((skill) => ({
+                            value: skill.id,
+                            label: skill.name,
+                            description: skill.description,
+                          }))}
+                        value={watchedDisabledSkills}
+                        onValueChange={(val) => setValue('disabledSkills', val)}
+                        placeholder="Select inherited skills to disable"
+                        searchPlaceholder="Search inherited skills"
+                        emptyText="No inherited skills available"
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="connectors" forceMount className="mt-0 data-[state=inactive]:hidden">
+                  <div className="grid gap-4">
+                    <div className="space-y-2">
+                      <Label>Connectors</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Attach MCP connectors to this agent. They will be available on every playbook step that uses this agent.
+                      </p>
+                      <MultiSelect
+                        options={availableConnectors.map((connector) => ({
+                          value: connector.id,
+                          label: connector.name,
+                          description: connector.description,
+                        }))}
+                        value={watchedConnectors}
+                        onValueChange={(val) => setValue('connectors', val)}
+                        placeholder="Select connectors"
+                        searchPlaceholder="Search connectors"
+                        emptyText="No connectors found"
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
                   {/* Evaluation Tab */}
                   <TabsContent value="evaluation" forceMount className="mt-0 data-[state=inactive]:hidden">
                     <EvaluationTab agent={agent} />

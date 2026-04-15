@@ -6,6 +6,7 @@ type Translator = (key: ModuleTranslationKey<"admin">, params?: TranslationParam
 export type AgentTypeFormValues = {
   name: string;
   defaultPrompt: string;
+  skills: string[];
   isActive: boolean;
 };
 
@@ -21,6 +22,7 @@ export function createAgentTypeFormSchema(t: Translator) {
       .max(50000, t("agentTypes.form.validation.promptMax"))
       .optional()
       .default(""),
+    skills: z.array(z.string()).default([]),
     isActive: z.boolean().default(true),
   });
 }
@@ -28,5 +30,6 @@ export function createAgentTypeFormSchema(t: Translator) {
 export const defaultFormValues: AgentTypeFormValues = {
   name: "",
   defaultPrompt: "",
+  skills: [],
   isActive: true,
 };

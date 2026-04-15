@@ -1,12 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { FolderOpen, FileText, Trash2 } from 'lucide-react';
+import { FolderOpen, FileText, Trash2, Link2 } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 import type { InputFile } from '../types';
+import { PORT_COLORS } from '../utils/port-colors';
 import { cn } from '@/lib/utils';
 
 export function InputFilesPopover({
@@ -19,6 +20,8 @@ export function InputFilesPopover({
   alwaysVisible?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+
+  const boundCount = files.filter((f) => f.portId).length;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -49,9 +52,17 @@ export function InputFilesPopover({
         <div className="px-3 py-2 border-b">
           <div className="flex items-center justify-between">
             <span className="text-sm font-semibold">Input Files</span>
-            <Badge variant="secondary" className="text-[10px]">
-              {files.length} {files.length === 1 ? 'item' : 'items'}
-            </Badge>
+            <div className="flex items-center gap-1.5">
+              {boundCount > 0 && (
+                <Badge variant="secondary" className="text-[10px] gap-0.5">
+                  <Link2 className="h-2.5 w-2.5" />
+                  {boundCount} bound
+                </Badge>
+              )}
+              <Badge variant="secondary" className="text-[10px]">
+                {files.length} {files.length === 1 ? 'item' : 'items'}
+              </Badge>
+            </div>
           </div>
         </div>
 
@@ -65,27 +76,33 @@ export function InputFilesPopover({
             </div>
           ) : (
             <div className="p-2 space-y-1">
-              {files.map((file) => (
-                <div
-                  key={`${file.type}-${file.id}`}
-                  className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/50"
-                >
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
-                    onClick={() => onRemove(file.id)}
+              {files.map((file) => {
+                const portColors = file.artifactKind ? PORT_COLORS[file.artifactKind] : null;
+                return (
+                  <div
+                    key={`${file.type}-${file.id}${file.portId ? `-${file.portId}` : ''}`}
+                    className="flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/50"
                   >
-                    <Trash2 className="h-3 w-3" />
-                  </Button>
-                  {file.type === 'workspace' ? (
-                    <FolderOpen className="h-4 w-4 text-sky-600 shrink-0" />
-                  ) : (
-                    <FileText className="h-4 w-4 text-emerald-600 shrink-0" />
-                  )}
-                  <span className="text-xs truncate">{file.name}</span>
-                </div>
-              ))}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-5 w-5 p-0 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => onRemove(file.id)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                    {file.type === 'workspace' ? (
+                      <FolderOpen className="h-4 w-4 text-sky-600 shrink-0" />
+                    ) : (
+                      <FileText className="h-4 w-4 text-emerald-600 shrink-0" />
+                    )}
+                    <span className="text-xs truncate flex-1 min-w-0">{file.name}</span>
+                    {portColors && (
+                      <span className={cn('shrink-0 h-2 w-2 rounded-full', portColors.dot)} />
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </ScrollArea>
@@ -93,7 +110,7 @@ export function InputFilesPopover({
         {files.length > 0 && (
           <div className="p-2 border-t bg-muted/30">
             <p className="text-[10px] text-muted-foreground text-center">
-              Drag workspaces or documents from the explorer to add more
+              Drag onto specific ports to bind files
             </p>
           </div>
         )}

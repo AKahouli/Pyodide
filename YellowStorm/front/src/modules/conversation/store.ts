@@ -237,6 +237,9 @@ interface ConversationState {
   // Model selection
   selectedModelId: string | null;
 
+  // Workspace selection
+  selectedWorkspaceIds: string[];
+
   // Stream state cache for background conversations
   streamingStateCache: Map<string, CachedStreamingState>;
 
@@ -250,7 +253,7 @@ interface ConversationState {
 
   // Actions - Conversations
   fetchConversations: (params?: { reset?: boolean; limit?: number; search?: string }) => Promise<void>;
-  createConversation: (data?: { title?: string; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string }) => Promise<Conversation>;
+  createConversation: (data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string }) => Promise<Conversation>;
   updateConversation: (id: string, data: { title?: string; isArchived?: boolean; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }> }) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   setCurrentConversation: (id: string) => Promise<void>;
@@ -303,6 +306,10 @@ interface ConversationState {
   // Model selection
   setSelectedModelId: (modelId: string | null) => void;
 
+  // Workspace selection
+  setSelectedWorkspaceIds: (workspaceIds: string[]) => void;
+  resetSelectedWorkspaceIds: () => void;
+
   // Cleanup
   clearMessages: () => void;
   clearAll: () => void;
@@ -349,6 +356,7 @@ export const useConversationStore = create<ConversationState>()(
       inputDisabled: false,
 
       selectedModelId: null,
+      selectedWorkspaceIds: [],
 
       streamingStateCache: new Map(),
 
@@ -1193,6 +1201,16 @@ export const useConversationStore = create<ConversationState>()(
         set({ selectedModelId: modelId });
       },
 
+      // ===== Workspace Selection =====
+
+      setSelectedWorkspaceIds: (workspaceIds) => {
+        set({ selectedWorkspaceIds: workspaceIds });
+      },
+
+      resetSelectedWorkspaceIds: () => {
+        set({ selectedWorkspaceIds: [] });
+      },
+
       // ===== Cleanup =====
 
       clearMessages: () => {
@@ -1357,6 +1375,12 @@ export const useIsInitialLoading = () => useConversationStore((s) => s.conversat
 export const useSelectedModelId = () => useConversationStore((s) => s.selectedModelId);
 
 export const useSetSelectedModelId = () => useConversationStore((s) => s.setSelectedModelId);
+
+export const useSelectedWorkspaceIds = () => useConversationStore((s) => s.selectedWorkspaceIds);
+
+export const useSetSelectedWorkspaceIds = () => useConversationStore((s) => s.setSelectedWorkspaceIds);
+
+export const useResetSelectedWorkspaceIds = () => useConversationStore((s) => s.resetSelectedWorkspaceIds);
 
 export const useBranchCache = () => useConversationStore(useShallow((s) => s.branchCache));
 

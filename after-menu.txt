@@ -1,0 +1,11 @@
+uid=9_0 RootWebArea "POC" url="http://localhost:5173/#/playbooks/69d8e70899808c34a665ffe7"
+  uid=17_15 main
+    uid=20_124 generic atomic live="assertive" relevant="additions text"
+  uid=9_15 region "Notifications alt+T" live="polite" relevant="additions text"
+  uid=22_0 menu "Actions" focusable focused orientation="vertical"
+    uid=22_1 menuitem "Save replay baseline"
+    uid=22_2 menuitem "Run evaluation"
+    uid=22_3 menuitem "Save output format"
+    uid=22_4 menuitem "Download HTML"
+    uid=22_5 menuitem "Download PDF"
+    uid=22_6 menuitem "Delete execution"

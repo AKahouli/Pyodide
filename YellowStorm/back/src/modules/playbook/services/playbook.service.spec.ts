@@ -166,6 +166,7 @@ describe('PlaybookService', () => {
       findOne: jest.fn(),
       aggregate: jest.fn(),
       updateMany: jest.fn(),
+      updateOne: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) }),
     };
 
     executionModel = {
@@ -370,6 +371,7 @@ describe('PlaybookService', () => {
       description: 'desc',
       taskCount: 2,
       isFavorite: false,
+      scheduleEnabled: false,
       lastExecutionAt: null,
       createdAt: now,
       updatedAt: now,
@@ -385,6 +387,7 @@ describe('PlaybookService', () => {
       expect(playbookModel.aggregate).toHaveBeenCalled();
       expect(result.playbooks).toHaveLength(1);
       expect(result.playbooks[0].id).toBe(MOCK_PLAYBOOK_ID);
+      expect(result.playbooks[0].scheduleEnabled).toBe(false);
       expect(result.pagination).toEqual({
         page: 1,
         limit: 20,
@@ -770,6 +773,47 @@ describe('PlaybookService', () => {
       playbookModel.findById.mockReturnValue(chain);
 
       await expect(service.toggleFavorite(MOCK_PLAYBOOK_ID)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // getOrCreateIntegrationToken / findByIntegrationToken
+  // -------------------------------------------------------------------------
+  describe('integration token helpers', () => {
+    it('should create and persist a token when missing', async () => {
+      const save = jest.fn().mockResolvedValue(undefined);
+      const doc = makeMockPlaybook({ integrationToken: undefined, save });
+      playbookModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(doc) });
+
+      const result = await service.getOrCreateIntegrationToken(MOCK_PLAYBOOK_ID, MOCK_USER_ID);
+
+      expect(playbookModel.findOne).toHaveBeenCalledWith({
+        _id: objectId(MOCK_PLAYBOOK_ID),
+        createdBy: objectId(MOCK_USER_ID),
+        isActive: true,
+      });
+      expect(save).toHaveBeenCalled();
+      expect(result.token).toHaveLength(32);
+    });
+
+    it('should reuse an existing token', async () => {
+      const doc = makeMockPlaybook({ integrationToken: 'existing-token', save: jest.fn() });
+      playbookModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(doc) });
+
+      const result = await service.getOrCreateIntegrationToken(MOCK_PLAYBOOK_ID, MOCK_USER_ID);
+
+      expect(result).toEqual({ token: 'existing-token' });
+      expect((doc as any).save).not.toHaveBeenCalled();
+    });
+
+    it('should return playbook by integration token', async () => {
+      const doc = makeMockPlaybook({ integrationToken: 'public-token' });
+      playbookModel.findOne.mockReturnValue({ exec: jest.fn().mockResolvedValue(doc) });
+
+      const result = await service.findByIntegrationToken('public-token');
+
+      expect(playbookModel.findOne).toHaveBeenCalledWith({ integrationToken: 'public-token', isActive: true });
+      expect(result).toBe(doc);
     });
   });
 
@@ -1382,7 +1426,13 @@ describe('PlaybookService', () => {
 
       const result = await service.findById(MOCK_PLAYBOOK_ID);
 
-      expect(result.edges[0]).toEqual({ id: 'e-x', sourceId: 'a', targetId: 'b' });
+      expect(result.edges[0]).toEqual({
+        id: 'e-x',
+        sourceId: 'a',
+        targetId: 'b',
+        sourceOutputPortId: 'default',
+        targetInputPortId: 'default',
+      });
     });
 
     it('should map workspace ObjectIds to strings', async () => {
@@ -1437,6 +1487,7 @@ describe('PlaybookService', () => {
         description: 'desc',
         taskCount: 3,
         isFavorite: true,
+        scheduleEnabled: true,
         lastExecutionAt: now,
         createdAt: now,
         updatedAt: now,
@@ -1452,6 +1503,7 @@ describe('PlaybookService', () => {
       expect(s.name).toBe('Summary PB');
       expect(s.taskCount).toBe(3);
       expect(s.isFavorite).toBe(true);
+      expect(s.scheduleEnabled).toBe(true);
     });
 
     it('should handle execution summary mapping with null dates', async () => {

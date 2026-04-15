@@ -51,11 +51,25 @@ import type {
   AdminModelResponse,
   UpdateModelRequest,
   SyncModelsResponse,
+  PlaybookPromptListResponse,
+  PlaybookPromptResponse,
+  UpsertPlaybookPromptRequest,
   ToolListResponse,
   ToolResponse,
   CreateToolRequest,
   UpdateToolRequest,
   ToolQueryParams,
+  SkillListResponse,
+  SkillResponse,
+  CreateSkillRequest,
+  UpdateSkillRequest,
+  SkillQueryParams,
+  ConnectorListResponse,
+  ConnectorResponse,
+  CreateConnectorRequest,
+  UpdateConnectorRequest,
+  ConnectorQueryParams,
+  McpInspectResult,
 } from './types';
 
 // Helper to build query string
@@ -464,6 +478,33 @@ export async function syncModels(): Promise<SyncModelsResponse> {
   return response.data.data;
 }
 
+// Playbook Prompts API
+
+export async function getPlaybookPrompts(): Promise<PlaybookPromptListResponse> {
+  const response = await apiClient.get<ApiResponse<PlaybookPromptListResponse>>(
+    API_ENDPOINTS.adminPlaybookPrompts.list
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookPrompt(key: string): Promise<PlaybookPromptResponse | null> {
+  const response = await apiClient.get<ApiResponse<PlaybookPromptResponse | null>>(
+    API_ENDPOINTS.adminPlaybookPrompts.byKey(key)
+  );
+  return response.data.data;
+}
+
+export async function updatePlaybookPrompt(
+  key: string,
+  data: UpsertPlaybookPromptRequest,
+): Promise<PlaybookPromptResponse> {
+  const response = await apiClient.patch<ApiResponse<PlaybookPromptResponse>>(
+    API_ENDPOINTS.adminPlaybookPrompts.byKey(key),
+    data,
+  );
+  return response.data.data;
+}
+
 export async function getDefaultModel(): Promise<AdminModelResponse | null> {
   const response = await apiClient.get<ApiResponse<AdminModelResponse | null>>(
     API_ENDPOINTS.adminModels.default
@@ -521,6 +562,125 @@ export async function updateTool(
 
 export async function deleteTool(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminTools.byId(id));
+}
+
+// Skills API
+
+function buildSkillQueryString(params: SkillQueryParams): string {
+  const searchParams = new URLSearchParams();
+  if (params.page) searchParams.set('page', params.page.toString());
+  if (params.limit) searchParams.set('limit', params.limit.toString());
+  if (params.search) searchParams.set('search', params.search);
+  if (params.isActive !== undefined) searchParams.set('isActive', params.isActive.toString());
+  const queryString = searchParams.toString();
+  return queryString ? `?${queryString}` : '';
+}
+
+export async function getSkills(params: SkillQueryParams = {}): Promise<SkillListResponse> {
+  const response = await apiClient.get<ApiResponse<SkillListResponse>>(
+    `${API_ENDPOINTS.adminSkills.list}${buildSkillQueryString(params)}`
+  );
+  return response.data.data;
+}
+
+export async function getSkillById(id: string): Promise<SkillResponse> {
+  const response = await apiClient.get<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.byId(id)
+  );
+  return response.data.data;
+}
+
+export async function createSkill(data: CreateSkillRequest): Promise<SkillResponse> {
+  const response = await apiClient.post<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateSkill(id: string, data: UpdateSkillRequest): Promise<SkillResponse> {
+  const response = await apiClient.patch<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteSkill(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminSkills.byId(id));
+}
+
+export async function importSkill(file: File): Promise<SkillResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const response = await apiClient.post<ApiResponse<SkillResponse>>(
+    API_ENDPOINTS.adminSkills.import,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    },
+  );
+  return response.data.data;
+}
+
+// Connectors API
+
+export async function getConnectors(params: ConnectorQueryParams = {}): Promise<ConnectorListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params.page) searchParams.set('page', params.page.toString());
+  if (params.limit) searchParams.set('limit', params.limit.toString());
+  if (params.search) searchParams.set('search', params.search);
+  if (params.isActive !== undefined) searchParams.set('isActive', params.isActive.toString());
+  const queryString = searchParams.toString();
+  const response = await apiClient.get<ApiResponse<ConnectorListResponse>>(
+    `${API_ENDPOINTS.adminConnectors.list}${queryString ? `?${queryString}` : ''}`,
+  );
+  return response.data.data;
+}
+
+export async function getConnectorById(id: string): Promise<ConnectorResponse> {
+  const response = await apiClient.get<ApiResponse<ConnectorResponse>>(
+    API_ENDPOINTS.adminConnectors.byId(id),
+  );
+  return response.data.data;
+}
+
+export async function createConnector(data: CreateConnectorRequest): Promise<ConnectorResponse> {
+  const response = await apiClient.post<ApiResponse<ConnectorResponse>>(
+    API_ENDPOINTS.adminConnectors.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateConnector(id: string, data: UpdateConnectorRequest): Promise<ConnectorResponse> {
+  const response = await apiClient.patch<ApiResponse<ConnectorResponse>>(
+    API_ENDPOINTS.adminConnectors.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteConnector(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminConnectors.byId(id));
+}
+
+export async function inspectMcp(transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<McpInspectResult> {
+  const response = await apiClient.post<ApiResponse<McpInspectResult>>(
+    API_ENDPOINTS.adminConnectors.inspect,
+    { transportType, serverUrl, serverConfig },
+  );
+  return response.data.data;
+}
+
+export async function importFromMcp(transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<McpInspectResult> {
+  const response = await apiClient.post<ApiResponse<McpInspectResult>>(
+    API_ENDPOINTS.adminConnectors.importMcp,
+    { transportType, serverUrl, serverConfig },
+  );
+  return response.data.data;
 }
 
 // Agent Types API

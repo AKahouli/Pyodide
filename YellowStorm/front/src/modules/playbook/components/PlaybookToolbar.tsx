@@ -1,8 +1,18 @@
-import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2 } from 'lucide-react';
+import { Plus, Play, Save, Check, Loader2, History, Wand2, LayoutGrid, Undo2, Redo2, ChevronDown, CalendarClock, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useModuleTranslation } from '@/modules/localization';
-import type { PlaybookPageMode } from '../types';
+import { TASK_TEMPLATES } from '../utils/task-template-registry';
+import { PORT_COLORS } from '../utils/port-colors';
+import type { TaskTemplate, PlaybookPageMode } from '../types';
 
 interface Props {
   pageMode: PlaybookPageMode;
@@ -10,6 +20,7 @@ interface Props {
   hasExecutionContext?: boolean;
   hasPendingInterrupt?: boolean;
   onAddStep: () => void;
+  onAddStepFromTemplate: (template: TaskTemplate) => void;
   onAutoLayout: () => void;
   onRun: () => void;
   onSave: () => void;
@@ -22,10 +33,18 @@ interface Props {
   canRun: boolean;
   executionMode: 'live' | 'inherit';
   onExecutionModeChange: (mode: 'live' | 'inherit') => void;
+  nodeReflectionEnabled: boolean;
+  onNodeReflectionChange: (enabled: boolean) => void;
+  advisorAutopilotEnabled?: boolean;
+  onAdvisorAutopilotChange?: (enabled: boolean) => void;
   canUndo: boolean;
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onDownloadAllResults?: () => void;
+  canDownloadAllResults?: boolean;
+  /** Opens schedule dialog (design mode). */
+  onSchedule?: () => void;
 }
 
 export function PlaybookToolbar({
@@ -34,6 +53,7 @@ export function PlaybookToolbar({
   hasExecutionContext = false,
   hasPendingInterrupt = false,
   onAddStep,
+  onAddStepFromTemplate,
   onAutoLayout,
   onRun,
   onSave,
@@ -46,10 +66,17 @@ export function PlaybookToolbar({
   canRun,
   executionMode,
   onExecutionModeChange,
+  nodeReflectionEnabled,
+  onNodeReflectionChange,
+  advisorAutopilotEnabled = false,
+  onAdvisorAutopilotChange,
   canUndo,
   canRedo,
   onUndo,
   onRedo,
+  onDownloadAllResults,
+  canDownloadAllResults = false,
+  onSchedule,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showCopilotAction = pageMode === 'design' || hasPendingInterrupt || copilotOpen;
@@ -100,14 +127,55 @@ export function PlaybookToolbar({
           <SelectItem value="inherit">{t('toolbar.executionMode.inherit')}</SelectItem>
         </SelectContent>
       </Select>
-      <Button variant="outline" size="sm" onClick={onAddStep} className="px-2 sm:px-3">
-        <Plus className="h-4 w-4 sm:mr-1" />
-        <span className="hidden sm:inline">{t('toolbar.addStep')}</span>
-      </Button>
+      <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
+        <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />
+        <span>{t('toolbar.advisor')}</span>
+      </div>
+      {onAdvisorAutopilotChange && (
+        <div className="flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs text-muted-foreground">
+          <Switch checked={advisorAutopilotEnabled} onCheckedChange={onAdvisorAutopilotChange} />
+          <span>{t('toolbar.stepAutopilot')}</span>
+        </div>
+      )}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <div className="flex">
+            <Button variant="outline" size="sm" onClick={onAddStep} className="rounded-r-none border-r-0 px-2 sm:px-3">
+              <Plus className="h-4 w-4 sm:mr-1" />
+              <span className="hidden sm:inline">{t('toolbar.addBlankStep')}</span>
+            </Button>
+            <Button variant="outline" size="sm" className="h-9 rounded-l-none px-1.5">
+              <ChevronDown className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuItem onClick={onAddStep}>
+            <Plus className="h-4 w-4 mr-2" />
+            {t('toolbar.addBlankStep')}
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {TASK_TEMPLATES.map((tpl) => {
+            const KindIcon = PORT_COLORS[tpl.inputPorts[0]?.artifactKind || 'text'].icon;
+            return (
+              <DropdownMenuItem key={tpl.id} onClick={() => onAddStepFromTemplate(tpl)}>
+                <KindIcon className="h-4 w-4 mr-2 text-muted-foreground" />
+                {t(`taskType.${tpl.type}` as any)}
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuContent>
+      </DropdownMenu>
       <Button variant="outline" size="sm" onClick={onAutoLayout} className="px-2 sm:px-3">
         <LayoutGrid className="h-4 w-4 sm:mr-1" />
         <span className="hidden sm:inline">{t('toolbar.autoLayout')}</span>
       </Button>
+      {onDownloadAllResults && (
+        <Button variant="outline" size="sm" onClick={onDownloadAllResults} disabled={!canDownloadAllResults} className="px-2 sm:px-3">
+          <Download className="h-4 w-4 sm:mr-1" />
+          <span className="hidden sm:inline">{t('execution.downloadAllResults')}</span>
+        </Button>
+      )}
       {showCopilotAction && (
         <Button
           variant={copilotOpen ? 'default' : 'outline'}
@@ -125,6 +193,12 @@ export function PlaybookToolbar({
         <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
           <History className="h-4 w-4 sm:mr-1" />
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
+        </Button>
+      )}
+      {onSchedule && (
+        <Button variant="outline" size="sm" onClick={onSchedule} className="px-2 sm:px-3">
+            <CalendarClock className="h-4 w-4 sm:mr-1" />
+            <span className="hidden sm:inline">{t('toolbar.schedule')}</span>
         </Button>
       )}
       <Button

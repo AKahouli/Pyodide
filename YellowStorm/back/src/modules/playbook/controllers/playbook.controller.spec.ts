@@ -22,12 +22,16 @@ describe('PlaybookController', () => {
       | 'getDesignMessages'
       | 'revertToSnapshot'
       | 'cloneForUser'
+      | 'getSchedule'
+      | 'upsertSchedule'
+      | 'clearSchedule'
+      | 'getOrCreateIntegrationToken'
     >
   >;
   let executionService: jest.Mocked<
     Pick<
       PlaybookExecutionService,
-      'executePlaybook' | 'stopExecution' | 'resumeExecution' | 'findActiveExecutionsByUser'
+      'executePlaybook' | 'executePlaybookByIntegrationToken' | 'stopExecution' | 'resumeExecution' | 'findActiveExecutionsByUser'
     >
   >;
   let designService: jest.Mocked<
@@ -54,10 +58,15 @@ describe('PlaybookController', () => {
       getDesignMessages: jest.fn().mockResolvedValue([]),
       revertToSnapshot: jest.fn().mockResolvedValue({ id: playbookId }),
       cloneForUser: jest.fn().mockResolvedValue({ id: 'cloned-789' }),
+      getSchedule: jest.fn().mockResolvedValue(null),
+      upsertSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
+      clearSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
+      getOrCreateIntegrationToken: jest.fn().mockResolvedValue({ token: 'integration-token' }),
     };
 
     executionService = {
       executePlaybook: jest.fn().mockResolvedValue({ executionId: 'exec-1' }),
+      executePlaybookByIntegrationToken: jest.fn().mockResolvedValue({ executionId: 'exec-public-1' }),
       stopExecution: jest.fn().mockResolvedValue(undefined),
       resumeExecution: jest.fn().mockResolvedValue({ executionId: 'exec-1' }),
       findActiveExecutionsByUser: jest.fn().mockResolvedValue([]),
@@ -223,7 +232,69 @@ describe('PlaybookController', () => {
         playbookId,
         dto,
         'test@example.com',
+        { executionTrigger: 'manual' },
       );
+    });
+  });
+
+  describe('getIntegrationLink', () => {
+    it('should delegate to playbookService.getOrCreateIntegrationToken', async () => {
+      const result = await controller.getIntegrationLink(user, playbookId);
+
+      expect(playbookService.getOrCreateIntegrationToken).toHaveBeenCalledWith(playbookId, 'user-123');
+      expect(result).toEqual({ token: 'integration-token' });
+    });
+  });
+
+  describe('executePublic', () => {
+    it('should delegate to executionService.executePlaybookByIntegrationToken', async () => {
+      const dto = { variables: {} } as any;
+
+      await controller.executePublic('integration-token', dto);
+
+      expect(executionService.executePlaybookByIntegrationToken).toHaveBeenCalledWith('integration-token', dto);
+    });
+  });
+
+  describe('getSchedule', () => {
+    it('should delegate to playbookService.getSchedule', async () => {
+      const schedule = { enabled: false, timezone: 'UTC' } as any;
+      playbookService.getSchedule.mockResolvedValue(schedule);
+
+      const result = await controller.getSchedule(playbookId);
+
+      expect(playbookService.getSchedule).toHaveBeenCalledWith(playbookId);
+      expect(result).toBe(schedule);
+    });
+  });
+
+  describe('upsertSchedule', () => {
+    it('should delegate to playbookService.upsertSchedule', async () => {
+      const dto = {
+        enabled: true,
+        timezone: 'Europe/Paris',
+        type: 'daily',
+        daily: { timesLocal: ['09:00'] },
+      } as any;
+      const response = { id: playbookId, executionSchedule: dto };
+      playbookService.upsertSchedule.mockResolvedValue(response as any);
+
+      const result = await controller.upsertSchedule(playbookId, dto);
+
+      expect(playbookService.upsertSchedule).toHaveBeenCalledWith(playbookId, dto);
+      expect(result).toBe(response);
+    });
+  });
+
+  describe('clearSchedule', () => {
+    it('should delegate to playbookService.clearSchedule', async () => {
+      const response = { id: playbookId, executionSchedule: null };
+      playbookService.clearSchedule.mockResolvedValue(response as any);
+
+      const result = await controller.clearSchedule(playbookId);
+
+      expect(playbookService.clearSchedule).toHaveBeenCalledWith(playbookId);
+      expect(result).toBe(response);
     });
   });
 

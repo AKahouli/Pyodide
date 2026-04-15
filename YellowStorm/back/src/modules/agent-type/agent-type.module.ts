@@ -7,6 +7,7 @@ import { AgentType, AgentTypeSchema } from './schemas/agent-type.schema';
 import { AgentTypePrompt, AgentTypePromptSchema } from './schemas/agent-type-prompt.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { AgentModule } from '../agent/agent.module';
+import { SkillModule } from '../skill/skill.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { AgentModule } from '../agent/agent.module';
       { name: AgentTypePrompt.name, schema: AgentTypePromptSchema },
     ]),
     AuthorizationModule,
+    SkillModule,
     forwardRef(() => AgentModule),
   ],
   controllers: [AgentTypeController, AdminAgentTypeController],

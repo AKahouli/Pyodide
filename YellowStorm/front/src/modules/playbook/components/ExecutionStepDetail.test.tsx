@@ -1,15 +1,25 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
 import type { PlaybookExecution, TaskResult } from '../types';
 
+const navigateMock = vi.hoisted(() => vi.fn());
 const storeState = vi.hoisted(() => ({
   currentPlaybook: null as any,
   deleteExecution: vi.fn(),
+  deleteStepExecution: vi.fn(),
+  updatePlaybookFromJudge: vi.fn(),
+  generatePlaybookFromJudge: vi.fn(),
+  optimizeStepFromJudge: vi.fn(),
   validateTaskReplay: vi.fn(),
   fetchTaskReplays: vi.fn().mockResolvedValue([]),
 }));
+
+vi.mock('react-router-dom', async () => {
+  const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
+  return { ...actual, useNavigate: () => navigateMock };
+});
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -118,6 +128,287 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
   });
 
+  it('navigates to the newly generated playbook from the judge CTA', async () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1' }],
+    };
+    storeState.generatePlaybookFromJudge.mockResolvedValueOnce({ id: 'p2' });
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          judgeResult: {
+            accuracyScore: 80,
+            completenessScore: 90,
+            overallScore: 85,
+            confidence: 0.84,
+            toolUsageScore: 78,
+            missingFacts: [],
+            incoherences: [],
+            unsupportedClaims: [],
+            handoffRisks: [],
+            rewriteHints: [],
+            toolSelectionIssues: [],
+            missingToolCalls: [],
+            redundantToolCalls: [],
+            toolOutputUseIssues: [],
+            toolSequencingIssues: [],
+            toolUsageStrengths: [],
+            toolUsageRecommendation: '',
+            safeAutoFixType: 'none',
+            recommendation: 'generate_new_optimized_playbook',
+            reason: 'Create a new playbook.',
+          },
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateNewOptimizedPlaybook' }));
+
+    expect(storeState.generatePlaybookFromJudge).toHaveBeenCalledWith('p1', 'exec-1');
+    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p2');
+
+    storeState.currentPlaybook = null;
+  });
+
+  it('shows a step execution picker in the results tab when history exists', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          attemptNumber: 3,
+          stepExecutions: [
+            {
+              id: 'step-exec-2',
+              attemptNumber: 2,
+              status: 'completed',
+              output: 'Older result',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
+  });
+
+  it('prefers the live current attempt over persisted history for the same attempt number', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          status: 'running',
+          attemptNumber: 3,
+          output: 'Streaming output',
+          completedAt: null,
+          durationMs: null,
+          stepExecutions: [
+            {
+              id: 'step-exec-3',
+              attemptNumber: 3,
+              status: 'completed',
+              output: 'Persisted final snapshot',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Streaming output')).toBeInTheDocument();
+    expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
+    expect(screen.getByText('execution.running')).toBeInTheDocument();
+  });
+
+  it('clears a stale completed result when the step goes back to running', () => {
+    const { rerender } = render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          status: 'completed',
+          attemptNumber: 3,
+          output: 'Persisted final snapshot',
+          completedAt: '2025-01-01T00:00:04.100Z',
+          stepExecutions: [
+            {
+              id: 'step-exec-3',
+              attemptNumber: 3,
+              status: 'completed',
+              output: 'Persisted final snapshot',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Persisted final snapshot')).toBeInTheDocument();
+
+    rerender(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          status: 'running',
+          attemptNumber: 3,
+          output: null,
+          completedAt: null,
+          durationMs: null,
+          stepExecutions: [
+            {
+              id: 'step-exec-3',
+              attemptNumber: 3,
+              status: 'completed',
+              output: 'Persisted final snapshot',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.queryByText('Persisted final snapshot')).not.toBeInTheDocument();
+    expect(screen.getByText('execution.running')).toBeInTheDocument();
+  });
+
+  it('auto-scrolls while streaming and exposes a jump-to-bottom button when scrolled up', () => {
+    const scrollTo = vi.fn();
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = scrollTo as any;
+
+    try {
+      const { rerender } = render(
+        <ExecutionStepDetail
+          step={{
+            ...baseStep,
+            status: 'running',
+            output: 'First streaming chunk',
+            components: [],
+            toolTrace: [],
+            llmPromptTrace: [],
+            artifacts: [],
+            stepExecutions: [],
+          }}
+        />,
+      );
+
+      const scrollContainer = screen.getByTestId('execution-step-scroll');
+      Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+      Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1200, configurable: true });
+      Object.defineProperty(scrollContainer, 'scrollTop', { value: 120, writable: true, configurable: true });
+      fireEvent.scroll(scrollContainer);
+
+      expect(screen.getByRole('button', { name: 'Jump to bottom' })).toBeInTheDocument();
+
+      rerender(
+        <ExecutionStepDetail
+          step={{
+            ...baseStep,
+            status: 'running',
+            output: 'Second streaming chunk',
+            components: [],
+            toolTrace: [],
+            llmPromptTrace: [],
+            artifacts: [],
+            stepExecutions: [],
+          }}
+        />,
+      );
+
+      expect(scrollTo).toHaveBeenCalled();
+    } finally {
+      HTMLElement.prototype.scrollTo = originalScrollTo;
+    }
+  });
+
   it('renders plain text output when no components', () => {
     render(<ExecutionStepDetail step={baseStep} />);
     expect(screen.getByText('Result text here')).toBeInTheDocument();
@@ -180,6 +471,7 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(<ExecutionStepDetail step={withSemanticMatch} />);
+    expect(screen.queryByText('detail.evaluation.description')).not.toBeInTheDocument();
     expect(screen.getByText('detail.evaluation.semanticMatch')).toBeInTheDocument();
     expect(screen.getByText('detail.evaluation.evidenceConsistency')).toBeInTheDocument();
     expect(screen.getByText('93%')).toBeInTheDocument();
@@ -318,9 +610,199 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('detail.evaluation.historyLabel')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.stepExecutionLabel')).toBeInTheDocument();
     expect(screen.getByText(/detail.evaluation.trigger: manual/)).toBeInTheDocument();
     expect(screen.getByText(/detail.provenance.baseline: v3/)).toBeInTheDocument();
+  });
+
+  it('renders a step execution comparison when multiple evaluation history entries exist', () => {
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'completed',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [baseStep],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:00:05.200Z',
+      singleStepTaskId: null,
+      playbookSnapshot: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          semanticMatch: {
+            matchScore: 91,
+            semanticSimilarityScore: 88,
+            evidenceConsistencyScore: 93,
+            judgeScore: 90,
+            reason: 'Selected attempt.',
+            missingPoints: [],
+            changedPoints: [],
+            model: 'test-evaluation-model',
+            judgeUsed: true,
+          },
+          evaluationHistory: [
+            {
+              id: 'hist-1',
+              createdAt: '2025-01-01T00:01:00.000Z',
+              attemptNumber: 2,
+              trigger: 'manual',
+              baselineReplayId: 'r1',
+              baselineValidationVersion: 3,
+              semanticMatch: {
+                matchScore: 91,
+                semanticSimilarityScore: 88,
+                evidenceConsistencyScore: 93,
+                judgeScore: 90,
+                reason: 'Selected attempt.',
+                missingPoints: [],
+                changedPoints: [],
+                model: 'test-evaluation-model',
+                judgeUsed: true,
+              },
+            },
+            {
+              id: 'hist-2',
+              createdAt: '2025-01-01T00:02:00.000Z',
+              attemptNumber: 3,
+              trigger: 'manual',
+              baselineReplayId: 'r2',
+              baselineValidationVersion: 4,
+              semanticMatch: {
+                matchScore: 84,
+                semanticSimilarityScore: 80,
+                evidenceConsistencyScore: 82,
+                judgeScore: 86,
+                reason: 'Compared attempt.',
+                missingPoints: ['One item'],
+                changedPoints: ['Another item'],
+                model: 'test-evaluation-model',
+                judgeUsed: true,
+              },
+            },
+          ],
+        }}
+        execution={execution}
+      />,
+    );
+
+    expect(screen.getByText('detail.evaluation.stepExecutionLabel')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.compareWith')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.compareTitle')).toBeInTheDocument();
+    expect(screen.getByText('detail.evaluation.comparedExecution')).toBeInTheDocument();
+  });
+
+  it('renders a selector for persisted advisor evaluations', () => {
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'completed',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [baseStep],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:00:05.200Z',
+      singleStepTaskId: null,
+      playbookSnapshot: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          judgeResult: null,
+          judgeHistory: [
+            {
+              id: 'judge-1',
+              createdAt: '2025-01-01T00:01:00.000Z',
+              attemptNumber: 1,
+              model: 'advisor-model-v1',
+              judgeResult: {
+                accuracyScore: 70,
+                completenessScore: 72,
+                overallScore: 71,
+                confidence: 0.7,
+                toolUsageScore: 68,
+                missingFacts: [],
+                incoherences: [],
+                unsupportedClaims: [],
+                handoffRisks: [],
+                rewriteHints: [],
+                toolSelectionIssues: [],
+                missingToolCalls: [],
+                redundantToolCalls: [],
+                toolOutputUseIssues: [],
+                toolSequencingIssues: [],
+                toolUsageStrengths: [],
+                toolUsageRecommendation: 'Use the validated source first.',
+                safeAutoFixType: 'none',
+                recommendation: 'none',
+                reason: 'Earlier advisor result.',
+              },
+            },
+            {
+              id: 'judge-2',
+              createdAt: '2025-01-01T00:02:00.000Z',
+              attemptNumber: 2,
+              model: 'advisor-model-v2',
+              judgeResult: {
+                accuracyScore: 81,
+                completenessScore: 83,
+                overallScore: 82,
+                confidence: 0.8,
+                toolUsageScore: 75,
+                missingFacts: ['Missing control check'],
+                incoherences: [],
+                unsupportedClaims: [],
+                handoffRisks: [],
+                rewriteHints: [],
+                toolSelectionIssues: [],
+                missingToolCalls: [],
+                redundantToolCalls: [],
+                toolOutputUseIssues: [],
+                toolSequencingIssues: [],
+                toolUsageStrengths: [],
+                toolUsageRecommendation: 'Earlier advisor result.',
+                safeAutoFixType: 'none',
+                recommendation: 'none',
+                reason: 'Latest advisor result.',
+              },
+            },
+          ],
+        }}
+        execution={execution}
+      />,
+    );
+
+    expect(screen.getByText('detail.judge.stepExecutionLabel')).toBeInTheDocument();
+    expect(screen.getByText(/detail.evaluation.attempt: 2/)).toBeInTheDocument();
+    expect(screen.getByText(/detail.evaluation.judgeModel/)).toBeInTheDocument();
+    expect(screen.getByText('Latest advisor result.')).toBeInTheDocument();
   });
 
   it('shows an in-progress message while evaluation is running', () => {
@@ -391,6 +873,24 @@ describe('ExecutionStepDetail', () => {
           ...baseStep,
           semanticMatch: null,
           evaluationHistory: [{
+            id: 'hist-1',
+            createdAt: '2025-01-01T00:01:00.000Z',
+            attemptNumber: 2,
+            trigger: 'manual',
+            baselineReplayId: 'r1',
+            baselineValidationVersion: 3,
+            semanticMatch: {
+              matchScore: 91,
+              semanticSimilarityScore: 88,
+              evidenceConsistencyScore: 93,
+              judgeScore: 90,
+              reason: 'Earlier history-only evaluation payload.',
+              missingPoints: ['One item'],
+              changedPoints: ['One changed item'],
+              model: 'test-evaluation-model',
+              judgeUsed: true,
+            },
+          }, {
             id: 'hist-2',
             createdAt: '2025-01-01T00:02:00.000Z',
             attemptNumber: 3,

@@ -212,6 +212,13 @@ export class SystemService implements OnApplicationBootstrap {
   }
 
   /**
+   * Check if classic (email/password) auth is enabled (sync, from cache)
+   */
+  isClassicAuthEnabled(): boolean {
+    return this.registrationCache?.classicAuthEnabled ?? true;
+  }
+
+  /**
    * Set registration enabled/disabled
    */
   async setRegistrationEnabled(
@@ -222,6 +229,7 @@ export class SystemService implements OnApplicationBootstrap {
       enabled,
       disabledAt: enabled ? undefined : new Date(),
       disabledBy: enabled ? undefined : options.userId,
+      classicAuthEnabled: this.registrationCache?.classicAuthEnabled ?? true,
     };
 
     await this.systemSettingModel.findOneAndUpdate(
@@ -235,10 +243,50 @@ export class SystemService implements OnApplicationBootstrap {
       enabled: value.enabled,
       disabledAt: value.disabledAt,
       disabledBy: value.disabledBy,
+      classicAuthEnabled: value.classicAuthEnabled,
     };
     this.lastRegistrationCacheUpdate = Date.now();
 
     this.logger.log(`Registration ${enabled ? 'enabled' : 'disabled'}`, {
+      userId: options.userId,
+    });
+
+    return this.registrationCache;
+  }
+
+  /**
+   * Set classic auth enabled/disabled
+   */
+  async setClassicAuthEnabled(
+    enabled: boolean,
+    options: { userId?: string } = {},
+  ): Promise<RegistrationStatus> {
+    const currentEnabled = this.registrationCache?.enabled ?? true;
+    const currentDisabledAt = this.registrationCache?.disabledAt;
+    const currentDisabledBy = this.registrationCache?.disabledBy;
+
+    const value: RegistrationValue = {
+      enabled: currentEnabled,
+      disabledAt: currentDisabledAt,
+      disabledBy: currentDisabledBy,
+      classicAuthEnabled: enabled,
+    };
+
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: REGISTRATION_KEY },
+      { key: REGISTRATION_KEY, value },
+      { upsert: true, new: true },
+    );
+
+    this.registrationCache = {
+      enabled: value.enabled,
+      disabledAt: value.disabledAt,
+      disabledBy: value.disabledBy,
+      classicAuthEnabled: value.classicAuthEnabled,
+    };
+    this.lastRegistrationCacheUpdate = Date.now();
+
+    this.logger.log(`Classic auth ${enabled ? 'enabled' : 'disabled'}`, {
       userId: options.userId,
     });
 
@@ -257,9 +305,10 @@ export class SystemService implements OnApplicationBootstrap {
           enabled: setting.value.enabled,
           disabledAt: setting.value.disabledAt,
           disabledBy: setting.value.disabledBy,
+          classicAuthEnabled: setting.value.classicAuthEnabled ?? true,
         };
       } else {
-        this.registrationCache = { enabled: true };
+        this.registrationCache = { enabled: true, classicAuthEnabled: true };
       }
 
       this.lastRegistrationCacheUpdate = Date.now();

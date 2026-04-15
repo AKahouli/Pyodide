@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { nanoid } from 'nanoid';
 import { Playbook, PlaybookDocument } from '../schemas/playbook.schema';
 import {
   PlaybookExecution,
@@ -9,6 +10,7 @@ import {
 } from '../schemas/playbook-execution.schema';
 import { CreatePlaybookDto } from '../dto/create-playbook.dto';
 import { UpdatePlaybookDto } from '../dto/update-playbook.dto';
+import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
 import { PlaybookQueryDto } from '../dto/playbook-query.dto';
 import { ExecutionQueryDto } from '../dto/execution-query.dto';
 import {
@@ -19,7 +21,10 @@ import {
   PlaybookExecutionSummaryResponse,
   PaginatedExecutions,
   PlaybookDesignMessageResponse,
+  ExecutionScheduleData,
 } from '../interfaces/playbook.interface';
+import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
+import { buildExecutionScheduleDocument } from '../utils/execution-schedule-upsert.builder';
 import {
   PlaybookDesignMessage,
   PlaybookDesignMessageDocument,
@@ -56,6 +61,7 @@ export class PlaybookService {
       workspaces: (dto.workspaces || []).map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     this.logger.log('Playbook created', { playbookId: playbook._id, userId });
@@ -78,6 +84,7 @@ export class PlaybookService {
       workspaces: workspaceIds.map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     this.logger.log('Playbook created with tasks', {
@@ -107,6 +114,7 @@ export class PlaybookService {
       workspaces: source.workspaces || [],
       createdBy: new Types.ObjectId(targetUserId),
       isActive: true,
+      integrationToken: nanoid(32),
     });
 
     await this.cloneExecutionsForPlaybook(sourcePlaybookId, cloned._id.toString(), targetUserId);
@@ -159,8 +167,7 @@ export class PlaybookService {
       matchQuery[dateField] = dateRange;
     }
 
-    const needsExecutionLookup =
-      sortBy === 'lastExecutionAt' || dateField === 'lastExecutionAt';
+    const needsExecutionLookup = true;
 
     // Build aggregation pipeline
     const pipeline: any[] = [{ $match: matchQuery }];
@@ -189,7 +196,7 @@ export class PlaybookService {
               { $match: { $expr: { $eq: ['$playbookId', '$$pid'] } } },
               { $sort: { startedAt: -1 } },
               { $limit: 1 },
-              { $project: { startedAt: 1 } },
+              { $project: { startedAt: 1, status: 1 } },
             ],
             as: '_lastExec',
           },
@@ -198,6 +205,9 @@ export class PlaybookService {
           $addFields: {
             lastExecutionAt: {
               $ifNull: [{ $arrayElemAt: ['$_lastExec.startedAt', 0] }, null],
+            },
+            executionStatus: {
+              $ifNull: [{ $arrayElemAt: ['$_lastExec.status', 0] }, null],
             },
           },
         },
@@ -223,6 +233,7 @@ export class PlaybookService {
           { $limit: limit },
           {
             $project: {
+              integrationToken: 1,
               name: 1,
               description: 1,
               taskCount: 1,
@@ -230,6 +241,9 @@ export class PlaybookService {
               lastExecutionAt: 1,
               createdAt: 1,
               updatedAt: 1,
+              scheduleEnabled: {
+                $eq: [{ $ifNull: ['$executionSchedule.enabled', false] }, true],
+              },
             },
           },
         ],
@@ -239,6 +253,17 @@ export class PlaybookService {
     const [result] = await this.playbookModel.aggregate(pipeline);
     const total = result.metadata[0]?.total ?? 0;
     const playbooks = result.data as any[];
+
+    const missingTokenPlaybooks = playbooks.filter((p) => !p.integrationToken);
+    if (missingTokenPlaybooks.length > 0) {
+      await Promise.all(
+        missingTokenPlaybooks.map(async (p) => {
+          const integrationToken = nanoid(32);
+          await this.playbookModel.updateOne({ _id: p._id }, { $set: { integrationToken } }).exec();
+          p.integrationToken = integrationToken;
+        }),
+      );
+    }
 
     return {
       playbooks: playbooks.map((p) => this.mapToSummaryResponse(p)),
@@ -268,6 +293,57 @@ export class PlaybookService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
     }
 
+    return await this.mapToResponse(playbook as any);
+  }
+
+  /**
+   * Returns the mapped execution schedule for API consumers (at most one embedded `executionSchedule` per playbook).
+   */
+  async getSchedule(playbookId: string): Promise<ExecutionScheduleData | null> {
+    const playbook = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+    return mapExecutionScheduleToData(playbook.executionSchedule);
+  }
+
+  /** Persists the single embedded schedule for this playbook (replaces any previous configuration). */
+  async upsertSchedule(playbookId: string, dto: UpsertPlaybookScheduleDto): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+    const prev = existing.executionSchedule as { lastScheduledRunAt?: Date } | null | undefined;
+    const preserveLast =
+      dto.enabled && prev?.lastScheduledRunAt ? new Date(prev.lastScheduledRunAt) : null;
+
+    const executionSchedule = buildExecutionScheduleDocument(dto, preserveLast);
+
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook schedule upserted', { playbookId, enabled: dto.enabled, type: dto.type });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async clearSchedule(playbookId: string): Promise<PlaybookResponse> {
+    const disabledSchedule = buildExecutionScheduleDocument({ enabled: false } as UpsertPlaybookScheduleDto, null);
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(playbookId, { $set: { executionSchedule: disabledSchedule } }, { new: true })
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook schedule cleared', { playbookId });
     return await this.mapToResponse(playbook as any);
   }
 
@@ -302,6 +378,32 @@ export class PlaybookService {
     const newValue = !playbook.isFavorite;
     await this.playbookModel.findByIdAndUpdate(playbookId, { $set: { isFavorite: newValue } });
     return { isFavorite: newValue };
+  }
+
+  async getOrCreateIntegrationToken(
+    playbookId: string,
+    userId: string,
+  ): Promise<{ token: string }> {
+    const playbook = await this.playbookModel.findOne({
+      _id: new Types.ObjectId(playbookId),
+      createdBy: new Types.ObjectId(userId),
+      isActive: true,
+    }).exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    if (!playbook.integrationToken) {
+      playbook.integrationToken = nanoid(32);
+      await playbook.save();
+    }
+
+    return { token: playbook.integrationToken };
+  }
+
+  async findByIntegrationToken(token: string): Promise<PlaybookDocument | null> {
+    return this.playbookModel.findOne({ integrationToken: token, isActive: true }).exec();
   }
 
   async findRawById(playbookId: string): Promise<PlaybookDocument | null> {
@@ -378,6 +480,55 @@ export class PlaybookService {
     }
 
     this.logger.log('Playbook execution deleted', { playbookId, executionId });
+  }
+
+  async deleteStepExecution(
+    playbookId: string,
+    executionId: string,
+    taskId: string,
+    stepExecutionId: string,
+  ): Promise<void> {
+    const execution = await this.executionModel
+      .findOne({
+        _id: new Types.ObjectId(executionId),
+        playbookId: new Types.ObjectId(playbookId),
+      })
+      .lean()
+      .exec();
+
+    if (!execution) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND);
+    }
+
+    const taskResult = (execution.taskResults || []).find((task: any) => task.taskId === taskId);
+    if (!taskResult) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND);
+    }
+
+    const stepExecutions = taskResult.stepExecutions || [];
+    const target = stepExecutions.find((entry: any) => entry.id === stepExecutionId);
+    if (!target) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND);
+    }
+
+    if ((taskResult.attemptNumber ?? null) === (target.attemptNumber ?? null)) {
+      throw new BadRequestException('Cannot delete the current step execution.');
+    }
+
+    await this.executionModel.updateOne(
+      {
+        _id: new Types.ObjectId(executionId),
+        playbookId: new Types.ObjectId(playbookId),
+        'taskResults.taskId': taskId,
+      },
+      {
+        $set: {
+          'taskResults.$.stepExecutions': stepExecutions.filter((entry: any) => entry.id !== stepExecutionId),
+        },
+      },
+    ).exec();
+
+    this.logger.log('Playbook step execution deleted', { playbookId, executionId, taskId, stepExecutionId });
   }
 
   async deleteExecutions(
@@ -555,6 +706,9 @@ export class PlaybookService {
       description: playbook.description || '',
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
+      scheduleEnabled: Boolean(playbook.scheduleEnabled),
+      executionStatus: playbook.executionStatus ?? null,
+      integrationToken: playbook.integrationToken || null,
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
@@ -594,6 +748,10 @@ export class PlaybookService {
         notifyOnComplete: t.notifyOnComplete || false,
         notifyEmails: t.notifyEmails || [],
         inputFiles: t.inputFiles || [],
+        enabled: t.enabled !== false,
+        taskType: t.taskType || null,
+        inputPorts: t.inputPorts || [],
+        outputPorts: t.outputPorts || [],
         hasValidatedReplay: activeReplays.has(t.id),
         activeReplayId: activeReplays.get(t.id)?.id || null,
         activeReplayVersion: activeReplays.get(t.id)?.validationVersion || null,
@@ -608,16 +766,20 @@ export class PlaybookService {
         activeOutputFormatStatus: activeOutputFormats.get(t.id)?.generationStatus || null,
         activeOutputFormatError: activeOutputFormats.get(t.id)?.generationError || null,
         stepReplayMode: t.stepReplayMode || 'live',
+        toolBindings: t.toolBindings || [],
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,
         sourceId: e.sourceId,
         targetId: e.targetId,
+        sourceOutputPortId: e.sourceOutputPortId || 'default',
+        targetInputPortId: e.targetInputPortId || 'default',
       })),
       workspaces: (playbook.workspaces || []).map((w: any) => w.toString()),
       createdBy: playbook.createdBy.toString(),
       isFavorite: playbook.isFavorite || false,
       isActive: playbook.isActive,
+      executionSchedule: mapExecutionScheduleToData(playbook.executionSchedule),
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
     };
@@ -631,6 +793,7 @@ export class PlaybookService {
       executionNumber: execution.executionNumber,
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
+      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
       error: execution.error,
       durationMs: execution.durationMs,
       startedAt: execution.startedAt?.toISOString?.() || execution.startedAt,
@@ -650,6 +813,17 @@ export class PlaybookService {
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
       executionMode: execution.executionMode || 'live',
+      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      reflectionEnabled: execution.reflectionEnabled !== false,
+      advisorAutopilotEnabled: execution.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: execution.advisorAutopilotTargetScore ?? 80,
+      advisorAutopilotMaxTurns: execution.advisorAutopilotMaxTurns ?? 2,
+      advisorAutopilotStatus: execution.advisorAutopilotStatus || 'idle',
+      advisorAutopilotTaskId: execution.advisorAutopilotTaskId ?? null,
+      advisorAutopilotAttemptCount: execution.advisorAutopilotAttemptCount ?? 0,
+      advisorAutopilotLastError: execution.advisorAutopilotLastError ?? null,
+      judgeSummaryStatus: execution.judgeSummaryStatus || 'idle',
+      judgeSummary: execution.judgeSummary || null,
       replaySourceByTask: execution.replaySourceByTask || null,
       taskResults: (execution.taskResults || []).map((tr: any) => ({
         taskId: tr.taskId,
@@ -674,6 +848,30 @@ export class PlaybookService {
         staleReason: tr.staleReason ?? null,
         invalidatedByTaskId: tr.invalidatedByTaskId ?? null,
         semanticMatch: tr.semanticMatch ?? null,
+        judgeStatus: tr.judgeStatus || 'idle',
+        judgeResult: tr.judgeResult ?? null,
+        judgeError: tr.judgeError ?? null,
+        advisorTurnCount: tr.advisorTurnCount ?? 0,
+        advisorTurnHistory: (tr.advisorTurnHistory || []).map((entry: any) => ({
+          turn: entry.turn,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+          score: entry.score ?? null,
+          recommendation: entry.recommendation ?? null,
+          safeAutoFixType: entry.safeAutoFixType ?? null,
+          actionType: entry.actionType,
+          stopReason: entry.stopReason ?? null,
+        })),
+        lastAdvisorAction: tr.lastAdvisorAction ?? null,
+        lastAdvisorScoreDelta: tr.lastAdvisorScoreDelta ?? null,
+        advisorStopReason: tr.advisorStopReason ?? null,
+        judgeHistory: (tr.judgeHistory || []).map((entry: any) => ({
+          id: entry.id,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+          attemptNumber: entry.attemptNumber ?? null,
+          model: entry.model ?? null,
+          judgeResult: entry.judgeResult,
+        })),
+        artifacts: tr.artifacts || [],
         evaluationHistory: (tr.evaluationHistory || []).map((entry: any) => ({
           id: entry.id,
           createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
@@ -682,6 +880,24 @@ export class PlaybookService {
           baselineReplayId: entry.baselineReplayId ?? null,
           baselineValidationVersion: entry.baselineValidationVersion ?? null,
           semanticMatch: entry.semanticMatch,
+        })),
+        stepExecutions: (tr.stepExecutions || []).map((entry: any) => ({
+          id: entry.id,
+          attemptNumber: entry.attemptNumber ?? null,
+          status: entry.status,
+          output: entry.output ?? null,
+          error: entry.error ?? null,
+          durationMs: entry.durationMs ?? null,
+          startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
+          completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
+          components: entry.components || [],
+          toolTrace: entry.toolTrace || [],
+          llmPromptTrace: entry.llmPromptTrace || [],
+          inputTokens: entry.inputTokens ?? null,
+          outputTokens: entry.outputTokens ?? null,
+          totalTokens: entry.totalTokens ?? null,
+          modelName: entry.modelName ?? null,
+          artifacts: entry.artifacts || [],
         })),
       })),
       threadId: execution.threadId,

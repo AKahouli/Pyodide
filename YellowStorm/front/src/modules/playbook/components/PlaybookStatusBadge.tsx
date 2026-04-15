@@ -4,6 +4,7 @@ import { useModuleTranslation } from '@/modules/localization/useModuleTranslatio
 import type { StepStatus, ExecutionStatus } from '../types';
 
 const statusConfig: Record<string, { icon: React.ElementType; className: string }> = {
+  idle: { icon: Circle, className: 'border-transparent bg-muted text-muted-foreground' },
   pending: { icon: Circle, className: 'border-transparent bg-muted text-muted-foreground' },
   running: { icon: Loader2, className: 'border-transparent bg-primary/10 text-primary' },
   completed: { icon: CheckCircle2, className: 'border-transparent bg-green-500/10 text-green-600' },
@@ -14,7 +15,7 @@ const statusConfig: Record<string, { icon: React.ElementType; className: string 
 };
 
 interface Props {
-  status: StepStatus | ExecutionStatus;
+  status: StepStatus | ExecutionStatus | 'idle';
   size?: 'sm' | 'md' | 'xs';
 }
 
@@ -29,7 +30,7 @@ export function PlaybookStatusBadge({ status, size = 'sm' }: Props) {
   return (
     <Badge variant="outline" className={`gap-1 ${paddingClass} ${config.className}`}>
       <Icon className={`${iconSize} ${status === 'running' ? 'animate-spin' : ''}`} />
-      <span className={textClass}>{t(`status.${status}`)}</span>
+      <span className={textClass}>{status === 'idle' ? 'Idle' : t(`status.${status}`)}</span>
     </Badge>
   );
 }

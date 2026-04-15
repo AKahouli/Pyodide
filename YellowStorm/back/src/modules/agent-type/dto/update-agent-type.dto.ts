@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, MinLength, MaxLength, Matches } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, MinLength, MaxLength, Matches, IsArray, IsMongoId } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class UpdateAgentTypeDto {
@@ -15,6 +15,12 @@ export class UpdateAgentTypeDto {
   @IsString()
   @MaxLength(50000)
   defaultPrompt?: string;
+
+  @ApiPropertyOptional({ description: 'Skill IDs inherited by agents of this type', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  skills?: string[];
 
   @ApiPropertyOptional({ description: 'Whether the agent type is active' })
   @IsOptional()

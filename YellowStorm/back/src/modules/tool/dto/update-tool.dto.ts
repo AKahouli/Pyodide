@@ -30,6 +30,12 @@ export class UpdateToolDto {
   @Type(() => ToolAttributeDto)
   attributes?: ToolAttributeDto[];
 
+  @ApiPropertyOptional({ description: 'Connected app key required for this tool', example: 'microsoft' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  requiredAppKey?: string;
+
   @ApiPropertyOptional({ description: 'Whether the tool is active' })
   @IsOptional()
   @IsBoolean()

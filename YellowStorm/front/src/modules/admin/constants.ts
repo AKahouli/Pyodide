@@ -15,18 +15,11 @@ import {
   Wrench,
   Puzzle,
   Bot,
+  KeyRound,
+  Plug,
+  Cable,
 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
-
-// Permissions that grant admin panel access
-export const ADMIN_ACCESS_PERMISSIONS = [
-  'admin.*',
-  'admin.roles.read',
-  'admin.roles.manage',
-  'admin.audit.read',
-  'admin.logs.read',
-  '*',
-] as const;
 
 // Admin menu items with their required permissions
 export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
@@ -49,6 +42,26 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['admin.roles.read', 'admin.*', '*'],
     description: 'Configure roles and permissions',
     descriptionKey: 'menu.roles.description',
+  },
+  {
+    id: 'auth-providers',
+    label: 'Auth Providers',
+    labelKey: 'menu.authProviders.label',
+    path: '/admin/auth-providers',
+    icon: KeyRound,
+    permissions: ['auth_providers.read', 'auth_providers.*', '*'],
+    description: 'Manage OAuth authentication providers',
+    descriptionKey: 'menu.authProviders.description',
+  },
+  {
+    id: 'connected-apps',
+    label: 'Connected Apps',
+    labelKey: 'menu.connectedApps.label',
+    path: '/admin/connected-apps',
+    icon: Plug,
+    permissions: ['connected_apps.read', 'connected_apps.*', '*'],
+    description: 'Manage external app integrations',
+    descriptionKey: 'menu.connectedApps.description',
   },
   {
     id: 'audit',
@@ -121,6 +134,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     descriptionKey: 'menu.agents.description',
   },
   {
+    id: 'playbook-prompts',
+    label: 'Playbook Prompts',
+    labelKey: 'menu.playbookPrompts.label',
+    path: '/admin/playbook-prompts',
+    icon: FileText,
+    permissions: ['admin.*', '*'],
+    description: 'Manage playbook prompt templates',
+    descriptionKey: 'menu.playbookPrompts.description',
+  },
+  {
     id: 'tools',
     label: 'Tools',
     labelKey: 'menu.tools.label',
@@ -129,6 +152,26 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['tools.read', 'tools.*', '*'],
     description: 'Manage agent tools',
     descriptionKey: 'menu.tools.description',
+  },
+  {
+    id: 'skills',
+    label: 'Skills',
+    labelKey: 'menu.skills.label',
+    path: '/admin/skills',
+    icon: Wrench,
+    permissions: ['skills.read', 'skills.*', '*'],
+    description: 'Manage agent skills',
+    descriptionKey: 'menu.skills.description',
+  },
+  {
+    id: 'connectors',
+    label: 'Connectors',
+    labelKey: 'menu.connectors.label',
+    path: '/admin/connectors',
+    icon: Cable,
+    permissions: ['connectors.read', 'connectors.*', '*'],
+    description: 'Manage MCP connector catalog',
+    descriptionKey: 'menu.connectors.description',
   },
   {
     id: 'analytics',
@@ -150,4 +193,10 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     description: 'System settings and maintenance',
     descriptionKey: 'menu.system.description',
   },
+];
+
+// Permissions that grant admin panel access — derived from menu items
+// Any permission that grants access to a menu item also grants admin panel entry
+export const ADMIN_ACCESS_PERMISSIONS = [
+  ...new Set(ADMIN_MENU_ITEMS.flatMap((item) => item.permissions)),
 ];

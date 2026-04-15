@@ -203,7 +203,7 @@ export class AuthService {
    * Accepts pre-fetched permissions/roleNames to avoid duplicate DB calls when
    * the caller already has them (e.g. login response includes them).
    */
-  private async generateTokens(
+  async generateTokens(
     user: UserDocument,
     ipAddress: string,
     userAgent: string,

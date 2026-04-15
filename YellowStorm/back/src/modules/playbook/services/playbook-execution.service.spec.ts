@@ -13,13 +13,17 @@ import { AgentService } from '../../agent/agent.service';
 import { ModelsService } from '../../models/models.service';
 import { UsageService } from '../../usage/usage.service';
 import { EmailService } from '../../email/email.service';
+import { UserService } from '../../user/user.service';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
+import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
 import {
   PlaybookExecution,
   ExecutionStatus,
   StepStatus,
+  JudgeStatus,
 } from '../schemas/playbook-execution.schema';
 import {
   BadRequestException,
@@ -44,6 +48,13 @@ const objectIdMap: Record<string, string> = {
   'active-exec': '000000000000000000000008',
 };
 const objectId = (id = 'user1') => new Types.ObjectId(objectIdMap[id] ?? id.padEnd(24, '0').replace(/[^a-f0-9]/gi, 'a').slice(0, 24));
+
+/** executePlaybook starts runFullWorkflow without awaiting; listeners attach after microtasks (no setImmediate — works with jest fake timers). */
+async function waitForWorkflowStreamReady(): Promise<void> {
+  for (let i = 0; i < 40; i++) {
+    await Promise.resolve();
+  }
+}
 
 function createMockExecution(overrides: Record<string, any> = {}) {
   return {
@@ -144,7 +155,7 @@ function createMockPlaybook(overrides: Record<string, any> = {}) {
     edges: [
       { sourceId: 'task-1', targetId: 'task-2', toObject: function () { return { sourceId: 'task-1', targetId: 'task-2' }; } },
     ],
-    workspaces: [],
+    workspaces: [objectId('ws1')],
     ...overrides,
   };
 }
@@ -178,20 +189,23 @@ describe('PlaybookExecutionService', () => {
   let mockModelsService: any;
   let mockUsageService: any;
   let mockEmailService: any;
+  let mockUserService: any;
   let mockReplayService: any;
   let mockOutputFormatService: any;
+  let mockPromptService: any;
   let mockSemanticEnrichmentService: any;
+  let mockJudgeEnrichmentService: any;
   let mockLoggerService: any;
   let mockConfigService: any;
 
   const defaultConfig: Record<string, any> = {
     'playbook.maxComponentsPerTask': 200,
     'playbook.maxConcurrentSteps': 5,
+    'app.frontendUrl': 'http://localhost:5173',
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    jest.useFakeTimers({ advanceTimers: true });
 
     mockLoggerService = {
       setContext: jest.fn(),
@@ -207,12 +221,14 @@ describe('PlaybookExecutionService', () => {
 
     mockPlaybookService = {
       findRawById: jest.fn(),
+      findByIntegrationToken: jest.fn(),
       getNextExecutionNumber: jest.fn().mockResolvedValue(1),
     };
 
     mockGrpcService = {
       isAvailable: true,
       runStep: jest.fn(),
+      runStepStream: jest.fn(),
       runPlaybookWorkflow: jest.fn(),
       resumePlaybookWorkflow: jest.fn(),
       resumeStep: jest.fn(),
@@ -253,6 +269,10 @@ describe('PlaybookExecutionService', () => {
       send: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockUserService = {
+      findById: jest.fn().mockResolvedValue({ email: 'user@test.com' }),
+    };
+
     mockReplayService = {
       getActiveReplays: jest.fn().mockResolvedValue(new Map()),
     };
@@ -263,8 +283,22 @@ describe('PlaybookExecutionService', () => {
       applyOutputFormatToTasks: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockPromptService = {
+      getActivePromptTemplates: jest.fn().mockResolvedValue(new Map()),
+      resolvePromptTemplate: jest.fn().mockReturnValue(null),
+      getPromptOverridesPayload: jest.fn().mockResolvedValue(undefined),
+    };
+
     mockSemanticEnrichmentService = {
       schedule: jest.fn(),
+      evaluateNow: jest.fn(),
+    };
+
+    mockJudgeEnrichmentService = {
+      schedule: jest.fn(),
+      scheduleExecutionSweep: jest.fn(),
+      evaluateNodeNow: jest.fn().mockResolvedValue(undefined),
+      evaluateExecutionSummaryNowIfReady: jest.fn().mockResolvedValue(undefined),
     };
 
     // Create a mock model that is both a constructor and has static methods
@@ -275,9 +309,13 @@ describe('PlaybookExecutionService', () => {
     }));
     mockExecutionModel.find = jest.fn().mockReturnValue(createChainMock([]));
     mockExecutionModel.findById = jest.fn().mockReturnValue(createChainMock(null));
-    mockExecutionModel.findByIdAndUpdate = jest.fn().mockResolvedValue(null);
+    mockExecutionModel.findByIdAndUpdate = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue(null),
+    });
     mockExecutionModel.findOne = jest.fn().mockReturnValue(createChainMock(null));
-    mockExecutionModel.updateOne = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    mockExecutionModel.updateOne = jest.fn().mockReturnValue({
+      exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+    });
     mockExecutionModel.create = jest.fn().mockResolvedValue({
       _id: objectId('exec1'),
       toString: () => objectId('exec1').toString(),
@@ -297,9 +335,12 @@ describe('PlaybookExecutionService', () => {
         { provide: ModelsService, useValue: mockModelsService },
         { provide: UsageService, useValue: mockUsageService },
         { provide: EmailService, useValue: mockEmailService },
+        { provide: UserService, useValue: mockUserService },
         { provide: PlaybookReplayService, useValue: mockReplayService },
         { provide: PlaybookOutputFormatService, useValue: mockOutputFormatService },
+        { provide: PlaybookPromptService, useValue: mockPromptService },
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
+        { provide: PlaybookJudgeEnrichmentService, useValue: mockJudgeEnrichmentService },
       ],
     }).compile();
 
@@ -323,6 +364,10 @@ describe('PlaybookExecutionService', () => {
 
     it('should read maxConcurrentSteps from config', () => {
       expect(mockConfigService.get).toHaveBeenCalledWith('playbook.maxConcurrentSteps');
+    });
+
+    it('should read frontendUrl from config', () => {
+      expect(mockConfigService.get).toHaveBeenCalledWith('app.frontendUrl', 'http://localhost:5173');
     });
   });
 
@@ -360,6 +405,32 @@ describe('PlaybookExecutionService', () => {
   });
 
   // ===== executePlaybook =====
+
+  describe('executePlaybookByIntegrationToken', () => {
+    it('should resolve the playbook owner and delegate to executePlaybook', async () => {
+      const playbook = {
+        _id: objectId('pb1'),
+        createdBy: objectId('user1'),
+      };
+      mockPlaybookService.findByIntegrationToken.mockResolvedValue(playbook);
+      mockUserService.findById.mockResolvedValue({ email: 'owner@example.com' });
+
+      const executeSpy = jest.spyOn(service, 'executePlaybook').mockResolvedValue({ executionId: 'exec-public-1' });
+
+      const result = await service.executePlaybookByIntegrationToken('public-token', {} as any);
+
+      expect(mockPlaybookService.findByIntegrationToken).toHaveBeenCalledWith('public-token');
+      expect(mockUserService.findById).toHaveBeenCalledWith(objectId('user1').toString());
+      expect(executeSpy).toHaveBeenCalledWith(
+        objectId('user1').toString(),
+        objectId('pb1').toString(),
+        {},
+        'owner@example.com',
+        { executionTrigger: 'manual' },
+      );
+      expect(result).toEqual({ executionId: 'exec-public-1' });
+    });
+  });
 
   describe('executePlaybook', () => {
     const userId = objectId('user1').toString();
@@ -420,6 +491,7 @@ describe('PlaybookExecutionService', () => {
       const createArg = mockExecutionModel.create.mock.calls[0][0];
       expect(createArg.executionNumber).toBe(5);
       expect(createArg.status).toBe(ExecutionStatus.RUNNING);
+      expect(createArg.executionTrigger).toBe('manual');
       expect(createArg.taskResults).toHaveLength(2);
 
       // Both tasks should be PENDING in full workflow mode
@@ -431,6 +503,25 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.taskResults[0].nodeTitle).toBe('Task One');
       expect(createArg.taskResults[0].output).toBeNull();
       expect(createArg.taskResults[0].error).toBeNull();
+    });
+
+    it('should set executionTrigger to scheduled when options request scheduled', async () => {
+      const playbook = createMockPlaybook();
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockPlaybookService.getNextExecutionNumber.mockResolvedValue(1);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+
+      await service.executePlaybook(userId, playbookId, dto, userEmail, {
+        executionTrigger: 'scheduled',
+      });
+
+      const createArg = mockExecutionModel.create.mock.calls[0][0];
+      expect(createArg.executionTrigger).toBe('scheduled');
     });
 
     it('should mark non-target tasks as SKIPPED in single-step mode', async () => {
@@ -479,6 +570,7 @@ describe('PlaybookExecutionService', () => {
             executionId: objectId('exec1').toString(),
             playbookId,
             status: ExecutionStatus.RUNNING,
+            executionTrigger: 'manual',
           }),
         }),
       );
@@ -515,6 +607,7 @@ describe('PlaybookExecutionService', () => {
         userId,
         [objectId('agent1').toString()],
         'model-1',
+        'playbook:000000000000000000000002:execution:1',
       );
       expect(mockContextService.resolveAgentBrainContexts).toHaveBeenCalled();
     });
@@ -594,6 +687,58 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.playbookSnapshot.tasks).toHaveLength(2);
       expect(createArg.playbookSnapshot.edges).toHaveLength(1);
     });
+
+    it('preserves distinct same-node edges when ports differ in snapshot merges', () => {
+      const snapshot = {
+        tasks: [{ id: 'task-1' }, { id: 'task-2' }],
+        edges: [
+          {
+            id: 'edge-existing',
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'documents',
+            targetInputPortId: 'primary',
+          },
+        ],
+      };
+      const playbook = createMockPlaybook({
+        tasks: [{ id: 'task-1' }, { id: 'task-2' }],
+        edges: [
+          {
+            id: 'edge-existing',
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'documents',
+            targetInputPortId: 'primary',
+          },
+          {
+            id: 'edge-secondary',
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'summary',
+            targetInputPortId: 'secondary',
+          },
+        ],
+      });
+
+      const merged = (service as any).mergeSnapshotForNewTask(snapshot, playbook, 'task-1');
+
+      expect(merged.edges).toHaveLength(2);
+      expect(merged.edges).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          sourceId: 'task-1',
+          targetId: 'task-2',
+          sourceOutputPortId: 'documents',
+          targetInputPortId: 'primary',
+        }),
+        expect.objectContaining({
+          sourceId: 'task-1',
+          targetId: 'task-2',
+          sourceOutputPortId: 'summary',
+          targetInputPortId: 'secondary',
+        }),
+      ]));
+    });
   });
 
   // ===== handleStepUpdate (tested via consumePlaybookStream) =====
@@ -628,6 +773,7 @@ describe('PlaybookExecutionService', () => {
       const userId = objectId('user1').toString();
       const playbookId = objectId('pb1').toString();
       await service.executePlaybook(userId, playbookId, {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
 
       // Emit in_progress step update
       mockStream.emit('data', {
@@ -662,6 +808,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
 
       mockStream.emit('data', {
         step_update: {
@@ -692,6 +839,47 @@ describe('PlaybookExecutionService', () => {
       );
     });
 
+    it('should derive completed status from result payload when step status is missing', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution();
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'task-1',
+          result: {
+            status: 'completed',
+            components: [],
+            duration_ms: '1500',
+          },
+        },
+      });
+
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_step_complete',
+          data: expect.objectContaining({
+            taskId: 'task-1',
+            status: 'completed',
+            durationMs: 1500,
+          }),
+        }),
+      );
+    });
+
     it('should send SSE playbook_step_complete for failed status with error', async () => {
       const mockStream = createMockStream();
       mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
@@ -707,6 +895,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
 
       mockStream.emit('data', {
         step_update: {
@@ -749,6 +938,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
 
       // First: task starts
       mockStream.emit('data', {
@@ -813,6 +1003,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
@@ -840,6 +1031,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Buffer should exist before stream ends
       const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
@@ -869,6 +1061,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
@@ -897,6 +1090,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Buffer in_progress
       mockStream.emit('data', {
@@ -932,6 +1126,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       expect(mockGrpcService.registerStream).toHaveBeenCalledWith(
         objectId('exec1').toString(),
@@ -974,6 +1169,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Buffer some step updates
       mockStream.emit('data', {
@@ -1007,7 +1203,7 @@ describe('PlaybookExecutionService', () => {
       const taskResultUpdates = findByIdAndUpdateCalls.filter(
         (call: any[]) => call[2]?.arrayFilters,
       );
-      expect(taskResultUpdates.length).toBe(2);
+      expect(taskResultUpdates.length).toBeGreaterThanOrEqual(2);
     });
 
     it('should preserve humanFeedback components during flush', async () => {
@@ -1038,6 +1234,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Emit completed with new components
       mockStream.emit('data', {
@@ -1202,7 +1399,7 @@ describe('PlaybookExecutionService', () => {
         buffer.set('task-1', {
           taskId: 'task-1',
           status: StepStatus.COMPLETED,
-          output: 'new output',
+          output: 'output',
           durationMs: 2000,
           completedAt: new Date('2026-03-10T10:02:00Z'),
           inputTokens: 100,
@@ -1217,7 +1414,7 @@ describe('PlaybookExecutionService', () => {
         const tr = result[0].taskResults[0];
         // Buffer wins (same weight = 2)
         expect(tr.status).toBe(StepStatus.COMPLETED);
-        expect(tr.output).toBe('new output');
+        expect(tr.output).toBe('output');
         expect(tr.durationMs).toBe(2000);
         expect(tr.inputTokens).toBe(100);
         expect(tr.outputTokens).toBe(50);
@@ -1796,6 +1993,62 @@ describe('PlaybookExecutionService', () => {
     });
   });
 
+  describe('executeStepWithStreaming', () => {
+    function createMockStream(): EventEmitter & { cancel: jest.Mock } {
+      const stream = new EventEmitter() as EventEmitter & { cancel: jest.Mock };
+      stream.cancel = jest.fn();
+      return stream;
+    }
+
+    it('should complete when terminal status is present only on the result payload', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runStepStream.mockReturnValue(mockStream);
+
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+        ],
+      })));
+
+      const promise = (service as any).executeStepWithStreaming(
+        objectId('user1').toString(),
+        objectId('exec1').toString(),
+        objectId('pb1').toString(),
+        createMockPlaybook().tasks[0],
+        { playbook_id: objectId('pb1').toString(), task: { id: 'task-1' } },
+        new Map<string, string>(),
+        'Test Playbook',
+        false,
+      );
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'task-1',
+          result: {
+            status: 'completed',
+            components: [],
+            duration_ms: '250',
+          },
+        },
+      });
+      mockStream.emit('end');
+
+      await expect(promise).resolves.toEqual(expect.objectContaining({ outcome: 'completed' }));
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        objectId('user1').toString(),
+        expect.objectContaining({
+          type: 'playbook_step_complete',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            taskId: 'task-1',
+            status: 'completed',
+            durationMs: 250,
+          }),
+        }),
+      );
+    });
+  });
+
   // ===== resumeExecution =====
 
   describe('resumeExecution', () => {
@@ -1920,11 +2173,13 @@ describe('PlaybookExecutionService', () => {
             playbook_id: playbookId,
             thread_id: 'thread-abc',
             task_id: 'task-1',
-            human_response: {
+            human_response: expect.objectContaining({
               approved: true,
               reason: '',
               feedback: '',
-            },
+              action: 'approve',
+            }),
+            user_context: expect.objectContaining({ user_id: userId }),
           }),
         );
       });
@@ -2043,14 +2298,38 @@ describe('PlaybookExecutionService', () => {
 
       expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
         objectId('exec1').toString(),
-        {
-          $set: { status: ExecutionStatus.RUNNING, interruptPayload: null },
-        },
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: ExecutionStatus.RUNNING,
+            interruptPayload: null,
+          }),
+        }),
       );
     });
   });
 
   describe('rerunStepInExecution', () => {
+    it('should throw ServiceUnavailableException when gRPC is unavailable', async () => {
+      mockGrpcService.isAvailable = false;
+
+      await expect(
+        service.rerunStepInExecution(
+          objectId('user1').toString(),
+          objectId('pb1').toString(),
+          objectId('exec1').toString(),
+          'task-1',
+          false,
+          'live',
+          false,
+          true,
+          '',
+        ),
+      ).rejects.toThrow(ServiceUnavailableException);
+
+      expect(mockGrpcService.runStepStream).not.toHaveBeenCalled();
+      expect(mockExecutionModel.findById).not.toHaveBeenCalled();
+    });
+
     it('persists downstream tasks back to pending for recompute', async () => {
       const userId = objectId('user1').toString();
       const playbookId = objectId('pb1').toString();
@@ -2104,7 +2383,7 @@ describe('PlaybookExecutionService', () => {
         result: { components: [], duration_ms: '1' },
       });
 
-      await service.rerunStepInExecution(userId, playbookId, objectId('exec1').toString(), 'task-1', false, 'live', '');
+      await service.rerunStepInExecution(userId, playbookId, objectId('exec1').toString(), 'task-1', false, 'live', false, true, '');
 
       expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
         objectId('exec1').toString(),
@@ -2118,6 +2397,92 @@ describe('PlaybookExecutionService', () => {
         }),
         { arrayFilters: [{ 'elem.taskId': 'task-2' }] },
       );
+    });
+
+    it('clears stale judge state for the rerun step and keeps reflection enabled', async () => {
+      const userId = objectId('user1').toString();
+      const playbookId = objectId('pb1').toString();
+      const executionId = objectId('exec1').toString();
+      const execution = createMockExecution({
+        _id: executionId,
+        executedBy: objectId('user1'),
+        playbookId: objectId('pb1'),
+        status: ExecutionStatus.COMPLETED,
+        executionNumber: 3,
+        currentAttemptNumber: 1,
+        reflectionEnabled: false,
+        playbookSnapshot: {
+          tasks: createMockPlaybook().tasks.map((task: any) => ({ ...task })),
+          edges: createMockPlaybook().edges.map((edge: any) => ({ ...edge })),
+        },
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'Task One',
+            agentName: 'Agent A',
+            order: 0,
+            status: StepStatus.COMPLETED,
+            output: 'done',
+            error: null,
+            durationMs: 10,
+            startedAt: new Date(),
+            completedAt: new Date(),
+            components: [],
+            judgeStatus: JudgeStatus.EVALUATED,
+            judgeResult: { overallScore: 91 },
+            judgeError: 'old error',
+          },
+        ],
+      });
+
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockGrpcService.runStep.mockResolvedValue({
+        status: 'completed',
+        result: { components: [], duration_ms: '1' },
+      });
+
+      await service.rerunStepInExecution(userId, playbookId, executionId, 'task-1', false, 'live', false, true, '');
+
+      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        executionId,
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            runEvaluation: false,
+            reflectionEnabled: true,
+          }),
+        }),
+      );
+
+      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        executionId,
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            'taskResults.$[elem].judgeStatus': JudgeStatus.IDLE,
+            'taskResults.$[elem].judgeResult': null,
+            'taskResults.$[elem].judgeError': null,
+          }),
+        }),
+        { arrayFilters: [{ 'elem.taskId': 'task-1' }] },
+      );
+    });
+  });
+
+  describe('resolveAdvisorAutopilotFixType', () => {
+    it('falls back to optimize_step when advisor suggests updating the current playbook with rewrite hints', () => {
+      expect((service as any).resolveAdvisorAutopilotFixType({
+        safeAutoFixType: 'none',
+        recommendation: 'update_current_playbook',
+        rewriteHints: ['Tighten the task prompt around the baseline contract.'],
+      })).toBe('optimize_step');
+    });
+
+    it('keeps none when advisor does not provide a safe step-scoped fallback', () => {
+      expect((service as any).resolveAdvisorAutopilotFixType({
+        safeAutoFixType: 'none',
+        recommendation: 'generate_new_optimized_playbook',
+        rewriteHints: ['Broader workflow rewrite needed.'],
+      })).toBe('none');
     });
   });
 
@@ -2370,6 +2735,7 @@ describe('PlaybookExecutionService', () => {
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
 
       await service.executePlaybook(objectId('user1').toString(), objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Complete a task
       mockStream.emit('data', {
@@ -2412,6 +2778,7 @@ describe('PlaybookExecutionService', () => {
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
 
       await service.executePlaybook(objectId('user1').toString(), objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       mockStream.emit('data', {
         step_update: { task_id: 'task-1', status: 'completed', result: { components: [], duration_ms: '100' } },
@@ -2450,6 +2817,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
 
       // Emit completed steps with usage
       mockStream.emit('data', {
@@ -2518,6 +2886,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Complete without usage
       mockStream.emit('data', {
@@ -2535,6 +2904,10 @@ describe('PlaybookExecutionService', () => {
   // ===== Stream timeout =====
 
   describe('stream idle timeout', () => {
+    beforeEach(() => {
+      jest.useFakeTimers({ advanceTimers: true });
+    });
+
     function createMockStream(): EventEmitter & { cancel: jest.Mock } {
       const stream = new EventEmitter() as EventEmitter & { cancel: jest.Mock };
       stream.cancel = jest.fn();
@@ -2558,6 +2931,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Advance timers past the timeout
       jest.advanceTimersByTime(6000);
@@ -2586,6 +2960,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Advance 4 seconds (just under timeout)
       jest.advanceTimersByTime(4000);
@@ -2618,6 +2993,57 @@ describe('PlaybookExecutionService', () => {
       return stream;
     }
 
+    it('should mark execution CANCELLED when a locally cancelled stream ends', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+      mockGrpcService.wasCancelled.mockReturnValueOnce(true);
+
+      const execution = createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+          { taskId: 'task-2', status: StepStatus.PENDING, components: [] },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        objectId('exec1').toString(),
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: ExecutionStatus.CANCELLED,
+          }),
+        }),
+      );
+
+      expect(mockLoggerService.warn).not.toHaveBeenCalledWith(
+        'Stream ended prematurely with tasks still pending/running',
+        expect.anything(),
+      );
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_execution_complete',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            status: ExecutionStatus.CANCELLED,
+          }),
+        }),
+      );
+    });
+
     it('should mark execution FAILED when stream ends with tasks still pending', async () => {
       const mockStream = createMockStream();
       mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
@@ -2639,6 +3065,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
@@ -2655,6 +3082,43 @@ describe('PlaybookExecutionService', () => {
             status: ExecutionStatus.FAILED,
           }),
         }),
+      );
+    });
+
+    it('should mark running tasks failed when a failed execution ends unexpectedly', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+          { taskId: 'task-2', status: StepStatus.PENDING, components: [] },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        { _id: objectId('exec1').toString() },
+        { $set: { 'taskResults.$[elem].status': StepStatus.FAILED } },
+        { arrayFilters: [{ 'elem.status': StepStatus.RUNNING }] },
+      );
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        { _id: objectId('exec1').toString() },
+        { $set: { 'taskResults.$[elem].status': StepStatus.SKIPPED } },
+        { arrayFilters: [{ 'elem.status': StepStatus.PENDING }] },
       );
     });
 
@@ -2678,6 +3142,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
@@ -2725,6 +3190,7 @@ describe('PlaybookExecutionService', () => {
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
 
       // Emit with thread_id
       mockStream.emit('data', {

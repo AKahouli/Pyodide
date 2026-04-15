@@ -49,14 +49,34 @@ describe('ExecutionHeader', () => {
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
   });
 
+  it('shows running badge when a task is running even if the execution status is completed', () => {
+    const execution = makeExecution({
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 't1', status: 'running' },
+      ],
+    });
+
+    render(<ExecutionHeader execution={execution} playbook={null} />);
+    expect(screen.getByText('running')).toBeInTheDocument();
+    expect(screen.getByText('execution.stop')).toBeInTheDocument();
+  });
+
   it('does not show stop button for completed execution', () => {
-    const execution = makeExecution({ status: 'completed' });
+    const execution = makeExecution({
+      status: 'completed',
+      taskResults: [{ ...makeExecution().taskResults[0], status: 'completed' }],
+    });
     render(<ExecutionHeader execution={execution} playbook={null} />);
     expect(screen.queryByText('execution.stop')).not.toBeInTheDocument();
   });
 
   it('shows error message for failed execution', () => {
-    const execution = makeExecution({ status: 'failed', error: 'Network error' });
+    const execution = makeExecution({
+      status: 'failed',
+      error: 'Network error',
+      taskResults: [{ ...makeExecution().taskResults[0], status: 'failed' }],
+    });
     render(<ExecutionHeader execution={execution} playbook={null} />);
     expect(screen.getByText('Network error')).toBeInTheDocument();
   });
@@ -72,4 +92,5 @@ describe('ExecutionHeader', () => {
     render(<ExecutionHeader execution={makeExecution()} playbook={null} />);
     expect(screen.getByTestId('history-dropdown')).toBeInTheDocument();
   });
+
 });

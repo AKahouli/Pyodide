@@ -4,7 +4,7 @@ import { X, Reply } from 'lucide-react';
 import Input from '@/components/ai-elements/input';
 import { Button } from '@/components/ui/button';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage } from '../store';
+import { useConversationStore, useIsAwaitingFirstChunk, useInputDisabled, useReplyingToMessage, useSelectedWorkspaceIds } from '../store';
 import { UsageLimitBanner, useUsage } from '@/modules/usage';
 import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
@@ -13,9 +13,10 @@ import { useAuth } from '@/modules/auth/useAuth';
 
 interface ConversationInputProps {
   conversationId: string;
+  onWorkspaceUpdate?: (workspaceIds: string[]) => void;
 }
 
-export function ConversationInput({ conversationId }: ConversationInputProps) {
+export function ConversationInput({ conversationId, onWorkspaceUpdate }: ConversationInputProps) {
   const sendMessage = useConversationStore((s) => s.sendMessage);
   const stopStream = useConversationStore((s) => s.stopStream);
   const replyingToMessage = useReplyingToMessage();
@@ -23,6 +24,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   const isAwaitingFirstChunk = useIsAwaitingFirstChunk();
   const isStreaming = useConversationStore((s) => s.isStreaming);
   const inputDisabled = useInputDisabled();
+  const selectedWorkspaceIds = useSelectedWorkspaceIds();
   const currentConversation = useConversationStore((s) => s.currentConversation);
   const { status: usageStatus } = useUsage();
   const { t } = useModuleTranslation('conversation');
@@ -73,8 +75,13 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
   );
 
   const handleSubmit = useCallback(
-    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[]) => {
+    async (message: PromptInputMessage, modelId: string, agentIds?: string[], memberIds?: string[], workspaceIds?: string[]) => {
       if (!message.text?.trim() && !completedFileIds.length) return;
+
+      // Update conversation workspaces if workspaces are selected
+      if (workspaceIds && workspaceIds.length > 0 && onWorkspaceUpdate) {
+        onWorkspaceUpdate(workspaceIds);
+      }
 
       // Build optimistic attachedFiles from the upload hook state
       const attachedFiles = uploadFiles
@@ -100,7 +107,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
       clearAll();
       clearReplyingTo();
     },
-    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id],
+    [completedFileIds, uploadFiles, sendMessage, conversationId, clearAll, clearReplyingTo, replyingToMessage?.id, onWorkspaceUpdate],
   );
 
   const senderDisplayName = useMemo(() => {
@@ -178,6 +185,7 @@ export function ConversationInput({ conversationId }: ConversationInputProps) {
         maxFiles={5}
         members={membersToTag}
         autoMention={autoMention}
+        showWorkspaceSelect={false}
       />
     </div>
   );

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertCircle, Clock, Square, X, ChevronDown, History, GitCompareArrows, Trash2 } from 'lucide-react';
+import { AlertCircle, Clock, Square, ChevronDown, History, GitCompareArrows, PanelRightClose, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -53,6 +53,26 @@ function getExecutionModeLabel(
   if (mode === 'replay_flex') return t('execution.mode.replayFlex');
   if (mode === 'replay_adaptive') return t('execution.mode.replayAdaptive');
   return t('execution.mode.live');
+}
+
+const SIDEBAR_DEFAULT_WIDTH_RATIO = 0.5;
+const SIDEBAR_MIN_WIDTH = 360;
+const SIDEBAR_MAX_WIDTH_RATIO = 0.8;
+const EXECUTION_PANEL_WIDTH_KEY = 'ys_playbook_execution_panel_width';
+
+function readSidebarWidthFallback(): number {
+  if (typeof window === 'undefined') return 640;
+  try {
+    const stored = window.localStorage.getItem(EXECUTION_PANEL_WIDTH_KEY);
+    const parsed = stored ? Number(stored) : Number.NaN;
+    if (Number.isFinite(parsed)) {
+      const maxWidth = Math.floor(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO);
+      return Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH, parsed));
+    }
+  } catch {
+    // Ignore storage access errors and fall back to the viewport default.
+  }
+  return Math.floor(window.innerWidth * SIDEBAR_DEFAULT_WIDTH_RATIO);
 }
 
 function ExecutionHistoryPicker({
@@ -116,15 +136,21 @@ function PanelHeaderActions({
   historyPickerLabel,
   currentExecutionId,
   baselineExecutionId,
+  onDeleteCurrentExecution,
+  canDeleteCurrentExecution,
   onDeleteAll,
   canDeleteAll,
+  onCollapse,
 }: {
   compareUrl: string | null;
   historyPickerLabel: string;
   currentExecutionId?: string;
   baselineExecutionId?: string | null;
+  onDeleteCurrentExecution?: () => void;
+  canDeleteCurrentExecution?: boolean;
   onDeleteAll?: () => void;
   canDeleteAll?: boolean;
+  onCollapse?: () => void;
 }) {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('playbook');
@@ -157,13 +183,35 @@ function PanelHeaderActions({
           <span className="hidden sm:inline">Delete All</span>
         </Button>
       )}
+      {canDeleteCurrentExecution && onDeleteCurrentExecution && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 text-xs px-2 text-destructive"
+          onClick={onDeleteCurrentExecution}
+          title={t('execution.deleteSelected')}
+        >
+          <Trash2 className="h-3 w-3 mr-1" />
+          <span className="hidden sm:inline">{t('execution.delete')}</span>
+        </Button>
+      )}
       <ExecutionHistoryPicker
         currentExecutionId={currentExecutionId}
         label={historyPickerLabel}
         baselineExecutionId={baselineExecutionId}
       />
-      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExecutionPanelOpen(false)}>
-        <X className="h-3.5 w-3.5" />
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-6 w-6"
+        onClick={() => {
+          onCollapse?.();
+          setExecutionPanelOpen(false);
+        }}
+        title="Collapse sidebar"
+        aria-label="Collapse sidebar"
+      >
+        <PanelRightClose className="h-3.5 w-3.5" />
       </Button>
     </div>
   );
@@ -172,9 +220,10 @@ function PanelHeaderActions({
 interface ExecutionPanelProps {
   pageMode?: PlaybookPageMode;
   onOpenOutputFormatEditor?: (taskId: string) => void;
+  onCollapse?: () => void;
 }
 
-export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: ExecutionPanelProps) {
+export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onCollapse }: ExecutionPanelProps) {
   const { t } = useModuleTranslation('playbook');
   const execution = useCurrentExecution();
   const playbook = useCurrentPlaybook();
@@ -185,6 +234,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const deleteAllExecutions = usePlaybookStore((s) => s.deleteAllExecutions);
+  const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
   const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
@@ -194,7 +244,62 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
+  const [deleteExecutionDialogOpen, setDeleteExecutionDialogOpen] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState('results');
+  const sidebarDragActive = useRef(false);
+  const sidebarDragStartX = useRef(0);
+  const sidebarDragStartWidth = useRef(0);
+  const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidthFallback);
+  const visibleExecutionStatus = execution
+    ? (execution.taskResults.some((taskResult) => taskResult.status === 'running')
+      ? 'running'
+      : execution.taskResults.some((taskResult) => taskResult.status === 'interrupted')
+        ? 'interrupted'
+        : execution.status)
+    : null;
+
+  useEffect(() => {
+    const clampWidth = () => {
+      if (typeof window === 'undefined') return;
+      const maxWidth = Math.floor(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO);
+      setSidebarWidth((current) => Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH, current)));
+    };
+
+    clampWidth();
+    window.addEventListener('resize', clampWidth);
+    return () => window.removeEventListener('resize', clampWidth);
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EXECUTION_PANEL_WIDTH_KEY, String(sidebarWidth));
+    } catch {
+      // Ignore persistence failures in restricted environments.
+    }
+  }, [sidebarWidth]);
+
+  const onSidebarResizeStart = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    sidebarDragActive.current = true;
+    sidebarDragStartX.current = event.clientX;
+    sidebarDragStartWidth.current = sidebarWidth;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, [sidebarWidth]);
+
+  const onSidebarResizeMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidebarDragActive.current || typeof window === 'undefined') return;
+    const delta = sidebarDragStartX.current - event.clientX;
+    const maxWidth = Math.floor(window.innerWidth * SIDEBAR_MAX_WIDTH_RATIO);
+    const nextWidth = Math.min(maxWidth, Math.max(SIDEBAR_MIN_WIDTH, sidebarDragStartWidth.current + delta));
+    setSidebarWidth(nextWidth);
+  }, []);
+
+  const onSidebarResizeEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!sidebarDragActive.current) return;
+    sidebarDragActive.current = false;
+    event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   // Auto-load the latest execution when panel opens with no execution loaded
   // Guard: only if history belongs to the current playbook
@@ -207,7 +312,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   // Auto-follow running/interrupted steps during a live execution
   useEffect(() => {
     if (!execution) return;
-    const isLive = execution.status === 'running' || execution.status === 'interrupted';
+    const isLive = visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted';
     if (!isLive) return;
     if (selectedStepId && execution.taskResults.some((tr) => tr.taskId === selectedStepId)) return;
 
@@ -225,7 +330,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
     if (running) {
       selectStep(running.taskId);
     }
-  }, [execution?.status, execution?.taskResults, selectedStepId, selectStep]);
+  }, [execution?.taskResults, selectedStepId, selectStep, visibleExecutionStatus]);
 
   const handleSelectStep = useCallback(
     (taskId: string) => {
@@ -295,12 +400,18 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
         taskId,
         true,
         task?.stepReplayMode || 'live',
+        false,
+        true,
+        execution.advisorAutopilotEnabled === true,
+        execution.advisorAutopilotTargetScore,
+        execution.advisorAutopilotMaxTurns,
       );
     },
     [execution, playbook, rerunStepInExecution],
   );
 
-  const canStop = execution && (execution.status === 'running' || execution.status === 'interrupted');
+  const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
+  const canDeleteCurrentExecution = Boolean(execution && visibleExecutionStatus !== 'running' && visibleExecutionStatus !== 'interrupted');
 
   const selectedResult = execution?.taskResults.find(
     (tr) => tr.taskId === selectedStepId,
@@ -373,18 +484,36 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
 
   if (!execution) {
     return (
-      <div className="flex flex-col h-full bg-background">
+      <div
+        className="relative flex h-full shrink-0 flex-col overflow-hidden border-l bg-background"
+        style={{
+          width: sidebarWidth,
+          flex: '0 0 auto',
+          transition: sidebarDragActive.current ? 'none' : 'width 180ms ease',
+        }}
+      >
+        <div
+          onPointerDown={onSidebarResizeStart}
+          onPointerMove={onSidebarResizeMove}
+          onPointerUp={onSidebarResizeEnd}
+          onPointerCancel={onSidebarResizeEnd}
+          className="absolute left-0 top-0 bottom-0 z-20 w-1 cursor-ew-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
+          style={{ touchAction: 'none' }}
+        />
         <div className="flex items-center justify-between px-4 py-1.5 border-b shrink-0">
           <div className="flex items-center gap-3">
             <span className="text-sm font-medium">{t('execution.title')}</span>
           </div>
-          <PanelHeaderActions
-            compareUrl={compareUrl}
-            historyPickerLabel={t('execution.selectRun')}
-            baselineExecutionId={baselineExecutionId}
-            onDeleteAll={() => setDeleteAllDialogOpen(true)}
-            canDeleteAll={canDeleteAll}
-          />
+        <PanelHeaderActions
+          compareUrl={compareUrl}
+          historyPickerLabel={t('execution.workflowExecutions')}
+          baselineExecutionId={baselineExecutionId}
+          onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
+          canDeleteCurrentExecution={canDeleteCurrentExecution}
+          onDeleteAll={() => setDeleteAllDialogOpen(true)}
+          canDeleteAll={canDeleteAll}
+          onCollapse={onCollapse}
+        />
         </div>
         <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
           {history.length > 0
@@ -396,12 +525,27 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
   }
 
   return (
-    <div className="flex flex-col h-full bg-background">
+    <div
+      className="relative flex h-full shrink-0 flex-col overflow-hidden border-l bg-background"
+      style={{
+        width: sidebarWidth,
+        flex: '0 0 auto',
+        transition: sidebarDragActive.current ? 'none' : 'width 180ms ease',
+      }}
+    >
+      <div
+        onPointerDown={onSidebarResizeStart}
+        onPointerMove={onSidebarResizeMove}
+        onPointerUp={onSidebarResizeEnd}
+        onPointerCancel={onSidebarResizeEnd}
+        className="absolute left-0 top-0 bottom-0 z-20 w-1 cursor-ew-resize transition-colors hover:bg-primary/30 active:bg-primary/50"
+        style={{ touchAction: 'none' }}
+      />
       {/* Compact header */}
       <div className="flex items-center justify-between px-4 py-1.5 border-b bg-background shrink-0">
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium">{t('execution.title')}</span>
-          <PlaybookStatusBadge status={execution.status} size="md" />
+          <PlaybookStatusBadge status={visibleExecutionStatus || execution.status} size="md" />
           <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
             {getExecutionModeLabel(execution.executionMode, t)}
           </span>
@@ -421,7 +565,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
               {isStopping ? t('execution.stopping') : t('execution.stop')}
             </Button>
           )}
-          {execution.status === 'failed' && execution.error && (
+          {visibleExecutionStatus === 'failed' && execution.error && (
             <div className="flex items-center gap-1 text-xs text-destructive">
               <AlertCircle className="h-3 w-3 shrink-0" />
               <span className="truncate max-w-[200px]" title={execution.error}>
@@ -435,8 +579,11 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
           historyPickerLabel={`#${execution.executionNumber}`}
           currentExecutionId={execution.id}
           baselineExecutionId={baselineExecutionId}
+          onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
+          canDeleteCurrentExecution={canDeleteCurrentExecution}
           onDeleteAll={() => setDeleteAllDialogOpen(true)}
           canDeleteAll={canDeleteAll}
+          onCollapse={onCollapse}
         />
       </div>
 
@@ -486,6 +633,36 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor }: E
               onClick={() => void handleDeleteAllExecutions()}
             >
               Delete All
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteExecutionDialogOpen} onOpenChange={setDeleteExecutionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete execution</DialogTitle>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            Delete the selected workflow execution from this playbook. This action cannot be undone.
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setDeleteExecutionDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (execution) {
+                  void deleteExecution(execution.playbookId, execution.id);
+                }
+                setDeleteExecutionDialogOpen(false);
+              }}
+            >
+              Delete
             </Button>
           </DialogFooter>
         </DialogContent>

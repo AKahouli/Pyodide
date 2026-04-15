@@ -1,4 +1,5 @@
 import { Circle, Loader2, CheckCircle2, XCircle, CornerDownRight, PauseCircle } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
 import type { TaskResult, StepStatus } from '../types';
@@ -12,12 +13,6 @@ const statusIcons: Record<StepStatus, { icon: React.ElementType; className: stri
   interrupted: { icon: PauseCircle, className: 'text-yellow-600' },
 };
 
-function formatDuration(ms: number | null): string {
-  if (ms === null) return '';
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
 interface Props {
   taskResults: TaskResult[];
   selectedStepId: string | null;
@@ -30,7 +25,7 @@ export function ExecutionStepList({ taskResults, selectedStepId, onSelectStep, p
   const sortedResults = [...taskResults].sort((a, b) => a.order - b.order);
 
   return (
-    <div className="w-80 border-r overflow-y-auto bg-background">
+    <div className="w-28 border-r overflow-y-auto bg-background">
       <div className="p-3">
         <h3 className="mb-2 text-sm font-medium text-muted-foreground">{t('execution.steps')}</h3>
         <div className="space-y-1">
@@ -43,8 +38,9 @@ export function ExecutionStepList({ taskResults, selectedStepId, onSelectStep, p
               <button
                 type="button"
                 key={result.taskId}
+                aria-label={`Step ${result.order}`}
                 className={cn(
-                  'flex w-full items-start gap-3 rounded-lg border px-3 py-2 text-left transition-colors',
+                  'flex w-full items-center gap-2 rounded-lg border px-2 py-2 text-left transition-colors',
                   isSelected
                     ? 'border-primary/30 bg-primary/10 shadow-sm'
                     : 'border-transparent hover:border-border hover:bg-muted/40',
@@ -53,31 +49,21 @@ export function ExecutionStepList({ taskResults, selectedStepId, onSelectStep, p
               >
                 <div
                   className={cn(
-                    'mt-0.5 h-10 w-1 shrink-0 rounded-full bg-transparent transition-colors',
+                    'h-10 w-1 shrink-0 rounded-full bg-transparent transition-colors',
                     isSelected && 'bg-primary/70',
                   )}
                 />
-                <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${config.className}`} />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <p className={cn('truncate text-sm font-medium', isSelected ? 'text-foreground' : 'text-foreground/90')}>
-                      {result.nodeTitle}
-                    </p>
-                    {result.durationMs !== null && (
-                      <span className="shrink-0 text-xs text-muted-foreground">
-                        {formatDuration(result.durationMs)}
-                      </span>
+                <Icon className={`h-4 w-4 shrink-0 ${config.className}`} />
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'h-5 min-w-5 shrink-0 justify-center px-1 text-[11px] font-bold',
+                      isSelected ? 'bg-[#ffcd03] text-black border-[#ffcd03]' : 'bg-primary/10 text-primary border-primary/20',
                     )}
-                  </div>
-                  {result.agentName && (
-                    <p className="truncate text-xs text-muted-foreground">{result.agentName}</p>
-                  )}
-                  {result.isStale && (
-                    <p className="mt-0.5 truncate text-xs text-amber-700">{t('execution.staleResult')}</p>
-                  )}
-                  {result.status === 'failed' && result.error && (
-                    <p className="mt-0.5 truncate text-xs text-destructive">{result.error}</p>
-                  )}
+                  >
+                    {result.order}
+                  </Badge>
                 </div>
               </button>
             );

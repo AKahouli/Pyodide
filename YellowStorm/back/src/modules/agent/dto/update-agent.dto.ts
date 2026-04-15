@@ -75,6 +75,24 @@ export class UpdateAgentDto {
   @IsMongoId({ each: true })
   tools?: string[];
 
+  @ApiPropertyOptional({ description: 'Skill IDs directly attached to the agent', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  skills?: string[];
+
+  @ApiPropertyOptional({ description: 'Inherited skill IDs disabled for this agent', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  disabledSkills?: string[];
+
+  @ApiPropertyOptional({ description: 'Connector IDs attached to this agent', type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsMongoId({ each: true })
+  connectors?: string[];
+
   @ApiPropertyOptional({ description: 'Whether the agent is active' })
   @IsOptional()
   @IsBoolean()

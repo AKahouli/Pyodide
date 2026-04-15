@@ -4,6 +4,7 @@ import type errors from './locales/en/errors.json';
 import type admin from '../admin/locales/en.json';
 import type agent from '../agent/locales/en.json';
 import type auth from '../auth/locales/en.json';
+import type connectedApp from '../connected-app/locales/en.json';
 import type conversation from '../conversation/locales/en.json';
 import type fileViewer from '../file-viewer/locales/en.json';
 import type models from '../models/locales/en.json';
@@ -23,6 +24,7 @@ export type NamespaceResourceMap = {
   admin: typeof admin;
   agent: typeof agent;
   auth: typeof auth;
+  'connected-app': typeof connectedApp;
   conversation: typeof conversation;
   'file-viewer': typeof fileViewer;
   models: typeof models;
