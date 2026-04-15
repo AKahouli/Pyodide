@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, Share2, FolderOpen, Copy, PanelRightOpen, Cable } from 'lucide-react';
+import { ArrowLeft, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -48,6 +48,7 @@ import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
+import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
@@ -172,6 +173,7 @@ function PlaybookCanvasInner() {
   const isGeneratingRoute = id === 'generating';
 
   const reactFlow = useReactFlow();
+  const canvasChromeRef = useRef<HTMLDivElement | null>(null);
 
   const {
     nodes,
@@ -1071,7 +1073,8 @@ function PlaybookCanvasInner() {
             variant="ghost"
             size="sm"
             onClick={() => void (id && clonePlaybook(id))}
-            title="Clone playbook"
+            title={t('header.clonePlaybook')}
+            aria-label={t('header.clonePlaybook')}
           >
             <Copy className="h-4 w-4" />
           </Button>
@@ -1090,34 +1093,11 @@ function PlaybookCanvasInner() {
             />
           </div>
           <PlaybookUsageIndicator />
-          <Button
-            variant={workspaceExplorerOpen ? "default" : "outline"}
-            size="sm"
-            onClick={() => setWorkspaceExplorerOpen(!workspaceExplorerOpen)}
-            className="px-2 sm:px-3"
-            title="Workspace Explorer"
-          >
-            <FolderOpen className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">Explorer</span>
-          </Button>
-          <Button
-            variant={connectorSidebarOpen ? "default" : "outline"}
-            size="sm"
-            onClick={() => setConnectorSidebarOpen(!connectorSidebarOpen)}
-            className="px-2 sm:px-3"
-            title="Connectors"
-          >
-            <Cable className="h-4 w-4 sm:mr-1" />
-            <span className="hidden sm:inline">Connectors</span>
-          </Button>
           <PlaybookToolbar
             pageMode={pageMode}
             onPageModeChange={handlePageModeChange}
             hasExecutionContext={Boolean(currentExecution || execution)}
             hasPendingInterrupt={Boolean(currentExecution?.interruptPayload)}
-            onAddStep={handleAddStep}
-            onAddStepFromTemplate={handleAddStepFromTemplate}
-            onAutoLayout={handleAutoLayout}
             onRun={handleRun}
             onSave={saveNow}
             onViewExecutions={handleViewExecutions}
@@ -1133,10 +1113,6 @@ function PlaybookCanvasInner() {
             onNodeReflectionChange={setNodeReflectionEnabled}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
             onAdvisorAutopilotChange={setAdvisorAutopilotEnabled}
-            canUndo={canUndo}
-            canRedo={canRedo}
-            onUndo={undo}
-            onRedo={redo}
             onDownloadAllResults={handleDownloadAllResults}
             canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
             onSchedule={() => setScheduleSheetOpen(true)}
@@ -1163,7 +1139,7 @@ function PlaybookCanvasInner() {
 
         {/* Canvas + Execution split */}
         <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
-          <div className="relative flex-1 min-w-0 overflow-hidden">
+          <div ref={canvasChromeRef} className="relative flex-1 min-w-0 overflow-hidden">
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
               <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
                 <Canvas
@@ -1191,6 +1167,21 @@ function PlaybookCanvasInner() {
                 >
                   <Controls />
                 </Canvas>
+                <PlaybookCanvasFloatingToolbar
+                  containerRef={canvasChromeRef}
+                  onAddStep={handleAddStep}
+                  onAddStepFromTemplate={handleAddStepFromTemplate}
+                  onAutoLayout={handleAutoLayout}
+                  onUndo={undo}
+                  onRedo={redo}
+                  onToggleExplorer={() => setWorkspaceExplorerOpen(!workspaceExplorerOpen)}
+                  onToggleConnectors={() => setConnectorSidebarOpen(!connectorSidebarOpen)}
+                  explorerOpen={workspaceExplorerOpen}
+                  connectorsOpen={connectorSidebarOpen}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                  disabled={isSaving}
+                />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>
             {isDesigning && (

@@ -797,418 +797,508 @@ export function ExecutionStepDetail({
           </div>
         </div>
 
-          {step.isStale && (
-            <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              {t('detail.staleMessage')}
-            </div>
-          )}
+        {step.isStale && (
+          <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {t('detail.staleMessage')}
+          </div>
+        )}
 
-          <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
-            <TabsList className="grid w-full grid-cols-6">
-              <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
-              <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
-              <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
-              <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
-              <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
-              <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
-            </TabsList>
+        <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
+          <TabsList className="grid w-full grid-cols-6">
+            <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
+            <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
+            <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
+            <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
+            <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
+            <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
+          </TabsList>
 
-        <TabsContent value="results" className="space-y-4">
-          {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
-            <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-              <div className="font-medium">{t('detail.provenance.title')}</div>
-              <div className="mt-2 space-y-1 text-muted-foreground">
-                <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode, t)}</div>
-                {replaySource && (
-                  <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
-                )}
-                {baselineReplay?.preserveOutputFormat && (
-                  <div>{t('detail.provenance.outputFormat')}</div>
-                )}
+          <TabsContent value="results" className="space-y-4">
+            {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="font-medium">{t('detail.provenance.title')}</div>
+                <div className="mt-2 space-y-1 text-muted-foreground">
+                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode, t)}</div>
+                  {replaySource && (
+                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
+                  )}
+                  {baselineReplay?.preserveOutputFormat && (
+                    <div>{t('detail.provenance.outputFormat')}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {selectedStepExecution?.error && (
-            <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
-              <div className="mb-2 flex items-center gap-2">
-                <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-                <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
+            {selectedStepExecution?.error && (
+              <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                  <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
+                </div>
+                <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                  {selectedStepExecution.error}
+                </pre>
               </div>
-              <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
-                {selectedStepExecution.error}
-              </pre>
-            </div>
-          )}
+            )}
 
-          {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
-            <div className="prose prose-sm max-w-none dark:prose-invert">
-              <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
-            </div>
-          ) : selectedStepExecution?.output ? (
-            <div className="prose prose-sm max-w-none dark:prose-invert">
-              <div className="rounded-lg bg-muted/50 p-4 text-sm whitespace-pre-wrap">
+            {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
+              <div className="prose prose-sm max-w-none dark:prose-invert">
+                <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+              </div>
+            ) : selectedStepExecution?.output ? (
+              <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
                 {selectedStepExecution.output}
               </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {selectedStepExecution?.status === 'running' && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-              {t('execution.running')}
-            </div>
-          )}
-
-          {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium">{t('artifacts.sectionTitle' as any)}</h3>
-              <div className="grid gap-2">
-                {selectedStepExecution.artifacts.map((artifact, idx) => (
-                  <ArtifactListItem key={`${artifact.portId}-${idx}`} artifact={artifact} />
-                ))}
+            {selectedStepExecution?.status === 'running' && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
+                {t('execution.running')}
               </div>
-            </div>
-          )}
-        </TabsContent>
+            )}
 
-        <TabsContent value="evaluation" className="space-y-4">
-          {(execution || evaluationHistory.length > 0) && (
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              {evaluationHistory.length > 0 && (
-                <div className="min-w-[260px] flex-1 space-y-1">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.stepExecutionLabel')}</div>
-                  <Select value={selectedEvaluation?.id || ''} onValueChange={setSelectedEvaluationId}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder={t('detail.evaluation.stepExecutionPlaceholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {evaluationHistory.map((entry) => (
-                        <SelectItem key={entry.id} value={entry.id}>
-                          {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.semanticMatch.matchScore)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              {comparisonCandidates.length > 0 && (
-                <div className="min-w-[260px] flex-1 space-y-1">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.compareWith')}</div>
-                  <Select value={comparisonEvaluation?.id || ''} onValueChange={setComparisonEvaluationId}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder={t('detail.evaluation.compareWithPlaceholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {comparisonCandidates.map((entry) => (
-                        <SelectItem key={entry.id} value={entry.id}>
-                          {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.semanticMatch.matchScore)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-              {execution && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => onRequestRunEvaluation?.(step.taskId)}
-                  disabled={isRunningEvaluation}
-                  className="shrink-0"
-                >
-                  {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
-                </Button>
-              )}
-            </div>
-          )}
-
-          {hasStepComparison && selectedEvaluation && comparisonEvaluation && comparisonSemanticMatch && (
-            <div className="rounded-lg border bg-muted/20 p-4 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">{t('detail.evaluation.compareTitle')}</div>
-                <div className="text-xs text-muted-foreground">{t('detail.evaluation.compareHint')}</div>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                <div className="rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {t('detail.evaluation.selectedExecution')}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span>{t('detail.evaluation.attempt')}: {selectedEvaluation.attemptNumber ?? '-'}</span>
-                    <span>{t('detail.evaluation.recorded')}: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.matchScore)}</div>
-                    </div>
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.semanticSimilarityScore)}</div>
-                    </div>
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.evidenceConsistencyScore)}</div>
-                    </div>
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.judgeScore)}</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {t('detail.evaluation.comparedExecution')}
-                  </div>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span>{t('detail.evaluation.attempt')}: {comparisonEvaluation.attemptNumber ?? '-'}</span>
-                    <span>{t('detail.evaluation.recorded')}: {new Date(comparisonEvaluation.createdAt).toLocaleString()}</span>
-                  </div>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.matchScore)}</div>
-                    </div>
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.semanticSimilarityScore)}</div>
-                    </div>
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.evidenceConsistencyScore)}</div>
-                    </div>
-                    <div className="rounded border bg-muted/30 p-2">
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.judgeScore)}</div>
-                    </div>
-                  </div>
+            {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">{t('artifacts.sectionTitle' as any)}</h3>
+                <div className="grid gap-2">
+                  {selectedStepExecution.artifacts.map((artifact, idx) => (
+                    <ArtifactListItem key={`${artifact.portId}-${idx}`} artifact={artifact} />
+                  ))}
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full border bg-background px-2 py-1">
-                  {t('detail.evaluation.compareDelta', {
-                    label: t('detail.evaluation.overall'),
-                    value: formatSignedPercentDelta(semanticMatchToDisplay.matchScore - comparisonSemanticMatch.matchScore),
-                  })}
-                </span>
-                <span className="rounded-full border bg-background px-2 py-1">
-                  {t('detail.evaluation.compareDelta', {
-                    label: t('detail.evaluation.embeddingSimilarity'),
-                    value: formatSignedPercentDelta(semanticMatchToDisplay.semanticSimilarityScore - comparisonSemanticMatch.semanticSimilarityScore),
-                  })}
-                </span>
-                <span className="rounded-full border bg-background px-2 py-1">
-                  {t('detail.evaluation.compareDelta', {
-                    label: t('detail.evaluation.evidenceConsistency'),
-                    value: formatSignedPercentDelta(semanticMatchToDisplay.evidenceConsistencyScore - comparisonSemanticMatch.evidenceConsistencyScore),
-                  })}
-                </span>
-                <span className="rounded-full border bg-background px-2 py-1">
-                  {t('detail.evaluation.compareDelta', {
-                    label: t('detail.evaluation.judgeScore'),
-                    value: formatSignedPercentDelta(semanticMatchToDisplay.judgeScore - comparisonSemanticMatch.judgeScore),
-                  })}
-                </span>
+            )}
+          </TabsContent>
+
+          <TabsContent value="evaluation" className="space-y-4">
+            {(execution || evaluationHistory.length > 0) && (
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                {evaluationHistory.length > 0 && (
+                  <div className="min-w-[260px] flex-1 space-y-1">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.stepExecutionLabel')}</div>
+                    <Select value={selectedEvaluation?.id || ''} onValueChange={setSelectedEvaluationId}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder={t('detail.evaluation.stepExecutionPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {evaluationHistory.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.semanticMatch.matchScore)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {comparisonCandidates.length > 0 && (
+                  <div className="min-w-[260px] flex-1 space-y-1">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.compareWith')}</div>
+                    <Select value={comparisonEvaluation?.id || ''} onValueChange={setComparisonEvaluationId}>
+                      <SelectTrigger className="h-9">
+                        <SelectValue placeholder={t('detail.evaluation.compareWithPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {comparisonCandidates.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.semanticMatch.matchScore)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {execution && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onRequestRunEvaluation?.(step.taskId)}
+                    disabled={isRunningEvaluation}
+                    className="shrink-0"
+                  >
+                    {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
+                  </Button>
+                )}
               </div>
-              {(selectedEvaluation.semanticMatch.reason || comparisonSemanticMatch.reason) && (
+            )}
+
+            {hasStepComparison && selectedEvaluation && comparisonEvaluation && comparisonSemanticMatch && (
+              <div className="rounded-lg border bg-muted/20 p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium">{t('detail.evaluation.compareTitle')}</div>
+                  <div className="text-xs text-muted-foreground">{t('detail.evaluation.compareHint')}</div>
+                </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2">
                   <div className="rounded bg-background p-3">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
-                    <div className="mt-1 text-sm whitespace-pre-wrap">{selectedEvaluation.semanticMatch.reason || t('detail.evaluation.none')}</div>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t('detail.evaluation.selectedExecution')}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>{t('detail.evaluation.attempt')}: {selectedEvaluation.attemptNumber ?? '-'}</span>
+                      <span>{t('detail.evaluation.recorded')}: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.matchScore)}</div>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.semanticSimilarityScore)}</div>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.evidenceConsistencyScore)}</div>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.judgeScore)}</div>
+                      </div>
+                    </div>
                   </div>
                   <div className="rounded bg-background p-3">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
-                    <div className="mt-1 text-sm whitespace-pre-wrap">{comparisonSemanticMatch.reason || t('detail.evaluation.none')}</div>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      {t('detail.evaluation.comparedExecution')}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span>{t('detail.evaluation.attempt')}: {comparisonEvaluation.attemptNumber ?? '-'}</span>
+                      <span>{t('detail.evaluation.recorded')}: {new Date(comparisonEvaluation.createdAt).toLocaleString()}</span>
+                    </div>
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.matchScore)}</div>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.semanticSimilarityScore)}</div>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.evidenceConsistencyScore)}</div>
+                      </div>
+                      <div className="rounded border bg-muted/30 p-2">
+                        <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
+                        <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.judgeScore)}</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <span className="rounded-full border bg-background px-2 py-1">
+                    {t('detail.evaluation.compareDelta', {
+                      label: t('detail.evaluation.overall'),
+                      value: formatSignedPercentDelta(semanticMatchToDisplay.matchScore - comparisonSemanticMatch.matchScore),
+                    })}
+                  </span>
+                  <span className="rounded-full border bg-background px-2 py-1">
+                    {t('detail.evaluation.compareDelta', {
+                      label: t('detail.evaluation.embeddingSimilarity'),
+                      value: formatSignedPercentDelta(semanticMatchToDisplay.semanticSimilarityScore - comparisonSemanticMatch.semanticSimilarityScore),
+                    })}
+                  </span>
+                  <span className="rounded-full border bg-background px-2 py-1">
+                    {t('detail.evaluation.compareDelta', {
+                      label: t('detail.evaluation.evidenceConsistency'),
+                      value: formatSignedPercentDelta(semanticMatchToDisplay.evidenceConsistencyScore - comparisonSemanticMatch.evidenceConsistencyScore),
+                    })}
+                  </span>
+                  <span className="rounded-full border bg-background px-2 py-1">
+                    {t('detail.evaluation.compareDelta', {
+                      label: t('detail.evaluation.judgeScore'),
+                      value: formatSignedPercentDelta(semanticMatchToDisplay.judgeScore - comparisonSemanticMatch.judgeScore),
+                    })}
+                  </span>
+                </div>
+                {(selectedEvaluation.semanticMatch.reason || comparisonSemanticMatch.reason) && (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div className="rounded bg-background p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
+                      <div className="mt-1 text-sm whitespace-pre-wrap">{selectedEvaluation.semanticMatch.reason || t('detail.evaluation.none')}</div>
+                    </div>
+                    <div className="rounded bg-background p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
+                      <div className="mt-1 text-sm whitespace-pre-wrap">{comparisonSemanticMatch.reason || t('detail.evaluation.none')}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
-          {semanticMatchToDisplay ? (
-            <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="font-medium">{t('detail.evaluation.semanticMatch')}</div>
-                <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                  {t('detail.evaluation.matchBadge', { score: formatPercent(semanticMatchToDisplay.matchScore) })}
-                </span>
-              </div>
-              <div className="mt-3 grid gap-3 md:grid-cols-4">
-                <div className="rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
-                  <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.matchScore)}</div>
+            {semanticMatchToDisplay ? (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium">{t('detail.evaluation.semanticMatch')}</div>
+                  <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    {t('detail.evaluation.matchBadge', { score: formatPercent(semanticMatchToDisplay.matchScore) })}
+                  </span>
                 </div>
-                <div className="rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
-                  <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.semanticSimilarityScore)}</div>
-                </div>
-                <div className="rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
-                  <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.evidenceConsistencyScore)}</div>
-                </div>
-                <div className="rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
-                  <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.judgeScore)}</div>
-                </div>
-              </div>
-              {semanticMatchToDisplay.reason && (
-                <div className="mt-3 rounded bg-background p-3">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
-                  <div className="mt-1 text-sm whitespace-pre-wrap">{semanticMatchToDisplay.reason}</div>
-                </div>
-              )}
-              {(semanticMatchToDisplay.missingPoints?.length || semanticMatchToDisplay.changedPoints?.length) ? (
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <div className="mt-3 grid gap-3 md:grid-cols-4">
                   <div className="rounded bg-background p-3">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.missingPoints')}</div>
-                    {semanticMatchToDisplay.missingPoints?.length ? (
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                        {semanticMatchToDisplay.missingPoints.map((item, index) => (
-                          <li key={`missing-${index}`}>{item}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="mt-1 text-sm text-muted-foreground">{t('detail.evaluation.none')}</div>
-                    )}
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.matchScore)}</div>
                   </div>
                   <div className="rounded bg-background p-3">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.changedPoints')}</div>
-                    {semanticMatchToDisplay.changedPoints?.length ? (
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                        {semanticMatchToDisplay.changedPoints.map((item, index) => (
-                          <li key={`changed-${index}`}>{item}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <div className="mt-1 text-sm text-muted-foreground">{t('detail.evaluation.none')}</div>
-                    )}
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.semanticSimilarityScore)}</div>
+                  </div>
+                  <div className="rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.evidenceConsistencyScore)}</div>
+                  </div>
+                  <div className="rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.judgeScore)}</div>
                   </div>
                 </div>
-              ) : null}
-              <div className="mt-3 text-xs text-muted-foreground">
+                {semanticMatchToDisplay.reason && (
+                  <div className="mt-3 rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
+                    <div className="mt-1 text-sm whitespace-pre-wrap">{semanticMatchToDisplay.reason}</div>
+                  </div>
+                )}
+                {(semanticMatchToDisplay.missingPoints?.length || semanticMatchToDisplay.changedPoints?.length) ? (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div className="rounded bg-background p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.missingPoints')}</div>
+                      {semanticMatchToDisplay.missingPoints?.length ? (
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                          {semanticMatchToDisplay.missingPoints.map((item, index) => (
+                            <li key={`missing-${index}`}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="mt-1 text-sm text-muted-foreground">{t('detail.evaluation.none')}</div>
+                      )}
+                    </div>
+                    <div className="rounded bg-background p-3">
+                      <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.changedPoints')}</div>
+                      {semanticMatchToDisplay.changedPoints?.length ? (
+                        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                          {semanticMatchToDisplay.changedPoints.map((item, index) => (
+                            <li key={`changed-${index}`}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <div className="mt-1 text-sm text-muted-foreground">{t('detail.evaluation.none')}</div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="mt-3 text-xs text-muted-foreground">
                   {semanticMatchToDisplay.judgeUsed
                     ? t('detail.evaluation.judgeModel', { model: semanticMatchToDisplay.model || '-' })
                     : t('detail.evaluation.embeddingFallback')}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="rounded-lg border bg-muted/10 p-4 text-sm text-muted-foreground">
-              {isEvaluationPending
-                ? t('detail.evaluation.waiting')
-                : t('detail.evaluation.empty')}
-            </div>
-          )}
+            ) : (
+              <div className="rounded-lg border bg-muted/10 p-4 text-sm text-muted-foreground">
+                {isEvaluationPending
+                  ? t('detail.evaluation.waiting')
+                  : t('detail.evaluation.empty')}
+              </div>
+            )}
 
-          {evaluationHistory.length > 0 && (
-            <div>
-              <div className="text-sm text-muted-foreground">
-                {t('detail.evaluation.historyHint')}
-              </div>
-              {selectedEvaluation && (
-                <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
-                  <span>{t('detail.evaluation.recorded')}: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
-                  <span>{t('detail.evaluation.attempt')}: {selectedEvaluation.attemptNumber ?? '-'}</span>
-                  <span>{t('detail.evaluation.trigger')}: {selectedEvaluation.trigger}</span>
-                  {selectedEvaluation.baselineValidationVersion !== null && (
-                    <span>{t('detail.provenance.baseline')}: v{selectedEvaluation.baselineValidationVersion}</span>
-                  )}
+            {evaluationHistory.length > 0 && (
+              <div>
+                <div className="text-sm text-muted-foreground">
+                  {t('detail.evaluation.historyHint')}
                 </div>
-              )}
-            </div>
-          )}
-
-          {isEvaluationPending && (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
-              <div className="font-medium text-primary">{t('detail.evaluation.inProgress')}</div>
-              <div className="mt-1 text-muted-foreground">
-                {t('detail.evaluation.runningMessage')}
-              </div>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="judge" className="space-y-4">
-          {advisorAutopilotActive && (
-            <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.title')}</div>
-                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                  {t(`detail.autopilot.status.${execution?.advisorAutopilotStatus || 'idle'}` as any)}
-                </Badge>
-              </div>
-              <div className="grid gap-3 md:grid-cols-3">
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.targetScore')}</div>
-                  <div className="mt-1 font-medium">{formatPercent(execution?.advisorAutopilotTargetScore)}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.maxTurns')}</div>
-                  <div className="mt-1 font-medium">{execution?.advisorAutopilotMaxTurns ?? 0}</div>
-                </div>
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.attemptCount')}</div>
-                  <div className="mt-1 font-medium">{execution?.advisorAutopilotAttemptCount ?? 0}</div>
-                </div>
-              </div>
-              {step?.advisorStopReason && (
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.stopReason')}</div>
-                  <div className="mt-1 text-muted-foreground">{t(`detail.autopilot.stopReasonValue.${step.advisorStopReason}` as any)}</div>
-                </div>
-              )}
-              {execution?.advisorAutopilotLastError && (
-                <div>
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.lastError')}</div>
-                  <div className="mt-1 text-destructive whitespace-pre-wrap">{execution.advisorAutopilotLastError}</div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {judgeHistory.length > 0 && (
-            <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
-              <div className="min-w-[260px] flex-1 space-y-1">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.stepExecutionLabel')}</div>
-                <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
-                  <SelectTrigger className="h-9">
-                    <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {judgeHistory.map((entry) => (
-                      <SelectItem key={entry.id} value={entry.id}>
-                        {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.judgeResult.overallScore)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedJudgeHistory && (
-                <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                  <span>{t('detail.evaluation.recorded')}: {new Date(selectedJudgeHistory.createdAt).toLocaleString()}</span>
-                  <span>{t('detail.evaluation.attempt')}: {selectedJudgeHistory.attemptNumber ?? '-'}</span>
-                  <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {stepJudgeResult ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border bg-muted/20 p-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
-                    <div className="text-3xl font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
+                {selectedEvaluation && (
+                  <div className="mt-3 flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    <span>{t('detail.evaluation.recorded')}: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
+                    <span>{t('detail.evaluation.attempt')}: {selectedEvaluation.attemptNumber ?? '-'}</span>
+                    <span>{t('detail.evaluation.trigger')}: {selectedEvaluation.trigger}</span>
+                    {selectedEvaluation.baselineValidationVersion !== null && (
+                      <span>{t('detail.provenance.baseline')}: v{selectedEvaluation.baselineValidationVersion}</span>
+                    )}
                   </div>
+                )}
+              </div>
+            )}
+
+            {isEvaluationPending && (
+              <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 text-sm">
+                <div className="font-medium text-primary">{t('detail.evaluation.inProgress')}</div>
+                <div className="mt-1 text-muted-foreground">
+                  {t('detail.evaluation.runningMessage')}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="judge" className="space-y-4">
+            {advisorAutopilotActive && (
+              <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.title')}</div>
                   <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                    {t('detail.judge.confidence')} {formatConfidence(stepJudgeResult.confidence)}
+                    {t(`detail.autopilot.status.${execution?.advisorAutopilotStatus || 'idle'}` as any)}
+                  </Badge>
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.targetScore')}</div>
+                    <div className="mt-1 font-medium">{formatPercent(execution?.advisorAutopilotTargetScore)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.maxTurns')}</div>
+                    <div className="mt-1 font-medium">{execution?.advisorAutopilotMaxTurns ?? 0}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.attemptCount')}</div>
+                    <div className="mt-1 font-medium">{execution?.advisorAutopilotAttemptCount ?? 0}</div>
+                  </div>
+                </div>
+                {step?.advisorStopReason && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.stopReason')}</div>
+                    <div className="mt-1 text-muted-foreground">{t(`detail.autopilot.stopReasonValue.${step.advisorStopReason}` as any)}</div>
+                  </div>
+                )}
+                {execution?.advisorAutopilotLastError && (
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.lastError')}</div>
+                    <div className="mt-1 text-destructive whitespace-pre-wrap">{execution.advisorAutopilotLastError}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {judgeHistory.length > 0 && (
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
+                <div className="min-w-[260px] flex-1 space-y-1">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.stepExecutionLabel')}</div>
+                  <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
+                    <SelectTrigger className="h-9">
+                      <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {judgeHistory.map((entry) => (
+                        <SelectItem key={entry.id} value={entry.id}>
+                          {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.judgeResult.overallScore)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedJudgeHistory && (
+                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                    <span>{t('detail.evaluation.recorded')}: {new Date(selectedJudgeHistory.createdAt).toLocaleString()}</span>
+                    <span>{t('detail.evaluation.attempt')}: {selectedJudgeHistory.attemptNumber ?? '-'}</span>
+                    <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {stepJudgeResult ? (
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-muted/20 p-4">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                      <div className="text-3xl font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
+                    </div>
+                    <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                      {t('detail.judge.confidence')} {formatConfidence(stepJudgeResult.confidence)}
+                    </Badge>
+                    <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                      {t('detail.judge.toolUsageScore')} {formatPercent(stepJudgeResult.toolUsageScore)}
+                    </Badge>
+                    <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                      {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
+                    </div>
+                    <div className="ml-auto flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.updateCurrentPlaybook')}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.optimizeThisStep')}
+                      </Button>
+                      <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.generateNewOptimizedPlaybook')}
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
+
+                  <AdvisorChangeReviewDialog
+                    open={remediationDialogOpen}
+                    onOpenChange={setRemediationDialogOpen}
+                    items={remediationItems}
+                    tasks={currentPlaybook?.tasks || []}
+                    mode={remediationDialogMode}
+                    loading={remediationLoading}
+                    onApply={handleApplyRemediations}
+                  />
+                </div>
+
+                <div className="rounded-lg border bg-background p-4">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
+                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
+                    {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-background p-4">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
+                  <div className="mt-2 space-y-2 text-sm">
+                    {stepJudgeResult.rewriteHints.length > 0 ? (
+                      stepJudgeResult.rewriteHints.map((hint, idx) => (
+                        <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
+                      ))
+                    ) : (
+                      <div className="text-muted-foreground">{t('detail.judge.none')}</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {issueSections.map((section) => (
+                    <IssueSection
+                      key={section.title}
+                      title={section.title}
+                      badge={section.badge}
+                      badgeClassName={section.badgeClassName}
+                      items={section.items}
+                      emptyLabel={t('detail.judge.none')}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : stepJudgeStatus === 'failed' ? (
+              <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
+                <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
+                  <AlertCircle className="h-4 w-4 shrink-0" />
+                  {t('detail.judge.failed')}
+                </div>
+                <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                  {stepJudgeError || t('detail.judge.failedUnknown')}
+                </pre>
+              </div>
+            ) : (
+              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
+                  ? t('detail.judge.evaluating')
+                  : t('detail.judge.empty')}
+              </div>
+            )}
+
+            {judgeSummary && !stepJudgeResult && (
+              <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
+                    {Math.round(judgeSummary.overallScore)}%
                   </Badge>
                   <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                    {t('detail.judge.toolUsageScore')} {formatPercent(stepJudgeResult.toolUsageScore)}
+                    {t('detail.judge.confidence')} {formatConfidence(judgeSummary.confidence)}
                   </Badge>
                   <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                    {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
+                    {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
                   </div>
                   <div className="ml-auto flex flex-wrap gap-2">
                     <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
@@ -1225,7 +1315,7 @@ export function ExecutionStepDetail({
                     </Button>
                   </div>
                 </div>
-                <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
+                <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
 
                 <AdvisorChangeReviewDialog
                   open={remediationDialogOpen}
@@ -1236,269 +1326,177 @@ export function ExecutionStepDetail({
                   loading={remediationLoading}
                   onApply={handleApplyRemediations}
                 />
-              </div>
 
-              <div className="rounded-lg border bg-background p-4">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
-                <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
-                  {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
-                </p>
-              </div>
-
-              <div className="rounded-lg border bg-background p-4">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
-                <div className="mt-2 space-y-2 text-sm">
-                  {stepJudgeResult.rewriteHints.length > 0 ? (
-                    stepJudgeResult.rewriteHints.map((hint, idx) => (
-                      <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
-                    ))
-                  ) : (
-                    <div className="text-muted-foreground">{t('detail.judge.none')}</div>
-                  )}
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {issueSections.map((section) => (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
                   <IssueSection
-                    key={section.title}
-                    title={section.title}
-                    badge={section.badge}
-                    badgeClassName={section.badgeClassName}
-                    items={section.items}
+                    title={t('detail.judge.toolUsageIssues')}
+                    badge={t('detail.remediation.category.tooling')}
+                    badgeClassName="bg-emerald-100 text-emerald-700 border-emerald-200"
+                    items={judgeSummary.toolUsageIssues || []}
                     emptyLabel={t('detail.judge.none')}
                   />
-                ))}
-              </div>
-            </div>
-          ) : stepJudgeStatus === 'failed' ? (
-            <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
-              <div className="mb-2 flex items-center gap-2 font-medium text-destructive">
-                <AlertCircle className="h-4 w-4 shrink-0" />
-                {t('detail.judge.failed')}
-              </div>
-              <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
-                {stepJudgeError || t('detail.judge.failedUnknown')}
-              </pre>
-            </div>
-          ) : (
-            <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
-                ? t('detail.judge.evaluating')
-                : t('detail.judge.empty')}
-            </div>
-          )}
-
-          {judgeSummary && !stepJudgeResult && (
-            <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
-                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                  {Math.round(judgeSummary.overallScore)}%
-                </Badge>
-                <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                  {t('detail.judge.confidence')} {formatConfidence(judgeSummary.confidence)}
-                </Badge>
-                <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                  {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
-                </div>
-                <div className="ml-auto flex flex-wrap gap-2">
-                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.updateCurrentPlaybook')}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.optimizeThisStep')}
-                  </Button>
-                  <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.generateNewOptimizedPlaybook')}
-                  </Button>
+                  <IssueSection
+                    title={t('detail.judge.crossStepToolPatterns')}
+                    badge={t('detail.remediation.category.structure')}
+                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                    items={judgeSummary.crossStepToolPatterns || []}
+                    emptyLabel={t('detail.judge.none')}
+                  />
+                  <IssueSection
+                    title={t('detail.judge.rootCauseTaskIds')}
+                    badge={t('detail.remediation.category.structure')}
+                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                    items={judgeSummary.rootCauseTaskIds || []}
+                    emptyLabel={t('detail.judge.none')}
+                  />
+                  <IssueSection
+                    title={t('detail.judge.highImpactRecommendations')}
+                    badge={t('detail.remediation.category.structure')}
+                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
+                    items={judgeSummary.highImpactRecommendations || []}
+                    emptyLabel={t('detail.judge.none')}
+                  />
                 </div>
               </div>
-              <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
+            )}
+          </TabsContent>
 
-              <AdvisorChangeReviewDialog
-                open={remediationDialogOpen}
-                onOpenChange={setRemediationDialogOpen}
-                items={remediationItems}
-                tasks={currentPlaybook?.tasks || []}
-                mode={remediationDialogMode}
-                loading={remediationLoading}
-                onApply={handleApplyRemediations}
-              />
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
-                <IssueSection
-                  title={t('detail.judge.toolUsageIssues')}
-                  badge={t('detail.remediation.category.tooling')}
-                  badgeClassName="bg-emerald-100 text-emerald-700 border-emerald-200"
-                  items={judgeSummary.toolUsageIssues || []}
-                  emptyLabel={t('detail.judge.none')}
-                />
-                <IssueSection
-                  title={t('detail.judge.crossStepToolPatterns')}
-                  badge={t('detail.remediation.category.structure')}
-                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                  items={judgeSummary.crossStepToolPatterns || []}
-                  emptyLabel={t('detail.judge.none')}
-                />
-                <IssueSection
-                  title={t('detail.judge.rootCauseTaskIds')}
-                  badge={t('detail.remediation.category.structure')}
-                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                  items={judgeSummary.rootCauseTaskIds || []}
-                  emptyLabel={t('detail.judge.none')}
-                />
-                <IssueSection
-                  title={t('detail.judge.highImpactRecommendations')}
-                  badge={t('detail.remediation.category.structure')}
-                  badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                  items={judgeSummary.highImpactRecommendations || []}
-                  emptyLabel={t('detail.judge.none')}
-                />
-              </div>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="tool-trace" className="space-y-4">
-          {step.toolTrace && step.toolTrace.length > 0 ? (
-            <div className="space-y-3">
-              {step.toolTrace.map((item) => (
-                <div key={`${item.callIndex}-${item.toolName}`} className="rounded-lg border bg-muted/30 p-4">
-                  <div className="mb-2 flex items-center gap-2 text-sm">
-                    <span className="font-medium">{item.callIndex}.</span>
-                    <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{item.toolName}</code>
-                  </div>
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div>
-                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.args')}</div>
-                      <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                        {formatToolArgs(item.args)}
-                      </pre>
-                    </div>
-                    <div>
-                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.outputSummary')}</div>
-                      <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                        {item.outputSummary || '-'}
-                      </pre>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              {t('detail.toolTrace.empty')}
-            </div>
-          )}
-
-        </TabsContent>
-
-        <TabsContent value="replay-diff" className="space-y-4">
-          {baselineReplay ? (
-            <div className="space-y-3">
-              {baselineReplay.toolCalls.map((baselineItem) => {
-                const actualItem = step.toolTrace?.find((item) => item.callIndex === baselineItem.callIndex);
-                const argsMatch = actualItem ? areArgsEqual(baselineItem.args, actualItem.args) : false;
-                const toolMatch = actualItem ? actualItem.toolName === baselineItem.toolName : false;
-                const statusClass = !actualItem
-                  ? 'bg-amber-100 text-amber-700'
-                  : argsMatch && toolMatch
-                    ? 'bg-green-100 text-green-700'
-                    : 'bg-red-100 text-red-700';
-                const statusLabel = !actualItem
-                  ? t('detail.replayDiff.missing')
-                  : argsMatch && toolMatch
-                    ? t('detail.replayDiff.matches')
-                    : t('detail.replayDiff.differs');
-
-                return (
-                  <div key={`replay-diff-${baselineItem.callIndex}-${baselineItem.toolName}`} className="rounded-lg border bg-muted/20 p-4">
+          <TabsContent value="tool-trace" className="space-y-4">
+            {step.toolTrace && step.toolTrace.length > 0 ? (
+              <div className="space-y-3">
+                {step.toolTrace.map((item) => (
+                  <div key={`${item.callIndex}-${item.toolName}`} className="rounded-lg border bg-muted/30 p-4">
                     <div className="mb-2 flex items-center gap-2 text-sm">
-                      <span className="font-medium">{baselineItem.callIndex}.</span>
-                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{baselineItem.toolName}</code>
-                      <span className={`rounded-full px-2 py-0.5 text-xs ${statusClass}`}>
-                        {statusLabel}
-                      </span>
+                      <span className="font-medium">{item.callIndex}.</span>
+                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{item.toolName}</code>
                     </div>
                     <div className="grid gap-3 md:grid-cols-2">
                       <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineArgs')}</div>
+                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.args')}</div>
                         <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                          {formatToolArgs(baselineItem.args)}
+                          {formatToolArgs(item.args)}
                         </pre>
                       </div>
                       <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualArgs')}</div>
+                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.outputSummary')}</div>
                         <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                          {formatToolArgs(actualItem?.args)}
-                        </pre>
-                      </div>
-                    </div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineResult')}</div>
-                        <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                          {baselineItem.outputSummary || '-'}
-                        </pre>
-                      </div>
-                      <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualResult')}</div>
-                        <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                          {actualItem?.outputSummary || '-'}
+                          {item.outputSummary || '-'}
                         </pre>
                       </div>
                     </div>
                   </div>
-                );
-              })}
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                {t('detail.toolTrace.empty')}
+              </div>
+            )}
 
-              {(step.toolTrace || []).some((actualItem) => !baselineReplay.toolCalls.find((baselineItem) => baselineItem.callIndex === actualItem.callIndex)) && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 text-sm text-amber-800">
-                  {t('detail.replayDiff.extraCalls')}
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              {t('detail.replayDiff.empty')}
-            </div>
-          )}
-        </TabsContent>
+          </TabsContent>
 
-        <TabsContent value="llm-prompts" className="space-y-4">
-          {promptTraceItems.length > 0 ? (
-            <div className="space-y-3">
-              {promptTraceItems.map((item, index) => (
-                <Collapsible key={`llm-prompt-${index}`} defaultOpen={false} className="rounded-lg border bg-muted/30 px-4">
-                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 py-4 text-left">
-                    <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <span className="font-medium">{index + 1}.</span>
-                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                        {formatPromptStage(item.stage)}
-                      </span>
-                      <code className="rounded bg-background px-1.5 py-0.5 text-xs">{item.model || '-'}</code>
+          <TabsContent value="replay-diff" className="space-y-4">
+            {baselineReplay ? (
+              <div className="space-y-3">
+                {baselineReplay.toolCalls.map((baselineItem) => {
+                  const actualItem = step.toolTrace?.find((item) => item.callIndex === baselineItem.callIndex);
+                  const argsMatch = actualItem ? areArgsEqual(baselineItem.args, actualItem.args) : false;
+                  const toolMatch = actualItem ? actualItem.toolName === baselineItem.toolName : false;
+                  const statusClass = !actualItem
+                    ? 'bg-amber-100 text-amber-700'
+                    : argsMatch && toolMatch
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-red-100 text-red-700';
+                  const statusLabel = !actualItem
+                    ? t('detail.replayDiff.missing')
+                    : argsMatch && toolMatch
+                      ? t('detail.replayDiff.matches')
+                      : t('detail.replayDiff.differs');
+
+                  return (
+                    <div key={`replay-diff-${baselineItem.callIndex}-${baselineItem.toolName}`} className="rounded-lg border bg-muted/20 p-4">
+                      <div className="mb-2 flex items-center gap-2 text-sm">
+                        <span className="font-medium">{baselineItem.callIndex}.</span>
+                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{baselineItem.toolName}</code>
+                        <span className={`rounded-full px-2 py-0.5 text-xs ${statusClass}`}>
+                          {statusLabel}
+                        </span>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div>
+                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineArgs')}</div>
+                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                            {formatToolArgs(baselineItem.args)}
+                          </pre>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualArgs')}</div>
+                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                            {formatToolArgs(actualItem?.args)}
+                          </pre>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-2">
+                        <div>
+                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineResult')}</div>
+                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                            {baselineItem.outputSummary || '-'}
+                          </pre>
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualResult')}</div>
+                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                            {actualItem?.outputSummary || '-'}
+                          </pre>
+                        </div>
+                      </div>
                     </div>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="pb-4 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.prompts.promptLabel')}</div>
-                    <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                      {item.prompt || '-'}
-                    </pre>
-                  </CollapsibleContent>
-                </Collapsible>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-              {t('detail.prompts.empty')}
-            </div>
-          )}
-        </TabsContent>
+                  );
+                })}
+
+                {(step.toolTrace || []).some((actualItem) => !baselineReplay.toolCalls.find((baselineItem) => baselineItem.callIndex === actualItem.callIndex)) && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 text-sm text-amber-800">
+                    {t('detail.replayDiff.extraCalls')}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                {t('detail.replayDiff.empty')}
+              </div>
+            )}
+          </TabsContent>
+
+          <TabsContent value="llm-prompts" className="space-y-4">
+            {promptTraceItems.length > 0 ? (
+              <div className="space-y-3">
+                {promptTraceItems.map((item, index) => (
+                  <Collapsible key={`llm-prompt-${index}`} defaultOpen={false} className="rounded-lg border bg-muted/30 px-4">
+                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 py-4 text-left">
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="font-medium">{index + 1}.</span>
+                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                          {formatPromptStage(item.stage)}
+                        </span>
+                        <code className="rounded bg-background px-1.5 py-0.5 text-xs">{item.model || '-'}</code>
+                      </div>
+                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="pb-4 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.prompts.promptLabel')}</div>
+                      <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                        {item.prompt || '-'}
+                      </pre>
+                    </CollapsibleContent>
+                  </Collapsible>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                {t('detail.prompts.empty')}
+              </div>
+            )}
+          </TabsContent>
         </Tabs>
       </div>
 

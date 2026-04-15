@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-15 08:48:01 UTC] — Reorganize playbook canvas toolbar
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Split playbook toolbar responsibilities by keeping run and document actions in the header, moving canvas editing actions into a new movable floating toolbar on the left side of the canvas, moving both connectors and workspace explorer toggles into that floating toolbar, and grouping execution configuration into a compact run-settings popover.
+- **Why:** Reduce header crowding, place canvas actions closer to the workspace, and improve playbook editing ergonomics without changing playbook contracts.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/` and playbook locale files.
+
 ## [2026-04-14 23:35:00 UTC] — Connector editor skill selector and form shape update
 
 - **Feature:** `connectors`

@@ -8,10 +8,10 @@ export class GeneratePlaybookDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty({ minLength: 10, maxLength: 5000, description: 'Prompt describing the desired playbook workflow' })
+  @ApiProperty({ minLength: 10, maxLength: 20000, description: 'Prompt describing the desired playbook workflow' })
   @IsString()
   @MinLength(10)
-  @MaxLength(5000)
+  @MaxLength(20000)
   prompt!: string;
 
   @ApiPropertyOptional({ type: [String], description: 'Workspace IDs to attach' })
