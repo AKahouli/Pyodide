@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-15 16:05:00 UTC] — Show applied Advisor Autopilot step rewrites
+
+- **Feature:** `playbook-advisor`
+- **Type:** `feat`
+- **Changed:** Persisted per-turn advisor optimization history for safe `optimize_step` rewrites, including compact before/after task snapshots and changed field names, and surfaced that history in the Playbook Advisor step detail pane.
+- **Why:** Users could see that autopilot optimization turns happened, but not what was actually changed on each rewrite.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+
 ## [2026-04-15 08:48:01 UTC] — Reorganize playbook canvas toolbar
 
 - **Feature:** `playbook`

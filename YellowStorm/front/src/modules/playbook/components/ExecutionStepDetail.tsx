@@ -170,6 +170,15 @@ function formatConfidence(value: number | null | undefined): string {
   return `${Math.round(normalized)}%`;
 }
 
+function formatOptimizationValue(value: unknown): string {
+  if (value === null || value === undefined) return '-';
+  if (typeof value === 'string') return value.trim().length > 0 ? value : '-';
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.length > 0 ? JSON.stringify(value, null, 2) : '[]';
+  return JSON.stringify(value, null, 2);
+}
+
 function formatToolArgs(args: Record<string, unknown> | undefined): string {
   if (!args) return '{}';
   try {
@@ -278,6 +287,7 @@ export function ExecutionStepDetail({
   const currentTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
+  const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
   const stepJudgeStatus = step?.judgeStatus || 'idle';
   const stepJudgeError = step?.judgeError || null;
   const judgeSummary = execution?.judgeSummary || null;
@@ -1188,6 +1198,53 @@ export function ExecutionStepDetail({
                     <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
                   </div>
                 )}
+              </div>
+            )}
+
+            {advisorOptimizationHistory.length > 0 && (
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t('detail.autopilot.appliedOptimizations')}
+                </div>
+                <div className="space-y-3">
+                  {[...advisorOptimizationHistory].reverse().map((entry) => (
+                    <div key={`${entry.turn}-${entry.createdAt}`} className="rounded-md border bg-background p-3">
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                        <span>{t('detail.autopilot.turnLabel', { turn: entry.turn })}</span>
+                        <span>{new Date(entry.createdAt).toLocaleString()}</span>
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {entry.changedFields.length > 0 ? entry.changedFields.map((field) => (
+                          <Badge key={field} variant="outline" className="rounded-full px-2 py-0 text-xs">
+                            {t(`detail.autopilot.field.${field}` as any)}
+                          </Badge>
+                        )) : (
+                          <div className="text-xs text-muted-foreground">{t('detail.autopilot.noVisibleChanges')}</div>
+                        )}
+                      </div>
+                      {entry.changedFields.length > 0 && (
+                        <div className="mt-3 space-y-3">
+                          {entry.changedFields.map((field) => (
+                            <div key={field} className="grid gap-3 md:grid-cols-2">
+                              <div>
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.before')}</div>
+                                <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
+                                  {formatOptimizationValue(entry.beforeTask?.[field])}
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.after')}</div>
+                                <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
+                                  {formatOptimizationValue(entry.afterTask?.[field])}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 

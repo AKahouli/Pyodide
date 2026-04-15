@@ -12,6 +12,8 @@ const storeState = vi.hoisted(() => ({
   updatePlaybookFromJudge: vi.fn(),
   generatePlaybookFromJudge: vi.fn(),
   optimizeStepFromJudge: vi.fn(),
+  fetchAdvisorRemediations: vi.fn().mockResolvedValue([]),
+  applyAdvisorRemediations: vi.fn().mockResolvedValue(null),
   validateTaskReplay: vi.fn(),
   fetchTaskReplays: vi.fn().mockResolvedValue([]),
 }));
@@ -246,6 +248,52 @@ describe('ExecutionStepDetail', () => {
     );
 
     expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
+  });
+
+  it('renders applied optimization diffs for advisor autopilot turns', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          advisorOptimizationHistory: [
+            {
+              turn: 1,
+              createdAt: '2025-01-01T00:00:02.000Z',
+              changedFields: ['description', 'allowClarification'],
+              beforeTask: { description: 'Old prompt', allowClarification: false },
+              afterTask: { description: 'New prompt', allowClarification: true },
+            },
+          ],
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          advisorAutopilotEnabled: true,
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('detail.autopilot.appliedOptimizations')).toBeInTheDocument();
+    expect(screen.getByText('detail.autopilot.field.description')).toBeInTheDocument();
+    expect(screen.getByText('Old prompt')).toBeInTheDocument();
+    expect(screen.getByText('New prompt')).toBeInTheDocument();
   });
 
   it('prefers the live current attempt over persisted history for the same attempt number', () => {

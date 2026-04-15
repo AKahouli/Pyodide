@@ -200,6 +200,7 @@ export class PlaybookJudgeEnrichmentService {
       throw new Error('Execution not found');
     }
 
+    const taskResult = (execution.taskResults || []).find((item: any) => item.taskId === taskId);
     const task = (sourcePlaybook.tasks || []).find((item: any) => item.id === taskId);
     if (!task) {
       throw new Error('Task not found');
@@ -208,6 +209,12 @@ export class PlaybookJudgeEnrichmentService {
     const payload = await this.buildStepOptimizationPayload(executionId, taskId);
     const optimizedTask = this.normalizeOptimizedTask(task, payload.task || payload);
     const tasks = (sourcePlaybook.tasks || []).map((item: any) => (item.id === taskId ? optimizedTask : item));
+
+    await this.appendAdvisorOptimizationHistory(executionId, taskId, {
+      turn: Math.max(1, Number((taskResult as any)?.advisorTurnCount ?? 1)),
+      beforeTask: task as unknown as Record<string, unknown>,
+      afterTask: optimizedTask as unknown as Record<string, unknown>,
+    });
 
     return this.playbookService.update(playbookId, { tasks } as any);
   }
@@ -336,6 +343,70 @@ export class PlaybookJudgeEnrichmentService {
       outputPorts: originalTask.outputPorts || [],
       inputFiles: originalTask.inputFiles || [],
     };
+  }
+
+  private async appendAdvisorOptimizationHistory(
+    executionId: string,
+    taskId: string,
+    entry: {
+      turn: number;
+      beforeTask: Record<string, unknown>;
+      afterTask: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const historyEntry = {
+      turn: entry.turn,
+      createdAt: new Date(),
+      changedFields: this.computeTaskChangedFields(entry.beforeTask, entry.afterTask),
+      beforeTask: this.pickAdvisorOptimizationTaskFields(entry.beforeTask),
+      afterTask: this.pickAdvisorOptimizationTaskFields(entry.afterTask),
+    };
+
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
+      {
+        $push: {
+          'taskResults.$.advisorOptimizationHistory': {
+            $each: [historyEntry],
+            $slice: -25,
+          },
+        },
+        $set: { updatedAt: new Date() },
+      },
+    ).exec();
+  }
+
+  private pickAdvisorOptimizationTaskFields(task: Record<string, unknown>): Record<string, unknown> {
+    const fields = [
+      'title',
+      'description',
+      'assignedAgentId',
+      'interruptBefore',
+      'interruptAfter',
+      'allowClarification',
+      'clarificationPrompt',
+      'maxClarifications',
+      'enabled',
+      'notifyOnComplete',
+      'notifyEmails',
+      'stepReplayMode',
+      'taskType',
+    ];
+
+    return fields.reduce<Record<string, unknown>>((acc, field) => {
+      acc[field] = task?.[field];
+      return acc;
+    }, {});
+  }
+
+  private computeTaskChangedFields(
+    beforeTask: Record<string, unknown>,
+    afterTask: Record<string, unknown>,
+  ): string[] {
+    const before = this.pickAdvisorOptimizationTaskFields(beforeTask);
+    const after = this.pickAdvisorOptimizationTaskFields(afterTask);
+
+    return Object.keys(after).filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
   }
 
   private async evaluateNodeAndPersist(userId: string, executionId: string, taskId: string): Promise<void> {

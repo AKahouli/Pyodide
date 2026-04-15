@@ -1278,8 +1278,8 @@ export class PlaybookExecutionService {
       status: dto.singleStepTaskId && dto.singleStepTaskId !== task.id
         ? StepStatus.SKIPPED
         : task.enabled === false
-        ? StepStatus.SKIPPED
-        : StepStatus.PENDING,
+          ? StepStatus.SKIPPED
+          : StepStatus.PENDING,
       output: null,
       error: null,
       durationMs: null,
@@ -1859,11 +1859,11 @@ export class PlaybookExecutionService {
           ...usageFields,
         });
         this.persistBufferedCompletionAndScheduleEnrichment(userId, executionId, taskId, stepBuffer.get(taskId)!, evalEnabled, reflectionEnabled);
-          this.streamGateway.sendToUser(userId, {
-            type: 'playbook_step_complete',
-            data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
-          });
-          this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'completed' });
+        this.streamGateway.sendToUser(userId, {
+          type: 'playbook_step_complete',
+          data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
+        });
+        this.logger.log('SSE playbook_step_complete sent (workflow)', { executionId, taskId, status: 'completed' });
         if (completedTask) this.sendStepNotificationEmail(completedTask, 'completed', playbookName, { output });
         break;
       }
@@ -2168,18 +2168,18 @@ export class PlaybookExecutionService {
         threadId: threadId || null,
         interruptPayload: firstInterrupt
           ? {
-              type: firstInterrupt.type,
-              taskId: firstInterrupt.task_id,
-              taskTitle: firstInterrupt.task_title,
-              message: firstInterrupt.message,
-              threadId: firstInterrupt.thread_id,
-              interruptId: firstInterrupt.interrupt_id || '',
-              round: firstInterrupt.round || 0,
-              payloadJson: firstInterrupt.conversation_json || '',
-              resumableActions: firstInterrupt.resumable_actions || [],
-              taskDescription: firstInterrupt.task_description || '',
-              result: firstInterrupt.result || '',
-            }
+            type: firstInterrupt.type,
+            taskId: firstInterrupt.task_id,
+            taskTitle: firstInterrupt.task_title,
+            message: firstInterrupt.message,
+            threadId: firstInterrupt.thread_id,
+            interruptId: firstInterrupt.interrupt_id || '',
+            round: firstInterrupt.round || 0,
+            payloadJson: firstInterrupt.conversation_json || '',
+            resumableActions: firstInterrupt.resumable_actions || [],
+            taskDescription: firstInterrupt.task_description || '',
+            result: firstInterrupt.result || '',
+          }
           : null,
       },
     });
@@ -2574,13 +2574,13 @@ export class PlaybookExecutionService {
             threadId: response.thread_id || null,
             interruptPayload: interrupt
               ? {
-                  type: interrupt.type,
-                  taskId: interrupt.task_id,
-                  taskTitle: interrupt.task_title,
-                  message: interrupt.message,
-                  threadId: interrupt.thread_id,
-                  payloadJson: interrupt.payload_json,
-                }
+                type: interrupt.type,
+                taskId: interrupt.task_id,
+                taskTitle: interrupt.task_title,
+                message: interrupt.message,
+                threadId: interrupt.thread_id,
+                payloadJson: interrupt.payload_json,
+              }
               : null,
           },
         });
@@ -2665,13 +2665,13 @@ export class PlaybookExecutionService {
             threadId: outcome.response?.thread_id || null,
             interruptPayload: interrupt
               ? {
-                  type: interrupt.type,
-                  taskId: interrupt.task_id,
-                  taskTitle: interrupt.task_title,
-                  message: interrupt.message,
-                  threadId: interrupt.thread_id,
-                  payloadJson: interrupt.payload_json,
-                }
+                type: interrupt.type,
+                taskId: interrupt.task_id,
+                taskTitle: interrupt.task_title,
+                message: interrupt.message,
+                threadId: interrupt.thread_id,
+                payloadJson: interrupt.payload_json,
+              }
               : null,
           },
         }).exec();
@@ -2924,13 +2924,13 @@ export class PlaybookExecutionService {
           threadId: outcome.response?.thread_id || null,
           interruptPayload: interrupt
             ? {
-                type: interrupt.type,
-                taskId: interrupt.task_id,
-                taskTitle: interrupt.task_title,
-                message: interrupt.message,
-                threadId: interrupt.thread_id,
-                payloadJson: interrupt.payload_json,
-              }
+              type: interrupt.type,
+              taskId: interrupt.task_id,
+              taskTitle: interrupt.task_title,
+              message: interrupt.message,
+              threadId: interrupt.thread_id,
+              payloadJson: interrupt.payload_json,
+            }
             : null,
         },
       }).exec();
@@ -3072,10 +3072,10 @@ export class PlaybookExecutionService {
         allow_clarification: task.allowClarification || false,
         clarification_prompt: task.clarificationPrompt || '',
         max_clarifications: task.maxClarifications || 3,
-          input_keys: task.inputKeys || [],
-          output_key: task.outputKey || '',
-          input_files_by_port: inputFilesByPort,
-          input_ports: (task.inputPorts || []).map((p: any) => ({
+        input_keys: task.inputKeys || [],
+        output_key: task.outputKey || '',
+        input_files_by_port: inputFilesByPort,
+        input_ports: (task.inputPorts || []).map((p: any) => ({
           id: p.id,
           name: p.name,
           artifact_kind: p.artifactKind,
@@ -3220,18 +3220,18 @@ export class PlaybookExecutionService {
           taskOutputs.set(task.outputKey, output);
         }
 
-          this.streamGateway.sendToUser(userId, {
-            type: 'playbook_step_complete',
-            data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
-          });
-          this.logger.log('Step completed', { executionId, taskId, componentCount: components.length, durationMs });
-          this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', runEvaluation);
-          this.scheduleNodeReflection(userId, executionId, taskId, 'completed', runNodeReflection);
-          this.sendStepNotificationEmail(task, 'completed', playbookName, {
-            output,
-            playbookId,
-            executionId,
-          });
+        this.streamGateway.sendToUser(userId, {
+          type: 'playbook_step_complete',
+          data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
+        });
+        this.logger.log('Step completed', { executionId, taskId, componentCount: components.length, durationMs });
+        this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', runEvaluation);
+        this.scheduleNodeReflection(userId, executionId, taskId, 'completed', runNodeReflection);
+        this.sendStepNotificationEmail(task, 'completed', playbookName, {
+          output,
+          playbookId,
+          executionId,
+        });
         return { outcome: 'completed' };
       } else if (response.status === 'skipped') {
         const usage = response.result?.usage;
@@ -3470,15 +3470,15 @@ export class PlaybookExecutionService {
       call.on('end', async () => {
         try {
           const buffered = sharedBuffer.get(taskId);
-        if (buffered) {
-          const execution = await this.executionModel.findById(executionId)
-            .select('taskResults.taskId taskResults.components')
-            .lean()
-            .exec();
-          const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
-            .filter((component: any) => component.type === 'humanFeedback');
-          await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
-          await this.recordBufferedTaskUsage(userId, executionId, buffered, startedAt);
+          if (buffered) {
+            const execution = await this.executionModel.findById(executionId)
+              .select('taskResults.taskId taskResults.components')
+              .lean()
+              .exec();
+            const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
+              .filter((component: any) => component.type === 'humanFeedback');
+            await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
+            await this.recordBufferedTaskUsage(userId, executionId, buffered, startedAt);
 
             if (buffered.output) {
               taskOutputs.set(taskId, buffered.output);
@@ -3809,24 +3809,21 @@ ${executionBlock}
 <tr><td style="padding:8px 16px;color:#6b7280;">Status</td><td style="padding:8px 16px;font-weight:600;">${esc(statusLabel)}</td></tr>
 ${errorBlock}
 </table>
-${
-  summaryLine
-    ? `<p style="margin-top:14px;font-size:13px;color:#4b5563;line-height:1.5;"><strong>Summary</strong><br/>${esc(
-        summaryLine,
-      )}</p>`
-    : ''
-}
-${
-  detailUrl
-    ? `<p style="margin-top:12px;"><a href="${esc(detailUrl)}">View execution details</a></p>`
-    : ''
-}
+${summaryLine
+          ? `<p style="margin-top:14px;font-size:13px;color:#4b5563;line-height:1.5;"><strong>Summary</strong><br/>${esc(
+            summaryLine,
+          )}</p>`
+          : ''
+        }
+${detailUrl
+          ? `<p style="margin-top:12px;"><a href="${esc(detailUrl)}">View execution details</a></p>`
+          : ''
+        }
 <p style="margin-top:16px;font-size:12px;color:#9ca3af;">Sent by YelloStorm Playbook</p>
 </div>`;
 
-      const text = `Scheduled playbook "${playbookName}" finished: ${statusLabel}${
-        error ? `\nError: ${error}` : ''
-      }${summaryLine ? `\n\nSummary: ${summaryLine}` : ''}${detailUrl ? `\n\nDetails: ${detailUrl}` : ''}`;
+      const text = `Scheduled playbook "${playbookName}" finished: ${statusLabel}${error ? `\nError: ${error}` : ''
+        }${summaryLine ? `\n\nSummary: ${summaryLine}` : ''}${detailUrl ? `\n\nDetails: ${detailUrl}` : ''}`;
 
       await this.emailService.send({ to: [to], subject, html, text });
     } catch (err) {
@@ -4556,13 +4553,13 @@ ${
               llmPromptTrace,
               durationMs, startedAt: new Date(), completedAt: new Date(),
             });
-              this.streamGateway.sendToUser(userId, {
-                type: 'playbook_step_complete',
-                data: { executionId, taskId, status: 'completed', output, components: mergedComponents, toolTrace, llmPromptTrace, semanticMatch, durationMs },
-              });
-          this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
-          this.scheduleNodeReflection(userId, executionId, taskId, 'completed', reflectionEnabled);
-            } else if (result.status === 'skipped') {
+            this.streamGateway.sendToUser(userId, {
+              type: 'playbook_step_complete',
+              data: { executionId, taskId, status: 'completed', output, components: mergedComponents, toolTrace, llmPromptTrace, semanticMatch, durationMs },
+            });
+            this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
+            this.scheduleNodeReflection(userId, executionId, taskId, 'completed', reflectionEnabled);
+          } else if (result.status === 'skipped') {
             this.streamGateway.sendToUser(userId, {
               type: 'playbook_step_start',
               data: { executionId, taskId, status: 'running' },
@@ -4581,7 +4578,7 @@ ${
               type: 'playbook_step_complete',
               data: { executionId, taskId, status: 'skipped', output: '', toolTrace, llmPromptTrace, semanticMatch, durationMs },
             });
-            } else if (result.status === 'failed') {
+          } else if (result.status === 'failed') {
             this.streamGateway.sendToUser(userId, {
               type: 'playbook_step_start',
               data: { executionId, taskId, status: 'running' },
@@ -4652,10 +4649,10 @@ ${
     const resumedInterruptPayload = execution.interruptPayload as any;
     const resumedInterruptIdentity = resumedInterruptPayload
       ? {
-          interruptId: String(resumedInterruptPayload.interruptId || ''),
-          type: String(resumedInterruptPayload.type || ''),
-          round: Number(resumedInterruptPayload.round || 0),
-        }
+        interruptId: String(resumedInterruptPayload.interruptId || ''),
+        type: String(resumedInterruptPayload.type || ''),
+        round: Number(resumedInterruptPayload.round || 0),
+      }
       : undefined;
 
     const call = this.grpcService.resumePlaybookWorkflow(grpcRequest);
@@ -4871,31 +4868,31 @@ ${
       const executionId = (e._id || e.id).toString();
       const buffer = this.activeStepBuffers.get(executionId);
 
-        return {
-          id: executionId,
-          playbookId: e.playbookId.toString(),
-          executedBy: e.executedBy.toString(),
-          executionNumber: e.executionNumber,
-          currentAttemptNumber: e.currentAttemptNumber ?? 1,
-          status: e.status,
-          executionMode: e.executionMode || 'live',
-          reflectionEnabled: e.reflectionEnabled !== false,
-          advisorAutopilotEnabled: e.advisorAutopilotEnabled === true,
-          advisorAutopilotTargetScore: e.advisorAutopilotTargetScore ?? 80,
-          advisorAutopilotMaxTurns: e.advisorAutopilotMaxTurns ?? 2,
-          advisorAutopilotStatus: e.advisorAutopilotStatus || 'idle',
-          advisorAutopilotTaskId: e.advisorAutopilotTaskId ?? null,
-          advisorAutopilotAttemptCount: e.advisorAutopilotAttemptCount ?? 0,
-          advisorAutopilotLastError: e.advisorAutopilotLastError ?? null,
-          judgeSummaryStatus: e.judgeSummaryStatus || 'idle',
-          judgeSummary: e.judgeSummary || null,
-          replaySourceByTask: e.replaySourceByTask || null,
-          attemptHistory: e.attemptHistory || [],
-          taskResults: (e.taskResults || []).map((tr: any) => {
-            const merged = buffer?.has(tr.taskId)
-              ? this.mergeTaskResultWithBuffer(tr, buffer.get(tr.taskId)!)
-              : tr;
-            return {
+      return {
+        id: executionId,
+        playbookId: e.playbookId.toString(),
+        executedBy: e.executedBy.toString(),
+        executionNumber: e.executionNumber,
+        currentAttemptNumber: e.currentAttemptNumber ?? 1,
+        status: e.status,
+        executionMode: e.executionMode || 'live',
+        reflectionEnabled: e.reflectionEnabled !== false,
+        advisorAutopilotEnabled: e.advisorAutopilotEnabled === true,
+        advisorAutopilotTargetScore: e.advisorAutopilotTargetScore ?? 90,
+        advisorAutopilotMaxTurns: e.advisorAutopilotMaxTurns ?? 2,
+        advisorAutopilotStatus: e.advisorAutopilotStatus || 'idle',
+        advisorAutopilotTaskId: e.advisorAutopilotTaskId ?? null,
+        advisorAutopilotAttemptCount: e.advisorAutopilotAttemptCount ?? 0,
+        advisorAutopilotLastError: e.advisorAutopilotLastError ?? null,
+        judgeSummaryStatus: e.judgeSummaryStatus || 'idle',
+        judgeSummary: e.judgeSummary || null,
+        replaySourceByTask: e.replaySourceByTask || null,
+        attemptHistory: e.attemptHistory || [],
+        taskResults: (e.taskResults || []).map((tr: any) => {
+          const merged = buffer?.has(tr.taskId)
+            ? this.mergeTaskResultWithBuffer(tr, buffer.get(tr.taskId)!)
+            : tr;
+          return {
             taskId: merged.taskId,
             nodeTitle: merged.nodeTitle,
             agentName: merged.agentName || '',
@@ -4911,8 +4908,8 @@ ${
             toolTrace: merged.toolTrace || [],
             llmPromptTrace: merged.llmPromptTrace || [],
             inputTokens: merged.inputTokens ?? null,
-              outputTokens: merged.outputTokens ?? null,
-              totalTokens: merged.totalTokens ?? null,
+            outputTokens: merged.outputTokens ?? null,
+            totalTokens: merged.totalTokens ?? null,
             modelName: merged.modelName ?? null,
             semanticMatch: merged.semanticMatch ?? null,
             judgeStatus: merged.judgeStatus || 'idle',
@@ -4928,6 +4925,13 @@ ${
               actionType: entry.actionType,
               stopReason: entry.stopReason ?? null,
             })),
+            advisorOptimizationHistory: (merged.advisorOptimizationHistory || []).map((entry: any) => ({
+              turn: entry.turn,
+              createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+              changedFields: entry.changedFields || [],
+              beforeTask: entry.beforeTask || {},
+              afterTask: entry.afterTask || {},
+            })),
             lastAdvisorAction: merged.lastAdvisorAction ?? null,
             lastAdvisorScoreDelta: merged.lastAdvisorScoreDelta ?? null,
             advisorStopReason: merged.advisorStopReason ?? null,
@@ -4936,20 +4940,20 @@ ${
               createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
             })),
             evaluationHistory: (merged.evaluationHistory || []).map((entry: any) => ({
-                ...entry,
-                createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
-              })),
-              stepExecutions: (merged.stepExecutions || []).map((entry: any) => ({
-                ...entry,
-                startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
-                completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
-              })),
-              attemptNumber: merged.attemptNumber ?? 1,
-              isStale: merged.isStale ?? false,
-              staleReason: merged.staleReason ?? null,
-              invalidatedByTaskId: merged.invalidatedByTaskId ?? null,
-            };
-          }),
+              ...entry,
+              createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+            })),
+            stepExecutions: (merged.stepExecutions || []).map((entry: any) => ({
+              ...entry,
+              startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
+              completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
+            })),
+            attemptNumber: merged.attemptNumber ?? 1,
+            isStale: merged.isStale ?? false,
+            staleReason: merged.staleReason ?? null,
+            invalidatedByTaskId: merged.invalidatedByTaskId ?? null,
+          };
+        }),
         threadId: e.threadId,
         interruptPayload: e.interruptPayload,
         error: e.error,

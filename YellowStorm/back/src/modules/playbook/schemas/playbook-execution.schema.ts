@@ -303,6 +303,15 @@ export class TaskResult {
     stopReason?: string | null;
   }>;
 
+  @Prop({ type: [{ type: Object }], default: [] })
+  advisorOptimizationHistory!: Array<{
+    turn: number;
+    createdAt: Date;
+    changedFields: string[];
+    beforeTask: Record<string, unknown>;
+    afterTask: Record<string, unknown>;
+  }>;
+
   @Prop({ type: String, default: null })
   lastAdvisorAction!: string | null;
 

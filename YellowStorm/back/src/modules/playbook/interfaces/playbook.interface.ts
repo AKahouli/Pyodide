@@ -368,6 +368,13 @@ export interface TaskResultData {
     actionType: 'evaluate' | 'optimize_step' | 'stop';
     stopReason?: string | null;
   }>;
+  advisorOptimizationHistory?: Array<{
+    turn: number;
+    createdAt: string;
+    changedFields: string[];
+    beforeTask: Record<string, unknown>;
+    afterTask: Record<string, unknown>;
+  }>;
   lastAdvisorAction?: string | null;
   lastAdvisorScoreDelta?: number | null;
   advisorStopReason?: string | null;
