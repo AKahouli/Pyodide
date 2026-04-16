@@ -202,7 +202,6 @@ function PlaybookCanvasInner() {
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [executionMode, setExecutionMode] = useState<'live' | 'inherit'>('live');
   const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
   const [advisorAutopilotEnabled, setAdvisorAutopilotEnabled] = useState(false);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
@@ -874,21 +873,21 @@ function PlaybookCanvasInner() {
       toast.error('Select a default playbook workspace before running this playbook.');
       return;
     }
-      if (isDirty) await saveNow();
-      setPageMode('run');
-      if (executionMode === 'live') {
-      await executePlaybook(id, { executionMode: 'live', streaming: true, runNodeReflection: nodeReflectionEnabled });
-      } else {
-      const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
-      for (const task of playbook.tasks) {
-        if (task.enabled !== false) {
-          const mode = task.stepReplayMode || 'live';
-          stepExecutionModes[task.id] = mode;
-        }
+    if (isDirty) await saveNow();
+    setPageMode('run');
+    const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
+    for (const task of playbook.tasks) {
+      if (task.enabled !== false) {
+        stepExecutionModes[task.id] = task.stepReplayMode || 'live';
       }
-      await executePlaybook(id, { executionMode: 'inherit', stepExecutionModes, streaming: true, runNodeReflection: nodeReflectionEnabled });
-      }
-  }, [id, playbook, isDirty, saveNow, executePlaybook, executionMode, nodeReflectionEnabled, setPageMode]);
+    }
+    await executePlaybook(id, {
+      executionMode: 'inherit',
+      stepExecutionModes,
+      streaming: true,
+      runNodeReflection: nodeReflectionEnabled,
+    });
+  }, [id, playbook, isDirty, saveNow, executePlaybook, nodeReflectionEnabled, setPageMode]);
 
   const handleAutoLayout = useCallback(() => {
     if (!playbook) return;
@@ -1119,8 +1118,6 @@ function PlaybookCanvasInner() {
             isSaving={isSaving}
             isExecuting={isExecuting}
             canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
-            executionMode={executionMode}
-            onExecutionModeChange={setExecutionMode}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={setNodeReflectionEnabled}
             advisorAutopilotEnabled={advisorAutopilotEnabled}

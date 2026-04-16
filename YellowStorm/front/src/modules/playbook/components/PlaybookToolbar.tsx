@@ -1,7 +1,6 @@
 import { Play, Save, Check, Loader2, History, Wand2, CalendarClock, Download, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookPageMode } from '../types';
@@ -20,8 +19,6 @@ interface Props {
   isSaving: boolean;
   isExecuting: boolean;
   canRun: boolean;
-  executionMode: 'live' | 'inherit';
-  onExecutionModeChange: (mode: 'live' | 'inherit') => void;
   nodeReflectionEnabled: boolean;
   onNodeReflectionChange: (enabled: boolean) => void;
   advisorAutopilotEnabled?: boolean;
@@ -46,8 +43,6 @@ export function PlaybookToolbar({
   isSaving,
   isExecuting,
   canRun,
-  executionMode,
-  onExecutionModeChange,
   nodeReflectionEnabled,
   onNodeReflectionChange,
   advisorAutopilotEnabled = false,
@@ -118,18 +113,6 @@ export function PlaybookToolbar({
           <div className="space-y-1">
             <div className="text-sm font-medium">{t('toolbar.runSettings')}</div>
             <div className="text-xs text-muted-foreground">{t('toolbar.runSettingsHint')}</div>
-          </div>
-          <div className="space-y-2">
-            <div className="text-xs font-medium text-muted-foreground">{t('toolbar.executionModeLabel')}</div>
-            <Select value={executionMode} onValueChange={(value) => onExecutionModeChange(value as 'live' | 'inherit')}>
-              <SelectTrigger className="h-9 w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="live">{t('toolbar.executionMode.live')}</SelectItem>
-                <SelectItem value="inherit">{t('toolbar.executionMode.inherit')}</SelectItem>
-              </SelectContent>
-            </Select>
           </div>
           <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
             <span>{t('toolbar.advisor')}</span>

@@ -179,6 +179,18 @@ function formatOptimizationValue(value: unknown): string {
   return JSON.stringify(value, null, 2);
 }
 
+function getScoreTone(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'border bg-muted/30';
+  if (value >= 80) return 'border-emerald-200 bg-emerald-50';
+  if (value >= 60) return 'border-amber-200 bg-amber-50';
+  return 'border-rose-200 bg-rose-50';
+}
+
+function normalizePercentValue(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  return value <= 1 ? value * 100 : value;
+}
+
 function formatToolArgs(args: Record<string, unknown> | undefined): string {
   if (!args) return '{}';
   try {
@@ -195,16 +207,6 @@ function formatPromptStage(stage: string | undefined): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
-}
-
-function getExecutionModeLabel(
-  mode: string | undefined,
-  t: (key: 'execution.mode.live' | 'execution.mode.replayStrict' | 'execution.mode.replayFlex' | 'execution.mode.replayAdaptive') => string,
-): string {
-  if (mode === 'replay_strict') return t('execution.mode.replayStrict');
-  if (mode === 'replay_flex') return t('execution.mode.replayFlex');
-  if (mode === 'replay_adaptive') return t('execution.mode.replayAdaptive');
-  return t('execution.mode.live');
 }
 
 function stableValue(value: unknown): unknown {
@@ -289,7 +291,11 @@ export function ExecutionStepDetail({
     const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
     return tasks.find((task) => task.id === step?.taskId) || null;
   }, [execution?.playbookSnapshot, step?.taskId]);
-  const currentTask = (executionSnapshotTask || currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null) as any;
+  const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
+  const currentTask = ({
+    ...(executionSnapshotTask || {}),
+    ...(playbookTask || {}),
+  } || null) as any;
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
@@ -443,19 +449,8 @@ export function ExecutionStepDetail({
   const outputFormatBadgeTone = currentTask?.activeOutputFormatStatus === 'failed'
     ? 'border-red-500/30 bg-red-50 text-red-700'
     : 'border-sky-500/30 bg-sky-100 text-sky-700';
-  const isLiveStreaming = step?.status === 'running' || step?.status === 'interrupted';
-  const isResultsTabActive = activeTab === 'results';
+  const hasReplayBaseline = Boolean(currentTask?.hasValidatedReplay || replayBadgeVersion);
   const [isNearBottom, setIsNearBottom] = useState(true);
-
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    if (typeof container.scrollTo === 'function') {
-      container.scrollTo({ top: container.scrollHeight, behavior });
-      return;
-    }
-    container.scrollTop = container.scrollHeight;
-  }, []);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -617,24 +612,6 @@ export function ExecutionStepDetail({
   const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
   const isEvaluationPending = isRunningEvaluation || step.status === 'running';
   const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
-  const streamingContentKey = [
-    step.taskId,
-    step.status,
-    step.output || '',
-    step.error || '',
-    step.components?.length || 0,
-    step.toolTrace?.length || 0,
-    step.llmPromptTrace?.length || 0,
-    step.artifacts?.length || 0,
-    selectedStepExecution?.id || 'no-step-execution',
-  ].join('|');
-
-  useEffect(() => {
-    if (!isLiveStreaming) return;
-    if (!isNearBottom) return;
-    scrollToBottom('auto');
-  }, [isLiveStreaming, isNearBottom, streamingContentKey, scrollToBottom]);
-
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -673,18 +650,11 @@ export function ExecutionStepDetail({
                 {t('detail.badges.stale')}
               </span>
             )}
-            {(execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') && (
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700">
-                {getExecutionModeLabel(execution?.executionMode, t)}
-              </span>
-            )}
-            <div className="ml-auto flex flex-col items-end gap-1.5">
-              <div className="flex items-center gap-1.5">
+            <div className="ml-auto flex items-center gap-1.5">
                 <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
                 <Select
                   value={currentTask?.stepReplayMode ?? 'live'}
                   onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
-                  disabled={!currentTask?.hasValidatedReplay}
                 >
                   <SelectTrigger className="h-7 w-[130px] text-xs">
                     <SelectValue />
@@ -696,14 +666,14 @@ export function ExecutionStepDetail({
                     <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
                   </SelectContent>
                 </Select>
-                {!currentTask?.hasValidatedReplay && (
+                {!hasReplayBaseline && (
                   <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
                     {t('detail.noBaseline')}
                   </span>
                 )}
-              </div>
               {stepExecutions.length > 0 && (
-                <div className="flex items-center gap-1.5">
+                <>
+                  <span className="mx-1 h-4 w-px bg-border" />
                   <span className="whitespace-nowrap text-xs text-muted-foreground">
                     {t('detail.results.stepExecutionLabel')}
                   </span>
@@ -767,7 +737,7 @@ export function ExecutionStepDetail({
                       })}
                     </DropdownMenuContent>
                   </DropdownMenu>
-                </div>
+                </>
               )}
             </div>
             <DropdownMenu>
@@ -839,21 +809,18 @@ export function ExecutionStepDetail({
         )}
 
         <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
             <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
             <TabsTrigger value="judge">{t('detail.tabs.judge')}</TabsTrigger>
-            <TabsTrigger value="tool-trace">{t('detail.tabs.toolTrace')}</TabsTrigger>
-            <TabsTrigger value="replay-diff">{t('detail.tabs.replayDiff')}</TabsTrigger>
-            <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
+            <TabsTrigger value="traces">{t('detail.tabs.traces')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="results" className="space-y-4">
-            {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
+            {replaySource && (
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
                 <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode, t)}</div>
                   {replaySource && (
                     <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                   )}
@@ -972,19 +939,19 @@ export function ExecutionStepDetail({
                       <span>{t('detail.evaluation.recorded')}: {new Date(selectedEvaluation.createdAt).toLocaleString()}</span>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(selectedEvaluation.semanticMatch.matchScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.matchScore)}</div>
                       </div>
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(selectedEvaluation.semanticMatch.semanticSimilarityScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.semanticSimilarityScore)}</div>
                       </div>
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(selectedEvaluation.semanticMatch.evidenceConsistencyScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.evidenceConsistencyScore)}</div>
                       </div>
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(selectedEvaluation.semanticMatch.judgeScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(selectedEvaluation.semanticMatch.judgeScore)}</div>
                       </div>
@@ -999,19 +966,19 @@ export function ExecutionStepDetail({
                       <span>{t('detail.evaluation.recorded')}: {new Date(comparisonEvaluation.createdAt).toLocaleString()}</span>
                     </div>
                     <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(comparisonSemanticMatch.matchScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.matchScore)}</div>
                       </div>
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(comparisonSemanticMatch.semanticSimilarityScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.semanticSimilarityScore)}</div>
                       </div>
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(comparisonSemanticMatch.evidenceConsistencyScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.evidenceConsistencyScore)}</div>
                       </div>
-                      <div className="rounded border bg-muted/30 p-2">
+                      <div className={cn('rounded border p-2', getScoreTone(comparisonSemanticMatch.judgeScore))}>
                         <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
                         <div className="mt-1 text-lg font-semibold">{formatPercent(comparisonSemanticMatch.judgeScore)}</div>
                       </div>
@@ -1068,19 +1035,19 @@ export function ExecutionStepDetail({
                   </span>
                 </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-4">
-                  <div className="rounded bg-background p-3">
+                  <div className={cn('rounded border p-2', getScoreTone(semanticMatchToDisplay.matchScore))}>
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.matchScore)}</div>
                   </div>
-                  <div className="rounded bg-background p-3">
+                  <div className={cn('rounded border p-2', getScoreTone(semanticMatchToDisplay.semanticSimilarityScore))}>
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.embeddingSimilarity')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.semanticSimilarityScore)}</div>
                   </div>
-                  <div className="rounded bg-background p-3">
+                  <div className={cn('rounded border p-2', getScoreTone(semanticMatchToDisplay.evidenceConsistencyScore))}>
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.evidenceConsistency')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.evidenceConsistencyScore)}</div>
                   </div>
-                  <div className="rounded bg-background p-3">
+                  <div className={cn('rounded border p-2', getScoreTone(semanticMatchToDisplay.judgeScore))}>
                     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.judgeScore')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatPercent(semanticMatchToDisplay.judgeScore)}</div>
                   </div>
@@ -1126,10 +1093,12 @@ export function ExecutionStepDetail({
                 </div>
               </div>
             ) : (
-              <div className="rounded-lg border bg-muted/10 p-4 text-sm text-muted-foreground">
-                {isEvaluationPending
-                  ? t('detail.evaluation.waiting')
-                  : t('detail.evaluation.empty')}
+              <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-6 text-sm text-muted-foreground">
+                {isEvaluationPending ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  t('detail.evaluation.empty')
+                )}
               </div>
             )}
 
@@ -1171,9 +1140,9 @@ export function ExecutionStepDetail({
                   </Badge>
                 </div>
                 <div className="grid gap-3 md:grid-cols-3">
-                  <div>
+                  <div className={cn('rounded border p-2', getScoreTone(execution?.advisorAutopilotTargetScore))}>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.targetScore')}</div>
-                    <div className="mt-1 font-medium">{formatPercent(execution?.advisorAutopilotTargetScore)}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(execution?.advisorAutopilotTargetScore)}</div>
                   </div>
                   <div>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.maxTurns')}</div>
@@ -1295,16 +1264,18 @@ export function ExecutionStepDetail({
               <div className="space-y-4">
                 <div className="rounded-lg border bg-muted/20 p-4">
                   <div className="flex flex-wrap items-center gap-3">
-                    <div>
+                    <div className={cn('rounded border p-2', getScoreTone(stepJudgeResult.overallScore))}>
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
-                      <div className="text-3xl font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
+                      <div className="mt-1 text-lg font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
                     </div>
-                    <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                      {t('detail.judge.confidence')} {formatConfidence(stepJudgeResult.confidence)}
-                    </Badge>
-                    <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                      {t('detail.judge.toolUsageScore')} {formatPercent(stepJudgeResult.toolUsageScore)}
-                    </Badge>
+                    <div className={cn('rounded border p-2', getScoreTone(stepJudgeResult.toolUsageScore))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageScore')}</div>
+                      <div className="mt-1 text-lg font-semibold">{formatPercent(stepJudgeResult.toolUsageScore)}</div>
+                    </div>
+                    <div className={cn('rounded border p-2', getScoreTone(normalizePercentValue(stepJudgeResult.confidence)))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
+                      <div className="mt-1 text-lg font-semibold">{formatConfidence(stepJudgeResult.confidence)}</div>
+                    </div>
                     <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                       {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
                     </div>
@@ -1334,13 +1305,6 @@ export function ExecutionStepDetail({
                     loading={remediationLoading}
                     onApply={handleApplyRemediations}
                   />
-                </div>
-
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
-                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
-                    {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
-                  </p>
                 </div>
 
                 <Collapsible defaultOpen={true} className="rounded-lg border bg-background p-4">
@@ -1377,6 +1341,13 @@ export function ExecutionStepDetail({
                     ))}
                   </CollapsibleContent>
                 </Collapsible>
+
+                <div className="rounded-lg border bg-background p-4">
+                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
+                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
+                    {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
+                  </p>
+                </div>
               </div>
             ) : stepJudgeStatus === 'failed' ? (
               <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
@@ -1399,13 +1370,14 @@ export function ExecutionStepDetail({
             {judgeSummary && !stepJudgeResult && (
               <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
-                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                    {Math.round(judgeSummary.overallScore)}%
-                  </Badge>
-                  <Badge variant="outline" className="rounded-full px-2 py-0 text-xs">
-                    {t('detail.judge.confidence')} {formatConfidence(judgeSummary.confidence)}
-                  </Badge>
+                  <div className={cn('rounded border p-2', getScoreTone(judgeSummary.overallScore))}>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                    <div className="mt-1 text-lg font-semibold">{Math.round(judgeSummary.overallScore)}%</div>
+                  </div>
+                  <div className={cn('rounded border p-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeSummary.confidence)}</div>
+                  </div>
                   <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
                     {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
                   </div>
@@ -1470,156 +1442,164 @@ export function ExecutionStepDetail({
             )}
           </TabsContent>
 
-          <TabsContent value="tool-trace" className="space-y-4">
-            {step.toolTrace && step.toolTrace.length > 0 ? (
-              <div className="space-y-3">
-                {step.toolTrace.map((item) => (
-                  <div key={`${item.callIndex}-${item.toolName}`} className="rounded-lg border bg-muted/30 p-4">
-                    <div className="mb-2 flex items-center gap-2 text-sm">
-                      <span className="font-medium">{item.callIndex}.</span>
-                      <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{item.toolName}</code>
-                    </div>
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.args')}</div>
-                        <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                          {formatToolArgs(item.args)}
-                        </pre>
+          <TabsContent value="traces" className="space-y-4">
+            <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.tabs.toolTrace')}</div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                {step.toolTrace && step.toolTrace.length > 0 ? (
+                  <div className="space-y-3">
+                    {step.toolTrace.map((item) => (
+                      <div key={`${item.callIndex}-${item.toolName}`} className="rounded-lg border bg-muted/30 p-4">
+                        <div className="mb-2 flex items-center gap-2 text-sm">
+                          <span className="font-medium">{item.callIndex}.</span>
+                          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{item.toolName}</code>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.args')}</div>
+                            <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                              {formatToolArgs(item.args)}
+                            </pre>
+                          </div>
+                          <div>
+                            <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.outputSummary')}</div>
+                            <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                              {item.outputSummary || '-'}
+                            </pre>
+                          </div>
+                        </div>
                       </div>
-                      <div>
-                        <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.toolTrace.outputSummary')}</div>
-                        <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                          {item.outputSummary || '-'}
-                        </pre>
-                      </div>
-                    </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-                {t('detail.toolTrace.empty')}
-              </div>
-            )}
-
-          </TabsContent>
-
-          <TabsContent value="replay-diff" className="space-y-4">
-            {baselineReplay ? (
-              <div className="space-y-3">
-                {baselineReplay.toolCalls.map((baselineItem) => {
-                  const actualItem = step.toolTrace?.find((item) => item.callIndex === baselineItem.callIndex);
-                  const argsMatch = actualItem ? areArgsEqual(baselineItem.args, actualItem.args) : false;
-                  const toolMatch = actualItem ? actualItem.toolName === baselineItem.toolName : false;
-                  const statusClass = !actualItem
-                    ? 'bg-amber-100 text-amber-700'
-                    : argsMatch && toolMatch
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-red-100 text-red-700';
-                  const statusLabel = !actualItem
-                    ? t('detail.replayDiff.missing')
-                    : argsMatch && toolMatch
-                      ? t('detail.replayDiff.matches')
-                      : t('detail.replayDiff.differs');
-
-                  return (
-                    <div key={`replay-diff-${baselineItem.callIndex}-${baselineItem.toolName}`} className="rounded-lg border bg-muted/20 p-4">
-                      <div className="mb-2 flex items-center gap-2 text-sm">
-                        <span className="font-medium">{baselineItem.callIndex}.</span>
-                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{baselineItem.toolName}</code>
-                        <span className={`rounded-full px-2 py-0.5 text-xs ${statusClass}`}>
-                          {statusLabel}
-                        </span>
-                      </div>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div>
-                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineArgs')}</div>
-                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                            {formatToolArgs(baselineItem.args)}
-                          </pre>
-                        </div>
-                        <div>
-                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualArgs')}</div>
-                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                            {formatToolArgs(actualItem?.args)}
-                          </pre>
-                        </div>
-                      </div>
-                      <div className="mt-3 grid gap-3 md:grid-cols-2">
-                        <div>
-                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineResult')}</div>
-                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                            {baselineItem.outputSummary || '-'}
-                          </pre>
-                        </div>
-                        <div>
-                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualResult')}</div>
-                          <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                            {actualItem?.outputSummary || '-'}
-                          </pre>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {(step.toolTrace || []).some((actualItem) => !baselineReplay.toolCalls.find((baselineItem) => baselineItem.callIndex === actualItem.callIndex)) && (
-                  <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 text-sm text-amber-800">
-                    {t('detail.replayDiff.extraCalls')}
+                ) : (
+                  <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    {t('detail.toolTrace.empty')}
                   </div>
                 )}
-              </div>
-            ) : (
-              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-                {t('detail.replayDiff.empty')}
-              </div>
-            )}
-          </TabsContent>
+              </CollapsibleContent>
+            </Collapsible>
 
-          <TabsContent value="llm-prompts" className="space-y-4">
-            {promptTraceItems.length > 0 ? (
-              <div className="space-y-3">
-                {promptTraceItems.map((item, index) => (
-                  <Collapsible key={`llm-prompt-${index}`} defaultOpen={false} className="rounded-lg border bg-muted/30 px-4">
-                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 py-4 text-left">
-                      <div className="flex flex-wrap items-center gap-2 text-sm">
-                        <span className="font-medium">{index + 1}.</span>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                          {formatPromptStage(item.stage)}
-                        </span>
-                        <code className="rounded bg-background px-1.5 py-0.5 text-xs">{item.model || '-'}</code>
+            <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.tabs.replayDiff')}</div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                {baselineReplay ? (
+                  <div className="space-y-3">
+                    {baselineReplay.toolCalls.map((baselineItem) => {
+                      const actualItem = step.toolTrace?.find((item) => item.callIndex === baselineItem.callIndex);
+                      const argsMatch = actualItem ? areArgsEqual(baselineItem.args, actualItem.args) : false;
+                      const toolMatch = actualItem ? actualItem.toolName === baselineItem.toolName : false;
+                      const statusClass = !actualItem
+                        ? 'bg-amber-100 text-amber-700'
+                        : argsMatch && toolMatch
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-red-100 text-red-700';
+                      const statusLabel = !actualItem
+                        ? t('detail.replayDiff.missing')
+                        : argsMatch && toolMatch
+                          ? t('detail.replayDiff.matches')
+                          : t('detail.replayDiff.differs');
+
+                      return (
+                        <div key={`replay-diff-${baselineItem.callIndex}-${baselineItem.toolName}`} className="rounded-lg border bg-muted/20 p-4">
+                          <div className="mb-2 flex items-center gap-2 text-sm">
+                            <span className="font-medium">{baselineItem.callIndex}.</span>
+                            <code className="rounded bg-muted px-1.5 py-0.5 text-xs">{baselineItem.toolName}</code>
+                            <span className={`rounded-full px-2 py-0.5 text-xs ${statusClass}`}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div>
+                              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineArgs')}</div>
+                              <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                                {formatToolArgs(baselineItem.args)}
+                              </pre>
+                            </div>
+                            <div>
+                              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualArgs')}</div>
+                              <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                                {formatToolArgs(actualItem?.args)}
+                              </pre>
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-3 md:grid-cols-2">
+                            <div>
+                              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.baselineResult')}</div>
+                              <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                                {baselineItem.outputSummary || '-'}
+                              </pre>
+                            </div>
+                            <div>
+                              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.replayDiff.actualResult')}</div>
+                              <pre className="max-h-56 overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                                {actualItem?.outputSummary || '-'}
+                              </pre>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {(step.toolTrace || []).some((actualItem) => !baselineReplay.toolCalls.find((baselineItem) => baselineItem.callIndex === actualItem.callIndex)) && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-50 p-4 text-sm text-amber-800">
+                        {t('detail.replayDiff.extraCalls')}
                       </div>
-                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent className="pb-4 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                      <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.prompts.promptLabel')}</div>
-                      <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
-                        {item.prompt || '-'}
-                      </pre>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
-                {t('detail.prompts.empty')}
-              </div>
-            )}
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    {t('detail.replayDiff.empty')}
+                  </div>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+
+            <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.tabs.llmPrompts')}</div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                {promptTraceItems.length > 0 ? (
+                  <div className="space-y-3">
+                    {promptTraceItems.map((item, index) => (
+                      <Collapsible key={`llm-prompt-${index}`} defaultOpen={false} className="rounded-lg border bg-muted/30 px-4">
+                        <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 py-4 text-left">
+                          <div className="flex flex-wrap items-center gap-2 text-sm">
+                            <span className="font-medium">{index + 1}.</span>
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                              {formatPromptStage(item.stage)}
+                            </span>
+                            <code className="rounded bg-background px-1.5 py-0.5 text-xs">{item.model || '-'}</code>
+                          </div>
+                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+                        </CollapsibleTrigger>
+                        <CollapsibleContent className="pb-4 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                          <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.prompts.promptLabel')}</div>
+                          <pre className="max-h-[28rem] overflow-auto rounded bg-background p-3 text-xs whitespace-pre-wrap break-words">
+                            {item.prompt || '-'}
+                          </pre>
+                        </CollapsibleContent>
+                      </Collapsible>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    {t('detail.prompts.empty')}
+                  </div>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
           </TabsContent>
         </Tabs>
       </div>
 
-      {isLiveStreaming && isResultsTabActive && !isNearBottom && (
-        <Button
-          type="button"
-          size="sm"
-          className="absolute bottom-4 right-4 z-20 shadow-lg"
-          onClick={() => scrollToBottom()}
-        >
-          <ChevronDown className="mr-1 h-4 w-4" />
-          Jump to bottom
-        </Button>
-      )}
     </div>
   );
 }

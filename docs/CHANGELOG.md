@@ -1,5 +1,29 @@
 # Changelog
 
+## [2026-04-16 00:25 UTC] — Polish Advisor KPI cards and section order
+
+- **Feature:** `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Renamed the Advisor overall KPI label from `Recommendation Pane` to `Overall`, converted confidence into a color-coded KPI card in both step-level and summary-level Advisor states, and moved the `Tool usage recommendation` panel to the end of the step-level Advisor content.
+- **Why:** Makes Advisor scoring easier to scan, aligns confidence with the other KPI treatments, and places the supporting recommendation text after the primary remediation and issue-analysis sections.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+
+## [2026-04-15 23:10:00 UTC] — Remove workflow-level execution mode from the UI
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Removed the workflow-level execution mode selector and execution-mode badges from the frontend, and made full playbook runs always launch with `executionMode: 'inherit'` plus per-step `stepExecutionModes` derived from each task's `stepReplayMode`.
+- **Why:** Simplifies replay behavior so execution mode is configured only at the step level while ensuring whole-workflow runs always respect step-specific replay modes.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookToolbar.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionHeader.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookToolbar.test.tsx`
+
+## [2026-04-15 21:55:00 UTC] — Consolidate execution trace tabs and scope live autoscroll
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Scoped live autoscroll to the `Step Results` tab only, renamed execution tabs to `Replay Evaluation` and `Advisor`, merged `Tool Trace`, `Replay Args Diff`, and `LLM Prompts` into a single `Traces` tab with collapsed panes by default, and colorized replay-evaluation KPI cards by score range.
+- **Why:** Reduce disruptive scrolling outside the result view, simplify the execution detail navigation, and make replay evaluation health easier to scan visually.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+
 ## [2026-04-15 19:05:00 UTC] — Show execution snapshot task data in node editor during step runs
 
 - **Feature:** `playbook`

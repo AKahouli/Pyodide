@@ -45,16 +45,6 @@ function formatDuration(ms: number | null): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-function getExecutionModeLabel(
-  mode: string | undefined,
-  t: (key: 'execution.mode.live' | 'execution.mode.replayStrict' | 'execution.mode.replayFlex' | 'execution.mode.replayAdaptive') => string,
-): string {
-  if (mode === 'replay_strict') return t('execution.mode.replayStrict');
-  if (mode === 'replay_flex') return t('execution.mode.replayFlex');
-  if (mode === 'replay_adaptive') return t('execution.mode.replayAdaptive');
-  return t('execution.mode.live');
-}
-
 const SIDEBAR_DEFAULT_WIDTH_RATIO = 0.5;
 const SIDEBAR_MIN_WIDTH = 360;
 const SIDEBAR_MAX_WIDTH_RATIO = 0.8;
@@ -546,9 +536,6 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium">{t('execution.title')}</span>
           <PlaybookStatusBadge status={visibleExecutionStatus || execution.status} size="md" />
-          <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-            {getExecutionModeLabel(execution.executionMode, t)}
-          </span>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <Clock className="h-3 w-3" />
             <span>{formatDuration(execution.durationMs)}</span>

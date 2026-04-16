@@ -20,8 +20,6 @@ const defaultProps = {
   isSaving: false,
   isExecuting: false,
   canRun: true,
-  executionMode: 'live' as const,
-  onExecutionModeChange: vi.fn(),
   nodeReflectionEnabled: true,
   onNodeReflectionChange: vi.fn(),
   onDownloadAllResults: vi.fn(),
@@ -105,7 +103,6 @@ describe('PlaybookToolbar', () => {
   it('shows run settings content when the popover is opened', async () => {
     render(<PlaybookToolbar {...defaultProps} />);
     await userEvent.click(screen.getByText('toolbar.runSettings'));
-    expect(screen.getByText('toolbar.executionModeLabel')).toBeInTheDocument();
     expect(screen.getByText('toolbar.advisor')).toBeInTheDocument();
   });
 });
