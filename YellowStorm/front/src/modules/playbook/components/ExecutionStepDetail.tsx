@@ -813,7 +813,7 @@ export function ExecutionStepDetail({
               <TabsTrigger value="llm-prompts">{t('detail.tabs.llmPrompts')}</TabsTrigger>
             </TabsList>
 
-        <TabsContent value="results" className="space-y-4">
+        <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
           {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
             <div className="rounded-lg border bg-muted/30 p-4 text-sm">
               <div className="font-medium">{t('detail.provenance.title')}</div>
