@@ -431,7 +431,7 @@ export function EvaluationTab({ agent }: EvaluationTabProps) {
                 <input type='file' ref={fileInputRef} className='hidden' accept='.xlsx,.csv' onChange={handleFileUpload} />
                 <Button type='button' size='sm' onClick={() => fileInputRef.current?.click()}>
                   <FileDown className='mr-2 h-4 w-4' />
-                  Exporter en Excel
+                  Importer en Excel
                 </Button>
 
                 <div className='flex-1 flex flex-col gap-1'>
