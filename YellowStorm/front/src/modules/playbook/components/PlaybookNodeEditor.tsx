@@ -168,20 +168,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   }, [open, task, playbookId, fetchTaskReplays]);
 
   useEffect(() => {
-    if (!open || !task || !playbookId || !task.activeReplayId) return;
-    void fetchTaskReplays(playbookId, task.id).then(setReplays).catch(() => undefined);
-  }, [
-    open,
-    playbookId,
-    task,
-    fetchTaskReplays,
-    task?.activeReplayId,
-    task?.activeReplayVersion,
-    task?.activeReplayFormatGuideStatus,
-    task?.activeReplayFormatGuideError,
-  ]);
-
-  useEffect(() => {
     if (!open || !task || !playbookId) return;
     if (!replays.some((replay) => replay.preserveOutputFormat && replay.formatGuideStatus === 'pending')) return;
 

@@ -615,14 +615,14 @@ export class AgentService {
         .map((a) => a.model || fallbackModelId)
         .filter(Boolean) as string[],
     )];
-    const modelMap = new Map<string, string>(); // modelId → litellmModel (e.g., "azure/gpt-4.1")
+    const modelMap = new Map<string, string>(); // modelId → proxy alias (e.g., "gpt-4.1")
     if (allModelIds.length > 0) {
       const modelResults = await Promise.all(
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
         if (m) {
-          modelMap.set(m.id, m.litellmModel || m.id);
+          modelMap.set(m.id, m.id);
         }
       }
     }
@@ -700,7 +700,7 @@ export class AgentService {
       });
 
       const effectiveModelId = agent.model || fallbackModelId || '';
-      const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+      const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
       const connectorBindings = await buildConversationConnectorBindings(agent.connectorIds || [], userId);
       const connectorToolDefs = connectorBindings.flatMap((binding: any) =>
@@ -749,7 +749,7 @@ export class AgentService {
           workspace_documents: [],
         })),
         chatbot: {
-          model: litellmModel,
+          model: proxyModel,
         },
         agent_params: {
           params: {
@@ -856,7 +856,7 @@ export class AgentService {
         allModelIds.map((id) => this.modelsService.findById(id)),
       );
       for (const m of modelResults) {
-        if (m) modelMap.set(m.id, m.litellmModel || m.id);
+        if (m) modelMap.set(m.id, m.id);
       }
     }
 
@@ -867,7 +867,7 @@ export class AgentService {
           .filter(Boolean) as IToolResponse[];
 
         const effectiveModelId = agent.model || fallbackModelId || '';
-        const litellmModel = modelMap.get(effectiveModelId) || effectiveModelId;
+        const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
         const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
 
         let prompt = '';
@@ -896,7 +896,7 @@ export class AgentService {
             workspace_documents: [],
           })),
           chatbot: {
-            model: litellmModel,
+            model: proxyModel,
           },
           agent_params: {
             params: {

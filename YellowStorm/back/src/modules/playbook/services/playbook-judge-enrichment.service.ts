@@ -233,7 +233,7 @@ export class PlaybookJudgeEnrichmentService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new Error('No default model configured');
     }
@@ -287,7 +287,7 @@ export class PlaybookJudgeEnrichmentService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new Error('No default model configured');
     }
@@ -568,7 +568,7 @@ export class PlaybookJudgeEnrichmentService {
     if (!httpClient) return;
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) return;
 
     const prompt = await this.promptService.findByKey('judge.execution_summary');
@@ -642,7 +642,7 @@ export class PlaybookJudgeEnrichmentService {
     const playbook = await this.playbookService.findById(execution.playbookId?.toString?.() || String(execution.playbookId || ''));
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new Error('No default model configured');
     }
@@ -908,7 +908,7 @@ export class PlaybookJudgeEnrichmentService {
     if (!httpClient) throw new Error('LiteLLM is not available');
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) throw new Error('No default model configured');
 
     const prompt = await this.promptService.findByKey('judge.rewrite_current_playbook');

@@ -11,7 +11,9 @@ from structlog import get_logger
 logger = get_logger(__name__)
 
 
-def load_prompt_registry(prompt_overrides: Optional[Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
+def load_prompt_registry(
+    prompt_overrides: Optional[Dict[str, str]],
+) -> Dict[str, Dict[str, Any]]:
     registry: Dict[str, Dict[str, Any]] = {}
     for key, value in (prompt_overrides or {}).items():
         if not key:
@@ -42,6 +44,7 @@ def resolve_prompt_template(
     entry = (prompt_registry or {}).get(key) or {}
     value = str(entry.get(field) or "").strip()
     return value or fallback
+
 
 _DOCUMENT_EXTENSION_PRIORITY = {
     ".pdf": 100,
@@ -94,7 +97,9 @@ def _resolve_document_metadata(
                     "document_id": document_id,
                     "filename": str(doc.get("filename") or "").strip(),
                     "filepath": str(doc.get("filepath") or "").strip(),
-                    "workspace_id": str(doc.get("workspace_id") or workspace.get("workspace_id") or "").strip(),
+                    "workspace_id": str(
+                        doc.get("workspace_id") or workspace.get("workspace_id") or ""
+                    ).strip(),
                 }
 
     for doc in brain_documents:
@@ -165,7 +170,9 @@ def _document_artifact_score(artifact: Dict[str, Any]) -> int:
     return 10
 
 
-def _sort_artifacts_for_port(artifacts: List[Dict[str, Any]], expected_kind: str) -> List[Dict[str, Any]]:
+def _sort_artifacts_for_port(
+    artifacts: List[Dict[str, Any]], expected_kind: str
+) -> List[Dict[str, Any]]:
     if expected_kind != "document":
         return list(artifacts)
 
@@ -179,7 +186,9 @@ def _sort_artifacts_for_port(artifacts: List[Dict[str, Any]], expected_kind: str
     )
 
 
-def _select_artifact(artifacts: List[Dict[str, Any]], expected_kind: str) -> Optional[Dict[str, Any]]:
+def _select_artifact(
+    artifacts: List[Dict[str, Any]], expected_kind: str
+) -> Optional[Dict[str, Any]]:
     if not artifacts:
         return None
 
@@ -205,7 +214,9 @@ def _is_sandbox_local_path(path: str) -> bool:
     return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
 
 
-def _artifact_file_ref(artifact: Dict[str, Any], port_id: str) -> Optional[Dict[str, Any]]:
+def _artifact_file_ref(
+    artifact: Dict[str, Any], port_id: str
+) -> Optional[Dict[str, Any]]:
     filepath = str(
         artifact.get("filepath")
         or artifact.get("file_path")
@@ -219,25 +230,40 @@ def _artifact_file_ref(artifact: Dict[str, Any], port_id: str) -> Optional[Dict[
         return None
 
     return {
-        "document_id": str(artifact.get("document_id") or artifact.get("id") or "").strip(),
+        "document_id": str(
+            artifact.get("document_id") or artifact.get("id") or ""
+        ).strip(),
         "filename": filename,
         "filepath": filepath,
-        "workspace_id": str(artifact.get("workspace_id") or artifact.get("brain_id") or "").strip(),
+        "workspace_id": str(
+            artifact.get("workspace_id") or artifact.get("brain_id") or ""
+        ).strip(),
         "port_id": port_id,
     }
 
 
-def _find_input_bindings(edges: List[Dict[str, Any]], task_id: str, port_id: str) -> List[Dict[str, Any]]:
+def _find_input_bindings(
+    edges: List[Dict[str, Any]], task_id: str, port_id: str
+) -> List[Dict[str, Any]]:
     return [
-        edge for edge in edges
-        if edge.get("target_id") == task_id and _normalize_port_id(edge.get("target_input_port_id")) == _normalize_port_id(port_id)
+        edge
+        for edge in edges
+        if edge.get("target_id") == task_id
+        and _normalize_port_id(edge.get("target_input_port_id"))
+        == _normalize_port_id(port_id)
     ]
 
 
-def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> None:
+def validate_port_routing(
+    tasks: List[Dict[str, Any]], edges: List[Dict[str, Any]]
+) -> None:
     """Validate that edges reference existing tasks and ports."""
 
-    tasks_by_id = {str(task.get("id")): task for task in tasks if isinstance(task, dict) and task.get("id")}
+    tasks_by_id = {
+        str(task.get("id")): task
+        for task in tasks
+        if isinstance(task, dict) and task.get("id")
+    }
 
     for edge in edges or []:
         if not isinstance(edge, dict):
@@ -252,11 +278,15 @@ def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any
 
         target_task = tasks_by_id.get(target_id)
         if target_task is None:
-            raise ValueError(f"Task '{target_id}' is referenced by an edge but is not defined")
+            raise ValueError(
+                f"Task '{target_id}' is referenced by an edge but is not defined"
+            )
 
         source_task = tasks_by_id.get(source_id)
         if source_task is None:
-            raise ValueError(f"Task '{target_id}' references unknown source task '{source_id}'")
+            raise ValueError(
+                f"Task '{target_id}' references unknown source task '{source_id}'"
+            )
 
         target_ports = _port_map(target_task.get("input_ports") or [])
         target_port_id = _normalize_port_id(edge.get("target_input_port_id"))
@@ -271,6 +301,7 @@ def validate_port_routing(tasks: List[Dict[str, Any]], edges: List[Dict[str, Any
             raise ValueError(
                 f"Task '{target_id}' references unknown source output port '{source_port_id}' on task '{source_id}'"
             )
+
 
 def resolve_task_inputs(
     task_id: str,
@@ -310,7 +341,9 @@ def resolve_task_inputs(
     has_port_sources = False
 
     for port_id in port_ids:
-        input_port = deepcopy(input_ports.get(port_id) or {"id": port_id, "name": port_id})
+        input_port = deepcopy(
+            input_ports.get(port_id) or {"id": port_id, "name": port_id}
+        )
         bindings = _find_input_bindings(edges, task_id, port_id)
         upstream_bindings: List[Dict[str, Any]] = []
         workspace_artifacts: List[Dict[str, Any]] = []
@@ -321,7 +354,9 @@ def resolve_task_inputs(
 
         for binding in bindings:
             source_task_id = str(binding.get("source_id") or "")
-            source_output_port_id = _normalize_port_id(binding.get("source_output_port_id"))
+            source_output_port_id = _normalize_port_id(
+                binding.get("source_output_port_id")
+            )
             artifact_key = f"{source_task_id}:{source_output_port_id}"
             artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
 
@@ -329,12 +364,14 @@ def resolve_task_inputs(
                 fallback_result = task_results.get(source_task_id) or {}
                 fallback_output = fallback_result.get("output")
                 if isinstance(fallback_output, str) and fallback_output.strip():
-                    artifacts = [{
-                        "artifact_kind": "text",
-                        "content": fallback_output,
-                        "source_task_id": source_task_id,
-                        "source_output_port_id": source_output_port_id,
-                    }]
+                    artifacts = [
+                        {
+                            "artifact_kind": "text",
+                            "content": fallback_output,
+                            "source_task_id": source_task_id,
+                            "source_output_port_id": source_output_port_id,
+                        }
+                    ]
 
             if not artifacts:
                 raise ValueError(
@@ -349,12 +386,14 @@ def resolve_task_inputs(
                     f"Task '{task_id}' input port '{port_id}' expects artifact kind '{expected_kind}' but received '{actual_kind}'"
                 )
 
-            upstream_bindings.append({
-                "source_task_id": source_task_id,
-                "source_output_port_id": source_output_port_id,
-                "artifact_kind": actual_kind,
-                "artifacts": artifacts,
-            })
+            upstream_bindings.append(
+                {
+                    "source_task_id": source_task_id,
+                    "source_output_port_id": source_output_port_id,
+                    "artifact_kind": actual_kind,
+                    "artifacts": artifacts,
+                }
+            )
             has_port_sources = True
 
             for artifact in artifacts:
@@ -372,7 +411,9 @@ def resolve_task_inputs(
         for port_binding in task_config.get("input_files_by_port") or []:
             if not isinstance(port_binding, dict):
                 continue
-            binding_port_id = str(port_binding.get("port_id") or "default").strip() or "default"
+            binding_port_id = (
+                str(port_binding.get("port_id") or "default").strip() or "default"
+            )
             if binding_port_id != port_id:
                 continue
             document_ids = _unique_strings(port_binding.get("document_ids") or [])
@@ -413,7 +454,9 @@ def resolve_task_inputs(
         "ports": resolved_ports,
         "playbook_workspace_context": list(workspace_context),
         "fallback_workspace_context": fallback_workspace_context,
-        "workspace_context_mode": "fallback_playbook" if fallback_workspace_context else "resolved_inputs_only",
+        "workspace_context_mode": "fallback_playbook"
+        if fallback_workspace_context
+        else "resolved_inputs_only",
         "has_port_sources": has_port_sources,
     }
 
@@ -428,7 +471,9 @@ def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
     fallback_files: List[Dict[str, Any]] = []
 
     for port_id, port_state in (resolved_inputs.get("ports") or {}).items():
-        document_ids = _unique_strings((port_state.get("document_bindings") or {}).get("document_ids") or [])
+        document_ids = _unique_strings(
+            (port_state.get("document_bindings") or {}).get("document_ids") or []
+        )
         resolved_documents = list(port_state.get("resolved_documents") or [])
         staged_files = list(port_state.get("staged_files") or [])
         documents_by_port[port_id] = document_ids
@@ -443,12 +488,16 @@ def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
             filename = str(doc.get("filename") or "").strip()
             if not filepath or not filename:
                 continue
-            fallback_files.append({
-                "document_id": str(doc.get("id") or doc.get("_id") or "").strip(),
-                "filename": filename,
-                "filepath": filepath,
-                "workspace_id": str(doc.get("workspace_id") or workspace.get("workspace_id") or "").strip(),
-            })
+            fallback_files.append(
+                {
+                    "document_id": str(doc.get("id") or doc.get("_id") or "").strip(),
+                    "filename": filename,
+                    "filepath": filepath,
+                    "workspace_id": str(
+                        doc.get("workspace_id") or workspace.get("workspace_id") or ""
+                    ).strip(),
+                }
+            )
 
     return {
         "all_document_ids": _unique_strings(all_document_ids),
@@ -456,21 +505,31 @@ def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
         "files_by_port": files_by_port,
         "all_files": all_files,
         "fallback_files": fallback_files,
-        "workspace_context_mode": resolved_inputs.get("workspace_context_mode", "resolved_inputs_only"),
-        "fallback_workspace_context": list(resolved_inputs.get("fallback_workspace_context") or []),
+        "workspace_context_mode": resolved_inputs.get(
+            "workspace_context_mode", "resolved_inputs_only"
+        ),
+        "fallback_workspace_context": list(
+            resolved_inputs.get("fallback_workspace_context") or []
+        ),
     }
 
 
 def select_output_workspace_id(resolved_inputs: Dict[str, Any]) -> str:
-    playbook_workspace_context = list(resolved_inputs.get("playbook_workspace_context") or [])
+    playbook_workspace_context = list(
+        resolved_inputs.get("playbook_workspace_context") or []
+    )
     if playbook_workspace_context:
-        workspace_id = str(playbook_workspace_context[0].get("workspace_id") or "").strip()
+        workspace_id = str(
+            playbook_workspace_context[0].get("workspace_id") or ""
+        ).strip()
         if workspace_id:
             return workspace_id
     return ""
 
 
-def format_workspace_file_hint(workspace_context: Optional[list], max_files: int = 12) -> str:
+def format_workspace_file_hint(
+    workspace_context: Optional[list], max_files: int = 12
+) -> str:
     filenames: List[str] = []
     seen = set()
     for workspace in workspace_context or []:
@@ -513,8 +572,17 @@ def build_task_prompt(
 
     for port_id, port_state in ports.items():
         input_port = port_state.get("input_port") or {}
-        upstream_bindings = list(port_state.get("upstream_bindings") or ([] if not port_state.get("upstream_binding") else [port_state.get("upstream_binding")]))
-        document_ids = (port_state.get("document_bindings") or {}).get("document_ids") or []
+        upstream_bindings = list(
+            port_state.get("upstream_bindings")
+            or (
+                []
+                if not port_state.get("upstream_binding")
+                else [port_state.get("upstream_binding")]
+            )
+        )
+        document_ids = (port_state.get("document_bindings") or {}).get(
+            "document_ids"
+        ) or []
         workspace_artifacts = port_state.get("workspace_artifacts") or []
 
         block_lines = [f"Input port: {input_port.get('name') or port_id}"]
@@ -533,16 +601,28 @@ def build_task_prompt(
                     if kind in {"text", "code"}:
                         block_lines.append("Content:\n" + _artifact_content(artifact))
                     else:
-                        artifact_name = artifact.get("filename") or artifact.get("name") or artifact.get("url") or artifact.get("filepath") or "artifact"
+                        artifact_name = (
+                            artifact.get("filename")
+                            or artifact.get("name")
+                            or artifact.get("url")
+                            or artifact.get("filepath")
+                            or "artifact"
+                        )
                         if _is_sandbox_local_path(str(artifact_name)):
-                            artifact_name = artifact.get("filename") or artifact.get("name") or "artifact"
+                            artifact_name = (
+                                artifact.get("filename")
+                                or artifact.get("name")
+                                or "artifact"
+                            )
                         block_lines.append(f"Artifact: {artifact_name}")
         else:
             block_lines.append("Upstream source: none")
 
         if document_ids:
             block_lines.append(f"Bound documents: {len(document_ids)}")
-            block_lines.append(f"Document IDs: {', '.join(document_ids[:6])}{'...' if len(document_ids) > 6 else ''}")
+            block_lines.append(
+                f"Document IDs: {', '.join(repr(d) for d in document_ids[:6])}{'...' if len(document_ids) > 6 else ''}"
+            )
 
         if workspace_artifacts:
             block_lines.append(f"Workspace artifacts: {len(workspace_artifacts)}")
@@ -550,22 +630,26 @@ def build_task_prompt(
         structured_blocks.append("\n".join(block_lines))
 
     if structured_blocks:
-        lines.append("Structured inputs for this task:\n\n" + "\n\n".join(structured_blocks))
+        lines.append(
+            "Structured inputs for this task:\n\n" + "\n\n".join(structured_blocks)
+        )
 
     if output_ports:
         output_lines = []
         output_ports_intro = resolve_prompt_template(
             prompt_registry,
-            'task.output_ports.note',
-            field='userTemplate',
-            fallback='Declared output ports are semantic targets. When multiple ports share a kind, use the port name and description to decide the right target. If you produce structured outputs, set `output_port_id` to a declared id.',
+            "task.output_ports.note",
+            field="userTemplate",
+            fallback="Declared output ports are semantic targets. When multiple ports share a kind, use the port name and description to decide the right target. If you produce structured outputs, set `output_port_id` to a declared id.",
         )
         for output_port in output_ports:
             port_id = str(output_port.get("id") or "default").strip() or "default"
             port_name = str(output_port.get("name") or port_id).strip() or port_id
             port_kind = str(output_port.get("artifact_kind") or "").strip()
             description = str(output_port.get("description") or "").strip()
-            output_lines.append(f"- `{port_id}` ({port_kind or 'unknown'}): {port_name}")
+            output_lines.append(
+                f"- `{port_id}` ({port_kind or 'unknown'}): {port_name}"
+            )
             if description:
                 output_lines.append(f"  Description: {description}")
 
@@ -596,9 +680,9 @@ def build_task_prompt(
     lines.append(
         resolve_prompt_template(
             prompt_registry,
-            'task.user.footer',
-            field='userTemplate',
-            fallback='Please complete this task and provide a clear output.',
+            "task.user.footer",
+            field="userTemplate",
+            fallback="Please complete this task and provide a clear output.",
         )
     )
     return "\n\n".join(lines)

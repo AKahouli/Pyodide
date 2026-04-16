@@ -211,7 +211,7 @@ export class PlaybookOutputFormatService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       return { guide: this.getFallbackGuide(text), promptTrace: [] };
     }

@@ -807,9 +807,16 @@ function PlaybookCanvasInner() {
   );
 
   const activeExecutionForEditor = (currentExecution?.playbookId === id ? currentExecution : null) || execution || null;
+  const lastSnapshotRef = useRef<{ key: string; task: PlaybookTask | null }>({ key: '', task: null });
   const effectiveEditingTask = useMemo(() => {
     if (!editingTask?.id) return editingTask;
-    return getSnapshotTask(activeExecutionForEditor, editingTask.id) || editingTask;
+    const snapshot = getSnapshotTask(activeExecutionForEditor, editingTask.id) || editingTask;
+    const key = JSON.stringify(snapshot);
+    if (lastSnapshotRef.current.key === key) {
+      return lastSnapshotRef.current.task;
+    }
+    lastSnapshotRef.current = { key, task: snapshot };
+    return snapshot;
   }, [activeExecutionForEditor, editingTask]);
 
   const nodeContextMenuActions = useMemo<NodeContextMenuActions>(

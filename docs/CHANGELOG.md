@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-16 11:45 UTC] — Fix LiteLLM proxy model alias propagation
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated backend model sync to persist the real provider-side model from LiteLLM `litellm_params.model`, while switching proxy-facing agent and playbook request paths to send the public model alias (`id` / `modelId`) to LiteLLM proxy clients.
+- **Why:** LiteLLM proxy resolves `/chat/completions` requests by public `model_name` alias, so passing provider-side strings like `azure/...` caused invalid model errors for aliased models such as `gpt-5.4-low`.
+- **Impact:** `YellowStorm/back/src/modules/models/models.service.ts`, `YellowStorm/back/src/modules/agent/agent.service.ts`, and LiteLLM-backed playbook service call sites.
+
 ## [2026-04-16 00:25 UTC] — Polish Advisor KPI cards and section order
 
 - **Feature:** `playbook-advisor`
