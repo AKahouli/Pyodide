@@ -816,7 +816,7 @@ export function ExecutionStepDetail({
             <TabsTrigger value="traces">{t('detail.tabs.traces')}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="results" className="space-y-4">
+          <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
             {replaySource && (
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
