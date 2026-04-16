@@ -1,5 +1,6 @@
 import { Types } from 'mongoose';
 import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
+import { JudgeStatus, StepStatus } from '../schemas/playbook-execution.schema';
 
 describe('PlaybookJudgeEnrichmentService', () => {
   it('falls back to source workspaces when generated workspaces are invalid', async () => {
@@ -111,5 +112,90 @@ describe('PlaybookJudgeEnrichmentService', () => {
       recommendation: 'update_current_playbook',
       _model: 'model-b',
     }));
+  });
+
+  it('claims summary evaluation before generating the execution summary', async () => {
+    const executionId = new Types.ObjectId().toHexString();
+    const executionModel = {
+      findById: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue({
+            _id: new Types.ObjectId(executionId),
+            playbookId: new Types.ObjectId(),
+            status: 'completed',
+            judgeSummaryStatus: 'idle',
+            taskResults: [
+              { taskId: 'task-1', nodeTitle: 'Task 1', status: StepStatus.COMPLETED, judgeStatus: JudgeStatus.EVALUATED, judgeResult: { overallScore: 81 }, toolTrace: [], llmPromptTrace: [] },
+            ],
+          }),
+        }),
+      }),
+      updateOne: jest.fn()
+        .mockResolvedValueOnce({ modifiedCount: 1 })
+        .mockResolvedValueOnce({ modifiedCount: 1 }),
+    };
+    const streamGateway = { sendToUser: jest.fn() };
+
+    const service = new PlaybookJudgeEnrichmentService(
+      executionModel as any,
+      { findById: jest.fn().mockResolvedValue({ description: 'Goal' }) } as any,
+      { findByKey: jest.fn().mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'user {{nodeFindingsJson}}' }) } as any,
+      { getHttpClient: jest.fn().mockReturnValue({ post: jest.fn().mockResolvedValue({ data: { choices: [{ message: { content: JSON.stringify({ overallScore: 88, confidence: 0.9, recommendation: 'update_current_playbook' }) } }], usage: { model: 'judge-model' } } }) }) } as any,
+      { getDefaultModel: jest.fn().mockResolvedValue({ id: 'judge-model' }) } as any,
+      {} as any,
+      streamGateway as any,
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    await service.evaluateExecutionSummaryNowIfReady('user-1', executionId);
+
+    expect(executionModel.updateOne).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ judgeSummaryStatus: { $in: ['idle', 'failed'] } }),
+      expect.objectContaining({ $set: expect.objectContaining({ judgeSummaryStatus: 'evaluating' }) }),
+    );
+    expect(executionModel.updateOne).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ judgeSummaryStatus: 'evaluating' }),
+      expect.objectContaining({ $set: expect.objectContaining({ judgeSummaryStatus: 'evaluated' }) }),
+    );
+    expect(streamGateway.sendToUser).toHaveBeenCalledWith('user-1', expect.objectContaining({ type: 'playbook_judge_summary_updated' }));
+  });
+
+  it('skips summary generation when another worker already claimed it', async () => {
+    const executionId = new Types.ObjectId().toHexString();
+    const httpPost = jest.fn();
+    const executionModel = {
+      findById: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue({
+            _id: new Types.ObjectId(executionId),
+            playbookId: new Types.ObjectId(),
+            status: 'completed',
+            judgeSummaryStatus: 'idle',
+            taskResults: [
+              { taskId: 'task-1', nodeTitle: 'Task 1', status: StepStatus.COMPLETED, judgeStatus: JudgeStatus.EVALUATED, judgeResult: { overallScore: 81 }, toolTrace: [], llmPromptTrace: [] },
+            ],
+          }),
+        }),
+      }),
+      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 0 }),
+    };
+
+    const service = new PlaybookJudgeEnrichmentService(
+      executionModel as any,
+      { findById: jest.fn().mockResolvedValue({ description: 'Goal' }) } as any,
+      { findByKey: jest.fn() } as any,
+      { getHttpClient: jest.fn().mockReturnValue({ post: httpPost }) } as any,
+      { getDefaultModel: jest.fn().mockResolvedValue({ id: 'judge-model' }) } as any,
+      {} as any,
+      { sendToUser: jest.fn() } as any,
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    await service.evaluateExecutionSummaryNowIfReady('user-1', executionId);
+
+    expect(httpPost).not.toHaveBeenCalled();
+    expect(executionModel.updateOne).toHaveBeenCalledTimes(1);
   });
 });

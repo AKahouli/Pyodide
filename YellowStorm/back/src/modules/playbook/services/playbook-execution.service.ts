@@ -528,34 +528,6 @@ export class PlaybookExecutionService {
     this.judgeEnrichmentService.schedule(userId, executionId, taskId);
   }
 
-  private persistBufferedCompletionAndScheduleEnrichment(
-    userId: string,
-    executionId: string,
-    taskId: string,
-    buffered: BufferedStepResult,
-    evalEnabled: boolean,
-    reflectionEnabled: boolean,
-  ): void {
-    void (async () => {
-      const execution = await this.executionModel.findById(executionId)
-        .select('taskResults.taskId taskResults.components')
-        .lean()
-        .exec();
-      const existingHumanFeedback = ((execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components || [])
-        .filter((component: any) => component.type === 'humanFeedback');
-
-      await this.flushBufferedTaskResult(executionId, taskId, buffered, existingHumanFeedback);
-      this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
-      this.scheduleNodeReflection(userId, executionId, taskId, 'completed', reflectionEnabled);
-    })().catch((error) => {
-      this.logger.warn('Failed to persist completed workflow step before enrichment', {
-        executionId,
-        taskId,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-    });
-  }
-
   private isSkipStepReason(reason?: string | null): boolean {
     return reason === SKIP_STEP_REASON;
   }
@@ -1858,7 +1830,6 @@ export class PlaybookExecutionService {
           artifacts,
           ...usageFields,
         });
-        this.persistBufferedCompletionAndScheduleEnrichment(userId, executionId, taskId, stepBuffer.get(taskId)!, evalEnabled, reflectionEnabled);
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_step_complete',
           data: { executionId, taskId, status: 'completed', output, components, artifacts, toolTrace, llmPromptTrace, semanticMatch, durationMs, ...usageFields },
@@ -2022,6 +1993,7 @@ export class PlaybookExecutionService {
   private async flushStepBuffer(
     executionId: string,
     stepBuffer: Map<string, BufferedStepResult>,
+    postFlush?: (taskId: string, buffered: BufferedStepResult) => Promise<void>,
   ): Promise<void> {
     if (stepBuffer.size === 0) return;
 
@@ -2041,6 +2013,9 @@ export class PlaybookExecutionService {
 
     for (const [taskId, buffered] of stepBuffer) {
       await this.flushBufferedTaskResult(executionId, taskId, buffered, hfMap.get(taskId) || []);
+      if (postFlush) {
+        await postFlush(taskId, buffered);
+      }
     }
   }
 
@@ -2327,7 +2302,13 @@ export class PlaybookExecutionService {
         if (timeoutHandle) clearTimeout(timeoutHandle);
         this.grpcService.removeStream(executionId);
         try {
-          await this.flushStepBuffer(executionId, stepBuffer);
+          await this.flushStepBuffer(executionId, stepBuffer, async (taskId, buffered) => {
+            if (buffered.status !== StepStatus.COMPLETED) {
+              return;
+            }
+            this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
+            this.scheduleNodeReflection(userId, executionId, taskId, 'completed', reflectionEnabled);
+          });
           this.activeStepBuffers.delete(executionId);
           await this.recordStreamUsage(userId, executionId, stepBuffer, startedAt);
 

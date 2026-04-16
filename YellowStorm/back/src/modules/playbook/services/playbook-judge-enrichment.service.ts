@@ -149,6 +149,23 @@ export class PlaybookJudgeEnrichmentService {
     await this.evaluateExecutionSummaryIfReady(userId, executionId);
   }
 
+  private async claimExecutionSummaryEvaluation(executionId: string): Promise<boolean> {
+    const result = await this.executionModel.updateOne(
+      {
+        _id: new Types.ObjectId(executionId),
+        judgeSummaryStatus: { $in: ['idle', 'failed'] },
+      },
+      {
+        $set: {
+          judgeSummaryStatus: 'evaluating',
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    return result.modifiedCount > 0;
+  }
+
   async applyCurrentPlaybook(userId: string, playbookId: string, executionId: string): Promise<any> {
     const payload = await this.buildRewritePayload('judge.rewrite_current_playbook', executionId);
     return this.playbookService.update(playbookId, {
@@ -544,7 +561,7 @@ export class PlaybookJudgeEnrichmentService {
   private async evaluateExecutionSummaryIfReady(userId: string, executionId: string): Promise<void> {
     const execution = await this.executionModel.findById(executionId).lean().exec();
     if (!execution) return;
-    if (execution.judgeSummaryStatus === 'evaluated') return;
+    if (execution.judgeSummaryStatus === 'evaluated' || execution.judgeSummaryStatus === 'evaluating') return;
 
     const playbook = await this.playbookService.findById(execution.playbookId?.toString?.() || String(execution.playbookId || ''));
 
@@ -552,6 +569,11 @@ export class PlaybookJudgeEnrichmentService {
     if (!completedTasks.length) return;
 
     if (completedTasks.some((item: any) => item.judgeStatus !== JudgeStatus.EVALUATED && item.judgeStatus !== JudgeStatus.FAILED)) {
+      return;
+    }
+
+    const claimed = await this.claimExecutionSummaryEvaluation(executionId);
+    if (!claimed) {
       return;
     }
 
@@ -583,54 +605,67 @@ export class PlaybookJudgeEnrichmentService {
       nodeFindingsJson: JSON.stringify(nodeFindings, null, 2),
     });
 
-    const response = await httpClient.post('/v1/chat/completions', {
-      model,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }, { timeout: EXECUTION_SUMMARY_TIMEOUT_MS });
+    try {
+      const response = await httpClient.post('/v1/chat/completions', {
+        model,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }, { timeout: EXECUTION_SUMMARY_TIMEOUT_MS });
 
-    const usage = response.data?.usage;
-    const payload = this.normalizeExecutionSummaryPayload(
-      this.extractJsonPayload(response.data?.choices?.[0]?.message?.content),
-      usage?.model || model,
-    );
-    const judgeSummary = {
-      overallScore: payload.overallScore,
-      confidence: payload.confidence,
-      structuralIssues: payload.structuralIssues || [],
-      promptIssues: payload.promptIssues || [],
-      contractIssues: payload.contractIssues || [],
-      handoffIssues: payload.handoffIssues || [],
-      toolUsageIssues: payload.toolUsageIssues || [],
-      crossStepToolPatterns: payload.crossStepToolPatterns || [],
-      rootCauseTaskIds: payload.rootCauseTaskIds || [],
-      highImpactRecommendations: payload.highImpactRecommendations || [],
-      recommendation: payload.recommendation || 'update_current_playbook',
-      reason: payload.reason || '',
-    };
-    await this.executionModel.updateOne(
-      { _id: new Types.ObjectId(executionId) },
-      {
-        $set: {
-          judgeSummaryStatus: 'evaluated',
-          judgeSummary,
-          updatedAt: new Date(),
+      const usage = response.data?.usage;
+      const payload = this.normalizeExecutionSummaryPayload(
+        this.extractJsonPayload(response.data?.choices?.[0]?.message?.content),
+        usage?.model || model,
+      );
+      const judgeSummary = {
+        overallScore: payload.overallScore,
+        confidence: payload.confidence,
+        structuralIssues: payload.structuralIssues || [],
+        promptIssues: payload.promptIssues || [],
+        contractIssues: payload.contractIssues || [],
+        handoffIssues: payload.handoffIssues || [],
+        toolUsageIssues: payload.toolUsageIssues || [],
+        crossStepToolPatterns: payload.crossStepToolPatterns || [],
+        rootCauseTaskIds: payload.rootCauseTaskIds || [],
+        highImpactRecommendations: payload.highImpactRecommendations || [],
+        recommendation: payload.recommendation || 'update_current_playbook',
+        reason: payload.reason || '',
+      };
+      await this.executionModel.updateOne(
+        { _id: new Types.ObjectId(executionId), judgeSummaryStatus: 'evaluating' },
+        {
+          $set: {
+            judgeSummaryStatus: 'evaluated',
+            judgeSummary,
+            updatedAt: new Date(),
+          },
         },
-      },
-    );
+      );
 
-    this.streamGateway.sendToUser(userId, {
-      type: 'playbook_judge_summary_updated',
-      data: {
-        executionId,
-        judgeSummary,
-      },
-    });
-    this.logger.log('Completed playbook judge summary', { executionId, overallScore: judgeSummary.overallScore });
+      this.streamGateway.sendToUser(userId, {
+        type: 'playbook_judge_summary_updated',
+        data: {
+          executionId,
+          judgeSummary,
+        },
+      });
+      this.logger.log('Completed playbook judge summary', { executionId, overallScore: judgeSummary.overallScore });
+    } catch (error) {
+      await this.executionModel.updateOne(
+        { _id: new Types.ObjectId(executionId), judgeSummaryStatus: 'evaluating' },
+        {
+          $set: {
+            judgeSummaryStatus: 'failed',
+            updatedAt: new Date(),
+          },
+        },
+      );
+      throw error;
+    }
   }
 
   private async runNodeJudge(execution: any, task: any, taskResult: any, upstreamContext: Record<string, unknown>): Promise<NodeJudgeResult> {

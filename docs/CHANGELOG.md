@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-16 12:00 UTC] — Fix duplicate playbook step persistence and judge summary execution
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Removed duplicate full-workflow playbook step persistence writes so stream-completed tasks persist once at buffer flush time before enrichment scheduling; added deterministic judge summary claim/evaluate flow to avoid duplicate or missed execution summaries; added regression coverage in backend playbook execution and judge enrichment specs.
+- **Why:** Duplicate writes caused inconsistent task state and enrichment scheduling conflicts; non-deterministic judge summary flow caused missed or repeated execution summaries under concurrent load.
+- **Impact:** Backend playbook execution and judge enrichment modules (spec files for regression coverage).
+
 ## [2026-04-16 11:45 UTC] — Fix LiteLLM proxy model alias propagation
 
 - **Feature:** `playbook`

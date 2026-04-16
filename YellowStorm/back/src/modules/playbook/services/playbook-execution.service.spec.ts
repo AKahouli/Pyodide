@@ -19,6 +19,7 @@ import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
+import { Connector } from '../../connector/schemas/connector.schema';
 import {
   PlaybookExecution,
   ExecutionStatus,
@@ -195,6 +196,7 @@ describe('PlaybookExecutionService', () => {
   let mockPromptService: any;
   let mockSemanticEnrichmentService: any;
   let mockJudgeEnrichmentService: any;
+  let mockConnectorModel: any;
   let mockLoggerService: any;
   let mockConfigService: any;
 
@@ -301,6 +303,14 @@ describe('PlaybookExecutionService', () => {
       evaluateExecutionSummaryNowIfReady: jest.fn().mockResolvedValue(undefined),
     };
 
+    mockConnectorModel = {
+      find: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([]),
+        }),
+      }),
+    };
+
     // Create a mock model that is both a constructor and has static methods
     mockExecutionModel = jest.fn().mockImplementation((data) => ({
       ...data,
@@ -325,6 +335,7 @@ describe('PlaybookExecutionService', () => {
       providers: [
         PlaybookExecutionService,
         { provide: getModelToken(PlaybookExecution.name), useValue: mockExecutionModel },
+        { provide: getModelToken(Connector.name), useValue: mockConnectorModel },
         { provide: PlaybookService, useValue: mockPlaybookService },
         { provide: PlaybookGrpcService, useValue: mockGrpcService },
         { provide: PlaybookContextService, useValue: mockContextService },
@@ -341,6 +352,7 @@ describe('PlaybookExecutionService', () => {
         { provide: PlaybookPromptService, useValue: mockPromptService },
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
         { provide: PlaybookJudgeEnrichmentService, useValue: mockJudgeEnrichmentService },
+        { provide: 'ConnectorAuthService', useValue: {} },
       ],
     }).compile();
 
@@ -1267,6 +1279,49 @@ describe('PlaybookExecutionService', () => {
         expect(hfComponents.length).toBe(1);
         expect(hfComponents[0].data.approved).toBe(true);
       }
+    });
+
+    it('schedules enrichment only after the workflow buffer flush persists completed steps', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution({ reflectionEnabled: true });
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById
+        .mockReturnValueOnce(createChainMock(execution))
+        .mockReturnValueOnce(createChainMock({ runEvaluation: true, reflectionEnabled: true }))
+        .mockReturnValueOnce(createChainMock({ taskResults: execution.taskResults }))
+        .mockReturnValueOnce(createChainMock({ taskResults: [{ ...execution.taskResults[0], status: StepStatus.COMPLETED }, execution.taskResults[1]] }));
+
+      const updateTaskResultSpy = jest.spyOn(service as any, 'updateTaskResult').mockResolvedValue(undefined);
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'task-1',
+          status: 'completed',
+          result: { components: [], duration_ms: '1000' },
+        },
+      });
+
+      expect(updateTaskResultSpy).not.toHaveBeenCalled();
+      expect(mockSemanticEnrichmentService.schedule).not.toHaveBeenCalled();
+      expect(mockJudgeEnrichmentService.schedule).not.toHaveBeenCalled();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(updateTaskResultSpy).toHaveBeenCalledTimes(1);
+      expect(mockSemanticEnrichmentService.schedule).toHaveBeenCalledWith(userId, objectId('exec1').toString(), 'task-1');
+      expect(mockJudgeEnrichmentService.schedule).toHaveBeenCalledWith(userId, objectId('exec1').toString(), 'task-1');
     });
   });
 
