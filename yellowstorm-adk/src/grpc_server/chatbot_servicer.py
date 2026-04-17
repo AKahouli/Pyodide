@@ -281,6 +281,15 @@ class ChatbotServicer(
                 # Convert dict to protobuf
                 chunk_pb = self._dict_to_stream_chunk(chunk_dict)
 
+                logger.debug(
+                    "[gRPC OUT] Yielding stream chunk",
+                    conversation_id=request.conversation_id,
+                    action=chunk_dict.get("action"),
+                    component_type=chunk_dict.get("component", {}).get("type"),
+                    message_id=chunk_dict.get("metadata", {}).get("message_id"),
+                    agent_id=chunk_dict.get("metadata", {}).get("agent_id"),
+                )
+
                 # Yield protobuf message
                 yield chunk_pb
 

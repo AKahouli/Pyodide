@@ -211,6 +211,7 @@ def create_langchain_tools(
             collector,
             output_workspace_id=output_workspace_id,
             brain_ids=agent_brain_ids,
+            external_ids=input_files,
         )
 
     # --- Platform tools (e.g. save_file_to_workspace) ---
@@ -1089,6 +1090,7 @@ def _create_connector_mcp_tools(
     collector: ToolResultCollector,
     output_workspace_id: str = "",
     brain_ids: Optional[List[str]] = None,
+    external_ids: Optional[List[str]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1101,7 +1103,8 @@ def _create_connector_mcp_tools(
     brain_header: Dict[str, str] = {}
     if brain_ids:
         brain_header["X-Brain-ID"] = ",".join(brain_ids)
-
+    if external_ids:
+        brain_header["X-External-ID"] = ",".join(external_ids)
 
     tools: List[StructuredTool] = []
     for binding in bindings:
