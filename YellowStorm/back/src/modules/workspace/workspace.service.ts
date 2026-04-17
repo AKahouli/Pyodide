@@ -186,6 +186,42 @@ export class WorkspaceService {
   }
 
   /**
+   * Get or create personal workspace for a user
+   */
+  async getOrCreatePersonalWorkspace(
+    userId: string,
+    allocatedStorage: number,
+  ): Promise<WorkspaceResponse> {
+    const existing = await this.workspaceModel.findOne({
+      createdBy: new Types.ObjectId(userId),
+      isPersonal: true,
+    });
+
+    if (existing) {
+      return this.mapToResponse(existing);
+    }
+
+    const workspace = await this.workspaceModel.create({
+      name: 'Mon workspace personnel',
+      alias: 'mon-workspace-personnel',
+      description: 'Votre espace personnel pour organiser vos fichiers',
+      createdBy: new Types.ObjectId(userId),
+      documentCount: 0,
+      usedStorage: 0,
+      allocatedStorage,
+      isSystem: false,
+      isPersonal: true,
+    });
+
+    this.logger.log('Personal workspace created', {
+      workspaceId: workspace._id,
+      userId,
+    });
+
+    return this.mapToResponse(workspace);
+  }
+
+  /**
    * List workspaces for a user with pagination
    */
   async findAllByUser(
@@ -202,7 +238,7 @@ export class WorkspaceService {
 
     const skip = (page - 1) * limit;
 
-    // Build query - exclude system workspaces from user listing
+    // Build query - exclude system workspaces from user listing but include personal
     const query: Record<string, unknown> = {
       createdBy: new Types.ObjectId(userId),
       isSystem: { $ne: true },
@@ -216,8 +252,9 @@ export class WorkspaceService {
       ];
     }
 
-    // Build sort
+    // Build sort - always put personal workspace first
     const sort: Record<string, 1 | -1> = {
+      isPersonal: -1, // Personal workspace first
       [sortBy]: sortOrder === 'asc' ? 1 : -1,
     };
 
@@ -259,6 +296,14 @@ export class WorkspaceService {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',
+      );
+    }
+
+    // Prevent modifying personal workspace name
+    if (workspace.isPersonal && data.name && data.name !== workspace.name) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'Cannot rename personal workspace',
       );
     }
 
@@ -322,6 +367,14 @@ export class WorkspaceService {
       throw new ForbiddenException(
         ErrorCode.WORKSPACE_FORBIDDEN,
         'You do not have access to this workspace',
+      );
+    }
+
+    // Prevent deleting personal workspace
+    if (workspace.isPersonal) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'Cannot delete personal workspace',
       );
     }
 
@@ -481,6 +534,8 @@ export class WorkspaceService {
       documentCount: workspace.documentCount,
       usedStorage: workspace.usedStorage,
       allocatedStorage: workspace.allocatedStorage,
+      isSystem: workspace.isSystem || false,
+      isPersonal: workspace.isPersonal || false,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

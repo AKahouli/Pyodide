@@ -32,6 +32,8 @@ export interface Workspace {
   documentCount: number;
   usedStorage: number;
   allocatedStorage: number;
+  isSystem: boolean;
+  isPersonal: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -81,8 +83,30 @@ export interface WorkspaceDocument {
   indexingStatus: IndexingStatus;
   indexingError?: string;
   lastIndexedAt?: string;
+  parentId?: string;
+  isFolder: boolean;
+  folderName?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// ===== Folder Types =====
+
+export interface WorkspaceFolder {
+  id: string;
+  folderName: string;
+  parentId?: string;
+  createdAt: string;
+  children: (WorkspaceDocument | WorkspaceFolder)[];
+}
+
+export interface CreateFolderData {
+  name: string;
+  parentId?: string;
+}
+
+export interface RenameFolderData {
+  name: string;
 }
 
 export interface DocumentQueryParams {

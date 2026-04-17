@@ -88,6 +88,28 @@ export class WorkspaceController {
   }
 
   /**
+   * Get or create personal workspace
+   */
+  @Get('personal')
+  @ApiOperation({ summary: 'Get or create personal workspace for current user' })
+  async getPersonal(
+    @CurrentUser() user: UserDocument,
+  ) {
+    // Get user's plan for storage allocation
+    const plan = await this.usageService.ensureUserHasPlan(
+      user._id.toString(),
+      user.planId,
+    );
+
+    const allocatedStorage = plan.workspaceStorageBytes ?? DEFAULT_WORKSPACE_STORAGE;
+
+    return this.workspaceService.getOrCreatePersonalWorkspace(
+      user._id.toString(),
+      allocatedStorage,
+    );
+  }
+
+  /**
    * Get workspace by ID
    */
   @Get(':id')

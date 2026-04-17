@@ -43,6 +43,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -1283,6 +1284,393 @@ export class WorkspaceDocumentService {
   }
 
   /**
+   * Create a folder in a workspace
+   */
+  async createFolder(
+    workspaceId: string,
+    userId: string,
+    name: string,
+    parentId?: string,
+  ): Promise<DocumentResponse> {
+    // Validate folder name
+    const sanitizedName = this.sanitizeFilename(name);
+    if (!sanitizedName) {
+      throw new BadRequestException('Folder name cannot be empty');
+    }
+
+    // Check for duplicate folder name in same parent
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(userId),
+      isFolder: true,
+      folderName: sanitizedName,
+    };
+
+    if (parentId) {
+      query.parentId = new Types.ObjectId(parentId);
+    } else {
+      query.parentId = null;
+    }
+
+    const existing = await this.documentModel.findOne(query);
+    if (existing) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'A folder with this name already exists in this location',
+      );
+    }
+
+    // Create folder record
+    const folder = await this.documentModel.create({
+      filename: '', // Folders don't have files
+      originalName: sanitizedName,
+      mimeType: 'folder',
+      size: 0,
+      path: '', // Folders don't have physical storage
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(userId),
+      status: DocumentStatus.COMPLETED,
+      isFolder: true,
+      folderName: sanitizedName,
+      parentId: parentId ? new Types.ObjectId(parentId) : null,
+    });
+
+    this.logger.log('Folder created', {
+      folderId: folder._id,
+      workspaceId,
+      name: sanitizedName,
+      parentId,
+    });
+
+    return this.mapToResponse(folder);
+  }
+
+  /**
+   * Rename a folder
+   */
+  async renameFolder(folderId: string, newName: string): Promise<DocumentResponse> {
+    const folder = await this.documentModel.findById(folderId);
+
+    if (!folder) {
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
+        'Folder not found',
+      );
+    }
+
+    if (!folder.isFolder) {
+      throw new BadRequestException('Document is not a folder');
+    }
+
+    // Validate new name
+    const sanitizedName = this.sanitizeFilename(newName);
+    if (!sanitizedName) {
+      throw new BadRequestException('Folder name cannot be empty');
+    }
+
+    // Check for duplicate folder name in same parent
+    const query: Record<string, unknown> = {
+      workspaceId: folder.workspaceId,
+      createdBy: folder.createdBy,
+      isFolder: true,
+      folderName: sanitizedName,
+      parentId: folder.parentId,
+      _id: { $ne: folderId },
+    };
+
+    const existing = await this.documentModel.findOne(query);
+    if (existing) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'A folder with this name already exists in this location',
+      );
+    }
+
+    folder.folderName = sanitizedName;
+    folder.originalName = sanitizedName;
+    await folder.save();
+
+    this.logger.log('Folder renamed', {
+      folderId: folder._id,
+      oldName: folder.originalName,
+      newName: sanitizedName,
+    });
+
+    return this.mapToResponse(folder);
+  }
+
+  /**
+   * Delete a folder and all its contents recursively
+   */
+  async deleteFolder(
+    workspaceId: string,
+    userId: string,
+    folderId: string,
+  ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
+    const folder = await this.documentModel.findById(folderId);
+
+    if (!folder) {
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
+        'Folder not found',
+      );
+    }
+
+    if (!folder.isFolder) {
+      throw new BadRequestException('Document is not a folder');
+    }
+
+    if (folder.createdBy.toString() !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have access to this folder',
+      );
+    }
+
+    // Recursively delete all contents
+    const result = await this.deleteFolderRecursive(folderId, workspaceId, userId);
+
+    // Delete the folder itself
+    await this.documentModel.deleteOne({ _id: folderId });
+
+    this.logger.log('Folder deleted', {
+      folderId,
+      workspaceId,
+      deletedFolders: result.deletedFolders + 1,
+      deletedDocuments: result.deletedDocuments,
+    });
+
+    return {
+      deletedFolders: result.deletedFolders + 1,
+      deletedDocuments: result.deletedDocuments,
+    };
+  }
+
+  /**
+   * Recursively delete folder contents
+   */
+  private async deleteFolderRecursive(
+    folderId: Types.ObjectId,
+    workspaceId: string,
+    userId: string,
+  ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
+    // Find all items in the folder
+    const items = await this.documentModel.find({
+      parentId: folderId,
+    });
+
+    let deletedFolders = 0;
+    let deletedDocuments = 0;
+
+    for (const item of items) {
+      if (item.isFolder) {
+        // Recursively delete subfolder
+        const subResult = await this.deleteFolderRecursive(
+          item._id,
+          workspaceId,
+          userId,
+        );
+        deletedFolders += subResult.deletedFolders + 1;
+        deletedDocuments += subResult.deletedDocuments;
+      } else {
+        // Delete document file from storage
+        try {
+          await this.documentService.delete(item.path);
+        } catch (error) {
+          this.logger.warn('Failed to delete blob', {
+            documentId: item._id,
+            path: item.path,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
+
+        // Delete document index
+        if (item.indexingStatus === IndexingStatus.READY) {
+          this.indexingService.deleteDocumentIndex(item._id.toString(), workspaceId).catch((err) => {
+            this.logger.warn('Failed to delete document index', {
+              documentId: item._id,
+              error: err instanceof Error ? err.message : 'Unknown error',
+            });
+          });
+        }
+
+        deletedDocuments++;
+      }
+
+      // Delete item record
+      await this.documentModel.deleteOne({ _id: item._id });
+    }
+
+    return { deletedFolders, deletedDocuments };
+  }
+
+  /**
+   * Move documents to a different folder
+   */
+  async moveDocuments(
+    workspaceId: string,
+    documentIds: string[],
+    targetFolderId?: string,
+  ): Promise<{ moved: number; failed: string[] }> {
+    const moved: string[] = [];
+    const failed: string[] = [];
+
+    for (const documentId of documentIds) {
+      try {
+        const document = await this.documentModel.findById(documentId);
+
+        if (!document) {
+          failed.push(documentId);
+          continue;
+        }
+
+        if (document.workspaceId.toString() !== workspaceId) {
+          failed.push(documentId);
+          continue;
+        }
+
+        // Cannot move folders with this endpoint (use dedicated move for folders)
+        if (document.isFolder) {
+          failed.push(documentId);
+          continue;
+        }
+
+        // Update parent folder
+        document.parentId = targetFolderId
+          ? new Types.ObjectId(targetFolderId)
+          : null;
+        await document.save();
+
+        moved.push(documentId);
+      } catch (error) {
+        this.logger.warn('Failed to move document', {
+          documentId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        failed.push(documentId);
+      }
+    }
+
+    this.logger.log('Documents moved', {
+      workspaceId,
+      targetFolderId,
+      movedCount: moved.length,
+      failedCount: failed.length,
+    });
+
+    return {
+      moved: moved.length,
+      failed,
+    };
+  }
+
+  /**
+   * Get all documents and folders in a hierarchical structure
+   */
+  async findAllHierarchical(
+    workspaceId: string,
+    params: DocumentQueryParams,
+  ): Promise<PaginatedDocuments> {
+    const {
+      page = 1,
+      limit = 100,
+      status,
+      search,
+      sortBy = 'originalName',
+      sortOrder = 'asc',
+    } = params;
+
+    const skip = (page - 1) * limit;
+
+    // Build query
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      status: status || DocumentStatus.COMPLETED,
+    };
+
+    if (search) {
+      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
+    }
+
+    // Build sort
+    const sort: Record<string, 1 | -1> = {
+      isFolder: -1, // Folders first
+      [sortBy]: sortOrder === 'asc' ? 1 : -1,
+    };
+
+    // Execute queries
+    const [items, total] = await Promise.all([
+      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
+      this.documentModel.countDocuments(query),
+    ]);
+
+    return {
+      documents: items.map((d) => this.mapToResponse(d)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get contents of a specific folder
+   */
+  async getFolderContents(
+    workspaceId: string,
+    folderId: string,
+    params: DocumentQueryParams,
+  ): Promise<PaginatedDocuments> {
+    const {
+      page = 1,
+      limit = 50,
+      search,
+      sortBy = 'originalName',
+      sortOrder = 'asc',
+    } = params;
+
+    const skip = (page - 1) * limit;
+
+    // Build query for folder contents
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      parentId: new Types.ObjectId(folderId),
+      status: DocumentStatus.COMPLETED,
+    };
+
+    if (search) {
+      query.$or = [
+        { originalName: { $regex: escapeRegex(search), $options: 'i' } },
+        { folderName: { $regex: escapeRegex(search), $options: 'i' } },
+      ];
+    }
+
+    // Build sort - folders first
+    const sort: Record<string, 1 | -1> = {
+      isFolder: -1,
+      [sortBy]: sortOrder === 'asc' ? 1 : -1,
+    };
+
+    // Execute queries
+    const [items, total] = await Promise.all([
+      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
+      this.documentModel.countDocuments(query),
+    ]);
+
+    return {
+      documents: items.map((d) => this.mapToResponse(d)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
    * Map document to response
    */
   private mapToResponse(document: WorkspaceDocumentDoc): DocumentResponse {
@@ -1306,6 +1694,9 @@ export class WorkspaceDocumentService {
       lastIndexedAt: document.lastIndexedAt?.toISOString(),
       detected_language: document.detected_language,
       chunk_size: document.chunk_size,
+      parentId: document.parentId?.toString(),
+      isFolder: document.isFolder || false,
+      folderName: document.folderName,
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
     };

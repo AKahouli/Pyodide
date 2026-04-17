@@ -35,6 +35,9 @@ export class Workspace extends Document {
   @Prop({ type: Boolean, default: false, index: true })
   isSystem!: boolean;
 
+  @Prop({ type: Boolean, default: false, index: true })
+  isPersonal!: boolean;
+
   @Prop({ type: Types.ObjectId, ref: 'Conversation' })
   conversationId?: Types.ObjectId;
 

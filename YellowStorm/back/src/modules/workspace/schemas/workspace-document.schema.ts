@@ -91,6 +91,15 @@ export class WorkspaceDoc extends Document {
   @Prop({ default: 1200 })
   chunk_size?: number;
 
+  // Folder support
+  @Prop({ type: Types.ObjectId, ref: 'WorkspaceDoc', default: null })
+  parentId?: Types.ObjectId;
+
+  @Prop({ type: Boolean, default: false, index: true })
+  isFolder!: boolean;
+
+  @Prop({ trim: true, maxlength: 255 })
+  folderName?: string; // Used for folders (isFolder = true)
 
   createdAt!: Date;
   updatedAt!: Date;
@@ -101,6 +110,8 @@ export const WorkspaceDocumentSchema = SchemaFactory.createForClass(WorkspaceDoc
 // Indexes
 WorkspaceDocumentSchema.index({ workspaceId: 1, createdAt: -1 });
 WorkspaceDocumentSchema.index({ workspaceId: 1, status: 1 });
+WorkspaceDocumentSchema.index({ workspaceId: 1, parentId: 1 });
+WorkspaceDocumentSchema.index({ workspaceId: 1, isFolder: 1 });
 WorkspaceDocumentSchema.index({ path: 1 }, { unique: true });
 
 // JSON transform

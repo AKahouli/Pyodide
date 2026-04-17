@@ -23,6 +23,7 @@ import { WorkspaceDocumentController } from './workspace-document.controller';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceSettingService } from './workspace-setting.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
+import { WorkspaceInitializerService } from './workspace-initializer.service';
 import { WorkspaceOwnerGuard } from './guards/workspace-owner.guard';
 import { AuthModule } from '../auth/auth.module';
 import { LoggerModule } from '../logger';
@@ -60,12 +61,14 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
+    WorkspaceInitializerService,
     WorkspaceOwnerGuard,
   ],
   exports: [
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
+    WorkspaceInitializerService,
   ],
 })
 export class WorkspaceModule {}

@@ -45,6 +45,9 @@ export interface DocumentResponse {
   lastIndexedAt?: string;
   detected_language?: string;
   chunk_size?: number;
+  parentId?: string;
+  isFolder: boolean;
+  folderName?: string;
   createdAt: string;
   updatedAt: string;
 }

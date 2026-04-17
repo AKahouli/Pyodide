@@ -12,6 +12,20 @@ import { DEFAULT_PAGE_LIMIT } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
+import type {
+  Workspace,
+  WorkspaceDocument,
+  WorkspaceSetting,
+  CreateWorkspaceData,
+  UpdateWorkspaceData,
+  CreateWorkspaceSettingData,
+  UpdateWorkspaceSettingData,
+  BulkDeleteResult,
+  UploadQueueItem,
+  UploadFileStatus,
+  CreateFolderData,
+  RenameFolderData,
+} from './types';
 
 /**
  * Extract user-friendly error message from API error
@@ -29,6 +43,7 @@ function getApiErrorMessage(err: unknown, fallback: string): string {
   }
   return fallback;
 }
+
 type WorkspaceTranslator = (key: ModuleTranslationKey<'workspace'>, params?: TranslationParams) => string;
 
 let workspaceTranslator: WorkspaceTranslator | null = null;
@@ -41,16 +56,17 @@ const getWorkspaceTranslationKey = (segment: string) => `store.${segment}` as Mo
 
 const translateWorkspaceString = (segment: string, fallback: string, params?: TranslationParams) => {
   if (workspaceTranslator) {
-    return workspaceTranslator(getWorkspaceTranslationKey(segment), params);
+    return workspaceTranslator(getWorkspaceTranslationKey(segment), params, fallback);
   }
   return fallback;
 };
 
 const tError = (key: string, fallback: string) => translateWorkspaceString(`errors.${key}`, fallback);
 const tToast = (key: string, fallback: string, params?: TranslationParams) => translateWorkspaceString(`toast.${key}`, fallback, params);
-import type { Workspace, WorkspaceDocument, WorkspaceSetting, CreateWorkspaceData, UpdateWorkspaceData, CreateWorkspaceSettingData, UpdateWorkspaceSettingData, BulkDeleteResult, UploadQueueItem, UploadFileStatus } from './types';
 
-// ===== State Types =====
+import type { WorkspaceStore, WorkspaceActions, WorkspaceSelectors, WorkspaceState } from './types';
+
+// ===== Initial State =====
 
 interface WorkspaceState {
   // Workspace data with page caching
@@ -93,6 +109,7 @@ interface WorkspaceState {
   isLoadingWorkspaces: boolean;
   isLoadingDocuments: boolean;
   isLoadingTemplates: boolean;
+  isLoadingSettings: boolean;
   isCreating: boolean;
   isDeleting: boolean;
 
@@ -167,9 +184,15 @@ interface WorkspaceActions {
   updateUploadProgress: (fileId: string, progress: number) => void;
   updateUploadStatus: (fileId: string, status: UploadFileStatus, error?: string) => void;
   clearCompletedUploads: () => void;
-}
 
-export type WorkspaceStore = WorkspaceState & WorkspaceActions;
+  // Folder operations
+  createFolder: (workspaceId: string, data: CreateFolderData) => Promise<WorkspaceDocument>;
+  renameFolder: (workspaceId: string, folderId: string, data: RenameFolderData) => Promise<WorkspaceDocument>;
+  deleteFolder: (workspaceId: string, folderId: string) => Promise<{ deletedFolders: number; deletedDocuments: number }>;
+  getFolderContents: (workspaceId: string, folderId: string, params?: DocumentQueryParams) => Promise<void>;
+  moveDocuments: (workspaceId: string, documentIds: string[], targetFolderId?: string) => Promise<{ moved: number; failed: string[] }>;
+  getPersonalWorkspace: () => Promise<void>;
+}
 
 // ===== Initial State =====
 
@@ -207,6 +230,7 @@ const initialState: WorkspaceState = {
   isLoadingWorkspaces: false,
   isLoadingDocuments: false,
   isLoadingTemplates: false,
+  isLoadingSettings: false,
   isCreating: false,
   isDeleting: false,
 
@@ -221,818 +245,798 @@ const initialState: WorkspaceState = {
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
   devtools(
-    (set, get) => ({
-      ...initialState,
+    (set, get, api) => ({
+      name: 'workspace-store',
+    }),
+  ),
+  (set, get) => ({
+    ...initialState,
 
-      // ===== Modal Controls =====
-      openModal: () => {
-        set({ isModalOpen: true });
-        // Fetch workspaces when modal opens
-        get().fetchWorkspaces(1);
-      },
+    // ===== Modal Controls =====
+    openModal: () => {
+      set({ isModalOpen: true });
+      // Fetch workspaces when modal opens
+      get().fetchWorkspaces(1);
+    },
 
-      closeModal: () => {
-        set({
-          isModalOpen: false,
-          selectedWorkspaceId: null,
-          selectedWorkspace: null,
-          documents: new Map(),
-          documentsCurrentPage: 1,
-          documentSearchQuery: '',
-        });
-      },
+    closeModal: () => {
+      set({
+        isModalOpen: false,
+        selectedWorkspaceId: null,
+        selectedWorkspace: null,
+        documents: new Map(),
+        documentsCurrentPage: 1,
+        documentSearchQuery: '',
+      });
+    },
 
-      openCreateModal: () => {
-        set({
-          isCreateModalOpen: true,
-          createModalStep: 1,
-        });
-        // Fetch templates when opening create modal
-        get().fetchTemplates();
-      },
+    openCreateModal: () => {
+      set({
+        isCreateModalOpen: true,
+        createModalStep: 1,
+      });
+      // Fetch templates when opening create modal
+      get().fetchTemplates();
+    },
 
-      closeCreateModal: () =>
-        set({
-          isCreateModalOpen: false,
-          createModalStep: 1,
-        }),
+    closeCreateModal: () =>
+      set({
+        isCreateModalOpen: false,
+        createModalStep: 1,
+      }),
 
-      openCreateTemplateModal: () => {
-        set({
-          isCreateTemplateModalOpen: true,
-          createTemplateModalStep: 1,
-        });
-      },
+    openCreateTemplateModal: () => {
+      set({
+        isCreateTemplateModalOpen: true,
+        createTemplateModalStep: 1,
+      });
+    },
 
-      closeCreateTemplateModal: () =>
-        set({
-          isCreateTemplateModalOpen: false,
-          createTemplateModalStep: 1,
-        }),
+    closeCreateTemplateModal: () =>
+      set({
+        isCreateTemplateModalOpen: false,
+        createTemplateModalStep: 1,
+      }),
 
-      openSettingsModal: (workspace) => {
-        // Set the target workspace for settings (independent from selected workspace)
-        // Use provided workspace, or fall back to currently selected workspace
-        const targetWorkspace = workspace || get().selectedWorkspace;
-        set({
-          settingsTargetWorkspace: targetWorkspace,
-          isSettingsModalOpen: true,
-        });
-        // Fetch the workspace's settings
-        get().fetchCurrentWorkspaceSettings();
-      },
-      closeSettingsModal: () =>
-        set({
-          isSettingsModalOpen: false,
-          settingsTargetWorkspace: null,
-          currentWorkspaceSettings: null,
-        }),
+    openSettingsModal: (workspace) => {
+      // Set the target workspace for settings (independent from selected workspace)
+      set({
+        settingsTargetWorkspace: workspace || get().selectedWorkspace,
+        isSettingsModalOpen: true,
+      });
+      // Fetch the workspace's settings
+      get().fetchCurrentWorkspaceSettings();
+    },
 
-      setCreateModalStep: (step) => set({ createModalStep: step }),
-      setCreateTemplateModalStep: (step) => set({ createTemplateModalStep: step }),
+    closeSettingsModal: () =>
+      set({
+        isSettingsModalOpen: false,
+        settingsTargetWorkspace: null,
+        currentWorkspaceSettings: null,
+      }),
 
-      toggleMobileSidebar: () => set((state) => ({ isMobileSidebarOpen: !state.isMobileSidebarOpen })),
+    setCreateModalStep: (step) => set({ createModalStep: step }),
+    setCreateTemplateModalStep: (step) => set({ createTemplateModalStep: step }),
 
-      closeMobileSidebar: () => set({ isMobileSidebarOpen: false }),
+    toggleMobileSidebar: () => set((state) => ({ isMobileSidebarOpen: !state.isMobileSidebarOpen })),
 
-      // ===== Workspace Operations =====
-      fetchWorkspaces: async (page = 1) => {
-        const state = get();
+    closeMobileSidebar: () => set({ isMobileSidebarOpen: false }),
 
-        // Check cache first (skip if searching)
-        if (!state.searchQuery && state.workspaces.has(page)) {
-          set({ currentPage: page });
-          return;
-        }
+    // ===== Workspace Operations =====
+    fetchWorkspaces: async (page = 1) => {
+      const state = get();
 
-        set({ isLoadingWorkspaces: true, error: null });
+      // Check cache first (skip if searching)
+      if (!state.searchQuery && state.workspaces.has(page)) {
+        set({ currentPage: page });
+        return;
+      }
 
-        try {
-          const result = await workspaceApi.getWorkspaces({
+      set({ isLoadingWorkspaces: true, error: null });
+
+      try {
+        // Fetch regular workspaces and personal workspace in parallel
+        const [result, personalWorkspace] = await Promise.all([
+          workspaceApi.getWorkspaces({
             page,
             limit: DEFAULT_PAGE_LIMIT,
             search: state.searchQuery || undefined,
-          });
+          }),
+          workspaceApi.getPersonalWorkspace().catch(() => null),
+        ]);
 
-          const newCache = new Map(state.searchQuery ? [] : state.workspaces);
-          newCache.set(page, result.workspaces);
+        // Combine results - personal workspace first if it exists
+        const allWorkspaces = personalWorkspace
+          ? [personalWorkspace, ...result.workspaces]
+          : result.workspaces;
 
-          set({
-            workspaces: newCache,
-            currentPage: page,
-            totalPages: result.pagination.totalPages,
-            totalWorkspaces: result.pagination.total,
-            isLoadingWorkspaces: false,
-          });
+        const newCache = new Map(state.searchQuery ? [] : state.workspaces);
+        newCache.set(page, allWorkspaces);
 
-          const { isModalOpen, selectedWorkspaceId } = get();
-          if (isModalOpen && !selectedWorkspaceId && result.workspaces.length > 0) {
-            get()
-              .selectWorkspace(result.workspaces[0].id)
-              .catch((err) => {
-                console.error('Failed to auto-select workspace', err);
-              });
-          }
-        } catch (err) {
-          const fallback = tError('fetchWorkspaces', 'Failed to fetch workspaces');
-          const message = err instanceof Error ? err.message : fallback;
-          set({ error: message, isLoadingWorkspaces: false });
-        }
-      },
-
-      searchWorkspaces: async (query) => {
         set({
-          searchQuery: query,
-          workspaces: new Map(), // Clear cache on search
-          currentPage: 1,
+          workspaces: newCache,
+          currentPage: page,
+          totalPages: result.pagination.totalPages,
+          totalWorkspaces: result.pagination.total + (personalWorkspace ? 1 : 0),
+          isLoadingWorkspaces: false,
         });
+
+        const { isModalOpen, selectedWorkspaceId } = get();
+        if (isModalOpen && !selectedWorkspaceId && allWorkspaces.length > 0) {
+          get()
+            .selectWorkspace(allWorkspaces[0].id)
+            .catch((err) => {
+              console.error('Failed to auto-select workspace', err);
+            });
+        }
+      } catch (err) {
+        const fallback = tError('fetchWorkspaces', 'Failed to fetch workspaces');
+        const message = err instanceof Error ? err.message : fallback;
+        set({ error: message, isLoadingWorkspaces: false });
+      }
+    },
+
+    searchWorkspaces: (query) => {
+      set({
+        searchQuery: query,
+        workspaces: new Map(), // Clear cache on search
+        currentPage: 1,
+      });
+      await get().fetchWorkspaces(1);
+    },
+
+    selectWorkspace: async (workspaceId) => {
+      const state = get();
+
+      // Skip if already selected
+      if (state.selectedWorkspaceId === workspaceId) {
+        return;
+      }
+
+      // Find workspace from cache for immediate display (optimistic UI)
+      let cachedWorkspace: Workspace | null = null;
+      for (const workspaces of state.workspaces.values()) {
+        const found = workspaces.find((w) => w.id === workspaceId);
+        if (found) {
+          cachedWorkspace = found;
+          break;
+        }
+      }
+
+      set({
+        selectedWorkspaceId: workspaceId,
+        selectedWorkspace: cachedWorkspace,
+        isLoadingDocuments: true,
+        documents: new Map(),
+        documentsCurrentPage: 1,
+        documentSearchQuery: '',
+        isMobileSidebarOpen: false, // Close sidebar on mobile when selecting
+      });
+
+      try {
+        // Fetch fresh workspace data in parallel with documents
+        const [freshWorkspace] = await Promise.all([workspaceApi.getWorkspace(workspaceId)]);
+
+        // Update with fresh data (may have updated counts, storage, etc.)
+        set({
+          selectedWorkspace: freshWorkspace,
+          isLoadingDocuments: false,
+        });
+      } catch (err) {
+        const fallback = tError('loadWorkspace', 'Failed to load workspace');
+        const message = err instanceof Error ? err.message : fallback;
+        set({ error: message, isLoadingDocuments: false });
+      }
+    },
+
+    createWorkspace: async (data) => {
+      set({ isCreating: true, error: null });
+
+      try {
+        const workspace = await workspaceApi.createWorkspace(data);
+
+        // Invalidate cache and refresh
+        get().invalidateWorkspaceCache();
         await get().fetchWorkspaces(1);
-      },
-
-      selectWorkspace: async (workspaceId) => {
-        const state = get();
-
-        // Skip if already selected
-        if (state.selectedWorkspaceId === workspaceId) {
-          return;
-        }
-
-        // Find workspace from cache for immediate display (optimistic UI)
-        let cachedWorkspace: Workspace | null = null;
-        for (const workspaces of state.workspaces.values()) {
-          const found = workspaces.find((w) => w.id === workspaceId);
-          if (found) {
-            cachedWorkspace = found;
-            break;
-          }
-        }
 
         set({
-          selectedWorkspaceId: workspaceId,
-          selectedWorkspace: cachedWorkspace, // Show cached data immediately
-          isLoadingDocuments: true,
-          documents: new Map(),
-          documentsCurrentPage: 1,
-          documentSearchQuery: '',
-          isMobileSidebarOpen: false, // Close sidebar on mobile when selecting
+          isCreating: false,
+          isCreateModalOpen: false,
+          createModalStep: 1,
         });
 
-        try {
-          // Fetch fresh workspace data in parallel with documents
-          const [freshWorkspace] = await Promise.all([workspaceApi.getWorkspace(workspaceId), get().fetchDocuments(workspaceId, 1)]);
+        toast.success(tToast('workspace.createSuccessTitle', 'Workspace created'), {
+          description: tToast('workspace.createSuccessDescription', `"${data.name}" has been created successfully.`, { name: data.name }),
+        });
 
-          // Update with fresh data (may have updated counts, storage, etc.)
-          set({ selectedWorkspace: freshWorkspace });
-        } catch (err) {
-          const fallback = tError('loadWorkspace', 'Failed to load workspace');
-          const message = err instanceof Error ? err.message : fallback;
-          set({ error: message, isLoadingDocuments: false });
-        }
-      },
+        return workspace;
+      } catch (err) {
+        const fallback = tError('createWorkspace', 'Failed to create workspace');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message, isCreating: false });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
 
-      createWorkspace: async (data) => {
-        set({ isCreating: true, error: null });
+    updateWorkspace: async (id, data) => {
+      try {
+        const updated = await workspaceApi.updateWorkspace(id, data);
 
-        try {
-          const workspace = await workspaceApi.createWorkspace(data);
-
-          // Invalidate cache and refresh
-          get().invalidateWorkspaceCache();
-          await get().fetchWorkspaces(1);
-
-          set({
-            isCreating: false,
-            isCreateModalOpen: false,
-            createModalStep: 1,
-          });
-
-          toast.success(tToast('workspace.createSuccessTitle', 'Workspace created'), {
-            description: tToast('workspace.createSuccessDescription', `"${workspace.name}" has been created successfully.`, { name: workspace.name }),
-          });
-
-          return workspace;
-        } catch (err) {
-          const fallback = tError('createWorkspace', 'Failed to create workspace');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isCreating: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
-
-      updateWorkspace: async (id, data) => {
-        try {
-          const updated = await workspaceApi.updateWorkspace(id, data);
-
-          // Update in cache (create new arrays to ensure React detects changes)
-          const state = get();
-          const newCache = new Map(state.workspaces);
-          newCache.forEach((workspaces, page) => {
-            const index = workspaces.findIndex((w) => w.id === id);
-            if (index !== -1) {
-              const updatedWorkspaces = [...workspaces];
-              updatedWorkspaces[index] = updated;
-              newCache.set(page, updatedWorkspaces);
-            }
-          });
-
-          set({
-            workspaces: newCache,
-            selectedWorkspace: state.selectedWorkspaceId === id ? updated : state.selectedWorkspace,
-          });
-
-          toast.success(tToast('workspace.updateSuccessTitle', 'Workspace updated'));
-        } catch (err) {
-          const fallback = tError('updateWorkspace', 'Failed to update workspace');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
-
-      deleteWorkspace: async (id) => {
-        set({ isDeleting: true, error: null });
-
-        try {
-          await workspaceApi.deleteWorkspace(id);
-
-          // Clear selection if deleted workspace was selected
-          const state = get();
-          if (state.selectedWorkspaceId === id) {
-            set({ selectedWorkspaceId: null, selectedWorkspace: null });
+        // Update in cache (create new arrays to ensure React detects changes)
+        const state = get();
+        const newCache = new Map(state.workspaces);
+        newCache.forEach((workspaces, page) => {
+          const index = workspaces.findIndex((w) => w.id === id);
+          if (index !== -1) {
+            const updatedWorkspaces = [...workspaces];
+            updatedWorkspaces[index] = updated;
+            newCache.set(page, updatedWorkspaces);
           }
+        });
 
-          // Invalidate cache and refresh
-          get().invalidateWorkspaceCache();
-          await get().fetchWorkspaces(1);
+        set({
+          workspaces: newCache,
+          selectedWorkspace: state.selectedWorkspaceId === id ? updated : state.selectedWorkspace,
+        });
 
-          // Remove deleted workspace from conversation store
-          try {
-            const { useConversationStore } = await import('@/modules/conversation/store');
-            const convState = useConversationStore.getState();
+        toast.success(tToast('workspace.updateSuccessTitle', 'Workspace updated'));
+      } catch (err) {
+        const fallback = tError('updateWorkspace', 'Failed to update workspace');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
 
-            const updatedConversations = convState.conversations.map((c) => {
-              if (c.workspaces?.includes(id)) {
-                return { ...c, workspaces: c.workspaces.filter((wId) => wId !== id) };
+    deleteWorkspace: async (id) => {
+      set({ isDeleting: true, error: null });
+
+      try {
+        await workspaceApi.deleteWorkspace(id);
+
+        // Clear selection if deleted workspace was selected
+        const state = get();
+        if (state.selectedWorkspaceId === id) {
+          set({
+            selectedWorkspaceId: null,
+            selectedWorkspace: null,
+          });
+        }
+
+        // Invalidate cache and refresh
+        get().invalidateWorkspaceCache();
+        await get().fetchWorkspaces(1);
+
+        // Remove deleted workspace from conversation store
+        try {
+          const { useConversationStore } = await import('@/modules/conversation/store');
+          const convState = useConversationStore.getState();
+
+          const updatedConversations = convState.conversations.map((c) => {
+            if (c.workspaces?.includes(id)) {
+              return { ...c, workspaces: c.workspaces.filter((wId) => wId !== id) };
+            }
+            return c;
+          });
+
+          const updatedCurrent = convState.currentConversation?.workspaces?.includes(id)
+            ? {
+                ...convState.currentConversation,
+                workspaces: convState.currentConversation.workspaces?.filter((wId) => wId !== id),
               }
-              return c;
-            });
+            : convState.currentConversation;
 
-            const updatedCurrent = convState.currentConversation?.workspaces?.includes(id)
-              ? {
-                  ...convState.currentConversation,
-                  workspaces: convState.currentConversation.workspaces.filter((wId) => wId !== id),
-                }
-              : convState.currentConversation;
-
-            useConversationStore.setState({
-              conversations: updatedConversations,
-              currentConversation: updatedCurrent,
-            });
-          } catch {
-            // Conversation store cleanup is best-effort
-          }
-
-          set({ isDeleting: false });
-          toast.success(tToast('workspace.deleteSuccessTitle', 'Workspace deleted'));
-        } catch (err) {
-          const fallback = tError('deleteWorkspace', 'Failed to delete workspace');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isDeleting: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
-
-      renameWorkspace: async (id, name) => {
-        await get().updateWorkspace(id, { name });
-      },
-
-      // ===== Document Operations =====
-      fetchDocuments: async (workspaceId, page = 1) => {
-        const state = get();
-
-        // Check cache first (skip if searching)
-        if (!state.documentSearchQuery && state.documents.has(page)) {
-          set({ documentsCurrentPage: page });
-          return;
-        }
-
-        set({ isLoadingDocuments: true, error: null });
-
-        try {
-          const result = await workspaceApi.getDocuments(workspaceId, {
-            page,
-            limit: DEFAULT_PAGE_LIMIT,
-            search: state.documentSearchQuery || undefined,
+          useConversationStore.setState({
+            conversations: updatedConversations,
+            currentConversation: updatedCurrent,
           });
-
-          const newCache = new Map(state.documentSearchQuery ? [] : state.documents);
-          newCache.set(page, result.documents);
-
-          set({
-            documents: newCache,
-            documentsCurrentPage: page,
-            documentsTotalPages: result.pagination.totalPages,
-            totalDocuments: result.pagination.total,
-            isLoadingDocuments: false,
-          });
-        } catch (err) {
-          const fallback = tError('fetchDocuments', 'Failed to fetch documents');
-          const message = err instanceof Error ? err.message : fallback;
-          set({ error: message, isLoadingDocuments: false });
+        } catch {
+          // Conversation store cleanup is best-effort
         }
-      },
 
-      searchDocuments: async (query) => {
-        const state = get();
-        if (!state.selectedWorkspaceId) return;
+        set({ isDeleting: false });
+        toast.success(tToast('workspace.deleteSuccessTitle', 'Workspace deleted'));
+      } catch (err) {
+        const fallback = tError('deleteWorkspace', 'Failed to delete workspace');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message, isDeleting: false });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    renameWorkspace: async (id, name) => {
+      await get().updateWorkspace(id, { name });
+    },
+
+    // ===== Document Operations =====
+    fetchDocuments: async (workspaceId, page = 1) => {
+      const state = get();
+
+      // Check cache first (skip if searching)
+      if (!state.documentSearchQuery && state.documents.has(page)) {
+        set({ documentsCurrentPage: page });
+        return;
+      }
+
+      set({ isLoadingDocuments: true, error: null });
+
+      try {
+        const result = await workspaceApi.getDocuments(workspaceId, {
+          page,
+          limit: DEFAULT_PAGE_LIMIT,
+          search: state.documentSearchQuery || undefined,
+        });
+
+        const newCache = new Map(state.documentSearchQuery ? [] : state.documents);
+        newCache.set(page, result.documents);
 
         set({
-          documentSearchQuery: query,
-          documents: new Map(),
-          documentsCurrentPage: 1,
+          documents: newCache,
+          documentsCurrentPage: page,
+          documentsTotalPages: result.pagination.totalPages,
+          totalDocuments: result.pagination.total,
+          isLoadingDocuments: false,
         });
-        await get().fetchDocuments(state.selectedWorkspaceId, 1);
-      },
+      } catch (err) {
+        const fallback = tError('fetchDocuments', 'Failed to fetch documents');
+        const message = err instanceof Error ? err.message : fallback;
+        set({ error: message, isLoadingDocuments: false });
+      }
+    },
 
-      deleteDocument: async (workspaceId, docId) => {
-        try {
-          await workspaceApi.deleteDocument(workspaceId, docId);
+    searchDocuments: (query) => {
+      set({
+        documentSearchQuery: query,
+        documents: new Map(), // Clear cache on search
+        documentsCurrentPage: 1,
+      });
+      await get().fetchDocuments(get().selectedWorkspaceId || '', 1);
+    },
 
-          // Invalidate cache and refresh documents
-          get().invalidateDocumentCache();
-          await get().fetchDocuments(workspaceId, 1);
+    deleteDocument: async (workspaceId, docId) => {
+      try {
+        await workspaceApi.deleteDocument(workspaceId, docId);
 
-          // Refresh workspace to update document count and storage in both sidebar and content
-          await get().refreshWorkspace(workspaceId);
+        // Invalidate cache and refresh documents
+        get().invalidateDocumentCache();
+        await get().fetchDocuments(workspaceId, 1);
 
-          toast.success(tToast('documents.deleteSuccessTitle', 'Document deleted'));
-        } catch (err) {
-          const fallback = tError('deleteDocument', 'Failed to delete document');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message });
-          toast.error(fallback, { description: message });
-          throw err;
+        // Refresh workspace to update document count and storage in both sidebar and content
+        await get().refreshWorkspace(workspaceId);
+
+        toast.success(tToast('documents.deleteSuccessTitle', 'Document deleted'));
+      } catch (err) {
+        const fallback = tError('deleteDocument', 'Failed to delete document');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    bulkDeleteDocuments: async (workspaceId, docIds) => {
+      set({ isDeleting: true, error: null });
+
+      try {
+        const result = await workspaceApi.bulkDeleteDocuments(workspaceId, docIds);
+
+        // Invalidate cache and refresh documents
+        get().invalidateDocumentCache();
+        await get().fetchDocuments(workspaceId, 1);
+
+        // Refresh workspace to update document count and storage in both sidebar and content
+        await get().refreshWorkspace(workspaceId);
+
+        if (result.failed.length > 0) {
+          toast.warning(
+            tToast('documents.bulkDeletePartialTitle', 'Deleted {{count}} documents', { count: result.deleted }),
+            {
+              description: tToast('documents.bulkDeletePartialDescription', '{{count}} documents failed to delete.', { count: result.failed.length }),
+            },
+          );
+        } else {
+          toast.success(
+            tToast('documents.bulkDeleteSuccessTitle', 'Deleted {{count}} documents', { count: result.deleted }),
+          );
         }
-      },
 
-      bulkDeleteDocuments: async (workspaceId, docIds) => {
-        set({ isDeleting: true, error: null });
+        return result;
+      } catch (err) {
+        const fallback = tError('deleteDocuments', 'Failed to delete documents');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message, isDeleting: false });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
 
-        try {
-          const result = await workspaceApi.bulkDeleteDocuments(workspaceId, docIds);
+    deleteAllDocuments: async (workspaceId) => {
+      set({ isDeleting: true, error: null });
 
-          // Invalidate cache and refresh documents
-          get().invalidateDocumentCache();
-          await get().fetchDocuments(workspaceId, 1);
+      try {
+        await workspaceApi.deleteAllDocuments(workspaceId);
 
-          // Refresh workspace to update document count and storage in both sidebar and content
-          await get().refreshWorkspace(workspaceId);
+        // Invalidate cache and refresh documents
+        get().invalidateDocumentCache();
+        await get().fetchDocuments(workspaceId, 1);
 
-          set({ isDeleting: false });
+        // Refresh workspace to update document count and storage in both sidebar and content
+        await get().refreshWorkspace(workspaceId);
 
-          if (result.failed.length > 0) {
-            toast.warning(
-              tToast('documents.bulkDeletePartialTitle', 'Deleted {{count}} documents', { count: result.deleted }),
-              {
-                description: tToast('documents.bulkDeletePartialDescription', '{{count}} documents failed to delete.', {
-                  count: result.failed.length,
-                }),
-              },
-            );
-          } else {
-            toast.success(tToast('documents.bulkDeleteSuccessTitle', 'Deleted {{count}} documents', { count: result.deleted }));
-          }
+        set({ isDeleting: false });
+        toast.success(tToast('documents.deleteAllSuccessTitle', 'All documents deleted'));
+      } catch (err) {
+        const fallback = tError('deleteAllDocuments', 'Failed to delete all documents');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message, isDeleting: false });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
 
-          return result;
-        } catch (err) {
-          const fallback = tError('deleteDocuments', 'Failed to delete documents');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isDeleting: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
+    getDownloadUrl: async (workspaceId, docId) => {
+      const response = await workspaceApi.getDocumentDownloadUrl(workspaceId, docId);
+      return response.url;
+    },
 
-      deleteAllDocuments: async (workspaceId) => {
-        set({ isDeleting: true, error: null });
+    reindexDocument: async (workspaceId, docId) => {
+      try {
+        const result = await workspaceApi.reindexDocument(workspaceId, docId);
 
-        try {
-          await workspaceApi.deleteAllDocuments(workspaceId);
-
-          // Invalidate cache and refresh documents
-          get().invalidateDocumentCache();
-          await get().fetchDocuments(workspaceId, 1);
-
-          // Refresh workspace to update document count and storage
-          await get().refreshWorkspace(workspaceId);
-
-          set({ isDeleting: false });
-          toast.success(tToast('documents.deleteAllSuccessTitle', 'All documents deleted'));
-        } catch (err) {
-          const fallback = tError('deleteAllDocuments', 'Failed to delete all documents');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isDeleting: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
-
-      getDownloadUrl: async (workspaceId, docId) => {
-        const response = await workspaceApi.getDocumentDownloadUrl(workspaceId, docId);
-        return response.url;
-      },
-
-      reindexDocument: async (workspaceId, docId) => {
-        try {
-          const result = await workspaceApi.reindexDocument(workspaceId, docId);
-
-          // Merge only the returned fields into the existing document
-          const state = get();
-          const newCache = new Map(state.documents);
-          newCache.forEach((documents, page) => {
-            const index = documents.findIndex((d) => d.id === docId);
-            if (index !== -1) {
-              const updatedDocuments = [...documents];
-              updatedDocuments[index] = { ...documents[index], ...result };
-              newCache.set(page, updatedDocuments);
-            }
-          });
-
-          set({ documents: newCache });
-          toast.success(tToast('documents.reindexStartTitle', 'Re-indexing started'), {
-            description: tToast('documents.reindexStartDescription', 'Document will be re-indexed shortly.'),
-          });
-        } catch (err) {
-          const fallback = tError('reindexDocument', 'Failed to re-index document');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
-
-      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt) => {
+        // Merge only returned fields into existing document
         const state = get();
         const newCache = new Map(state.documents);
-        let found = false;
-
         newCache.forEach((documents, page) => {
-          const index = documents.findIndex((d) => d.id === documentId);
+          const index = documents.findIndex((d) => d.id === docId);
           if (index !== -1) {
-            found = true;
             const updatedDocuments = [...documents];
-            updatedDocuments[index] = {
-              ...updatedDocuments[index],
-              indexingStatus: indexingStatus as WorkspaceDocument['indexingStatus'],
-              indexingError,
-              lastIndexedAt,
-            };
+            updatedDocuments[index] = { ...documents[index], ...result };
             newCache.set(page, updatedDocuments);
           }
         });
 
-        if (found) {
-          set({ documents: newCache });
+        set({ documents: newCache });
+        toast.success(tToast('documents.reindexStartTitle', 'Re-indexing started'), {
+          description: tToast('documents.reindexStartDescription', 'Document will be re-indexed shortly.'),
+        });
+      } catch (err) {
+        const fallback = tError('reindexDocument', 'Failed to re-index document');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt) => {
+      set((state) => {
+        documents: new Map(state.documents),
+      });
+
+      const newCache = new Map(state.documents);
+      newCache.forEach((documents, page) => {
+        const index = documents.findIndex((d) => d.id === documentId);
+        if (index !== -1) {
+          const updatedDocuments = [...documents];
+          updatedDocuments[index] = {
+            ...documents[index],
+            indexingStatus: indexingStatus as WorkspaceDocument['indexingStatus'],
+            indexingError,
+            lastIndexedAt,
+          };
+          newCache.set(page, updatedDocuments);
         }
-      },
+      });
 
-      // ===== Template Operations =====
-      fetchTemplates: async () => {
-        set({ isLoadingTemplates: true });
+      set({ documents: newCache });
+    },
 
-        try {
-          const result = await workspaceApi.getWorkspaceSettingTemplates({
-            limit: 100, // Get all templates
-          });
-          // Sort predefined templates first (backend already does this, but ensure consistency)
-          const sortedTemplates = [...result.settings].sort((a, b) => {
-            if (a.isPredefined && !b.isPredefined) return -1;
-            if (!a.isPredefined && b.isPredefined) return 1;
-            return 0;
-          });
-          set({ templates: sortedTemplates, isLoadingTemplates: false });
-        } catch (err) {
-          console.error('Failed to fetch templates:', err);
-          set({ isLoadingTemplates: false });
-        }
-      },
+    // ===== Template Operations =====
+    fetchTemplates: async () => {
+      set({ isLoadingTemplates: true });
 
-      createSetting: async (data) => {
-        try {
-          const setting = await workspaceApi.createWorkspaceSetting(data);
-
-          // Refresh templates if it's a template
-          if (data.isTemplate) {
-            await get().fetchTemplates();
-            toast.success(tToast('template.createSuccessTitle', 'Template created'), {
-              description: tToast('template.createSuccessDescription', `"${setting.name}" has been created successfully.`, {
-                name: setting.name,
-              }),
-            });
+      try {
+        const result = await workspaceApi.getWorkspaceSettingTemplates({
+          limit: 100, // Get all templates
+        });
+        // Sort predefined templates first (backend already does this, but ensure consistency)
+        const sortedTemplates = [...result.settings].sort((a, b) => {
+          if (a.isPredefined && !b.isPredefined) {
+            return -1;
           }
+          if (!a.isPredefined && !b.isPredefined) {
+            return 1;
+          }
+          return 0;
+        });
+        set({
+          templates: sortedTemplates,
+          isLoadingTemplates: false,
+        });
+      } catch (err) {
+        set({ isLoadingTemplates: false });
+      }
+    },
 
-          return setting;
-        } catch (err) {
-          const fallback = tError('createSetting', 'Failed to create setting');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message });
-          toast.error(fallback, { description: message });
-          throw err;
+    createSetting: async (data) => {
+      try {
+        const setting = await workspaceApi.createWorkspaceSetting(data);
+
+        // Refresh templates if it's a template
+        if (data.isTemplate) {
+          await get().fetchTemplates();
         }
-      },
 
-      // ===== Workspace Settings Operations =====
-      // Note: These operations use settingsTargetWorkspace, not selectedWorkspace
-      // This allows viewing/editing settings without selecting the workspace
-      fetchCurrentWorkspaceSettings: async () => {
-        const state = get();
-        const workspace = state.settingsTargetWorkspace;
+        toast.success(tToast('template.createSuccessTitle', 'Template created'), {
+          description: tToast('template.createSuccessDescription', `"${data.name}" has been created successfully.`, { name: data.name }),
+        });
 
-        if (!workspace) {
-          set({ currentWorkspaceSettings: null, isLoadingSettings: false });
-          return;
-        }
+        return setting;
+      } catch (err) {
+        const fallback = tError('createSetting', 'Failed to create setting');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
 
+    // ===== Workspace Settings Operations (for settings modal) =====
+    fetchCurrentWorkspaceSettings: async () => {
+      const workspace = get().settingsTargetWorkspace;
+      if (!workspace) {
+        set({ currentWorkspaceSettings: null, isLoadingSettings: false });
+        return;
+      }
+
+      set({ isLoadingSettings: true, error: null });
+
+      try {
         // If workspace has no settings, set to null
         if (!workspace.settings) {
           set({ currentWorkspaceSettings: null, isLoadingSettings: false });
           return;
         }
 
-        set({ isLoadingSettings: true });
+        const settings = await workspaceApi.getWorkspaceSetting(workspace.settings);
+        set({ currentWorkspaceSettings: settings, isLoadingSettings: false });
+      } catch (err) {
+        const fallback = tError('fetchSettings', 'Failed to fetch workspace settings');
+        const message = err instanceof Error ? err.message : fallback;
+        set({ error: message, isLoadingSettings: false });
+        toast.error(fallback, { description: message });
+      }
+    },
 
-        try {
-          const settings = await workspaceApi.getWorkspaceSetting(workspace.settings);
-          set({ currentWorkspaceSettings: settings, isLoadingSettings: false });
-        } catch (err) {
-          console.error('Failed to fetch workspace settings:', err);
-          set({ currentWorkspaceSettings: null, isLoadingSettings: false });
+    updateCurrentWorkspaceSettings: async (data) => {
+      set({ isSavingSettings: true, error: null });
+
+      try {
+        const updated = await workspaceApi.updateWorkspaceSetting(
+          get().settingsTargetWorkspace!.settings,
+          data,
+        );
+        set({ currentWorkspaceSettings: updated, isSavingSettings: false });
+
+        toast.success(tToast('settings.updateSuccessTitle', 'Settings updated'));
+      } catch (err) {
+        const fallback = tError('updateSettings', 'Failed to update settings');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message, isSavingSettings: false });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    assignSettingsToWorkspace: async (settingsId) => {
+      try {
+        await get().updateWorkspace(get().settingsTargetWorkspace!.id, {
+          settings: settingsId,
+        });
+        // Fetch the updated workspace settings
+        await get().fetchCurrentWorkspaceSettings();
+        toast.success(tToast('settings.applySuccessTitle', 'Settings applied'));
+      } catch (err) {
+        const fallback = tError('applySettings', 'Failed to apply settings');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    clearWorkspaceSettings: () => {
+      set({
+        currentWorkspaceSettings: null,
+      });
+    },
+
+    // ===== Cache Management =====
+    invalidateWorkspaceCache: () => {
+      set({
+        workspaces: new Map(),
+        currentPage: 1,
+        totalPages: 0,
+        totalWorkspaces: 0,
+      });
+    },
+
+    invalidateDocumentCache: () => {
+      set({
+        documents: new Map(),
+        documentsCurrentPage: 1,
+        documentsTotalPages: 0,
+        totalDocuments: 0,
+        documentSearchQuery: '',
+      });
+    },
+
+    updateWorkspaceInCache: (workspace) => {
+      const state = get();
+      const newCache = new Map(state.workspaces);
+      newCache.forEach((workspaces, page) => {
+        const index = workspaces.findIndex((w) => w.id === workspace.id);
+        if (index !== -1) {
+          const updatedWorkspaces = [...workspaces];
+          updatedWorkspaces[index] = workspace;
+          newCache.set(page, updatedWorkspaces);
         }
-      },
+      });
 
-      updateCurrentWorkspaceSettings: async (data) => {
-        const state = get();
-        const settings = state.currentWorkspaceSettings;
-        const workspace = state.settingsTargetWorkspace;
+      set({
+        workspaces: newCache,
+        selectedWorkspace: state.selectedWorkspaceId === workspace.id ? workspace : state.selectedWorkspace,
+      });
+    },
 
-        if (!settings || !workspace) return;
+    refreshWorkspace: async (workspaceId) => {
+      try {
+        const workspace = await workspaceApi.getWorkspace(workspaceId);
+        get().updateWorkspaceInCache(workspace);
+      } catch (err) {
+        console.error('Failed to refresh workspace', err);
+      }
+    },
 
-        set({ isSavingSettings: true });
+    // ===== Error Handling =====
+    clearError: () => set({ error: null }),
 
-        try {
-          const updated = await workspaceApi.updateWorkspaceSetting(settings.id, data);
-          set({ currentWorkspaceSettings: updated, isSavingSettings: false });
-          toast.success(tToast('settings.updateSuccessTitle', 'Settings updated'));
-        } catch (err) {
-          const fallback = tError('updateSettings', 'Failed to update settings');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isSavingSettings: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
+    // ===== Upload Operations =====
+    addFilesToQueue: (files, workspaceId) => {
+      const newItems: UploadQueueItem[] = files.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+        file,
+        workspaceId,
+        status: 'pending' as UploadFileStatus,
+        progress: 0,
+      }));
 
-      assignSettingsToWorkspace: async (settingsId) => {
-        const state = get();
-        const workspace = state.settingsTargetWorkspace;
+      set((state) => ({
+        uploadQueue: [...state.uploadQueue, ...newItems],
+      }));
+    },
 
-        if (!workspace) return;
+    removeFromQueue: (fileId) => {
+      set((state) => ({
+        uploadQueue: state.uploadQueue.filter((item) => item.id !== fileId),
+      }));
+    },
 
-        set({ isSavingSettings: true });
+    clearQueue: () => {
+      set({ uploadQueue: [], uploadSessionId: null });
+    },
 
-        try {
-          await get().updateWorkspace(workspace.id, { settings: settingsId });
-          // Update the target workspace reference with new settings
-          set({
-            settingsTargetWorkspace: { ...workspace, settings: settingsId },
-          });
-          // Fetch the new settings to display
-          const settings = await workspaceApi.getWorkspaceSetting(settingsId);
-          set({ currentWorkspaceSettings: settings, isSavingSettings: false });
-          toast.success(tToast('settings.applySuccessTitle', 'Settings applied'));
-        } catch (err) {
-          const fallback = tError('applySettings', 'Failed to apply settings');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isSavingSettings: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
+    startUpload: async () => {
+      const state = get();
+      const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending');
 
-      clearWorkspaceSettings: async () => {
-        const state = get();
-        const workspace = state.settingsTargetWorkspace;
+      if (pendingFiles.length === 0) {
+        return;
+      }
 
-        if (!workspace) return;
+      set({ isUploading: true });
 
-        set({ isSavingSettings: true });
+      const workspaceId = pendingFiles[0].workspaceId;
+      const SMALL_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
 
-        try {
-          await get().updateWorkspace(workspace.id, { settings: null });
-          // Update the target workspace reference
-          set({
-            settingsTargetWorkspace: { ...workspace, settings: undefined },
-            currentWorkspaceSettings: null,
-            isSavingSettings: false,
-          });
-          toast.success(tToast('settings.clearSuccessTitle', 'Settings cleared'), {
-            description: tToast('settings.clearSuccessDescription', 'Workspace will use default settings.'),
-          });
-        } catch (err) {
-          const fallback = tError('clearSettings', 'Failed to clear settings');
-          const message = getApiErrorMessage(err, fallback);
-          set({ error: message, isSavingSettings: false });
-          toast.error(fallback, { description: message });
-          throw err;
-        }
-      },
+      try {
+        // Check if single small file or multiple/large files
+        const isSingleSmallFile =
+          pendingFiles.length === 1 && pendingFiles[0].file.size < SMALL_FILE_THRESHOLD;
 
-      // ===== Cache Management =====
-      invalidateWorkspaceCache: () => {
-        set({ workspaces: new Map(), currentPage: 1 });
-      },
+        if (isSingleSmallFile) {
+          // Direct upload for single small file
+          const item = pendingFiles[0];
+          get().updateUploadStatus(item.id, 'uploading');
 
-      invalidateDocumentCache: () => {
-        set({ documents: new Map(), documentsCurrentPage: 1 });
-      },
-
-      /**
-       * Update a workspace in both selectedWorkspace and the workspaces cache
-       * This ensures the sidebar and content area stay in sync
-       */
-      updateWorkspaceInCache: (workspace: Workspace) => {
-        const state = get();
-
-        // Update selectedWorkspace if it matches
-        const newSelectedWorkspace = state.selectedWorkspaceId === workspace.id ? workspace : state.selectedWorkspace;
-
-        // Update workspace in the cache
-        const newWorkspacesCache = new Map(state.workspaces);
-        newWorkspacesCache.forEach((workspaces, page) => {
-          const index = workspaces.findIndex((w) => w.id === workspace.id);
-          if (index !== -1) {
-            const updatedWorkspaces = [...workspaces];
-            updatedWorkspaces[index] = workspace;
-            newWorkspacesCache.set(page, updatedWorkspaces);
+          try {
+            await workspaceApi.uploadSmallFile(
+              workspaceId,
+              item.file.buffer,
+              item.file.originalname,
+              item.file.type,
+              (progress) => {
+                get().updateUploadProgress(item.id, progress);
+              },
+            );
+            get().updateUploadStatus(item.id, 'completed');
+            toast.success(tToast('upload.successTitle', 'Upload complete'), {
+              description: tToast('upload.singleSuccessDescription', `"${item.file.name}" has been uploaded successfully.`, { name: item.file.name }),
+            });
+          } catch (err) {
+            get().updateUploadStatus(item.id, 'failed', err instanceof Error ? err.message : 'Unknown error');
+            const fallbackUpload = tError('uploadFailed', 'Upload failed');
+            const message = getApiErrorMessage(err, fallbackUpload);
+            toast.error(fallbackUpload, { description: message });
           }
-        });
+        } else {
+          // Bulk upload for multiple or large files
+          const fileRequests = pendingFiles.map((item) => ({
+            filename: item.file.originalname,
+            mimeType: item.file.type,
+            size: item.file.size,
+          }));
 
-        set({
-          selectedWorkspace: newSelectedWorkspace,
-          workspaces: newWorkspacesCache,
-        });
-      },
-
-      /**
-       * Refresh workspace data from API and update cache
-       */
-      refreshWorkspace: async (workspaceId: string) => {
-        try {
-          const workspace = await workspaceApi.getWorkspace(workspaceId);
-          get().updateWorkspaceInCache(workspace);
-        } catch (err) {
-          console.error('Failed to refresh workspace:', err);
-        }
-      },
-
-      // ===== Error Handling =====
-      clearError: () => set({ error: null }),
-
-      // ===== Upload Operations =====
-      addFilesToQueue: (files, workspaceId) => {
-        const newItems: UploadQueueItem[] = files.map((file) => ({
-          id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-          file,
-          workspaceId,
-          status: 'pending' as UploadFileStatus,
-          progress: 0,
-        }));
-
-        set((state) => ({
-          uploadQueue: [...state.uploadQueue, ...newItems],
-        }));
-      },
-
-      removeFromQueue: (fileId) => {
-        set((state) => ({
-          uploadQueue: state.uploadQueue.filter((item) => item.id !== fileId),
-        }));
-      },
-
-      clearQueue: () => {
-        set({ uploadQueue: [], uploadSessionId: null });
-      },
-
-      startUpload: async () => {
-        const state = get();
-        const pendingFiles = state.uploadQueue.filter((item) => item.status === 'pending');
-
-        if (pendingFiles.length === 0) return;
-
-        set({ isUploading: true });
-
-        const workspaceId = pendingFiles[0].workspaceId;
-        const SMALL_FILE_THRESHOLD = 10 * 1024 * 1024; // 10MB
-
-        try {
-          // Check if single small file or multiple/large files
-          const isSingleSmallFile = pendingFiles.length === 1 && pendingFiles[0].file.size < SMALL_FILE_THRESHOLD;
-
-          if (isSingleSmallFile) {
-            // Direct upload for single small file
-            const item = pendingFiles[0];
+          // Mark all as uploading
+          pendingFiles.forEach((item) => {
             get().updateUploadStatus(item.id, 'uploading');
+          });
 
+          const session = await workspaceApi.initiateBulkUpload(workspaceId, {
+            files: fileRequests,
+          });
+
+          set({ uploadSessionId: session.sessionId });
+
+          // Upload each file to Azure in parallel
+          let successCount = 0;
+          let failCount = 0;
+
+          const uploadPromises = session.files.map(async (fileInfo, index) => {
+            const item = pendingFiles[index];
             try {
-              await workspaceApi.uploadSmallFile(workspaceId, item.file, (progress) => get().updateUploadProgress(item.id, progress));
+              await workspaceApi.uploadToAzure(fileInfo.uploadUrl, item.file, (progress) => {
+                get().updateUploadProgress(item.id, progress);
+              });
+
               get().updateUploadStatus(item.id, 'completed');
-              toast.success(tToast('upload.successTitle', 'Upload complete'), {
-                description: tToast('upload.singleSuccessDescription', '"{{name}}" has been uploaded.', { name: item.file.name }),
-              });
+              successCount++;
             } catch (err) {
-              const fallbackUpload = tError('uploadFailed', 'Upload failed');
-              const message = getApiErrorMessage(err, fallbackUpload);
-              get().updateUploadStatus(item.id, 'failed', message);
-              toast.error(fallbackUpload, { description: message });
+              get().updateUploadStatus(item.id, 'failed', err instanceof Error ? err.message : 'Unknown error');
+              failCount++;
             }
-          } else {
-            // Bulk upload for multiple or large files
-            const fileRequests = pendingFiles.map((item) => ({
-              filename: item.file.name,
-              mimeType: item.file.type || 'application/octet-stream',
-              size: item.file.size,
-            }));
+          });
 
-            // Mark all as uploading
-            pendingFiles.forEach((item) => {
-              get().updateUploadStatus(item.id, 'uploading');
-            });
+          await Promise.all(uploadPromises);
 
-            // Initiate bulk session
-            const session = await workspaceApi.initiateBulkUpload(workspaceId, {
-              files: fileRequests,
-            });
+          // Always complete bulk session so backend can finalize
+          try {
+            await workspaceApi.completeBulkUpload(workspaceId, session.sessionId);
 
-            set({ uploadSessionId: session.sessionId });
-
-            // Track upload results
-            let successCount = 0;
-            let failCount = 0;
-
-            // Upload each file to Azure in parallel
-            const uploadPromises = session.files.map(async (fileInfo, index) => {
-              const item = pendingFiles[index];
-              if (!item) return { success: false };
-
-              try {
-                await workspaceApi.uploadToAzure(fileInfo.uploadUrl, item.file, (progress) => {
-                  // Track progress locally - no need to send to backend
-                  get().updateUploadProgress(item.id, progress);
-                });
-
-                get().updateUploadStatus(item.id, 'completed');
-                successCount++;
-                return { success: true };
-              } catch (err) {
-                const fallbackUpload = tError('uploadFailed', 'Upload failed');
-                const message = getApiErrorMessage(err, fallbackUpload);
-                get().updateUploadStatus(item.id, 'failed', message);
-                failCount++;
-                return { success: false, error: message };
-              }
-            });
-
-            await Promise.allSettled(uploadPromises);
-
-            // Always complete the bulk session so backend can finalize
-            // Backend will verify which files actually made it to Azure
-            try {
-              await workspaceApi.completeBulkUpload(workspaceId, session.sessionId);
-            } catch (err) {
-              console.error('Failed to complete bulk upload session:', err);
-            }
-
-            // Show toast with results
             if (failCount === 0) {
-              toast.success(tToast('upload.successTitle', 'Upload complete'), {
-                description: tToast('upload.bulkSuccessDescription', '{{count}} file(s) uploaded successfully.', { count: successCount }),
-              });
+              toast.success(
+                tToast('upload.successTitle', 'Upload complete'),
+                {
+                  description: tToast('upload.bulkSuccessDescription', '{{count}} file(s) uploaded successfully.', { count: successCount }),
+                },
+              );
             } else if (successCount === 0) {
-              const fallbackUpload = tError('uploadFailed', 'Upload failed');
-              toast.error(fallbackUpload, {
+              toast.error(tToast('upload.failedTitle', 'Upload failed'), {
                 description: tToast('upload.bulkErrorDescription', 'All {{count}} files failed to upload.', { count: failCount }),
               });
             } else {
-              toast.warning(tToast('upload.partialTitle', 'Upload partially complete'), {
-                description: tToast('upload.partialDescription', '{{success}} succeeded, {{failed}} failed.', {
-                  success: successCount,
-                  failed: failCount,
-                }),
-              });
+              toast.warning(
+                tToast('upload.partialTitle', 'Upload partially complete'),
+                {
+                  description: tToast('upload.partialDescription', '{{success}} succeeded, {{failed}} failed to upload.', { success: successCount, failed: failCount }),
+                },
+              );
             }
+          } catch (err) {
+            console.error('Failed to complete bulk upload session', err);
           }
 
           // Refresh documents list and workspace data after upload
@@ -1042,12 +1046,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             await get().fetchDocuments(workspaceId, 1);
           }
 
-          // Refresh workspace to update document count and storage in both sidebar and content
           await get().refreshWorkspace(workspaceId);
         } catch (err) {
           const fallbackUpload = tError('uploadFailed', 'Upload failed');
           const message = getApiErrorMessage(err, fallbackUpload);
-          set({ error: message });
+          set({ error: message, isUploading: false });
 
           // Mark all pending as failed
           pendingFiles.forEach((item) => {
@@ -1055,40 +1058,169 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               get().updateUploadStatus(item.id, 'failed', message);
             }
           });
-        } finally {
-          set({ isUploading: false, uploadSessionId: null });
         }
-      },
+      } finally {
+        set({ isUploading: false, uploadSessionId: null });
+        get().clearCompletedUploads();
+      }
+    },
 
-      cancelUpload: (fileId) => {
-        // For now, just remove from queue if pending
-        // Full cancellation of in-progress uploads would require XHR abort
-        const item = get().uploadQueue.find((i) => i.id === fileId);
-        if (item?.status === 'pending') {
-          get().removeFromQueue(fileId);
+    cancelUpload: (fileId) => {
+      const item = get().uploadQueue.find((q) => q.id === fileId);
+      if (item?.status === 'pending') {
+        get().removeFromQueue(fileId);
+      }
+    },
+
+    updateUploadProgress: (fileId, progress) => {
+      set((state) => ({
+        uploadQueue: state.uploadQueue.map((item) => (item.id === fileId ? { ...item, progress } : item)),
+      }));
+    },
+
+    updateUploadStatus: (fileId, status, error) => {
+      set((state) => ({
+        uploadQueue: state.uploadQueue.map((item) => (item.id === fileId ? { ...item, status, error, progress: status === 'completed' ? 100 : item.progress } : item)),
+      }));
+    },
+
+    clearCompletedUploads: () => {
+      set((state) => ({
+        uploadQueue: state.uploadQueue.filter((item) => item.status !== 'completed' && item.status !== 'failed'),
+      }));
+    },
+
+    // ===== Folder Operations =====
+    createFolder: async (workspaceId, data) => {
+      try {
+        const folder = await workspaceApi.createFolder(workspaceId, data);
+        toast.success(tToast('folder.createSuccessTitle', 'Folder created'), {
+          description: tToast('folder.createSuccessDescription', `"${data.name}" has been created successfully.`, { name: data.name }),
+        });
+        return folder;
+      } catch (err) {
+        const fallback = tError('createFolder', 'Failed to create folder');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    renameFolder: async (workspaceId, folderId, data) => {
+      try {
+        const folder = await workspaceApi.renameFolder(workspaceId, folderId, data);
+        toast.success(tToast('folder.renameSuccessTitle', 'Folder renamed'), {
+          description: tToast('folder.renameSuccessDescription', `"${data.name}" has been renamed successfully.`, { name: data.name }),
+        });
+        return folder;
+      } catch (err) {
+        const fallback = tError('renameFolder', 'Failed to rename folder');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    deleteFolder: async (workspaceId, folderId) => {
+      set({ isDeleting: true, error: null });
+
+      try {
+        const result = await workspaceApi.deleteFolder(workspaceId, folderId);
+        set({ isDeleting: false });
+        toast.success(tToast('folder.deleteSuccessTitle', 'Folder deleted'), {
+          description: tToast('folder.deleteSuccessDescription', `Deleted ${result.deletedFolders} folder(s) and ${result.deletedDocuments} file(s).`, { folders: result.deletedFolders, files: result.deletedDocuments }),
+        });
+      } catch (err) {
+        const fallback = tError('deleteFolder', 'Failed to delete folder');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message, isDeleting: false });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
+
+    getFolderContents: async (workspaceId, folderId, params) => {
+      set({ isLoadingDocuments: true, error: null });
+
+      try {
+        const result = await workspaceApi.getFolderContents(workspaceId, folderId, params);
+        const newCache = new Map();
+        newCache.set(1, result.documents);
+        set({
+          documents: newCache,
+          documentsCurrentPage: 1,
+          documentsTotalPages: result.pagination.totalPages,
+          totalDocuments: result.pagination.total,
+          isLoadingDocuments: false,
+        });
+      } catch (err) {
+        const fallback = tError('fetchFolderContents', 'Failed to fetch folder contents');
+        const message = err instanceof Error ? err.message : fallback;
+        set({ error: message, isLoadingDocuments: false });
+      }
+    },
+
+    moveDocuments: async (workspaceId, documentIds, targetFolderId) => {
+      try {
+        const result = await workspaceApi.moveDocuments(workspaceId, documentIds, targetFolderId);
+        if (result.failed.length > 0) {
+          toast.warning(
+            tToast('documents.movePartialTitle', 'Moved {{count}} documents', { count: result.moved }),
+            {
+              description: tToast('documents.movePartialDescription', '{{count}} documents failed to move.', { count: result.failed.length }),
+            },
+          );
+        } else {
+          toast.success(
+            tToast('documents.moveSuccessTitle', 'Moved {{count}} documents', { count: result.moved }),
+          );
         }
-      },
 
-      updateUploadProgress: (fileId, progress) => {
-        set((state) => ({
-          uploadQueue: state.uploadQueue.map((item) => (item.id === fileId ? { ...item, progress } : item)),
-        }));
-      },
+        // Refresh documents list
+        await get().fetchDocuments(workspaceId, 1);
+        await get().refreshWorkspace(workspaceId);
 
-      updateUploadStatus: (fileId, status, error) => {
-        set((state) => ({
-          uploadQueue: state.uploadQueue.map((item) => (item.id === fileId ? { ...item, status, error, progress: status === 'completed' ? 100 : item.progress } : item)),
-        }));
-      },
+        return result;
+      } catch (err) {
+        const fallback = tError('moveDocuments', 'Failed to move documents');
+        const message = getApiErrorMessage(err, fallback);
+        set({ error: message });
+        toast.error(fallback, { description: message });
+        throw err;
+      }
+    },
 
-      clearCompletedUploads: () => {
-        set((state) => ({
-          uploadQueue: state.uploadQueue.filter((item) => item.status !== 'completed' && item.status !== 'failed'),
-        }));
-      },
-    }),
-    { name: 'workspace-store' },
-  ),
+    getPersonalWorkspace: async () => {
+      const state = get();
+
+      // Check if personal workspace is already in cache
+      const personalWorkspace = state.workspaces.get(1)?.find((w) => w.isPersonal);
+
+      if (personalWorkspace) {
+        return personalWorkspace;
+      }
+
+      try {
+        const workspace = await workspaceApi.getPersonalWorkspace();
+        // Add to cache at page 1
+        const newCache = new Map(state.workspaces);
+        const page1Workspaces = state.workspaces.get(1) || [];
+        newCache.set(1, [workspace, ...page1Workspaces]);
+
+        set({
+          workspaces: newCache,
+          totalWorkspaces: state.totalWorkspaces + 1,
+        });
+      } catch (err) {
+        const fallback = tError('fetchWorkspaces', 'Failed to fetch personal workspace');
+        const message = err instanceof Error ? err.message : fallback;
+        set({ error: message });
+      }
+    },
+  }),
+  { name: 'workspace-store' },
 );
 
 // ===== Selector Hooks for Performance =====
@@ -1099,13 +1231,32 @@ export const useWorkspaces = () => {
   return workspaces.get(currentPage) || [];
 };
 
-export const useDocuments = () => {
-  const documents = useWorkspaceStore((state) => state.documents);
+export const useDocumentPagination = () => {
   const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage);
-  return documents.get(currentPage) || [];
+  const totalPages = useWorkspaceStore((state) => state.documentsTotalPages);
+  const totalDocuments = useWorkspaceStore((state) => state.totalDocuments);
+  return { currentPage, totalPages, totalDocuments };
 };
 
-export const useSelectedWorkspace = () => useWorkspaceStore((state) => state.selectedWorkspace);
+export const useUploadQueue = () => {
+  const queue = useWorkspaceStore((state) => state.uploadQueue);
+  return queue;
+};
+
+export const useUploadState = () => {
+  return useWorkspaceStore(
+    useShallow((state) => ({
+      uploadQueue: state.uploadQueue,
+      isUploading: state.isUploading,
+      uploadSessionId: state.uploadSessionId,
+    })),
+  );
+};
+
+export const useHasActiveUploads = () => {
+  const queue = useWorkspaceStore((state) => state.uploadQueue);
+  return queue.some((item) => item.status === 'pending' || item.status === 'uploading');
+};
 
 export const useWorkspaceModalState = () => useWorkspaceStore(
   useShallow((state) => ({
@@ -1119,49 +1270,23 @@ export const useWorkspaceModalState = () => useWorkspaceStore(
   })),
 );
 
-export const useWorkspaceLoading = () => useWorkspaceStore(
-  useShallow((state) => ({
-    isLoadingWorkspaces: state.isLoadingWorkspaces,
-    isLoadingDocuments: state.isLoadingDocuments,
-    isLoadingTemplates: state.isLoadingTemplates,
-    isLoadingSettings: state.isLoadingSettings,
-    isSavingSettings: state.isSavingSettings,
-    isCreating: state.isCreating,
-    isDeleting: state.isDeleting,
-  })),
-);
+export const useWorkspaceLoading = () => {
+  return useWorkspaceStore(
+    useShallow((state) => ({
+      isLoadingWorkspaces: state.isLoadingWorkspaces,
+      isLoadingDocuments: state.isLoadingDocuments,
+      isLoadingTemplates: state.isLoadingTemplates,
+      isLoadingSettings: state.isLoadingSettings,
+      isCreating: state.isCreating,
+      isDeleting: state.isDeleting,
+    })),
+  );
+};
 
-export const useCurrentWorkspaceSettings = () => useWorkspaceStore((state) => state.currentWorkspaceSettings);
+export const useCurrentWorkspaceSettings = () => {
+  return useWorkspaceStore((state) => state.currentWorkspaceSettings);
+};
 
-export const useSettingsTargetWorkspace = () => useWorkspaceStore((state) => state.settingsTargetWorkspace);
-
-export const useWorkspacePagination = () => useWorkspaceStore(
-  useShallow((state) => ({
-    currentPage: state.currentPage,
-    totalPages: state.totalPages,
-    totalWorkspaces: state.totalWorkspaces,
-  })),
-);
-
-export const useDocumentPagination = () => useWorkspaceStore(
-  useShallow((state) => ({
-    currentPage: state.documentsCurrentPage,
-    totalPages: state.documentsTotalPages,
-    totalDocuments: state.totalDocuments,
-  })),
-);
-
-export const useUploadQueue = () => useWorkspaceStore(useShallow((state) => state.uploadQueue));
-
-export const useUploadState = () => useWorkspaceStore(
-  useShallow((state) => ({
-    uploadQueue: state.uploadQueue,
-    isUploading: state.isUploading,
-    uploadSessionId: state.uploadSessionId,
-  })),
-);
-
-export const useHasActiveUploads = () => {
-  const queue = useWorkspaceStore((state) => state.uploadQueue);
-  return queue.some((item) => item.status === 'pending' || item.status === 'uploading');
+export const useSettingsTargetWorkspace = () => {
+  return useWorkspaceStore((state) => state.settingsTargetWorkspace);
 };
