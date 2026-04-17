@@ -377,6 +377,10 @@ export class PlaybookService {
             mailTrigger: {
               enabled: dto.enabled,
               mailboxAppKey: dto.enabled ? (dto.mailboxAppKey ?? null) : null,
+              runtimeEnabled: false,
+              subscriptionId: null,
+              subscriptionClientState: null,
+              subscriptionExpiresAt: null,
               filters: {
                 from: dto.enabled ? (dto.filters?.from ?? []) : [],
                 subjectContains: dto.enabled ? (dto.filters?.subjectContains ?? []) : [],
@@ -408,6 +412,10 @@ export class PlaybookService {
             mailTrigger: {
               enabled: false,
               mailboxAppKey: null,
+              runtimeEnabled: false,
+              subscriptionId: null,
+              subscriptionClientState: null,
+              subscriptionExpiresAt: null,
               filters: {
                 from: [],
                 subjectContains: [],
@@ -427,6 +435,42 @@ export class PlaybookService {
     }
 
     this.logger.log('Playbook mail trigger cleared', { playbookId });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async syncMailTriggerSubscription(
+    playbookId: string,
+    subscription: {
+      mailboxAppKey: string;
+      subscriptionId: string | null;
+      subscriptionClientState: string;
+      subscriptionExpiresAt: string | null;
+    },
+  ): Promise<PlaybookResponse> {
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(
+        playbookId,
+        {
+          $set: {
+            'mailTrigger.enabled': true,
+            'mailTrigger.mailboxAppKey': subscription.mailboxAppKey,
+            'mailTrigger.runtimeEnabled': true,
+            'mailTrigger.subscriptionId': subscription.subscriptionId,
+            'mailTrigger.subscriptionClientState': subscription.subscriptionClientState,
+            'mailTrigger.subscriptionExpiresAt': subscription.subscriptionExpiresAt
+              ? new Date(subscription.subscriptionExpiresAt)
+              : null,
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
     return await this.mapToResponse(playbook as any);
   }
 
@@ -893,6 +937,11 @@ export class PlaybookService {
     const normalizedMailTrigger = {
       enabled: mailTrigger?.enabled === true,
       mailboxAppKey: mailTrigger?.mailboxAppKey ?? null,
+      runtimeEnabled: mailTrigger?.runtimeEnabled === true,
+      subscriptionId: mailTrigger?.subscriptionId ?? null,
+      subscriptionClientState: mailTrigger?.subscriptionClientState ?? null,
+      subscriptionExpiresAt:
+        mailTrigger?.subscriptionExpiresAt?.toISOString?.() ?? mailTrigger?.subscriptionExpiresAt ?? null,
       filters: {
         from: Array.isArray(mailTrigger?.filters?.from) ? mailTrigger.filters.from : [],
         subjectContains: Array.isArray(mailTrigger?.filters?.subjectContains)
@@ -906,7 +955,6 @@ export class PlaybookService {
             ? mailTrigger.filters.hasAttachments
             : null,
       },
-      runtimeEnabled: false as const,
       runtimePayloadSchema: null,
     };
     const mailEnabled = normalizedMailTrigger.enabled;
@@ -934,7 +982,12 @@ export class PlaybookService {
       executionNumber: execution.executionNumber,
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
-      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      executionTrigger:
+        execution.executionTrigger === 'scheduled'
+          ? 'scheduled'
+          : execution.executionTrigger === 'mail'
+            ? 'mail'
+            : 'manual',
       error: execution.error,
       durationMs: execution.durationMs,
       startedAt: execution.startedAt?.toISOString?.() || execution.startedAt,
@@ -954,7 +1007,12 @@ export class PlaybookService {
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
       executionMode: execution.executionMode || 'live',
-      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      executionTrigger:
+        execution.executionTrigger === 'scheduled'
+          ? 'scheduled'
+          : execution.executionTrigger === 'mail'
+            ? 'mail'
+            : 'manual',
       reflectionEnabled: execution.reflectionEnabled !== false,
       advisorAutopilotEnabled: execution.advisorAutopilotEnabled === true,
       advisorAutopilotTargetScore: execution.advisorAutopilotTargetScore ?? 90,

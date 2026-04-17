@@ -1025,6 +1025,7 @@ class DynamicGraphBuilder:
                         context_from_dependencies=context,
                         user_query=state.get("query", ""),
                         workspace_file_hint=workspace_file_hint,
+                        trigger_context=state.get("trigger_context"),
                         prompt_overrides=state.get("prompt_overrides") or {},
                     )
 

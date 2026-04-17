@@ -191,11 +191,70 @@ export interface PlaybookMailTriggerNodeInputData {
   message: MailTriggerRuntimePayloadData;
 }
 
+export type MailEventLedgerStatus = 'received' | 'normalized' | 'matched' | 'deduplicated' | 'ignored' | 'errored';
+
+export interface NormalizedMailEventData {
+  provider: 'm365';
+  mailboxAppKey: string;
+  providerMessageId: string;
+  providerThreadId: string | null;
+  receivedAt: string;
+  occurredAt: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  from: { name: string | null; address: string };
+  to: Array<{ name: string | null; address: string }>;
+  cc: Array<{ name: string | null; address: string }>;
+  hasAttachments: boolean;
+  attachments: MailMessageAttachmentData[];
+}
+
+export interface MailEventLedgerEntryData {
+  id: string;
+  dedupeKey: string;
+  status: MailEventLedgerStatus;
+  event: NormalizedMailEventData;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface MailEventIngestionResultData {
+  duplicate: boolean;
+  entry: MailEventLedgerEntryData;
+}
+
+export interface MailTriggerMatchResultData {
+  matched: boolean;
+  reasons: string[];
+}
+
+export interface MailTriggerEvaluationResultData {
+  ingestion: MailEventIngestionResultData;
+  match: MailTriggerMatchResultData;
+  finalStatus: MailEventLedgerStatus;
+}
+
+export interface MailTriggerHandoffResultData {
+  executionId: string | null;
+  handedOff: boolean;
+  skippedReason: 'duplicate' | 'not-matched' | 'already-handed-off' | null;
+}
+
+export interface ExecutionTriggerContextData {
+  type: 'mail';
+  occurredAt: string;
+  payload: PlaybookMailTriggerNodeInputData;
+}
+
 export interface PlaybookMailTriggerConfigData {
   enabled: boolean;
   mailboxAppKey: string | null;
   filters: PlaybookMailTriggerFiltersData;
-  runtimeEnabled: false;
+  runtimeEnabled: boolean;
+  subscriptionId: string | null;
+  subscriptionClientState: string | null;
+  subscriptionExpiresAt: string | null;
   runtimePayloadSchema: PlaybookMailTriggerNodeInputData | null;
 }
 
@@ -279,7 +338,7 @@ export interface PlaybookExecutionResponse {
   currentAttemptNumber: number;
   status: string;
   executionMode: string;
-  executionTrigger: 'manual' | 'scheduled';
+  executionTrigger: 'manual' | 'scheduled' | 'mail';
   reflectionEnabled: boolean;
   advisorAutopilotEnabled: boolean;
   advisorAutopilotTargetScore: number;
@@ -474,7 +533,7 @@ export interface PlaybookExecutionSummaryResponse {
   executionNumber: number;
   currentAttemptNumber: number;
   status: string;
-  executionTrigger: 'manual' | 'scheduled';
+  executionTrigger: 'manual' | 'scheduled' | 'mail';
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;

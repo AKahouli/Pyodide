@@ -1,5 +1,45 @@
 # Changelog
 
+## [2026-04-17 15:00 UTC] — Add synthetic mail trigger test ingress
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added an owner-only `POST /playbooks/:id/triggers/mail/test-event` route plus a small facade service that normalizes a synthetic email payload, runs the mail trigger orchestration pipeline, and hands matched events off into execution creation.
+- **Why:** The inbox-trigger feature needed an immediate end-to-end validation path for simple emails before Microsoft Graph webhook delivery is implemented.
+- **Impact:** New playbook mail test-event DTO/service/controller wiring and backend tests covering the synthetic trigger route.
+
+## [2026-04-17 14:25 UTC] — Forward trigger context into executions
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added persisted execution `triggerContext`, propagated mail-trigger context into execution creation and handoff, and forwarded `trigger_context` into the full-workflow gRPC request contract.
+- **Why:** Mail-triggered playbook runs need a structured runtime payload channel before trigger nodes and attachment staging can consume inbound email context safely.
+- **Impact:** Playbook execution schema/service contracts, mail trigger handoff, ADK playbook request schema, and execution trigger tests.
+
+## [2026-04-17 14:05 UTC] — Add mail trigger execution handoff
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added idempotent handoff from matched mail-trigger ledger rows into standard playbook execution creation, introduced `executionTrigger: 'mail'`, and persisted `executionId` back onto handed-off ledger rows.
+- **Why:** The inbox-trigger pipeline needs a safe bridge from matched inbound events into the existing playbook execution engine without creating duplicate executions under concurrent delivery.
+- **Impact:** Playbook execution trigger contracts, mail trigger handoff service, dedicated ledger schema/status transitions, and backend execution/trigger tests.
+
+## [2026-04-17 13:35 UTC] — Harden mail ledger storage
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Moved playbook mail-event ledger storage from embedded playbook documents to a dedicated collection with a unique `(playbookId, dedupeKey)` index, and updated mail-trigger ingestion/orchestration to use collection-backed dedupe and status updates.
+- **Why:** The inbox-trigger feature must tolerate concurrent inbound mail bursts across many users without unbounded playbook document growth or duplicate-trigger races.
+- **Impact:** New playbook mail-event ledger schema/model, refactored ingestion/orchestration services, and backend tests for collection-backed dedupe.
+
+## [2026-04-17 13:10 UTC] — Add mail event ledger foundation
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added normalized inbound mail event and mail-event ledger contracts plus a dedicated ledger service with stable dedupe-key generation for future playbook mail-trigger ingestion, without enabling webhook handling or execution.
+- **Why:** The inbox-trigger runtime needs a stable persistence and deduplication boundary before mailbox events can safely create playbook runs.
+- **Impact:** Playbook mail trigger shared interfaces, playbook schema, playbook module services, and new ledger service tests.
+
 ## [2026-04-17 12:50 UTC] — Persist playbook mail trigger config
 
 - **Feature:** `playbook`

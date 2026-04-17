@@ -25,6 +25,10 @@ import {
   PlaybookPromptTemplate,
   PlaybookPromptTemplateSchema,
 } from './schemas/playbook-prompt-template.schema';
+import {
+  PlaybookMailEventLedger,
+  PlaybookMailEventLedgerSchema,
+} from './schemas/playbook-mail-event-ledger.schema';
 import { Connector, ConnectorSchema } from '../connector/schemas/connector.schema';
 
 // Controllers — stream controller must be before playbook controller to avoid :id route conflict
@@ -32,6 +36,7 @@ import { PlaybookStreamController } from './controllers/playbook-stream.controll
 import { PlaybookController } from './controllers/playbook.controller';
 import { PlaybookExecutionController } from './controllers/playbook-execution.controller';
 import { AdminPlaybookPromptsController } from './controllers/admin-playbook-prompts.controller';
+import { PlaybookMailWebhookController } from './controllers/playbook-mail-webhook.controller';
 
 // Services
 import { PlaybookService } from './services/playbook.service';
@@ -47,6 +52,14 @@ import { PlaybookSemanticEnrichmentService } from './services/playbook-semantic-
 import { PlaybookJudgeEnrichmentService } from './services/playbook-judge-enrichment.service';
 import { PlaybookStreamGatewayService } from './services/playbook-stream-gateway.service';
 import { PlaybookScheduleRunnerService } from './services/playbook-schedule-runner.service';
+import { PlaybookMailEventLedgerService } from './services/playbook-mail-event-ledger.service';
+import { PlaybookMailEventIngestionService } from './services/playbook-mail-event-ingestion.service';
+import { PlaybookMailTriggerMatcherService } from './services/playbook-mail-trigger-matcher.service';
+import { PlaybookMailTriggerOrchestrationService } from './services/playbook-mail-trigger-orchestration.service';
+import { PlaybookMailTriggerHandoffService } from './services/playbook-mail-trigger-handoff.service';
+import { PlaybookMailTriggerTestEventService } from './services/playbook-mail-trigger-test-event.service';
+import { PlaybookMailGraphClientService } from './services/playbook-mail-graph-client.service';
+import { PlaybookMailWebhookService } from './services/playbook-mail-webhook.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -75,6 +88,7 @@ import playbookConfig from './config/playbook.config';
       { name: PlaybookValidatedReplay.name, schema: PlaybookValidatedReplaySchema },
       { name: PlaybookOutputFormatTemplate.name, schema: PlaybookOutputFormatTemplateSchema },
       { name: PlaybookPromptTemplate.name, schema: PlaybookPromptTemplateSchema },
+      { name: PlaybookMailEventLedger.name, schema: PlaybookMailEventLedgerSchema },
       { name: Connector.name, schema: ConnectorSchema },
       ]),
     JwtModule.register({}),
@@ -92,6 +106,7 @@ import playbookConfig from './config/playbook.config';
   controllers: [
     PlaybookStreamController, // Must be before PlaybookController to avoid route conflict with :id param
     PlaybookController,
+    PlaybookMailWebhookController,
     PlaybookExecutionController,
     AdminPlaybookPromptsController,
   ],
@@ -109,6 +124,14 @@ import playbookConfig from './config/playbook.config';
     PlaybookJudgeEnrichmentService,
     PlaybookStreamGatewayService,
     PlaybookScheduleRunnerService,
+    PlaybookMailEventLedgerService,
+    PlaybookMailEventIngestionService,
+    PlaybookMailTriggerMatcherService,
+    PlaybookMailTriggerOrchestrationService,
+    PlaybookMailTriggerHandoffService,
+    PlaybookMailTriggerTestEventService,
+    PlaybookMailGraphClientService,
+    PlaybookMailWebhookService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],

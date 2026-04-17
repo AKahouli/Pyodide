@@ -536,6 +536,41 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.executionTrigger).toBe('scheduled');
     });
 
+    it('should persist triggerContext when options request mail execution', async () => {
+      const playbook = createMockPlaybook();
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockPlaybookService.getNextExecutionNumber.mockResolvedValue(1);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+
+      await service.executePlaybook(
+        userId,
+        playbookId,
+        dto,
+        userEmail,
+        {
+          executionTrigger: 'mail',
+          triggerContext: {
+            type: 'mail',
+            occurredAt: '2026-04-17T12:00:00Z',
+            payload: { message: { providerMessageId: 'msg-123' } },
+          },
+        },
+      );
+
+      const createArg = mockExecutionModel.create.mock.calls[0][0];
+      expect(createArg.executionTrigger).toBe('mail');
+      expect(createArg.triggerContext).toEqual({
+        type: 'mail',
+        occurredAt: '2026-04-17T12:00:00Z',
+        payload: { message: { providerMessageId: 'msg-123' } },
+      });
+    });
+
     it('should mark non-target tasks as SKIPPED in single-step mode', async () => {
       const playbook = createMockPlaybook();
       mockPlaybookService.findRawById.mockResolvedValue(playbook);

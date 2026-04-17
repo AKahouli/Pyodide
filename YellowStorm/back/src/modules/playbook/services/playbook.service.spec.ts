@@ -377,6 +377,9 @@ describe('PlaybookService', () => {
             hasAttachments: null,
           },
           runtimeEnabled: false,
+          subscriptionId: null,
+          subscriptionClientState: null,
+          subscriptionExpiresAt: null,
           runtimePayloadSchema: null,
         },
       });
@@ -409,6 +412,9 @@ describe('PlaybookService', () => {
             hasAttachments: null,
           },
           runtimeEnabled: false,
+          subscriptionId: null,
+          subscriptionClientState: null,
+          subscriptionExpiresAt: null,
           runtimePayloadSchema: null,
         },
       });

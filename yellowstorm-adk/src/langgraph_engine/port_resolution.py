@@ -556,6 +556,7 @@ def build_task_prompt(
     context_from_dependencies: str = "",
     user_query: str = "",
     workspace_file_hint: str = "",
+    trigger_context: Optional[Dict[str, Any]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
 ) -> str:
     """Build a consistent task prompt from resolved inputs."""
@@ -669,6 +670,12 @@ def build_task_prompt(
 
     if user_query:
         lines.append(f"User query: {user_query}")
+
+    if trigger_context:
+        lines.append(
+            "Trigger context:\n"
+            + json.dumps(trigger_context, ensure_ascii=True, indent=2)
+        )
 
     if workspace_file_hint:
         lines.append(

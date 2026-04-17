@@ -532,6 +532,7 @@ async def _execute_step_direct(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
@@ -611,6 +612,7 @@ async def _execute_step_direct(
         resolved_inputs,
         context_from_dependencies=context_from_dependencies,
         workspace_file_hint=workspace_file_hint,
+        trigger_context=trigger_context,
         prompt_overrides=prompt_overrides or (task or {}).get("prompt_overrides") or {},
     )
     llm_prompt_trace: List[Dict[str, Any]] = []

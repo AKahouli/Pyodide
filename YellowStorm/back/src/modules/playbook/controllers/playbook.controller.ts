@@ -40,6 +40,8 @@ import { CloneSharePlaybookDto } from '../dto/clone-share-playbook.dto';
 import { BulkDeletePlaybooksDto } from '../dto/bulk-delete-playbooks.dto';
 import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
 import { UpsertPlaybookMailTriggerDto } from '../dto/upsert-playbook-mail-trigger.dto';
+import { TestPlaybookMailEventDto } from '../dto/test-playbook-mail-event.dto';
+import { SyncPlaybookMailSubscriptionDto } from '../dto/sync-playbook-mail-subscription.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
@@ -51,6 +53,8 @@ import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
 import type { Response } from 'express';
 import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.decorator';
 import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
+import { PlaybookMailTriggerTestEventService } from '../services/playbook-mail-trigger-test-event.service';
+import { PlaybookMailGraphClientService } from '../services/playbook-mail-graph-client.service';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -63,6 +67,8 @@ export class PlaybookController {
     private readonly judgeService: PlaybookJudgeEnrichmentService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly mailTriggerTestEventService: PlaybookMailTriggerTestEventService,
+    private readonly mailGraphClientService: PlaybookMailGraphClientService,
     private readonly streamGateway: PlaybookStreamGatewayService,
     private readonly userService: UserService,
     private readonly notificationsService: NotificationsService,
@@ -219,6 +225,53 @@ export class PlaybookController {
   @ApiResponse({ status: 200, description: 'Playbook with mail trigger disabled' })
   async clearMailTrigger(@Param('id') id: string) {
     return this.playbookService.clearMailTrigger(id);
+  }
+
+  @Post(':id/triggers/mail/test-event')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Inject a synthetic mail event into the playbook trigger pipeline (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Mail trigger evaluation and optional execution handoff result' })
+  async testMailTriggerEvent(
+    @CurrentUser() user: { _id: string; email: string },
+    @Param('id') id: string,
+    @Body() dto: TestPlaybookMailEventDto,
+  ) {
+    return this.mailTriggerTestEventService.processTestEvent(
+      id,
+      user._id.toString(),
+      user.email,
+      dto,
+    );
+  }
+
+  @Post(':id/triggers/mail/sync-subscription')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create a Microsoft Graph mailbox subscription for this playbook trigger (owner only)' })
+  async syncMailSubscription(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() dto: SyncPlaybookMailSubscriptionDto,
+  ) {
+    const playbook = await this.playbookService.findById(id);
+    const mailTrigger = playbook.triggers.find((trigger) => trigger.type === 'mail');
+    const mailboxAppKey = mailTrigger?.config?.mailboxAppKey || 'microsoft';
+
+    const subscription = await this.mailGraphClientService.createInboxSubscription(
+      user._id.toString(),
+      mailboxAppKey,
+      dto.notificationUrl || 'http://localhost:3000/api/v1/playbooks/mail/webhook',
+      `ys_${id}`,
+    );
+
+    await this.playbookService.syncMailTriggerSubscription(id, {
+      mailboxAppKey,
+      subscriptionId: subscription.id || null,
+      subscriptionClientState: `ys_${id}`,
+      subscriptionExpiresAt: subscription.expirationDateTime || null,
+    });
+
+    return subscription;
   }
 
   @Get(':id')

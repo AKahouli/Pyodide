@@ -30,6 +30,18 @@ export class PlaybookMailTrigger {
   @Prop({ type: String, default: null })
   mailboxAppKey!: string | null;
 
+  @Prop({ type: Boolean, default: false })
+  runtimeEnabled!: boolean;
+
+  @Prop({ type: String, default: null })
+  subscriptionId!: string | null;
+
+  @Prop({ type: String, default: null })
+  subscriptionClientState!: string | null;
+
+  @Prop({ type: Date, default: null })
+  subscriptionExpiresAt!: Date | null;
+
   @Prop({ type: PlaybookMailTriggerFiltersSchema, default: () => ({}) })
   filters!: PlaybookMailTriggerFilters;
 }

@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
@@ -112,7 +113,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private initGrpcClient() {
     try {
-      const protoPath = path.join(__dirname, '..', 'proto', 'chatbot.proto');
+      const protoPath = this.resolveChatbotProtoPath();
 
       const packageDefinition = protoLoader.loadSync(protoPath, {
         keepCase: true,
@@ -157,6 +158,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.lastError = (error as Error).message;
       this.lastCheckedAt = new Date();
     }
+  }
+
+  private resolveChatbotProtoPath(): string {
+    const candidatePaths = [
+      path.join(__dirname, '..', 'proto', 'chatbot.proto'),
+      path.resolve(process.cwd(), 'dist', 'modules', 'conversation', 'proto', 'chatbot.proto'),
+      path.resolve(process.cwd(), 'src', 'modules', 'conversation', 'proto', 'chatbot.proto'),
+    ];
+
+    const existingPath = candidatePaths.find((candidatePath) => fs.existsSync(candidatePath));
+    if (!existingPath) {
+      throw new Error(`chatbot.proto not found in expected locations: ${candidatePaths.join(', ')}`);
+    }
+
+    return existingPath;
   }
 
   isAvailable(): boolean {

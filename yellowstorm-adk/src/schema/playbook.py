@@ -169,6 +169,10 @@ class RunPlaybookRequest(RunAgentTeamRequest):
     available_tools: Optional[List[Dict[str, Any]]] = Field(
         default_factory=list, description="Available tools"
     )
+    trigger_context: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Optional trigger context injected by backend-owned playbook triggers.",
+    )
 
     @field_validator("playbook_id")
     @classmethod

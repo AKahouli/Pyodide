@@ -1510,6 +1510,9 @@ class ChatbotServicer(
                     workspace_context=_proto_workspace_context(
                         request.workspace_context
                     ),
+                    trigger_context=dict(request.trigger_context)
+                    if getattr(request, "trigger_context", None)
+                    else None,
                     queue=queue,
                     thread_id=thread_id,
                     execution_mode=request.execution_mode or "live",

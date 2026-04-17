@@ -1120,7 +1120,8 @@ export class PlaybookExecutionService {
 
 
   /**
-   * Creates a `PlaybookExecution` and starts the run loop. Use `options.executionTrigger === 'scheduled'`
+    * Creates a `PlaybookExecution` and starts the run loop. Use trusted internal callers for
+    * `options.executionTrigger === 'scheduled'` or `options.executionTrigger === 'mail'`.
    * only from trusted internal callers (e.g. schedule runner). User-facing `POST /playbooks/:id/execute` must
    * pass `manual` via the controller.
    */
@@ -1129,10 +1130,17 @@ export class PlaybookExecutionService {
     playbookId: string,
     dto: ExecutePlaybookDto,
     userEmail: string = '',
-    options?: { executionTrigger?: 'manual' | 'scheduled' },
+    options?: {
+      executionTrigger?: 'manual' | 'scheduled' | 'mail';
+      triggerContext?: Record<string, unknown> | null;
+    },
   ): Promise<{ executionId: string }> {
-    const executionTrigger: 'manual' | 'scheduled' =
-      options?.executionTrigger === 'scheduled' ? 'scheduled' : 'manual';
+    const executionTrigger: 'manual' | 'scheduled' | 'mail' =
+      options?.executionTrigger === 'scheduled'
+        ? 'scheduled'
+        : options?.executionTrigger === 'mail'
+          ? 'mail'
+          : 'manual';
     const mode = dto.singleStepTaskId ? 'single-step' : 'full-workflow';
     const globalExecutionMode = dto.executionMode || 'live';
     const advisorAutopilot = this.normalizeAdvisorAutopilotConfig(
@@ -1185,6 +1193,8 @@ export class PlaybookExecutionService {
     if (!dto.singleStepTaskId && enabledTasks.length === 0) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'No enabled steps to execute');
     }
+
+    const triggerContext = options?.triggerContext ?? null;
 
     if (dto.singleStepTaskId) {
       const targetTask = playbook.tasks.find((task: any) => task.id === dto.singleStepTaskId);
@@ -1318,6 +1328,7 @@ export class PlaybookExecutionService {
       status: ExecutionStatus.RUNNING,
       executionMode: globalExecutionMode,
       executionTrigger,
+      triggerContext: options?.triggerContext ?? null,
       runEvaluation: dto.runEvaluation === true,
       reflectionEnabled: dto.runNodeReflection !== false,
       advisorAutopilotEnabled: advisorAutopilot.enabled,
@@ -1575,6 +1586,7 @@ export class PlaybookExecutionService {
 
     const startedAt = execution.startedAt!;
     const playbookId = execution.playbookId.toString();
+    const triggerContext = (execution as any).triggerContext ?? null;
     const globalExecutionMode = dto.executionMode || 'live';
     const enabledTasks = playbook.tasks.filter((task: any) => task.enabled !== false);
     const enabledTaskIds = new Set(enabledTasks.map((task: any) => task.id));
@@ -1692,7 +1704,7 @@ export class PlaybookExecutionService {
     };
 
     if (activeReplayMap.size > 0) {
-      request.validated_replays = Array.from(activeReplayMap.values()).map((replay) => {
+        request.validated_replays = Array.from(activeReplayMap.values()).map((replay) => {
         const outputFormat = activeOutputFormatMap.get(replay.taskId);
         return this.formatReplayForGrpc({
           ...replay,
@@ -1711,6 +1723,10 @@ export class PlaybookExecutionService {
       if (task.assignedAgentId) {
         referencedAgentIds.add(task.assignedAgentId.toString());
       }
+    }
+
+    if (triggerContext) {
+      request.trigger_context = triggerContext;
     }
     for (const agentId of referencedAgentIds) {
       const grpcAgent = grpcAgentMap.get(agentId);

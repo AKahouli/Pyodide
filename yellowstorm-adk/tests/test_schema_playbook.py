@@ -6,6 +6,7 @@ from src.schema.playbook import (
     RunPlaybookStepRequest,
     RunPlaybookStepResponse,
     PlaybookMailTriggerNodeInput,
+    RunPlaybookRequest,
 )
 from src.schema.chatbot_schema import AgentSuggestion
 
@@ -274,9 +275,67 @@ class TestPlaybookMailTriggerNodeInput:
             payload.message.attachments[0].workspaceImport.workspaceDocumentId
             == "doc-1"
         )
-        request = RunPlaybookStepRequest(**valid_request_data)
 
-        assert request.task_metadata == {}
+
+class TestRunPlaybookRequest:
+    """Test suite for run-playbook trigger context support."""
+
+    def test_accepts_optional_trigger_context(self):
+        request = RunPlaybookRequest(
+            user_id="user-1",
+            session_id="msg-12345",
+            message="Run playbook",
+            chatbot_name={"provider": "gpt-4"},
+            agent_mode="team",
+            playbook_id="playbook-1",
+            playbook_name="Test Playbook",
+            manager_prompt="Manage this workflow",
+            manager_agent={
+                "id": "manager-1",
+                "name": "Manager",
+                "description": "Manager",
+                "prompt": "You manage tasks",
+                "chatbot_name": {"provider": "gpt-4"},
+                "brain_ids": [],
+                "agent_type": "manager",
+            },
+            steps=[
+                {
+                    "messageId": "msg-12345",
+                    "userId": "user-1",
+                    "taskId": "task-1",
+                    "taskDescription": "Process incoming mail",
+                    "task_metadata": {},
+                    "order": 0,
+                    "agent": {
+                        "id": "agent-1",
+                        "name": "Worker",
+                        "description": "Worker",
+                        "prompt": "Do the work",
+                        "chatbot_name": {"provider": "gpt-4"},
+                        "brain_ids": [],
+                    },
+                    "manager_agent": {
+                        "id": "manager-1",
+                        "name": "Manager",
+                        "description": "Manager",
+                        "prompt": "You manage tasks",
+                        "chatbot_name": {"provider": "gpt-4"},
+                        "brain_ids": [],
+                        "agent_type": "manager",
+                    },
+                    "call_id": "call-1",
+                    "vectorstore_name": "vectorstore",
+                }
+            ],
+            trigger_context={
+                "type": "mail",
+                "occurredAt": "2026-04-17T12:00:00Z",
+                "payload": {"message": {"providerMessageId": "msg-123"}},
+            },
+        )
+
+        assert request.trigger_context["type"] == "mail"
 
     def test_result_optional(self, valid_request_data):
         """Test that result is optional."""

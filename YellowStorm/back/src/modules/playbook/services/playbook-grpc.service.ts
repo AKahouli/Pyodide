@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { LoggerService } from '../../logger';
 
@@ -222,14 +223,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
 
   private initGrpcClient() {
     try {
-      const protoPath = path.join(
-        __dirname,
-        '..',
-        '..',
-        'conversation',
-        'proto',
-        'chatbot.proto',
-      );
+      const protoPath = this.resolveChatbotProtoPath();
 
       const packageDefinition = protoLoader.loadSync(protoPath, {
         keepCase: true,
@@ -266,6 +260,21 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
         error: (error as Error).message,
       });
     }
+  }
+
+  private resolveChatbotProtoPath(): string {
+    const candidatePaths = [
+      path.join(__dirname, '..', '..', 'conversation', 'proto', 'chatbot.proto'),
+      path.resolve(process.cwd(), 'dist', 'modules', 'conversation', 'proto', 'chatbot.proto'),
+      path.resolve(process.cwd(), 'src', 'modules', 'conversation', 'proto', 'chatbot.proto'),
+    ];
+
+    const existingPath = candidatePaths.find((candidatePath) => fs.existsSync(candidatePath));
+    if (!existingPath) {
+      throw new Error(`chatbot.proto not found in expected locations: ${candidatePaths.join(', ')}`);
+    }
+
+    return existingPath;
   }
 
   private watchChannelState() {
