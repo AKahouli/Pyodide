@@ -21,11 +21,13 @@ import { Button } from '@/components/ui/button';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
 import { usePlaybookStore } from '../../store';
+import { useMailboxCapability } from '@/modules/connected-app/store';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey } from '@/modules/localization/types';
 import type {
   ExecutionScheduleData,
   ExecutionScheduleType,
+  PlaybookMailTrigger,
   UpsertPlaybookScheduleData,
 } from '../../types';
 import { validateUpsertSchedulePayload } from '../../utils/scheduleValidation';
@@ -44,23 +46,41 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   playbookId: string;
   schedule: ExecutionScheduleData | null;
+  mailTrigger?: PlaybookMailTrigger | null;
 }
 
-export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule }: Props) {
+export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule, mailTrigger = null }: Props) {
   const { t, language } = useModuleTranslation('playbook');
   const upsertPlaybookTriggerSchedule = usePlaybookStore((s) => s.upsertPlaybookTriggerSchedule);
   const clearPlaybookTriggerSchedule = usePlaybookStore((s) => s.clearPlaybookTriggerSchedule);
+  const upsertPlaybookTriggerMail = usePlaybookStore((s) => s.upsertPlaybookTriggerMail);
+  const clearPlaybookTriggerMail = usePlaybookStore((s) => s.clearPlaybookTriggerMail);
   const triggerSaving = usePlaybookStore((s) => s.triggerSaving);
+  const mailboxCapability = useMailboxCapability();
 
   const [draft, setDraft] = useState<UpsertPlaybookScheduleData>(defaultSchedule());
+  const [mailDraft, setMailDraft] = useState({
+    mailboxAppKey: 'microsoft',
+    from: '',
+    subjectContains: '',
+    bodyContains: '',
+    hasAttachments: false,
+  });
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const automatedTriggerType = draft.enabled ? 'schedule' : 'none';
+  const automatedTriggerType = draft.enabled ? 'schedule' : mailTrigger?.enabled ? 'mail' : 'none';
 
   useEffect(() => {
     if (open) {
       setDraft(schedule?.enabled ? fromExecutionSchedule(schedule) : { enabled: false });
+      setMailDraft({
+        mailboxAppKey: mailTrigger?.config?.mailboxAppKey ?? mailboxCapability?.appKey ?? 'microsoft',
+        from: mailTrigger?.config?.filters.from.join('\n') ?? '',
+        subjectContains: mailTrigger?.config?.filters.subjectContains.join('\n') ?? '',
+        bodyContains: mailTrigger?.config?.filters.bodyContains.join('\n') ?? '',
+        hasAttachments: mailTrigger?.config?.filters.hasAttachments === true,
+      });
     }
-  }, [open, schedule]);
+  }, [open, schedule, mailTrigger, mailboxCapability]);
 
   const setType = (type: ExecutionScheduleType) => {
     setDraft((d) => {
@@ -136,7 +156,22 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
       return;
     }
     try {
-      await upsertPlaybookTriggerSchedule(playbookId, payload);
+      if (automatedTriggerType === 'schedule') {
+        await upsertPlaybookTriggerSchedule(playbookId, payload);
+      } else if (automatedTriggerType === 'mail') {
+        await upsertPlaybookTriggerMail(playbookId, {
+          enabled: true,
+          mailboxAppKey: mailDraft.mailboxAppKey,
+          filters: {
+            from: mailDraft.from.split('\n').map((v) => v.trim()).filter(Boolean),
+            subjectContains: mailDraft.subjectContains.split('\n').map((v) => v.trim()).filter(Boolean),
+            bodyContains: mailDraft.bodyContains.split('\n').map((v) => v.trim()).filter(Boolean),
+            hasAttachments: mailDraft.hasAttachments,
+          },
+        });
+      } else {
+        await upsertPlaybookTriggerSchedule(playbookId, { enabled: false });
+      }
       onOpenChange(false);
     } catch {
       /* toast in store */
@@ -146,7 +181,11 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
   const handleRemove = async () => {
     setShowConfirmDialog(false);
     try {
-      await clearPlaybookTriggerSchedule(playbookId);
+      if (automatedTriggerType === 'mail') {
+        await clearPlaybookTriggerMail(playbookId);
+      } else {
+        await clearPlaybookTriggerSchedule(playbookId);
+      }
       onOpenChange(false);
     } catch {
       /* toast in store */
@@ -155,6 +194,10 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
 
   const handleAutomatedTriggerChange = (value: string) => {
     if (value === 'schedule') {
+      setDraft((current) => ({
+        ...current,
+        enabled: true,
+      }));
       setDraft((current) => {
         const next = fromExecutionSchedule(schedule);
         return {
@@ -167,6 +210,11 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
           advanced: next.advanced ?? current.advanced,
         };
       });
+      return;
+    }
+
+    if (value === 'mail') {
+      setDraft({ enabled: false });
       return;
     }
 
@@ -224,8 +272,8 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                 </div>
               </label>
 
-              <div className="flex items-start gap-3 rounded-xl border border-dashed p-4 opacity-70">
-                <div className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-muted-foreground/50" />
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-dashed p-4 hover:border-primary/40">
+                <RadioGroupItem value="mail" id="trigger-mail" className="mt-0.5" />
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     <span>{t('triggers.automated.mailTitle')}</span>
@@ -234,8 +282,25 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground">{t('triggers.automated.mailDescription')}</p>
+                  {mailboxCapability?.mailboxReady && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      {t('triggers.automated.mailReady')}
+                    </p>
+                  )}
+                  {mailboxCapability?.connected && !mailboxCapability.mailboxReady && (
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      {t('triggers.automated.mailScopesMissing', {
+                        scopes: mailboxCapability.missingScopes.join(', '),
+                      })}
+                    </p>
+                  )}
+                  {!mailboxCapability?.connected && (
+                    <p className="text-xs text-muted-foreground">
+                      {t('triggers.automated.mailConnectRequired')}
+                    </p>
+                  )}
                 </div>
-              </div>
+              </label>
             </RadioGroup>
           </section>
 
@@ -288,10 +353,73 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
               )}
             </>
           )}
+
+          {automatedTriggerType === 'mail' && (
+            <section className="space-y-4 rounded-xl border p-4">
+              <div className="space-y-1">
+                <div className="text-sm font-medium">{t('triggers.mailConfig.title')}</div>
+                <p className="text-sm text-muted-foreground">{t('triggers.mailConfig.description')}</p>
+              </div>
+
+              <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="mail-from-filter">
+                  {t('triggers.mailConfig.from')}
+                </label>
+                <textarea
+                  id="mail-from-filter"
+                  aria-label={t('triggers.mailConfig.from')}
+                  className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  value={mailDraft.from}
+                  onChange={(e) => setMailDraft((current) => ({ ...current, from: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="mail-subject-filter">
+                  {t('triggers.mailConfig.subjectContains')}
+                </label>
+                <textarea
+                  id="mail-subject-filter"
+                  aria-label={t('triggers.mailConfig.subjectContains')}
+                  className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  value={mailDraft.subjectContains}
+                  onChange={(e) => setMailDraft((current) => ({ ...current, subjectContains: e.target.value }))}
+                />
+              </div>
+
+              <div className="space-y-2">
+              <label className="text-sm font-medium" htmlFor="mail-body-filter">
+                  {t('triggers.mailConfig.bodyContains')}
+                </label>
+                <textarea
+                  id="mail-body-filter"
+                  aria-label={t('triggers.mailConfig.bodyContains')}
+                  className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  value={mailDraft.bodyContains}
+                  onChange={(e) => setMailDraft((current) => ({ ...current, bodyContains: e.target.value }))}
+                />
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  aria-label={t('triggers.mailConfig.hasAttachments')}
+                  checked={mailDraft.hasAttachments}
+                  onChange={(e) =>
+                    setMailDraft((current) => ({ ...current, hasAttachments: e.target.checked }))
+                  }
+                />
+                <span>{t('triggers.mailConfig.hasAttachments')}</span>
+              </label>
+
+              <p className="text-xs text-muted-foreground">{t('triggers.mailConfig.runtimeNotice')}</p>
+            </section>
+          )}
         </div>
 
         <div className="border-t pt-4 mt-auto flex flex-wrap gap-2 justify-end">
-          {schedule?.enabled && automatedTriggerType === 'schedule' && (
+          {((schedule?.enabled && automatedTriggerType === 'schedule') ||
+            (mailTrigger?.enabled && automatedTriggerType === 'mail')) && (
             <Button
               type="button"
               variant="destructive"

@@ -5,6 +5,37 @@ import {
   ExecutionScheduleSchema,
 } from './execution-schedule.schema';
 
+@Schema({ _id: false })
+export class PlaybookMailTriggerFilters {
+  @Prop({ type: [String], default: [] })
+  from!: string[];
+
+  @Prop({ type: [String], default: [] })
+  subjectContains!: string[];
+
+  @Prop({ type: [String], default: [] })
+  bodyContains!: string[];
+
+  @Prop({ type: Boolean, default: null })
+  hasAttachments!: boolean | null;
+}
+
+export const PlaybookMailTriggerFiltersSchema = SchemaFactory.createForClass(PlaybookMailTriggerFilters);
+
+@Schema({ _id: false })
+export class PlaybookMailTrigger {
+  @Prop({ type: Boolean, default: false })
+  enabled!: boolean;
+
+  @Prop({ type: String, default: null })
+  mailboxAppKey!: string | null;
+
+  @Prop({ type: PlaybookMailTriggerFiltersSchema, default: () => ({}) })
+  filters!: PlaybookMailTriggerFilters;
+}
+
+export const PlaybookMailTriggerSchema = SchemaFactory.createForClass(PlaybookMailTrigger);
+
 export type PlaybookDocument = HydratedDocument<Playbook>;
 
 @Schema({ _id: false, strict: false })
@@ -209,6 +240,9 @@ export class Playbook extends Document {
 
   @Prop({ type: ExecutionScheduleSchema, default: null })
   executionSchedule!: ExecutionSchedule | null;
+
+  @Prop({ type: PlaybookMailTriggerSchema, default: null })
+  mailTrigger!: PlaybookMailTrigger | null;
 
   createdAt!: Date;
   updatedAt!: Date;

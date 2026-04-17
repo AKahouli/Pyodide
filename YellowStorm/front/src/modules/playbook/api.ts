@@ -22,6 +22,7 @@ import type {
   RerunStepData,
   CloneShareResult,
   PlaybookTriggersData,
+  UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ValidateTaskReplayData,
   ValidatedTaskReplay,
@@ -517,6 +518,24 @@ export async function clearPlaybookTriggerSchedule(playbookId: string): Promise<
 export async function getPlaybookTriggers(playbookId: string): Promise<PlaybookTriggersData> {
   const response = await apiClient.get<ApiResponse<PlaybookTriggersData>>(
     API_ENDPOINTS.playbooks.triggers(playbookId),
+  );
+  return response.data.data;
+}
+
+export async function upsertPlaybookTriggerMail(
+  playbookId: string,
+  data: UpsertPlaybookMailTriggerData,
+): Promise<Playbook> {
+  const response = await apiClient.put<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.triggerMail(playbookId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function clearPlaybookTriggerMail(playbookId: string): Promise<Playbook> {
+  const response = await apiClient.delete<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.triggerMail(playbookId),
   );
   return response.data.data;
 }

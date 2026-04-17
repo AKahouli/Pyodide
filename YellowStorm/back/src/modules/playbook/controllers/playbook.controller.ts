@@ -39,6 +39,7 @@ import { SkipPlaybookStepDto } from '../dto/skip-playbook-step.dto';
 import { CloneSharePlaybookDto } from '../dto/clone-share-playbook.dto';
 import { BulkDeletePlaybooksDto } from '../dto/bulk-delete-playbooks.dto';
 import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
+import { UpsertPlaybookMailTriggerDto } from '../dto/upsert-playbook-mail-trigger.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
@@ -200,6 +201,24 @@ export class PlaybookController {
   @ApiResponse({ status: 200, description: 'Playbook with schedule trigger disabled' })
   async clearScheduleTrigger(@Param('id') id: string) {
     return this.playbookService.clearSchedule(id);
+  }
+
+  @Put(':id/triggers/mail')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create or replace the mail automated trigger config (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with updated mail trigger config' })
+  async upsertMailTrigger(@Param('id') id: string, @Body() dto: UpsertPlaybookMailTriggerDto) {
+    return this.playbookService.upsertMailTrigger(id, dto);
+  }
+
+  @Delete(':id/triggers/mail')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Disable the mail automated trigger config (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with mail trigger disabled' })
+  async clearMailTrigger(@Param('id') id: string) {
+    return this.playbookService.clearMailTrigger(id);
   }
 
   @Get(':id')

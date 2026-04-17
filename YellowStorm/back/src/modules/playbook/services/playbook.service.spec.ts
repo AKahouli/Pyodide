@@ -10,6 +10,7 @@ import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -157,6 +158,7 @@ describe('PlaybookService', () => {
   let loggerService: Record<string, jest.Mock>;
   let replayService: Record<string, jest.Mock>;
   let outputFormatService: Record<string, jest.Mock>;
+  let connectedAppTokenService: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     playbookModel = {
@@ -198,6 +200,15 @@ describe('PlaybookService', () => {
       getActiveTemplates: jest.fn().mockResolvedValue(new Map()),
     };
 
+    connectedAppTokenService = {
+      getMailboxCapability: jest.fn().mockResolvedValue({
+        connected: false,
+        mailboxReady: false,
+        missingScopes: ['mail.read'],
+        grantedScopes: [],
+      }),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlaybookService,
@@ -207,6 +218,7 @@ describe('PlaybookService', () => {
         { provide: LoggerService, useValue: loggerService },
         { provide: PlaybookReplayService, useValue: replayService },
         { provide: PlaybookOutputFormatService, useValue: outputFormatService },
+        { provide: ConnectedAppTokenService, useValue: connectedAppTokenService },
       ],
     }).compile();
 
@@ -351,6 +363,55 @@ describe('PlaybookService', () => {
       expect(result.edges).toHaveLength(1);
       expect(result.workspaces).toEqual([MOCK_WORKSPACE_ID]);
       expect(result.createdBy).toBe(MOCK_USER_ID);
+      expect(result.triggers.find((trigger) => trigger.type === 'mail')).toEqual({
+        type: 'mail',
+        enabled: false,
+        available: false,
+        config: {
+          enabled: false,
+          mailboxAppKey: null,
+          filters: {
+            from: [],
+            subjectContains: [],
+            bodyContains: [],
+            hasAttachments: null,
+          },
+          runtimeEnabled: false,
+          runtimePayloadSchema: null,
+        },
+      });
+    });
+
+    it('should expose mail trigger availability when mailbox capability is ready', async () => {
+      connectedAppTokenService.getMailboxCapability.mockResolvedValueOnce({
+        connected: true,
+        mailboxReady: true,
+        providerEmail: 'owner@example.com',
+        missingScopes: [],
+        grantedScopes: ['Mail.Read'],
+      });
+      const chain = createQueryChain(makeMockPlaybook());
+      playbookModel.findById.mockReturnValue(chain);
+
+      const result = await service.findById(MOCK_PLAYBOOK_ID);
+
+      expect(result.triggers.find((trigger) => trigger.type === 'mail')).toEqual({
+        type: 'mail',
+        enabled: false,
+        available: true,
+        config: {
+          enabled: false,
+          mailboxAppKey: null,
+          filters: {
+            from: [],
+            subjectContains: [],
+            bodyContains: [],
+            hasAttachments: null,
+          },
+          runtimeEnabled: false,
+          runtimePayloadSchema: null,
+        },
+      });
     });
 
     it('should throw NotFoundException for non-existent playbook', async () => {

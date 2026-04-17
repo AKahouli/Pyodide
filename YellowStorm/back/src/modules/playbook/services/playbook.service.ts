@@ -11,6 +11,7 @@ import {
 import { CreatePlaybookDto } from '../dto/create-playbook.dto';
 import { UpdatePlaybookDto } from '../dto/update-playbook.dto';
 import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
+import { UpsertPlaybookMailTriggerDto } from '../dto/upsert-playbook-mail-trigger.dto';
 import { PlaybookQueryDto } from '../dto/playbook-query.dto';
 import { ExecutionQueryDto } from '../dto/execution-query.dto';
 import {
@@ -36,6 +37,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { escapeRegex } from '../../../common/utils';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
 
 @Injectable()
 export class PlaybookService {
@@ -49,6 +51,7 @@ export class PlaybookService {
     private readonly logger: LoggerService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly connectedAppTokenService: ConnectedAppTokenService,
   ) {
     this.logger.setContext('PlaybookService');
   }
@@ -309,12 +312,20 @@ export class PlaybookService {
   }
 
   async getTriggers(playbookId: string): Promise<PlaybookTriggersResponse> {
-    const playbook = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    const playbook = await this.playbookModel
+      .findById(playbookId)
+      .select('executionSchedule mailTrigger createdBy')
+      .lean()
+      .exec();
     if (!playbook) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
     }
 
-    return this.buildTriggersResponse(playbook.executionSchedule);
+    return await this.buildTriggersResponse(
+      playbook.executionSchedule,
+      playbook.mailTrigger,
+      playbook.createdBy?.toString?.(),
+    );
   }
 
   /** Persists the single embedded schedule for this playbook (replaces any previous configuration). */
@@ -354,6 +365,68 @@ export class PlaybookService {
     }
 
     this.logger.log('Playbook schedule cleared', { playbookId });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async upsertMailTrigger(playbookId: string, dto: UpsertPlaybookMailTriggerDto): Promise<PlaybookResponse> {
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(
+        playbookId,
+        {
+          $set: {
+            mailTrigger: {
+              enabled: dto.enabled,
+              mailboxAppKey: dto.enabled ? (dto.mailboxAppKey ?? null) : null,
+              filters: {
+                from: dto.enabled ? (dto.filters?.from ?? []) : [],
+                subjectContains: dto.enabled ? (dto.filters?.subjectContains ?? []) : [],
+                bodyContains: dto.enabled ? (dto.filters?.bodyContains ?? []) : [],
+                hasAttachments: dto.enabled ? (dto.filters?.hasAttachments ?? null) : null,
+              },
+            },
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook mail trigger upserted', { playbookId, enabled: dto.enabled });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async clearMailTrigger(playbookId: string): Promise<PlaybookResponse> {
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(
+        playbookId,
+        {
+          $set: {
+            mailTrigger: {
+              enabled: false,
+              mailboxAppKey: null,
+              filters: {
+                from: [],
+                subjectContains: [],
+                bodyContains: [],
+                hasAttachments: null,
+              },
+            },
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook mail trigger cleared', { playbookId });
     return await this.mapToResponse(playbook as any);
   }
 
@@ -740,7 +813,11 @@ export class PlaybookService {
     );
 
     const executionSchedule = mapExecutionScheduleToData(playbook.executionSchedule);
-    const triggersResponse = this.buildTriggersResponse(playbook.executionSchedule);
+    const triggersResponse = await this.buildTriggersResponse(
+      playbook.executionSchedule,
+      playbook.mailTrigger,
+      playbook.createdBy.toString(),
+    );
 
     return {
       id: (playbook._id || playbook.id).toString(),
@@ -803,16 +880,48 @@ export class PlaybookService {
     };
   }
 
-  private buildTriggersResponse(executionSchedule: any): PlaybookTriggersResponse {
+  private async buildTriggersResponse(
+    executionSchedule: any,
+    mailTrigger: any,
+    createdBy?: string,
+  ): Promise<PlaybookTriggersResponse> {
     const schedule = mapExecutionScheduleToData(executionSchedule);
     const scheduleEnabled = schedule?.enabled === true;
+    const mailboxCapability = createdBy
+      ? await this.connectedAppTokenService.getMailboxCapability(createdBy)
+      : null;
+    const normalizedMailTrigger = {
+      enabled: mailTrigger?.enabled === true,
+      mailboxAppKey: mailTrigger?.mailboxAppKey ?? null,
+      filters: {
+        from: Array.isArray(mailTrigger?.filters?.from) ? mailTrigger.filters.from : [],
+        subjectContains: Array.isArray(mailTrigger?.filters?.subjectContains)
+          ? mailTrigger.filters.subjectContains
+          : [],
+        bodyContains: Array.isArray(mailTrigger?.filters?.bodyContains)
+          ? mailTrigger.filters.bodyContains
+          : [],
+        hasAttachments:
+          typeof mailTrigger?.filters?.hasAttachments === 'boolean'
+            ? mailTrigger.filters.hasAttachments
+            : null,
+      },
+      runtimeEnabled: false as const,
+      runtimePayloadSchema: null,
+    };
+    const mailEnabled = normalizedMailTrigger.enabled;
 
     return {
-      automatedTriggerType: scheduleEnabled ? 'schedule' : null,
+      automatedTriggerType: scheduleEnabled ? 'schedule' : mailEnabled ? 'mail' : null,
       triggers: [
         { type: 'manual', enabled: true },
         { type: 'schedule', enabled: scheduleEnabled, schedule },
-        { type: 'mail', enabled: false, available: false },
+        {
+          type: 'mail',
+          enabled: mailEnabled,
+          available: mailboxCapability?.mailboxReady === true,
+          config: normalizedMailTrigger,
+        },
       ],
     };
   }

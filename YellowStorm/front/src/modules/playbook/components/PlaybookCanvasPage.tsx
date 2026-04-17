@@ -1146,6 +1146,7 @@ function PlaybookCanvasInner() {
           onOpenChange={setTriggersSheetOpen}
           playbookId={id}
           schedule={playbook.executionSchedule}
+          mailTrigger={playbook.triggers.find((trigger) => trigger.type === 'mail') ?? null}
         />
       )}
 

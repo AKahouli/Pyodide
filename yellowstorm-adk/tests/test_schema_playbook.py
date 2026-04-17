@@ -2,7 +2,11 @@
 
 import pytest
 from pydantic import ValidationError
-from src.schema.playbook import RunPlaybookStepRequest, RunPlaybookStepResponse
+from src.schema.playbook import (
+    RunPlaybookStepRequest,
+    RunPlaybookStepResponse,
+    PlaybookMailTriggerNodeInput,
+)
 from src.schema.chatbot_schema import AgentSuggestion
 
 
@@ -20,7 +24,7 @@ class TestRunPlaybookStepRequest:
             tools=[{"name": "search", "top_k": 3}],
             chatbot_name={"provider": "gpt-4"},
             brain_ids=["brain-1"],
-            save_memory=False
+            save_memory=False,
         )
 
     @pytest.fixture
@@ -33,7 +37,7 @@ class TestRunPlaybookStepRequest:
             prompt="You are a manager",
             chatbot_name={"provider": "gpt-4"},
             brain_ids=[],
-            agent_type="manager"
+            agent_type="manager",
         )
 
     @pytest.fixture
@@ -50,7 +54,7 @@ class TestRunPlaybookStepRequest:
             "agent": valid_agent_suggestion,
             "manager_agent": valid_manager_suggestion,
             "call_id": "call-789",
-            "vectorstore_name": "test-vectorstore"
+            "vectorstore_name": "test-vectorstore",
         }
 
     def test_valid_request_creation(self, valid_request_data):
@@ -158,7 +162,9 @@ class TestRunPlaybookStepRequest:
         with pytest.raises(ValidationError) as exc_info:
             RunPlaybookStepRequest(**valid_request_data)
 
-        assert "taskDescription cannot be empty" in str(exc_info.value) or "String should have at least 1 character" in str(exc_info.value)
+        assert "taskDescription cannot be empty" in str(
+            exc_info.value
+        ) or "String should have at least 1 character" in str(exc_info.value)
 
     def test_task_description_strips_whitespace(self, valid_request_data):
         """Test that taskDescription strips leading/trailing whitespace."""
@@ -218,6 +224,56 @@ class TestRunPlaybookStepRequest:
     def test_task_metadata_default(self, valid_request_data):
         """Test that task_metadata defaults to empty dict."""
         del valid_request_data["task_metadata"]
+
+
+class TestPlaybookMailTriggerNodeInput:
+    """Test suite for future mail-trigger payload schema."""
+
+    def test_valid_mail_trigger_node_input(self):
+        payload = PlaybookMailTriggerNodeInput(
+            trigger={"type": "mail", "occurredAt": "2026-04-17T12:00:00Z"},
+            message={
+                "provider": "m365",
+                "mailboxAppKey": "microsoft",
+                "providerMessageId": "msg-123",
+                "providerThreadId": "thread-456",
+                "receivedAt": "2026-04-17T12:00:00Z",
+                "subject": "Invoice",
+                "bodyText": "Please review",
+                "bodyHtml": None,
+                "from": {"name": "Ops", "address": "ops@example.com"},
+                "to": [{"name": None, "address": "user@example.com"}],
+                "cc": [],
+                "hasAttachments": True,
+                "attachments": [
+                    {
+                        "providerAttachmentId": "att-1",
+                        "filename": "invoice.pdf",
+                        "mimeType": "application/pdf",
+                        "size": 1234,
+                        "isInline": False,
+                        "workspaceImport": {
+                            "workspaceDocumentId": "doc-1",
+                            "filename": "invoice.pdf",
+                            "finalFilename": "invoice.pdf",
+                            "mimeType": "application/pdf",
+                            "size": 1234,
+                            "sourcePath": "/system-imports/mail/p1/e1/invoice.pdf",
+                            "collisionResolved": False,
+                            "error": None,
+                        },
+                    }
+                ],
+            },
+        )
+
+        assert payload.trigger["type"] == "mail"
+        assert payload.message.providerMessageId == "msg-123"
+        assert payload.message.from_.address == "ops@example.com"
+        assert (
+            payload.message.attachments[0].workspaceImport.workspaceDocumentId
+            == "doc-1"
+        )
         request = RunPlaybookStepRequest(**valid_request_data)
 
         assert request.task_metadata == {}
@@ -247,7 +303,7 @@ class TestRunPlaybookStepResponse:
             success=True,
             messageId="msg-123",
             taskId="task-456",
-            result="Task completed successfully"
+            result="Task completed successfully",
         )
 
         assert response.success is True
@@ -262,7 +318,7 @@ class TestRunPlaybookStepResponse:
             success=False,
             messageId="msg-123",
             taskId="task-456",
-            error="Task execution failed"
+            error="Task execution failed",
         )
 
         assert response.success is False
@@ -278,7 +334,7 @@ class TestRunPlaybookStepResponse:
             messageId="msg-123",
             taskId="task-456",
             result="Partial result",
-            error="Warning: some issues occurred"
+            error="Warning: some issues occurred",
         )
 
         assert response.result == "Partial result"
@@ -287,9 +343,7 @@ class TestRunPlaybookStepResponse:
     def test_response_optional_fields_default_to_none(self):
         """Test that optional fields default to None."""
         response = RunPlaybookStepResponse(
-            success=True,
-            messageId="msg-123",
-            taskId="task-456"
+            success=True, messageId="msg-123", taskId="task-456"
         )
 
         assert response.result is None

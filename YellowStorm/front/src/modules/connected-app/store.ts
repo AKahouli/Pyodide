@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import type { ConnectedAppWithStatus, OAuthPopupResult } from './types';
+import type { ConnectedAppWithStatus, MailboxCapability, OAuthPopupResult } from './types';
 import * as api from './api';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
 import { API_CONFIG } from '@/lib/api/config';
@@ -37,12 +37,14 @@ interface ConnectedAppState {
   isLoading: boolean;
   isInitialized: boolean;
   connectingAppKey: string | null;
+  mailboxCapability: MailboxCapability | null;
 }
 
 interface ConnectedAppActions {
   fetchApps: () => Promise<void>;
   connectApp: (appKey: string) => Promise<boolean>;
   disconnectApp: (appKey: string) => Promise<void>;
+  fetchMailboxCapability: () => Promise<void>;
   isConnected: (appKey: string) => boolean;
   reset: () => void;
 }
@@ -54,6 +56,7 @@ const initialState: ConnectedAppState = {
   isLoading: false,
   isInitialized: false,
   connectingAppKey: null,
+  mailboxCapability: null,
 };
 
 // ===== Store =====
@@ -66,11 +69,23 @@ export const useConnectedAppStore = create<ConnectedAppStore>()(
       fetchApps: async () => {
         set({ isLoading: true });
         try {
-          const apps = await api.getAvailableApps();
-          set({ apps, isLoading: false, isInitialized: true });
+          const [apps, mailboxCapability] = await Promise.all([
+            api.getAvailableApps(),
+            api.getMailboxCapability().catch(() => null),
+          ]);
+          set({ apps, mailboxCapability, isLoading: false, isInitialized: true });
         } catch {
           set({ isLoading: false });
           toast.error(tApp('store.errors.fetchFailed', 'Failed to load apps'));
+        }
+      },
+
+      fetchMailboxCapability: async () => {
+        try {
+          const mailboxCapability = await api.getMailboxCapability();
+          set({ mailboxCapability });
+        } catch {
+          set({ mailboxCapability: null });
         }
       },
 
@@ -111,8 +126,11 @@ export const useConnectedAppStore = create<ConnectedAppStore>()(
             }) => {
               set({ connectingAppKey: null });
               try {
-                const apps = await api.getAvailableApps();
-                set({ apps, isInitialized: true });
+                const [apps, mailboxCapability] = await Promise.all([
+                  api.getAvailableApps(),
+                  api.getMailboxCapability().catch(() => null),
+                ]);
+                set({ apps, mailboxCapability, isInitialized: true });
                 const connected = apps.some((a) => a.appKey === appKey && a.connected);
                 if (opts?.oauthSuccess && connected) {
                   toast.success(tApp('store.connected', 'App connected successfully'));
@@ -181,6 +199,17 @@ export const useConnectedAppStore = create<ConnectedAppStore>()(
                 ? { ...app, connected: false, connection: undefined }
                 : app,
             ),
+            mailboxCapability:
+              state.mailboxCapability?.appKey === appKey
+                ? {
+                    ...state.mailboxCapability,
+                    connected: false,
+                    mailboxReady: false,
+                    providerEmail: undefined,
+                    grantedScopes: [],
+                    missingScopes: ['mail.read'],
+                  }
+                : state.mailboxCapability,
           }));
 
           toast.success(tApp('store.disconnected', 'App disconnected'));
@@ -209,6 +238,9 @@ export const useConnectedAppsLoading = () =>
 
 export const useConnectingAppKey = () =>
   useConnectedAppStore((state) => state.connectingAppKey);
+
+export const useMailboxCapability = () =>
+  useConnectedAppStore((state) => state.mailboxCapability);
 
 // ===== Imperative API (barrel export) =====
 

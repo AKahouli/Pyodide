@@ -10,7 +10,9 @@
     "connect": "Connecter",
     "disconnect": "D\u00e9connecter",
     "connectedAs": "Connect\u00e9 en tant que {{email}}",
-    "confirmDisconnect": "\u00cates-vous s\u00fbr de vouloir d\u00e9connecter {{appName}} ?"
+    "confirmDisconnect": "\u00cates-vous s\u00fbr de vouloir d\u00e9connecter {{appName}} ?",
+    "mailboxReady": "Les permissions de messagerie sont pr\u00eates pour les futures fonctionnalit\u00e9s email.",
+    "mailboxScopesMissing": "Les permissions de messagerie sont incompl\u00e8tes. Scopes manquants : {{scopes}}"
   },
   "button": {
     "label": "Applications",

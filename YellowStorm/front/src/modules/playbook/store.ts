@@ -37,6 +37,7 @@ import type {
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
   PlaybookUndoSnapshot,
+  UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ToolBinding,
 } from './types';
@@ -661,6 +662,70 @@ export const usePlaybookStore = create<PlaybookStore>()(
               : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleCleared', 'Schedule removed'));
+        } catch (err) {
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      upsertPlaybookTriggerMail: async (playbookId: string, data: UpsertPlaybookMailTriggerData) => {
+        set({ triggerSaving: true, triggerError: null });
+        try {
+          const pb = await api.upsertPlaybookTriggerMail(playbookId, data);
+          const scheduleEnabled = pb.executionSchedule?.enabled === true;
+          set((state) => ({
+            triggerSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: pb.automatedTriggerType }
+                  : p,
+              )
+              : state.playbooks,
+          }));
+          toast.success(tPlaybook('store.toasts.triggerMailSaved', 'Mail trigger saved'));
+        } catch (err) {
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      clearPlaybookTriggerMail: async (playbookId: string) => {
+        set({ triggerSaving: true, triggerError: null });
+        try {
+          const pb = await api.clearPlaybookTriggerMail(playbookId);
+          const scheduleEnabled = pb.executionSchedule?.enabled === true;
+          set((state) => ({
+            triggerSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: pb.automatedTriggerType }
+                  : p,
+              )
+              : state.playbooks,
+          }));
+          toast.success(tPlaybook('store.toasts.triggerMailCleared', 'Mail trigger removed'));
         } catch (err) {
           set({ triggerSaving: false, triggerError: parseApiError(err).message });
           handleApiError(err);

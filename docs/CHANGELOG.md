@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-04-17 12:50 UTC] — Persist playbook mail trigger config
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added a persisted mail-trigger configuration model and owner routes for playbooks, wired the trigger panel to edit/save basic mailbox filters, and kept runtime execution explicitly disabled through a `runtimeEnabled: false` contract.
+- **Why:** The trigger UI and API need a real mail configuration surface before inbound mailbox events and trigger-node execution can be implemented safely.
+- **Impact:** Playbook schema/interfaces/controllers/services, frontend trigger panel/types/api/store, and playbook trigger tests/locales.
+
+## [2026-04-17 10:05 UTC] — Add mailbox capability foundation
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** Added a reusable Microsoft 365 mailbox capability check on top of existing connected-app user connections, exposed it through `GET /connected-apps/mailbox-capability`, and wired playbook mail-trigger availability to that readiness signal instead of a hardcoded placeholder.
+- **Why:** Future conversation mail tools and playbook mail triggers need a shared, scope-aware mailbox foundation without introducing a second OAuth connection model.
+- **Impact:** Connected-app token/controller/interfaces, playbook trigger availability derivation, and mailbox readiness tests.
+
 ## [2026-04-17 09:00 UTC] — Add playbook trigger abstraction
 
 - **Feature:** `playbook`

@@ -6,6 +6,7 @@ import type {
   ConnectedAppAdminResponse,
   CreateConnectedAppDefinition,
   UpdateConnectedAppDefinition,
+  MailboxCapability,
 } from './types';
 
 // ==================== User-facing ====================
@@ -29,6 +30,13 @@ export async function getAuthorizationUrl(appKey: string): Promise<string> {
     API_ENDPOINTS.connectedApps.authorize(appKey),
   );
   return response.data.data.authorizationUrl;
+}
+
+export async function getMailboxCapability(): Promise<MailboxCapability> {
+  const response = await apiClient.get<ApiResponse<MailboxCapability>>(
+    API_ENDPOINTS.connectedApps.mailboxCapability,
+  );
+  return response.data.data;
 }
 
 export async function disconnectApp(appKey: string): Promise<void> {

@@ -10,7 +10,9 @@
     "connect": "Connect",
     "disconnect": "Disconnect",
     "connectedAs": "Connected as {{email}}",
-    "confirmDisconnect": "Are you sure you want to disconnect {{appName}}?"
+    "confirmDisconnect": "Are you sure you want to disconnect {{appName}}?",
+    "mailboxReady": "Mailbox permissions are ready for future mail features.",
+    "mailboxScopesMissing": "Mailbox permissions are incomplete. Missing scopes: {{scopes}}"
   },
   "button": {
     "label": "Apps",

@@ -6,11 +6,26 @@ import { PlaybookScheduleSheet } from './PlaybookScheduleSheet';
 const storeMock = vi.hoisted(() => ({
   upsertPlaybookTriggerSchedule: vi.fn(),
   clearPlaybookTriggerSchedule: vi.fn(),
+  upsertPlaybookTriggerMail: vi.fn(),
+  clearPlaybookTriggerMail: vi.fn(),
   triggerSaving: false,
 }));
 
 vi.mock('../../store', () => ({
   usePlaybookStore: (selector: (state: typeof storeMock) => unknown) => selector(storeMock),
+}));
+
+const mailboxCapabilityMock = vi.hoisted(() => ({
+  current: null as null | {
+    connected: boolean;
+    mailboxReady: boolean;
+    missingScopes: string[];
+    grantedScopes: string[];
+  },
+}));
+
+vi.mock('@/modules/connected-app/store', () => ({
+  useMailboxCapability: () => mailboxCapabilityMock.current,
 }));
 
 vi.mock('@/modules/localization', () => ({
@@ -25,6 +40,7 @@ describe('PlaybookScheduleSheet', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storeMock.triggerSaving = false;
+    mailboxCapabilityMock.current = null;
   });
 
   it('shows manual trigger and hides schedule editors when no automated trigger is selected', () => {
@@ -74,5 +90,89 @@ describe('PlaybookScheduleSheet', () => {
     await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
 
     expect(storeMock.upsertPlaybookTriggerSchedule).toHaveBeenCalledWith('p1', { enabled: false });
+  });
+
+  it('shows mailbox readiness hint for future mail trigger support', () => {
+    mailboxCapabilityMock.current = {
+      connected: true,
+      mailboxReady: true,
+      missingScopes: [],
+      grantedScopes: ['mail.read'],
+    };
+
+    render(
+      <PlaybookScheduleSheet
+        open
+        onOpenChange={vi.fn()}
+        playbookId="p1"
+        schedule={null}
+      />,
+    );
+
+    expect(screen.getByText('triggers.automated.mailReady')).toBeInTheDocument();
+  });
+
+  it('shows missing mailbox scopes hint when mail permissions are incomplete', () => {
+    mailboxCapabilityMock.current = {
+      connected: true,
+      mailboxReady: false,
+      missingScopes: ['mail.read'],
+      grantedScopes: ['files.read'],
+    };
+
+    render(
+      <PlaybookScheduleSheet
+        open
+        onOpenChange={vi.fn()}
+        playbookId="p1"
+        schedule={null}
+      />,
+    );
+
+    expect(screen.getByText('triggers.automated.mailScopesMissing')).toBeInTheDocument();
+  });
+
+  it('saves mail trigger filters when mail is selected', async () => {
+    render(
+      <PlaybookScheduleSheet
+        open
+        onOpenChange={vi.fn()}
+        playbookId="p1"
+        schedule={null}
+        mailTrigger={{
+          type: 'mail',
+          enabled: true,
+          available: true,
+          config: {
+            enabled: true,
+            mailboxAppKey: 'microsoft',
+            filters: {
+              from: [],
+              subjectContains: [],
+              bodyContains: [],
+              hasAttachments: null,
+            },
+            runtimeEnabled: false,
+          },
+        }}
+      />,
+    );
+
+    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.from' }), 'alerts@example.com');
+    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.subjectContains' }), 'invoice');
+    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.bodyContains' }), 'urgent');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'triggers.mailConfig.hasAttachments' }));
+    await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
+
+    expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
+      enabled: true,
+      mailboxAppKey: 'microsoft',
+      filters: {
+        from: ['alerts@example.com'],
+        subjectContains: ['invoice'],
+        bodyContains: ['urgent'],
+        hasAttachments: true,
+      },
+    });
   });
 });

@@ -248,6 +248,7 @@ export const API_ENDPOINTS = {
     schedule: (id: string) => `/playbooks/${id}/schedule`,
     triggers: (id: string) => `/playbooks/${id}/triggers`,
     triggerSchedule: (id: string) => `/playbooks/${id}/triggers/schedule`,
+    triggerMail: (id: string) => `/playbooks/${id}/triggers/mail`,
     favorite: (id: string) => `/playbooks/${id}/favorite`,
     bulkDelete: '/playbooks/bulk-delete',
     activeExecutions: '/playbooks/active-executions',
@@ -255,6 +256,7 @@ export const API_ENDPOINTS = {
   connectedApps: {
     list: '/connected-apps',
     connections: '/connected-apps/connections',
+    mailboxCapability: '/connected-apps/mailbox-capability',
     authorize: (appKey: string) => `/connected-apps/${appKey}/authorize`,
     disconnect: (appKey: string) => `/connected-apps/${appKey}`,
   },

@@ -166,6 +166,8 @@ class ChatbotServicer(
 
         # Create asyncio queue
         queue: asyncio.Queue[dict] = asyncio.Queue()
+        bg_task: Optional[asyncio.Task] = None
+        get_task: Optional[asyncio.Task] = None
 
         try:
             # Convert protobuf request to internal V1 Pydantic model (for backward compatibility)
@@ -235,6 +237,7 @@ class ChatbotServicer(
 
                 # Get the chunk from the completed get_task
                 chunk_dict = await get_task
+                get_task = None
 
                 if chunk_dict is None:  # End of stream
                     logger.info(
@@ -288,15 +291,26 @@ class ChatbotServicer(
             )
             return
 
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GeneratorExit):
             # Client cancelled the stream (e.g., call.cancel() was called, or client disconnected)
             logger.info(
                 f"[gRPC] Client cancelled stream - conversation_id: {request.conversation_id}, "
                 f"user_id: {request.user_context.user_id}"
             )
 
+            if get_task is not None and not get_task.done():
+                get_task.cancel()
+                try:
+                    await get_task
+                except asyncio.CancelledError:
+                    logger.debug("[gRPC] Queue get task cancelled successfully")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
+                    )
+
             # Cancel the background task gracefully
-            if not bg_task.done():
+            if bg_task is not None and not bg_task.done():
                 bg_task.cancel()
                 try:
                     await bg_task

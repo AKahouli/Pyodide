@@ -197,10 +197,66 @@ export interface PlaybookScheduleTrigger {
   schedule: ExecutionScheduleData | null;
 }
 
+export interface MailAttachmentWorkspaceImport {
+  workspaceDocumentId: string | null;
+  filename: string;
+  finalFilename: string | null;
+  mimeType: string | null;
+  size: number | null;
+  sourcePath: string | null;
+  collisionResolved: boolean;
+  error: string | null;
+}
+
+export interface MailMessageAttachment {
+  providerAttachmentId: string;
+  filename: string;
+  mimeType: string | null;
+  size: number | null;
+  isInline: boolean;
+  workspaceImport: MailAttachmentWorkspaceImport | null;
+}
+
+export interface MailTriggerRuntimePayload {
+  provider: 'm365';
+  mailboxAppKey: string;
+  providerMessageId: string;
+  providerThreadId: string | null;
+  receivedAt: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  from: { name: string | null; address: string };
+  to: Array<{ name: string | null; address: string }>;
+  cc: Array<{ name: string | null; address: string }>;
+  hasAttachments: boolean;
+  attachments: MailMessageAttachment[];
+}
+
+export interface PlaybookMailTriggerNodeInput {
+  trigger: {
+    type: 'mail';
+    occurredAt: string;
+  };
+  message: MailTriggerRuntimePayload;
+}
+
 export interface PlaybookMailTrigger {
   type: 'mail';
-  enabled: false;
-  available: false;
+  enabled: boolean;
+  available: boolean;
+  config: {
+    enabled: boolean;
+    mailboxAppKey: string | null;
+    filters: {
+      from: string[];
+      subjectContains: string[];
+      bodyContains: string[];
+      hasAttachments: boolean | null;
+    };
+    runtimeEnabled: false;
+    runtimePayloadSchema: PlaybookMailTriggerNodeInput | null;
+  } | null;
 }
 
 export type PlaybookTrigger = PlaybookManualTrigger | PlaybookScheduleTrigger | PlaybookMailTrigger;
@@ -219,6 +275,17 @@ export interface UpsertPlaybookScheduleData {
   weekly?: WeeklySchedulePayloadData;
   monthly?: MonthlySchedulePayloadData;
   advanced?: AdvancedSchedulePayloadData;
+}
+
+export interface UpsertPlaybookMailTriggerData {
+  enabled: boolean;
+  mailboxAppKey?: string;
+  filters?: {
+    from?: string[];
+    subjectContains?: string[];
+    bodyContains?: string[];
+    hasAttachments?: boolean;
+  };
 }
 
 export interface PlaybookSummary {

@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "build": "nest build",
-    "postbuild": "node -e \"const fs=require('fs'); fs.mkdirSync('dist',{recursive:true}); fs.copyFileSync('package.json','dist/package.json')\"",
+    "postbuild": "node -e \"const fs=require('fs'); const path=require('path'); fs.mkdirSync('dist',{recursive:true}); fs.copyFileSync('package.json','dist/package.json'); const protoSource=path.join('src','modules','conversation','proto','chatbot.proto'); const protoTargetDir=path.join('dist','modules','conversation','proto'); fs.mkdirSync(protoTargetDir,{recursive:true}); fs.copyFileSync(protoSource,path.join(protoTargetDir,'chatbot.proto'));\"",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",

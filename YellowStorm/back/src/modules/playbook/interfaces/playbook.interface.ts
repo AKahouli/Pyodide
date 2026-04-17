@@ -140,10 +140,70 @@ export interface PlaybookScheduleTriggerData {
   schedule: ExecutionScheduleData | null;
 }
 
+export interface PlaybookMailTriggerFiltersData {
+  from: string[];
+  subjectContains: string[];
+  bodyContains: string[];
+  hasAttachments: boolean | null;
+}
+
+export interface MailAttachmentWorkspaceImportData {
+  workspaceDocumentId: string | null;
+  filename: string;
+  finalFilename: string | null;
+  mimeType: string | null;
+  size: number | null;
+  sourcePath: string | null;
+  collisionResolved: boolean;
+  error: string | null;
+}
+
+export interface MailMessageAttachmentData {
+  providerAttachmentId: string;
+  filename: string;
+  mimeType: string | null;
+  size: number | null;
+  isInline: boolean;
+  workspaceImport: MailAttachmentWorkspaceImportData | null;
+}
+
+export interface MailTriggerRuntimePayloadData {
+  provider: 'm365';
+  mailboxAppKey: string;
+  providerMessageId: string;
+  providerThreadId: string | null;
+  receivedAt: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  from: { name: string | null; address: string };
+  to: Array<{ name: string | null; address: string }>;
+  cc: Array<{ name: string | null; address: string }>;
+  hasAttachments: boolean;
+  attachments: MailMessageAttachmentData[];
+}
+
+export interface PlaybookMailTriggerNodeInputData {
+  trigger: {
+    type: 'mail';
+    occurredAt: string;
+  };
+  message: MailTriggerRuntimePayloadData;
+}
+
+export interface PlaybookMailTriggerConfigData {
+  enabled: boolean;
+  mailboxAppKey: string | null;
+  filters: PlaybookMailTriggerFiltersData;
+  runtimeEnabled: false;
+  runtimePayloadSchema: PlaybookMailTriggerNodeInputData | null;
+}
+
 export interface PlaybookMailTriggerData {
   type: 'mail';
-  enabled: false;
-  available: false;
+  enabled: boolean;
+  available: boolean;
+  config: PlaybookMailTriggerConfigData | null;
 }
 
 export type PlaybookTriggerData = PlaybookManualTriggerData | PlaybookScheduleTriggerData | PlaybookMailTriggerData;

@@ -12,6 +12,13 @@ vi.mock('../store', () => ({
       connectApp: mockConnectApp,
       disconnectApp: mockDisconnectApp,
       connectingAppKey: mockConnectingAppKey.current,
+      mailboxCapability: {
+        appKey: 'microsoft',
+        connected: true,
+        mailboxReady: false,
+        missingScopes: ['mail.read'],
+        grantedScopes: ['files.read'],
+      },
     }),
 }));
 
@@ -120,6 +127,23 @@ const disconnectedApp: ConnectedAppWithStatus = {
   connected: false,
 };
 
+const microsoftApp: ConnectedAppWithStatus = {
+  appKey: 'microsoft',
+  displayName: 'Microsoft 365',
+  description: 'Connect to Microsoft 365',
+  scopes: ['files.read'],
+  sortOrder: 3,
+  connected: true,
+  connection: {
+    appKey: 'microsoft',
+    displayName: 'Microsoft 365',
+    status: 'active',
+    scopes: ['files.read'],
+    providerEmail: 'user@contoso.com',
+    connectedAt: '2026-01-01T00:00:00Z',
+  },
+};
+
 describe('AppCard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -202,5 +226,11 @@ describe('AppCard', () => {
     render(<AppCard app={connectedApp} />);
 
     expect(screen.getByTestId('app-icon-google-drive')).toBeInTheDocument();
+  });
+
+  it('shows missing mailbox scopes hint for microsoft app', () => {
+    render(<AppCard app={microsoftApp} />);
+
+    expect(screen.getByText('card.mailboxScopesMissing')).toBeInTheDocument();
   });
 });
