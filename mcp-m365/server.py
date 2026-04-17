@@ -499,6 +499,7 @@ async def create_meeting(
 if __name__ == "__main__":
     import sys
 
+    os.environ.setdefault("HOST", "0.0.0.0")
     transport = os.getenv("M365_MCP_TRANSPORT", "sse")
     port = int(os.getenv("MCP_PORT", os.getenv("PORT", "8012")))
 
