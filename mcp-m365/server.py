@@ -527,4 +527,4 @@ if __name__ == "__main__":
         f"Starting MCP server with transport: {transport} on port: {port}",
         file=sys.stderr,
     )
-    mcp.run(transport=transport, middleware=middleware, port=port)
+    mcp.run(transport=transport, middleware=middleware,host="0.0.0.0", port=port)
