@@ -64,6 +64,10 @@ import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
 import { toast } from 'sonner';
 
+function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
+  return <PlaybookScheduleSheet {...props} />;
+}
+
 // Edge colors per step status
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
   completed: { stroke: 'var(--color-green-500)', strokeWidth: 2 },
@@ -222,7 +226,7 @@ function PlaybookCanvasInner() {
     existingBinding: ToolBinding | null;
   } | null>(null);
 
-  const [scheduleSheetOpen, setScheduleSheetOpen] = useState(false);
+  const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(false);
 
   useEffect(() => {
@@ -245,8 +249,8 @@ function PlaybookCanvasInner() {
   }, [id, isGeneratingRoute, fetchPlaybook, fetchExecutions]);
 
   useEffect(() => {
-    if (searchParams.get('schedule') === '1') {
-      setScheduleSheetOpen(true);
+    if (searchParams.get('triggers') === '1' || searchParams.get('schedule') === '1') {
+      setTriggersSheetOpen(true);
     }
   }, [searchParams]);
 
@@ -1131,15 +1135,15 @@ function PlaybookCanvasInner() {
             onAdvisorAutopilotChange={setAdvisorAutopilotEnabled}
             onDownloadAllResults={handleDownloadAllResults}
             canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
-            onSchedule={() => setScheduleSheetOpen(true)}
+            onTriggers={() => setTriggersSheetOpen(true)}
           />
         </div>
       </div>
 
       {id && (
-        <PlaybookScheduleSheet
-          open={scheduleSheetOpen}
-          onOpenChange={setScheduleSheetOpen}
+        <PlaybookTriggersSheet
+          open={triggersSheetOpen}
+          onOpenChange={setTriggersSheetOpen}
           playbookId={id}
           schedule={playbook.executionSchedule}
         />

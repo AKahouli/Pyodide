@@ -22,6 +22,7 @@ import {
   PaginatedExecutions,
   PlaybookDesignMessageResponse,
   ExecutionScheduleData,
+  PlaybookTriggersResponse,
 } from '../interfaces/playbook.interface';
 import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
 import { buildExecutionScheduleDocument } from '../utils/execution-schedule-upsert.builder';
@@ -305,6 +306,15 @@ export class PlaybookService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
     }
     return mapExecutionScheduleToData(playbook.executionSchedule);
+  }
+
+  async getTriggers(playbookId: string): Promise<PlaybookTriggersResponse> {
+    const playbook = await this.playbookModel.findById(playbookId).select('executionSchedule').lean().exec();
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    return this.buildTriggersResponse(playbook.executionSchedule);
   }
 
   /** Persists the single embedded schedule for this playbook (replaces any previous configuration). */
@@ -700,6 +710,8 @@ export class PlaybookService {
   }
 
   private mapToSummaryResponse(playbook: any): PlaybookSummaryResponse {
+    const automatedTriggerType = Boolean(playbook.scheduleEnabled) ? 'schedule' : null;
+
     return {
       id: (playbook._id || playbook.id).toString(),
       name: playbook.name,
@@ -707,6 +719,7 @@ export class PlaybookService {
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
       scheduleEnabled: Boolean(playbook.scheduleEnabled),
+      automatedTriggerType,
       executionStatus: playbook.executionStatus ?? null,
       integrationToken: playbook.integrationToken || null,
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
@@ -725,6 +738,9 @@ export class PlaybookService {
       (playbook._id || playbook.id).toString(),
       taskIds,
     );
+
+    const executionSchedule = mapExecutionScheduleToData(playbook.executionSchedule);
+    const triggersResponse = this.buildTriggersResponse(playbook.executionSchedule);
 
     return {
       id: (playbook._id || playbook.id).toString(),
@@ -779,9 +795,25 @@ export class PlaybookService {
       createdBy: playbook.createdBy.toString(),
       isFavorite: playbook.isFavorite || false,
       isActive: playbook.isActive,
-      executionSchedule: mapExecutionScheduleToData(playbook.executionSchedule),
+      executionSchedule,
+      triggers: triggersResponse.triggers,
+      automatedTriggerType: triggersResponse.automatedTriggerType,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
+    };
+  }
+
+  private buildTriggersResponse(executionSchedule: any): PlaybookTriggersResponse {
+    const schedule = mapExecutionScheduleToData(executionSchedule);
+    const scheduleEnabled = schedule?.enabled === true;
+
+    return {
+      automatedTriggerType: scheduleEnabled ? 'schedule' : null,
+      triggers: [
+        { type: 'manual', enabled: true },
+        { type: 'schedule', enabled: scheduleEnabled, schedule },
+        { type: 'mail', enabled: false, available: false },
+      ],
     };
   }
 

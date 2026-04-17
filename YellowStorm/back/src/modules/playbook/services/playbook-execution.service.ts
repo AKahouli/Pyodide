@@ -609,6 +609,29 @@ export class PlaybookExecutionService {
     return [...descendants];
   }
 
+  private async trySetExecutionTerminalState(
+    executionId: string,
+    status: ExecutionStatus,
+    fields: Record<string, any>,
+  ): Promise<boolean> {
+    const result = await this.executionModel.updateOne(
+      {
+        _id: executionId,
+        status: {
+          $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+        },
+      },
+      {
+        $set: {
+          status,
+          ...fields,
+        },
+      },
+    );
+
+    return result.modifiedCount > 0;
+  }
+
   private seedTaskOutputsFromExecution(execution: any, snapshot: any, ancestorTaskIds: string[]): Map<string, string> {
     const taskOutputs = new Map<string, string>();
     const allowed = new Set(ancestorTaskIds);
@@ -3974,14 +3997,15 @@ ${detailUrl
       .filter((tr: any) => tr.status === StepStatus.RUNNING)
       .map((tr: any) => tr.taskId);
 
-    await this.executionModel.findByIdAndUpdate(executionId, {
-      $set: {
-        status: ExecutionStatus.FAILED,
-        error,
-        durationMs,
-        completedAt: new Date(),
-      },
+    const transitioned = await this.trySetExecutionTerminalState(executionId, ExecutionStatus.FAILED, {
+      error,
+      durationMs,
+      completedAt: new Date(),
     });
+    if (!transitioned) {
+      this.logger.log('Skipping FAILED terminal transition because execution is already terminal', { executionId });
+      return;
+    }
 
     // Terminalize any still-running task and skip the remaining pending tasks.
     await this.executionModel.updateOne(
@@ -4023,13 +4047,14 @@ ${detailUrl
 
     this.logger.log('Marking execution COMPLETED', { executionId, durationMs });
 
-    await this.executionModel.findByIdAndUpdate(executionId, {
-      $set: {
-        status: ExecutionStatus.COMPLETED,
-        durationMs,
-        completedAt: new Date(),
-      },
+    const transitioned = await this.trySetExecutionTerminalState(executionId, ExecutionStatus.COMPLETED, {
+      durationMs,
+      completedAt: new Date(),
     });
+    if (!transitioned) {
+      this.logger.log('Skipping COMPLETED terminal transition because execution is already terminal', { executionId });
+      return;
+    }
 
     this.streamGateway.sendToUser(userId, {
       type: 'playbook_execution_complete',
@@ -4058,14 +4083,15 @@ ${detailUrl
       .filter((tr: any) => tr.status === StepStatus.PENDING || tr.status === StepStatus.RUNNING)
       .map((tr: any) => tr.taskId);
 
-    await this.executionModel.findByIdAndUpdate(executionId, {
-      $set: {
-        status: ExecutionStatus.CANCELLED,
-        error: 'Execution cancelled by user',
-        durationMs,
-        completedAt: new Date(),
-      },
+    const transitioned = await this.trySetExecutionTerminalState(executionId, ExecutionStatus.CANCELLED, {
+      error: 'Execution cancelled by user',
+      durationMs,
+      completedAt: new Date(),
     });
+    if (!transitioned) {
+      this.logger.log('Skipping CANCELLED terminal transition because execution is already terminal', { executionId });
+      return;
+    }
 
     // Bulk skip RUNNING and PENDING taskResults
     await this.executionModel.updateOne(

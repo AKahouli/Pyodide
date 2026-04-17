@@ -129,6 +129,30 @@ export interface ExecutionScheduleData {
   advanced: AdvancedSchedulePayloadData | null;
 }
 
+export interface PlaybookManualTriggerData {
+  type: 'manual';
+  enabled: true;
+}
+
+export interface PlaybookScheduleTriggerData {
+  type: 'schedule';
+  enabled: boolean;
+  schedule: ExecutionScheduleData | null;
+}
+
+export interface PlaybookMailTriggerData {
+  type: 'mail';
+  enabled: false;
+  available: false;
+}
+
+export type PlaybookTriggerData = PlaybookManualTriggerData | PlaybookScheduleTriggerData | PlaybookMailTriggerData;
+
+export interface PlaybookTriggersResponse {
+  automatedTriggerType: 'schedule' | 'mail' | null;
+  triggers: PlaybookTriggerData[];
+}
+
 export interface PlaybookSummaryResponse {
   id: string;
   name: string;
@@ -137,6 +161,7 @@ export interface PlaybookSummaryResponse {
   isFavorite: boolean;
   /** True when embedded `executionSchedule` exists and is enabled (scheduled runs). */
   scheduleEnabled: boolean;
+  automatedTriggerType: 'schedule' | 'mail' | null;
   /** Latest execution status for the list badge. */
   executionStatus?: ExecutionStatus | null;
   integrationToken?: string | null;
@@ -170,6 +195,8 @@ export interface PlaybookResponse {
   isFavorite: boolean;
   isActive: boolean;
   executionSchedule: ExecutionScheduleData | null;
+  triggers: PlaybookTriggerData[];
+  automatedTriggerType: 'schedule' | 'mail' | null;
   createdAt: string;
   updatedAt: string;
 }

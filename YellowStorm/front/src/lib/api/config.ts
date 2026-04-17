@@ -246,6 +246,8 @@ export const API_ENDPOINTS = {
     cloneShare: (id: string) => `/playbooks/${id}/clone-share`,
     clone: (id: string) => `/playbooks/${id}/clone`,
     schedule: (id: string) => `/playbooks/${id}/schedule`,
+    triggers: (id: string) => `/playbooks/${id}/triggers`,
+    triggerSchedule: (id: string) => `/playbooks/${id}/triggers/schedule`,
     favorite: (id: string) => `/playbooks/${id}/favorite`,
     bulkDelete: '/playbooks/bulk-delete',
     activeExecutions: '/playbooks/active-executions',

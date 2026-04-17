@@ -1,5 +1,27 @@
 # Changelog
 
+## [2026-04-17 09:00 UTC] — Add playbook trigger abstraction
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added trigger-oriented playbook contracts and endpoints that expose `manual` as the default trigger plus `schedule` as the current automated trigger, while updating the frontend schedule entry points to a `Triggers` panel and trigger-specific routes without changing the underlying schedule runner/storage.
+- **Why:** The playbook feature needs an extensible trigger model for future automation sources such as inbound mail, while keeping the existing schedule implementation stable during the first rollout.
+- **Impact:** Backend playbook controller/service/interfaces, frontend playbook API/types/toolbar/card/canvas trigger entry points, and playbook locale strings.
+
+## [2026-04-17 00:15 UTC] — Connector editor UX improvements
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** Replaced manual key entry with a connected-app selector; runtime auth config now uses structured `authStrategy`, `authHeader`, and `authEnv` fields instead of raw JSON entry; auth type is derived from `authSource` in the submit path instead of manual modal editing; MCP inspection now auto-loads discovered tools into the `actions` JSON field while previewing them.
+- **Why:** Reduce user error and onboarding friction by guiding credential input through selectable connected apps, structured auth fields, and auto-populated action discovery rather than manual JSON editing.
+- **Impact:** Frontend connector editor modal and binding configuration UI.
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Hardened backend playbook execution terminal-state transitions and added regression coverage for cancel vs transport-abort handling plus interrupt-resume-abort stream lifecycles; updated ADK playbook streaming to surface workflow failures as explicit gRPC aborts, bound workflow/step stream queues via env-backed settings, and refined queue pressure handling so the latest interrupt and terminal control events win over stale progress updates.
+- **Why:** Production readiness required deterministic workflow finalization, explicit cross-service failure signaling, and bounded stream buffering so backend and ADK execution state stay consistent under cancellation, resume, and error conditions.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/config/settings.py`, `yellowstorm-adk/tests/test_chatbot_servicer_playbook_streaming.py`, `yellowstorm-adk/.env`
+
 ## [2026-04-16 12:00 UTC] — Fix duplicate playbook step persistence and judge summary execution
 
 - **Feature:** `playbook`

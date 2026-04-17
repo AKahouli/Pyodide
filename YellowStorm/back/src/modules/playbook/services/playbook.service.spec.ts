@@ -527,14 +527,15 @@ describe('PlaybookService', () => {
       expect(lastExecMatch).toBeDefined();
     });
 
-    it('should not add execution lookup for default sort', async () => {
+    it('should still project schedule-enabled summaries for default sort', async () => {
       playbookModel.aggregate.mockResolvedValue([{ metadata: [], data: [] }]);
 
       await service.findAllByUser(MOCK_USER_ID, {});
 
       const pipeline = playbookModel.aggregate.mock.calls[0][0];
-      const lookupStage = pipeline.find((s: any) => s.$lookup);
-      expect(lookupStage).toBeUndefined();
+      const projectStage = pipeline.find((s: any) => s.$facet?.data?.some?.((entry: any) => entry.$project));
+      const dataProject = projectStage.$facet.data.find((entry: any) => entry.$project)?.$project;
+      expect(dataProject.scheduleEnabled).toBeDefined();
     });
 
     it('should respect custom page and limit', async () => {

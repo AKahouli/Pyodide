@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
@@ -17,6 +18,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Separator } from '@/components/ui/separator';
 import { usePlaybookStore } from '../../store';
 import { useModuleTranslation } from '@/modules/localization';
 import type { ModuleTranslationKey } from '@/modules/localization/types';
@@ -45,16 +48,17 @@ interface Props {
 
 export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule }: Props) {
   const { t, language } = useModuleTranslation('playbook');
-  const upsertPlaybookSchedule = usePlaybookStore((s) => s.upsertPlaybookSchedule);
-  const clearPlaybookSchedule = usePlaybookStore((s) => s.clearPlaybookSchedule);
-  const scheduleSaving = usePlaybookStore((s) => s.scheduleSaving);
+  const upsertPlaybookTriggerSchedule = usePlaybookStore((s) => s.upsertPlaybookTriggerSchedule);
+  const clearPlaybookTriggerSchedule = usePlaybookStore((s) => s.clearPlaybookTriggerSchedule);
+  const triggerSaving = usePlaybookStore((s) => s.triggerSaving);
 
   const [draft, setDraft] = useState<UpsertPlaybookScheduleData>(defaultSchedule());
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const automatedTriggerType = draft.enabled ? 'schedule' : 'none';
 
   useEffect(() => {
     if (open) {
-      setDraft(fromExecutionSchedule(schedule));
+      setDraft(schedule?.enabled ? fromExecutionSchedule(schedule) : { enabled: false });
     }
   }, [open, schedule]);
 
@@ -132,7 +136,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
       return;
     }
     try {
-      await upsertPlaybookSchedule(playbookId, payload);
+      await upsertPlaybookTriggerSchedule(playbookId, payload);
       onOpenChange(false);
     } catch {
       /* toast in store */
@@ -142,11 +146,31 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
   const handleRemove = async () => {
     setShowConfirmDialog(false);
     try {
-      await clearPlaybookSchedule(playbookId);
+      await clearPlaybookTriggerSchedule(playbookId);
       onOpenChange(false);
     } catch {
       /* toast in store */
     }
+  };
+
+  const handleAutomatedTriggerChange = (value: string) => {
+    if (value === 'schedule') {
+      setDraft((current) => {
+        const next = fromExecutionSchedule(schedule);
+        return {
+          ...next,
+          enabled: true,
+          type: next.type ?? current.type ?? 'daily',
+          daily: next.daily ?? current.daily ?? { timesLocal: ['09:00'] },
+          weekly: next.weekly ?? current.weekly,
+          monthly: next.monthly ?? current.monthly,
+          advanced: next.advanced ?? current.advanced,
+        };
+      });
+      return;
+    }
+
+    setDraft({ enabled: false });
   };
 
   return (
@@ -157,18 +181,73 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
       >
         <SheetHeader>
           <SheetTitle>{t('schedule.title')}</SheetTitle>
+          <SheetDescription>{t('triggers.description')}</SheetDescription>
         </SheetHeader>
 
         <div className="space-y-4 py-4 flex-1">
-          <ScheduleActiveToggle
-            draft={draft}
-            schedule={schedule}
-            t={t}
-            setDraft={setDraft}
-          />
+          <section className="rounded-xl border bg-muted/20 p-4 space-y-2">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{t('triggers.manual.title')}</div>
+              <p className="text-sm text-muted-foreground">{t('triggers.manual.description')}</p>
+            </div>
+            <div className="inline-flex rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+              {t('triggers.manual.badge')}
+            </div>
+          </section>
 
-          {draft.enabled && (
+          <Separator />
+
+          <section className="space-y-3">
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{t('triggers.automated.title')}</div>
+              <p className="text-sm text-muted-foreground">{t('triggers.automated.description')}</p>
+            </div>
+
+            <RadioGroup
+              value={automatedTriggerType}
+              onValueChange={handleAutomatedTriggerChange}
+              className="space-y-3"
+            >
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border p-4 hover:border-primary/40">
+                <RadioGroupItem value="none" id="trigger-none" className="mt-0.5" />
+                <div className="space-y-1">
+                  <div className="text-sm font-medium">{t('triggers.automated.noneTitle')}</div>
+                  <p className="text-sm text-muted-foreground">{t('triggers.automated.noneDescription')}</p>
+                </div>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border p-4 hover:border-primary/40">
+                <RadioGroupItem value="schedule" id="trigger-schedule" className="mt-0.5" />
+                <div className="space-y-1">
+                  <div className="text-sm font-medium">{t('triggers.automated.scheduleTitle')}</div>
+                  <p className="text-sm text-muted-foreground">{t('triggers.automated.scheduleDescription')}</p>
+                </div>
+              </label>
+
+              <div className="flex items-start gap-3 rounded-xl border border-dashed p-4 opacity-70">
+                <div className="mt-0.5 flex h-4 w-4 items-center justify-center rounded-full border border-muted-foreground/50" />
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <span>{t('triggers.automated.mailTitle')}</span>
+                    <span className="rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                      {t('triggers.comingSoon')}
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{t('triggers.automated.mailDescription')}</p>
+                </div>
+              </div>
+            </RadioGroup>
+          </section>
+
+          {automatedTriggerType === 'schedule' && (
             <>
+              <ScheduleActiveToggle
+                draft={draft}
+                schedule={schedule}
+                t={t}
+                setDraft={setDraft}
+              />
+
               <ScheduleTypeSelector
                 type={draft.type ?? 'daily'}
                 onTypeChange={setType}
@@ -212,13 +291,13 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
         </div>
 
         <div className="border-t pt-4 mt-auto flex flex-wrap gap-2 justify-end">
-          {schedule?.enabled && (
+          {schedule?.enabled && automatedTriggerType === 'schedule' && (
             <Button
               type="button"
               variant="destructive"
               className="mr-auto"
               onClick={() => setShowConfirmDialog(true)}
-              disabled={scheduleSaving}
+              disabled={triggerSaving}
             >
               {t('schedule.remove')}
             </Button>
@@ -226,8 +305,8 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             {t('schedule.cancel')}
           </Button>
-          <Button type="button" onClick={() => void handleSave()} disabled={scheduleSaving}>
-            {scheduleSaving ? t('schedule.saving') : t('schedule.save')}
+          <Button type="button" onClick={() => void handleSave()} disabled={triggerSaving}>
+            {triggerSaving ? t('schedule.saving') : t('schedule.save')}
           </Button>
         </div>
       </SheetContent>

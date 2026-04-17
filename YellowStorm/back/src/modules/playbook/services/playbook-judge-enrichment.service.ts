@@ -166,6 +166,18 @@ export class PlaybookJudgeEnrichmentService {
     return result.modifiedCount > 0;
   }
 
+  private async failClaimedExecutionSummary(executionId: string): Promise<void> {
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), judgeSummaryStatus: 'evaluating' },
+      {
+        $set: {
+          judgeSummaryStatus: 'failed',
+          updatedAt: new Date(),
+        },
+      },
+    );
+  }
+
   async applyCurrentPlaybook(userId: string, playbookId: string, executionId: string): Promise<any> {
     const payload = await this.buildRewritePayload('judge.rewrite_current_playbook', executionId);
     return this.playbookService.update(playbookId, {
@@ -587,11 +599,17 @@ export class PlaybookJudgeEnrichmentService {
     }));
 
     const httpClient = this.liteLLMConnectionService.getHttpClient();
-    if (!httpClient) return;
+    if (!httpClient) {
+      await this.failClaimedExecutionSummary(executionId);
+      return;
+    }
 
     const defaultModel = await this.modelsService.getDefaultModel();
     const model = defaultModel?.id || defaultModel?.litellmModel || '';
-    if (!model) return;
+    if (!model) {
+      await this.failClaimedExecutionSummary(executionId);
+      return;
+    }
 
     const prompt = await this.promptService.findByKey('judge.execution_summary');
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return strict JSON only.';
@@ -655,15 +673,7 @@ export class PlaybookJudgeEnrichmentService {
       });
       this.logger.log('Completed playbook judge summary', { executionId, overallScore: judgeSummary.overallScore });
     } catch (error) {
-      await this.executionModel.updateOne(
-        { _id: new Types.ObjectId(executionId), judgeSummaryStatus: 'evaluating' },
-        {
-          $set: {
-            judgeSummaryStatus: 'failed',
-            updatedAt: new Date(),
-          },
-        },
-      );
+      await this.failClaimedExecutionSummary(executionId);
       throw error;
     }
   }

@@ -186,6 +186,30 @@ export interface ExecutionScheduleData {
   advanced: AdvancedSchedulePayloadData | null;
 }
 
+export interface PlaybookManualTrigger {
+  type: 'manual';
+  enabled: true;
+}
+
+export interface PlaybookScheduleTrigger {
+  type: 'schedule';
+  enabled: boolean;
+  schedule: ExecutionScheduleData | null;
+}
+
+export interface PlaybookMailTrigger {
+  type: 'mail';
+  enabled: false;
+  available: false;
+}
+
+export type PlaybookTrigger = PlaybookManualTrigger | PlaybookScheduleTrigger | PlaybookMailTrigger;
+
+export interface PlaybookTriggersData {
+  automatedTriggerType: 'schedule' | 'mail' | null;
+  triggers: PlaybookTrigger[];
+}
+
 /** Body for PUT /playbooks/:id/schedule (aligns with backend UpsertPlaybookScheduleDto). */
 export interface UpsertPlaybookScheduleData {
   enabled: boolean;
@@ -205,6 +229,7 @@ export interface PlaybookSummary {
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
   scheduleEnabled: boolean;
+  automatedTriggerType?: 'schedule' | 'mail' | null;
   /** Latest known execution state for the list badge. */
   executionStatus?: ExecutionStatus | null;
   integrationToken?: string | null;
@@ -239,6 +264,8 @@ export interface Playbook {
   isFavorite: boolean;
   isActive: boolean;
   executionSchedule: ExecutionScheduleData | null;
+  triggers: PlaybookTrigger[];
+  automatedTriggerType: 'schedule' | 'mail' | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -900,9 +927,9 @@ export interface PlaybookState {
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
   canvasSyncVersion: number;
-  /** Saving schedule (PUT/DELETE /playbooks/:id/schedule) */
-  scheduleSaving: boolean;
-  scheduleError: string | null;
+  /** Saving automated trigger configuration */
+  triggerSaving: boolean;
+  triggerError: string | null;
 }
 
 export interface PlaybookActions {
@@ -918,8 +945,8 @@ export interface PlaybookActions {
   clonePlaybook: (id: string) => Promise<Playbook>;
   toggleFavorite: (id: string) => Promise<void>;
   bulkDeletePlaybooks: (ids: string[]) => Promise<void>;
-  upsertPlaybookSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
-  clearPlaybookSchedule: (playbookId: string) => Promise<void>;
+  upsertPlaybookTriggerSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
+  clearPlaybookTriggerSchedule: (playbookId: string) => Promise<void>;
 
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;

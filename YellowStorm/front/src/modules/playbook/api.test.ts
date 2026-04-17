@@ -12,8 +12,8 @@ import {
   getPlaybooks,
   toggleFavorite,
   updatePlaybook,
-  upsertPlaybookSchedule,
-  clearPlaybookSchedule,
+  upsertPlaybookTriggerSchedule,
+  clearPlaybookTriggerSchedule,
   rerunPlaybookStep,
   resumePlaybookFromStep,
 } from './api';
@@ -132,15 +132,15 @@ describe('playbook api', () => {
     expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.execution('p1', 'e1'));
   });
 
-  it('upserts and clears playbook schedule', async () => {
+  it('upserts and clears playbook trigger schedule', async () => {
     apiClientMock.put.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
-    await upsertPlaybookSchedule('p1', {
+    await upsertPlaybookTriggerSchedule('p1', {
       enabled: true,
       timezone: 'UTC',
       type: 'daily',
       daily: { timesLocal: ['09:00'] },
     });
-    expect(apiClientMock.put).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'), {
+    expect(apiClientMock.put).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.triggerSchedule('p1'), {
       enabled: true,
       timezone: 'UTC',
       type: 'daily',
@@ -148,8 +148,8 @@ describe('playbook api', () => {
     });
 
     apiClientMock.delete.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
-    await clearPlaybookSchedule('p1');
-    expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'));
+    await clearPlaybookTriggerSchedule('p1');
+    expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.triggerSchedule('p1'));
   });
 
   it('toggles favorite, bulk deletes, clones, and clone-shares', async () => {

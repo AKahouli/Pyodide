@@ -43,6 +43,59 @@ logger = get_logger(__name__)
 app_settings = get_settings()
 
 
+async def _put_progress_event(queue: asyncio.Queue, item: Dict[str, Any]) -> None:
+    """Keep streaming queues bounded while preferring newer progress updates."""
+
+    def _priority(payload: Optional[Dict[str, Any]]) -> int:
+        if not isinstance(payload, dict):
+            return 0
+
+        update = (
+            payload.get("step_update")
+            if isinstance(payload.get("step_update"), dict)
+            else payload
+        )
+        if not isinstance(update, dict):
+            return 0
+
+        if update.get("interrupt"):
+            return 3
+
+        status = str(update.get("status") or "").strip().lower()
+        if status in {"failed", "completed", "suspended", "skipped"}:
+            return 2
+
+        if status == "in_progress" or update.get("output") or update.get("components"):
+            return 1
+
+        return 0
+
+    try:
+        queue.put_nowait(item)
+        return
+    except asyncio.QueueFull:
+        pass
+
+    dropped_item: Optional[Dict[str, Any]] = None
+    try:
+        dropped_item = queue.get_nowait()
+    except asyncio.QueueEmpty:
+        dropped_item = None
+
+    if dropped_item and _priority(dropped_item) > _priority(item):
+        try:
+            queue.put_nowait(dropped_item)
+        except asyncio.QueueFull:
+            pass
+
+    try:
+        queue.put_nowait(item)
+    except asyncio.QueueFull:
+        logger.warning(
+            "[stream_queue] Dropping progress event because queue remained full"
+        )
+
+
 class ChatbotServicer(
     chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grpc else object
 ):
@@ -65,7 +118,7 @@ class ChatbotServicer(
 
     @staticmethod
     def _serialize_run_agent_team_request(
-            request: "chatbot_pb2.RunAgentTeamRequest"
+        request: "chatbot_pb2.RunAgentTeamRequest",
     ) -> Dict[str, Any]:
         """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
         return MessageToDict(
@@ -1422,8 +1475,11 @@ class ChatbotServicer(
             ],
         )
 
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
+        )
         thread_id = f"{request.playbook_id}_{uuid.uuid4().hex[:8]}"
+        bg_task: Optional[asyncio.Task] = None
 
         try:
             tasks = [_proto_task_to_dict(t) for t in request.tasks]
@@ -1479,8 +1535,9 @@ class ChatbotServicer(
             logger.error(
                 "[RunPlaybookWorkflow] Unhandled error", error=str(e), exc_info=True
             )
-            yield chatbot_pb2.PlaybookStreamChunk(
-                thread_id="",
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Playbook workflow failed: {str(e)}",
             )
 
         finally:
@@ -1498,7 +1555,10 @@ class ChatbotServicer(
             task_id=request.task_id,
         )
 
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
+        )
+        bg_task: Optional[asyncio.Task] = None
 
         try:
             human_response = {
@@ -1538,8 +1598,9 @@ class ChatbotServicer(
             logger.error(
                 "[ResumePlaybookWorkflow] Unhandled error", error=str(e), exc_info=True
             )
-            yield chatbot_pb2.PlaybookStreamChunk(
-                thread_id=request.thread_id,
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Playbook workflow resume failed: {str(e)}",
             )
 
         finally:
@@ -1609,8 +1670,7 @@ class ChatbotServicer(
                         "[_stream_playbook_queue] Background task was cancelled"
                     )
                     get_task.cancel()
-                    yield chatbot_pb2.PlaybookStreamChunk(thread_id=thread_id)
-                    return
+                    raise asyncio.CancelledError()
                 exc = bg_task.exception()
                 if exc:
                     logger.error(
@@ -1618,8 +1678,7 @@ class ChatbotServicer(
                         error=str(exc),
                     )
                     get_task.cancel()
-                    yield chatbot_pb2.PlaybookStreamChunk(thread_id=thread_id)
-                    return
+                    raise exc
 
             item = await get_task
 
@@ -1721,10 +1780,12 @@ class ChatbotServicer(
             "[RunStepStream] Request received", task_id=task_id, agent=agent_name
         )
 
-        queue: asyncio.Queue[dict] = asyncio.Queue()
+        queue: asyncio.Queue[dict] = asyncio.Queue(
+            maxsize=app_settings.STEP_STREAM_QUEUE_MAXSIZE
+        )
 
         async def on_progress(progress: Dict[str, Any]) -> None:
-            await queue.put(progress)
+            await _put_progress_event(queue, progress)
 
         try:
             task = _proto_task_to_dict(request.task)

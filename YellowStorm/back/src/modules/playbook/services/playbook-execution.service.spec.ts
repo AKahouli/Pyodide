@@ -781,6 +781,8 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       const playbookId = objectId('pb1').toString();
@@ -1116,6 +1118,63 @@ describe('PlaybookExecutionService', () => {
 
       const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(false);
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: { $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: ExecutionStatus.CANCELLED }),
+        }),
+      );
+      expect(mockLoggerService.error).not.toHaveBeenCalledWith(
+        'Workflow stream error',
+        expect.anything(),
+      );
+    });
+
+    it('should fail execution on transport-level gRPC abort errors', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+      mockGrpcService.wasCancelled.mockReturnValue(false);
+
+      const execution = createMockExecution();
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      const grpcAbortError = Object.assign(new Error('13 INTERNAL: Playbook workflow failed: boom'), {
+        code: 13,
+        details: 'Playbook workflow failed: boom',
+      });
+
+      mockStream.emit('error', grpcAbortError);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: { $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: ExecutionStatus.FAILED }),
+        }),
+      );
+      expect(mockLoggerService.error).toHaveBeenCalledWith(
+        'Workflow stream error',
+        expect.objectContaining({
+          executionId: objectId('exec1').toString(),
+          error: grpcAbortError.message,
+        }),
+      );
     });
 
     it('should register and remove gRPC stream calls', async () => {
@@ -2015,8 +2074,11 @@ describe('PlaybookExecutionService', () => {
       // But no stream to cancel
       expect(mockGrpcService.markCancelled).not.toHaveBeenCalled();
       // Should mark as cancelled directly
-      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        executionId,
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: executionId,
+          status: { $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+        }),
         expect.objectContaining({
           $set: expect.objectContaining({
             status: ExecutionStatus.CANCELLED,
@@ -2748,6 +2810,109 @@ describe('PlaybookExecutionService', () => {
         }),
       );
     });
+
+    it('should handle interrupt then fail on a later resume gRPC abort', async () => {
+      const execution = {
+        ...createMockExecution({
+          executedBy: objectId('user1'),
+          status: ExecutionStatus.INTERRUPTED,
+          threadId: 'thread-abc',
+          singleStepTaskId: null,
+          playbookSnapshot: { tasks: [{ id: 'task-1' }, { id: 'task-2' }], edges: [] },
+          taskResults: [
+            { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+            { taskId: 'task-2', status: StepStatus.PENDING, components: [] },
+          ],
+        }),
+        markModified: jest.fn(),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+
+      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+
+      const firstResumeStream = createMockStream();
+      mockGrpcService.resumePlaybookWorkflow.mockReturnValueOnce(firstResumeStream);
+
+      await service.resumeExecution(userId, objectId('pb1').toString(), {
+        executionId: objectId('exec1').toString(),
+        taskId: 'task-1',
+        approved: true,
+      } as any);
+
+      firstResumeStream.emit('data', {
+        thread_id: 'thread-abc',
+        step_update: {
+          task_id: 'task-2',
+          status: 'suspended',
+          interrupt: {
+            type: 'approval',
+            task_id: 'task-2',
+            message: 'Need approval for task 2',
+            interrupt_id: 'interrupt-2',
+            round: 2,
+          },
+        },
+      });
+
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      firstResumeStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_interrupt',
+          data: expect.objectContaining({
+            taskId: 'task-2',
+            interruptId: 'interrupt-2',
+          }),
+        }),
+      );
+
+      const interruptedExecution = {
+        ...execution,
+        status: ExecutionStatus.INTERRUPTED,
+        interruptPayload: { interruptId: 'interrupt-2', type: 'approval', round: 2 },
+      };
+
+      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(interruptedExecution) });
+      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(interruptedExecution) });
+
+      const secondResumeStream = createMockStream();
+      mockGrpcService.resumePlaybookWorkflow.mockReturnValueOnce(secondResumeStream);
+      mockGrpcService.wasCancelled.mockReturnValue(false);
+
+      await service.resumeExecution(userId, objectId('pb1').toString(), {
+        executionId: objectId('exec1').toString(),
+        taskId: 'task-2',
+        approved: true,
+      } as any);
+
+      const grpcAbortError = Object.assign(new Error('13 INTERNAL: Playbook workflow resume failed: boom'), {
+        code: 13,
+        details: 'Playbook workflow resume failed: boom',
+      });
+      secondResumeStream.emit('error', grpcAbortError);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: { $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: ExecutionStatus.FAILED }),
+        }),
+      );
+      expect(mockLoggerService.error).toHaveBeenCalledWith(
+        'Workflow stream error',
+        expect.objectContaining({
+          executionId: objectId('exec1').toString(),
+          error: grpcAbortError.message,
+        }),
+      );
+    });
   });
 
   // ===== Email notifications =====
@@ -3074,8 +3239,11 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        objectId('exec1').toString(),
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: { $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+        }),
         expect.objectContaining({
           $set: expect.objectContaining({
             status: ExecutionStatus.CANCELLED,
@@ -3086,16 +3254,6 @@ describe('PlaybookExecutionService', () => {
       expect(mockLoggerService.warn).not.toHaveBeenCalledWith(
         'Stream ended prematurely with tasks still pending/running',
         expect.anything(),
-      );
-      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
-        userId,
-        expect.objectContaining({
-          type: 'playbook_execution_complete',
-          data: expect.objectContaining({
-            executionId: objectId('exec1').toString(),
-            status: ExecutionStatus.CANCELLED,
-          }),
-        }),
       );
     });
 
@@ -3117,6 +3275,7 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
@@ -3130,8 +3289,11 @@ describe('PlaybookExecutionService', () => {
         expect.any(Object),
       );
 
-      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        objectId('exec1').toString(),
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: { $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED] },
+        }),
         expect.objectContaining({
           $set: expect.objectContaining({
             status: ExecutionStatus.FAILED,
@@ -3157,6 +3319,10 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne
+        .mockResolvedValueOnce({ modifiedCount: 1 })
+        .mockResolvedValueOnce({ modifiedCount: 1 })
+        .mockResolvedValueOnce({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
@@ -3194,6 +3360,7 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
@@ -3202,14 +3369,58 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+      expect(mockStreamGateway.sendToUser.mock.calls).toEqual(expect.arrayContaining([
+        [
+          userId,
+          expect.objectContaining({
+            type: 'playbook_execution_complete',
+            data: expect.objectContaining({
+              executionId: objectId('exec1').toString(),
+              status: ExecutionStatus.COMPLETED,
+            }),
+          }),
+        ],
+      ]));
+    });
+
+    it('should skip completed terminalization when another terminal path already won', async () => {
+      const userId = objectId('user1').toString();
+
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 0 });
+
+      await (service as any).markExecutionCompleted(
+        userId,
+        objectId('exec1').toString(),
+        new Date('2026-03-10T10:00:00Z'),
+      );
+
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(
         userId,
         expect.objectContaining({
           type: 'playbook_execution_complete',
-          data: expect.objectContaining({
-            executionId: objectId('exec1').toString(),
-            status: ExecutionStatus.COMPLETED,
-          }),
+          data: expect.objectContaining({ status: ExecutionStatus.COMPLETED }),
+        }),
+      );
+      expect(mockJudgeEnrichmentService.scheduleExecutionSweep).not.toHaveBeenCalled();
+    });
+
+    it('should skip failed terminalization when another terminal path already won', async () => {
+      const userId = objectId('user1').toString();
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 0 });
+
+      await (service as any).markRemainingSkippedAndFail(
+        userId,
+        objectId('exec1').toString(),
+        'boom',
+        new Date('2026-03-10T10:00:00Z'),
+      );
+
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_execution_complete',
+          data: expect.objectContaining({ status: ExecutionStatus.FAILED }),
         }),
       );
     });

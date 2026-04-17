@@ -57,7 +57,6 @@ export class Tool extends Document {
 export const ToolSchema = SchemaFactory.createForClass(Tool);
 
 // Indexes
-ToolSchema.index({ name: 1 });
 ToolSchema.index({ isActive: 1 });
 ToolSchema.index({ defaultAgentTypes: 1 });
 

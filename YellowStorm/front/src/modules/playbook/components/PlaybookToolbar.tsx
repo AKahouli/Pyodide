@@ -25,8 +25,8 @@ interface Props {
   onAdvisorAutopilotChange?: (enabled: boolean) => void;
   onDownloadAllResults?: () => void;
   canDownloadAllResults?: boolean;
-  /** Opens schedule dialog (design mode). */
-  onSchedule?: () => void;
+  /** Opens triggers dialog (design mode). */
+  onTriggers?: () => void;
 }
 
 export function PlaybookToolbar({
@@ -49,7 +49,7 @@ export function PlaybookToolbar({
   onAdvisorAutopilotChange,
   onDownloadAllResults,
   canDownloadAllResults = false,
-  onSchedule,
+  onTriggers,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showCopilotAction = pageMode === 'design' || hasPendingInterrupt || copilotOpen;
@@ -96,11 +96,11 @@ export function PlaybookToolbar({
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
         </Button>
       )}
-      {onSchedule && (
-         <Button variant="outline" size="sm" onClick={onSchedule} className="px-2 sm:px-3">
-             <CalendarClock className="h-4 w-4 sm:mr-1" />
-             <span className="hidden sm:inline">{t('toolbar.schedule')}</span>
-         </Button>
+      {onTriggers && (
+          <Button variant="outline" size="sm" onClick={onTriggers} className="px-2 sm:px-3">
+              <CalendarClock className="h-4 w-4 sm:mr-1" />
+              <span className="hidden sm:inline">{t('toolbar.triggers')}</span>
+          </Button>
       )}
       <Popover>
         <PopoverTrigger asChild>

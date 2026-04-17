@@ -23,6 +23,7 @@ describe('PlaybookController', () => {
       | 'revertToSnapshot'
       | 'cloneForUser'
       | 'getSchedule'
+      | 'getTriggers'
       | 'upsertSchedule'
       | 'clearSchedule'
       | 'getOrCreateIntegrationToken'
@@ -59,6 +60,7 @@ describe('PlaybookController', () => {
       revertToSnapshot: jest.fn().mockResolvedValue({ id: playbookId }),
       cloneForUser: jest.fn().mockResolvedValue({ id: 'cloned-789' }),
       getSchedule: jest.fn().mockResolvedValue(null),
+      getTriggers: jest.fn().mockResolvedValue({ automatedTriggerType: null, triggers: [] }),
       upsertSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
       clearSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
       getOrCreateIntegrationToken: jest.fn().mockResolvedValue({ token: 'integration-token' }),
@@ -97,6 +99,7 @@ describe('PlaybookController', () => {
       playbookService as unknown as PlaybookService,
       executionService as unknown as PlaybookExecutionService,
       designService as unknown as PlaybookDesignService,
+      {} as any,
       {} as any,
       {} as any,
       streamGateway as unknown as PlaybookStreamGatewayService,

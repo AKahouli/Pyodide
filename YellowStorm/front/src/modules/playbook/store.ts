@@ -122,8 +122,8 @@ const initialState: PlaybookState = {
   undoStack: [],
   redoStack: [],
   canvasSyncVersion: 0,
-  scheduleSaving: false,
-  scheduleError: null,
+  triggerSaving: false,
+  triggerError: null,
 };
 
 // ===== Stable empty references =====
@@ -605,50 +605,64 @@ export const usePlaybookStore = create<PlaybookStore>()(
         return cloned;
       },
 
-      upsertPlaybookSchedule: async (playbookId: string, data: UpsertPlaybookScheduleData) => {
-        set({ scheduleSaving: true, scheduleError: null });
+      upsertPlaybookTriggerSchedule: async (playbookId: string, data: UpsertPlaybookScheduleData) => {
+        set({ triggerSaving: true, triggerError: null });
         try {
-          const pb = await api.upsertPlaybookSchedule(playbookId, data);
+          const pb = await api.upsertPlaybookTriggerSchedule(playbookId, data);
           const scheduleEnabled = pb.executionSchedule?.enabled === true;
           set((state) => ({
-            scheduleSaving: false,
+            triggerSaving: false,
             currentPlaybook:
               state.currentPlaybook?.id === playbookId
-                ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
                 : state.currentPlaybook,
             playbooks: state.playbooks.some((p) => p.id === playbookId)
               ? state.playbooks.map((p) =>
-                p.id === playbookId ? { ...p, scheduleEnabled } : p,
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: pb.automatedTriggerType }
+                  : p,
               )
               : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleSaved', 'Schedule saved'));
         } catch (err) {
-          set({ scheduleSaving: false, scheduleError: parseApiError(err).message });
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
           handleApiError(err);
           throw err;
         }
       },
 
-      clearPlaybookSchedule: async (playbookId: string) => {
-        set({ scheduleSaving: true, scheduleError: null });
+      clearPlaybookTriggerSchedule: async (playbookId: string) => {
+        set({ triggerSaving: true, triggerError: null });
         try {
-          const pb = await api.clearPlaybookSchedule(playbookId);
+          const pb = await api.clearPlaybookTriggerSchedule(playbookId);
           set((state) => ({
-            scheduleSaving: false,
+            triggerSaving: false,
             currentPlaybook:
               state.currentPlaybook?.id === playbookId
-                ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
                 : state.currentPlaybook,
             playbooks: state.playbooks.some((p) => p.id === playbookId)
               ? state.playbooks.map((p) =>
-                p.id === playbookId ? { ...p, scheduleEnabled: false } : p,
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled: false, automatedTriggerType: null }
+                  : p,
               )
               : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleCleared', 'Schedule removed'));
         } catch (err) {
-          set({ scheduleSaving: false, scheduleError: parseApiError(err).message });
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
           handleApiError(err);
           throw err;
         }

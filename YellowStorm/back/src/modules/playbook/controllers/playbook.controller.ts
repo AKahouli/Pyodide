@@ -157,6 +157,15 @@ export class PlaybookController {
     return this.playbookService.getSchedule(id);
   }
 
+  @Get(':id/triggers')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get playbook triggers (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Derived trigger model for the playbook' })
+  async getTriggers(@Param('id') id: string) {
+    return this.playbookService.getTriggers(id);
+  }
+
   @Put(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
   @ApiOperation({ summary: 'Create or replace execution schedule (owner only)' })
@@ -166,12 +175,30 @@ export class PlaybookController {
     return this.playbookService.upsertSchedule(id, dto);
   }
 
+  @Put(':id/triggers/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create or replace the schedule automated trigger (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with updated schedule trigger' })
+  async upsertScheduleTrigger(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
+    return this.playbookService.upsertSchedule(id, dto);
+  }
+
   @Delete(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
   @ApiOperation({ summary: 'Remove execution schedule from playbook (owner only)' })
   @ApiParam({ name: 'id', description: 'Playbook id' })
   @ApiResponse({ status: 200, description: 'Playbook with executionSchedule cleared' })
   async clearSchedule(@Param('id') id: string) {
+    return this.playbookService.clearSchedule(id);
+  }
+
+  @Delete(':id/triggers/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Disable the schedule automated trigger (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with schedule trigger disabled' })
+  async clearScheduleTrigger(@Param('id') id: string) {
     return this.playbookService.clearSchedule(id);
   }
 
