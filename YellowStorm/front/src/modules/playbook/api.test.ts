@@ -10,6 +10,7 @@ import {
   getExecution,
   getPlaybook,
   getPlaybooks,
+  syncPlaybookTriggerMailSubscription,
   toggleFavorite,
   updatePlaybook,
   upsertPlaybookTriggerSchedule,
@@ -94,6 +95,10 @@ describe('playbook api', () => {
     await updatePlaybook('p1', { tasks: [task] });
 
     expect(apiClientMock.patch).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.byId('p1'), {
+      reflectionEnabled: undefined,
+      advisorAutopilotEnabled: undefined,
+      advisorAutopilotTargetScore: undefined,
+      advisorAutopilotMaxTurns: undefined,
       tasks: [{
         id: 'task-1',
         title: 'Step 1',
@@ -118,6 +123,24 @@ describe('playbook api', () => {
         inputPorts: [],
         outputPorts: [],
       }],
+    });
+  });
+
+  it('keeps playbook advisor settings when updating without tasks', async () => {
+    apiClientMock.patch.mockResolvedValueOnce({ data: { data: { id: 'p1' } } });
+
+    await updatePlaybook('p1', {
+      reflectionEnabled: false,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 95,
+      advisorAutopilotMaxTurns: 3,
+    });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.byId('p1'), {
+      reflectionEnabled: false,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 95,
+      advisorAutopilotMaxTurns: 3,
     });
   });
 
@@ -150,6 +173,21 @@ describe('playbook api', () => {
     apiClientMock.delete.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
     await clearPlaybookTriggerSchedule('p1');
     expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.triggerSchedule('p1'));
+  });
+
+  it('syncs playbook mail subscription', async () => {
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { id: 'sub-1' } } });
+
+    await syncPlaybookTriggerMailSubscription('p1', {
+      notificationUrl: 'https://example.com/api/v1/playbooks/mail/webhook',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      `${API_ENDPOINTS.playbooks.triggerMail('p1')}/sync-subscription`,
+      {
+        notificationUrl: 'https://example.com/api/v1/playbooks/mail/webhook',
+      },
+    );
   });
 
   it('toggles favorite, bulk deletes, clones, and clone-shares', async () => {

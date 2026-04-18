@@ -22,6 +22,7 @@ import type {
   RerunStepData,
   CloneShareResult,
   PlaybookTriggersData,
+  SyncPlaybookMailSubscriptionData,
   UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ValidateTaskReplayData,
@@ -90,6 +91,16 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
     })),
+  };
+}
+
+function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData {
+  return {
+    ...data,
+    reflectionEnabled: data.reflectionEnabled,
+    advisorAutopilotEnabled: data.advisorAutopilotEnabled,
+    advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
+    advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
   };
 }
 
@@ -187,7 +198,7 @@ export async function updatePlaybook(
 ): Promise<Playbook> {
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
-    sanitizePlaybookUpdate(data),
+    sanitizePlaybookSettings(sanitizePlaybookUpdate(data)),
   );
   return response.data.data;
 }
@@ -536,6 +547,17 @@ export async function upsertPlaybookTriggerMail(
 export async function clearPlaybookTriggerMail(playbookId: string): Promise<Playbook> {
   const response = await apiClient.delete<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.triggerMail(playbookId),
+  );
+  return response.data.data;
+}
+
+export async function syncPlaybookTriggerMailSubscription(
+  playbookId: string,
+  data: SyncPlaybookMailSubscriptionData,
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.post<ApiResponse<Record<string, unknown>>>(
+    API_ENDPOINTS.playbooks.triggerMail(playbookId) + '/sync-subscription',
+    data,
   );
   return response.data.data;
 }

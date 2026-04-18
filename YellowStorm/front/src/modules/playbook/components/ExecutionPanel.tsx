@@ -391,7 +391,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
         true,
         task?.stepReplayMode || 'live',
         false,
-        true,
+        playbook.reflectionEnabled !== false,
         execution.advisorAutopilotEnabled === true,
         execution.advisorAutopilotTargetScore,
         execution.advisorAutopilotMaxTurns,

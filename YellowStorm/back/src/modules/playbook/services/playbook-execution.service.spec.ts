@@ -735,6 +735,39 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.playbookSnapshot.edges).toHaveLength(1);
     });
 
+    it('preserves __trigger__ edges in execution snapshots', async () => {
+      const playbook = createMockPlaybook({
+        edges: [
+          {
+            id: 'edge-trigger',
+            sourceId: '__trigger__',
+            targetId: 'task-1',
+            sourceOutputPortId: 'mail_data',
+            targetInputPortId: 'default',
+          },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+
+      await service.executePlaybook(userId, playbookId, dto, userEmail);
+
+      const createArg = mockExecutionModel.create.mock.calls[0][0];
+      expect(createArg.playbookSnapshot.edges).toEqual([
+        expect.objectContaining({
+          sourceId: '__trigger__',
+          sourceOutputPortId: 'mail_data',
+          targetId: 'task-1',
+          targetInputPortId: 'default',
+        }),
+      ]);
+    });
+
     it('preserves distinct same-node edges when ports differ in snapshot merges', () => {
       const snapshot = {
         tasks: [{ id: 'task-1' }, { id: 'task-2' }],
@@ -2948,6 +2981,7 @@ describe('PlaybookExecutionService', () => {
         }),
       );
     });
+
   });
 
   // ===== Email notifications =====

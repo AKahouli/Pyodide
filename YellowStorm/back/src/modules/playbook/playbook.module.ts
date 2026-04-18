@@ -60,6 +60,7 @@ import { PlaybookMailTriggerHandoffService } from './services/playbook-mail-trig
 import { PlaybookMailTriggerTestEventService } from './services/playbook-mail-trigger-test-event.service';
 import { PlaybookMailGraphClientService } from './services/playbook-mail-graph-client.service';
 import { PlaybookMailWebhookService } from './services/playbook-mail-webhook.service';
+import { PlaybookMailSubscriptionRenewalService } from './services/playbook-mail-subscription-renewal.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -132,6 +133,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookMailTriggerTestEventService,
     PlaybookMailGraphClientService,
     PlaybookMailWebhookService,
+    PlaybookMailSubscriptionRenewalService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],

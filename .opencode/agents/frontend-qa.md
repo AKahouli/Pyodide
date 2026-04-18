@@ -1,7 +1,7 @@
 ---
 description: Browser-based validation agent. Verifies UI changes in a real browser using Chrome DevTools and project MCP tooling.
 mode: subagent
-model: z
+model: LiteLLM/gpt-5.4
 tools:
   write: false
   edit: false

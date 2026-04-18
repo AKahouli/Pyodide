@@ -38,6 +38,7 @@ import { escapeRegex } from '../../../common/utils';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
+import { PlaybookMailGraphClientService } from './playbook-mail-graph-client.service';
 
 @Injectable()
 export class PlaybookService {
@@ -52,6 +53,7 @@ export class PlaybookService {
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
+    private readonly mailGraphClient: PlaybookMailGraphClientService,
   ) {
     this.logger.setContext('PlaybookService');
   }
@@ -62,6 +64,10 @@ export class PlaybookService {
       description: dto.description || '',
       tasks: [],
       edges: [],
+      reflectionEnabled: true,
+      advisorAutopilotEnabled: false,
+      advisorAutopilotTargetScore: 90,
+      advisorAutopilotMaxTurns: 4,
       workspaces: (dto.workspaces || []).map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
@@ -115,6 +121,10 @@ export class PlaybookService {
       description: source.description || '',
       tasks: source.tasks || [],
       edges: source.edges || [],
+      reflectionEnabled: source.reflectionEnabled !== false,
+      advisorAutopilotEnabled: source.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: source.advisorAutopilotTargetScore ?? 90,
+      advisorAutopilotMaxTurns: source.advisorAutopilotMaxTurns ?? 4,
       workspaces: source.workspaces || [],
       createdBy: new Types.ObjectId(targetUserId),
       isActive: true,
@@ -287,6 +297,10 @@ export class PlaybookService {
     if (dto.tasks !== undefined) updateData.tasks = dto.tasks;
     if (dto.edges !== undefined) updateData.edges = dto.edges;
     if (dto.workspaces !== undefined) updateData.workspaces = dto.workspaces.map((id) => new Types.ObjectId(id));
+    if (dto.reflectionEnabled !== undefined) updateData.reflectionEnabled = dto.reflectionEnabled;
+    if (dto.advisorAutopilotEnabled !== undefined) updateData.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
+    if (dto.advisorAutopilotTargetScore !== undefined) updateData.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
+    if (dto.advisorAutopilotMaxTurns !== undefined) updateData.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
 
     const playbook = await this.playbookModel
       .findByIdAndUpdate(playbookId, { $set: updateData }, { new: true })
@@ -369,6 +383,16 @@ export class PlaybookService {
   }
 
   async upsertMailTrigger(playbookId: string, dto: UpsertPlaybookMailTriggerDto): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel
+      .findById(playbookId)
+      .select('mailTrigger')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
     const playbook = await this.playbookModel
       .findByIdAndUpdate(
         playbookId,
@@ -377,10 +401,19 @@ export class PlaybookService {
             mailTrigger: {
               enabled: dto.enabled,
               mailboxAppKey: dto.enabled ? (dto.mailboxAppKey ?? null) : null,
-              runtimeEnabled: false,
-              subscriptionId: null,
-              subscriptionClientState: null,
-              subscriptionExpiresAt: null,
+              notificationUrl: dto.enabled
+                ? (dto.notificationUrl ?? existing.mailTrigger?.notificationUrl ?? null)
+                : null,
+              attachmentImportEnabled: dto.enabled ? dto.attachmentImportEnabled === true : false,
+              allowedAttachmentExtensions: dto.enabled
+                ? Array.from(new Set((dto.allowedAttachmentExtensions ?? [])
+                  .map((value) => value.trim().replace(/^\./, '').toLowerCase())
+                  .filter(Boolean)))
+                : [],
+              runtimeEnabled: dto.enabled ? existing.mailTrigger?.runtimeEnabled === true : false,
+              subscriptionId: dto.enabled ? (existing.mailTrigger?.subscriptionId ?? null) : null,
+              subscriptionClientState: dto.enabled ? (existing.mailTrigger?.subscriptionClientState ?? null) : null,
+              subscriptionExpiresAt: dto.enabled ? (existing.mailTrigger?.subscriptionExpiresAt ?? null) : null,
               filters: {
                 from: dto.enabled ? (dto.filters?.from ?? []) : [],
                 subjectContains: dto.enabled ? (dto.filters?.subjectContains ?? []) : [],
@@ -404,6 +437,28 @@ export class PlaybookService {
   }
 
   async clearMailTrigger(playbookId: string): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel
+      .findById(playbookId)
+      .select('createdBy mailTrigger')
+      .lean()
+      .exec();
+
+    if (existing?.mailTrigger?.subscriptionId && existing?.mailTrigger?.mailboxAppKey) {
+      try {
+        await this.mailGraphClient.deleteSubscription(
+          (existing.createdBy as any).toString(),
+          existing.mailTrigger.mailboxAppKey,
+          existing.mailTrigger.subscriptionId,
+        );
+      } catch (err) {
+        this.logger.warn('Failed to delete remote Graph subscription during trigger clear', {
+          playbookId,
+          subscriptionId: existing.mailTrigger.subscriptionId,
+          error: (err as Error).message,
+        });
+      }
+    }
+
     const playbook = await this.playbookModel
       .findByIdAndUpdate(
         playbookId,
@@ -412,6 +467,9 @@ export class PlaybookService {
             mailTrigger: {
               enabled: false,
               mailboxAppKey: null,
+              notificationUrl: null,
+              attachmentImportEnabled: false,
+              allowedAttachmentExtensions: [],
               runtimeEnabled: false,
               subscriptionId: null,
               subscriptionClientState: null,
@@ -442,6 +500,7 @@ export class PlaybookService {
     playbookId: string,
     subscription: {
       mailboxAppKey: string;
+      notificationUrl?: string | null;
       subscriptionId: string | null;
       subscriptionClientState: string;
       subscriptionExpiresAt: string | null;
@@ -454,6 +513,7 @@ export class PlaybookService {
           $set: {
             'mailTrigger.enabled': true,
             'mailTrigger.mailboxAppKey': subscription.mailboxAppKey,
+            'mailTrigger.notificationUrl': subscription.notificationUrl ?? null,
             'mailTrigger.runtimeEnabled': true,
             'mailTrigger.subscriptionId': subscription.subscriptionId,
             'mailTrigger.subscriptionClientState': subscription.subscriptionClientState,
@@ -912,6 +972,10 @@ export class PlaybookService {
         sourceOutputPortId: e.sourceOutputPortId || 'default',
         targetInputPortId: e.targetInputPortId || 'default',
       })),
+      reflectionEnabled: playbook.reflectionEnabled !== false,
+      advisorAutopilotEnabled: playbook.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? 90,
+      advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? 4,
       workspaces: (playbook.workspaces || []).map((w: any) => w.toString()),
       createdBy: playbook.createdBy.toString(),
       isFavorite: playbook.isFavorite || false,
@@ -937,6 +1001,7 @@ export class PlaybookService {
     const normalizedMailTrigger = {
       enabled: mailTrigger?.enabled === true,
       mailboxAppKey: mailTrigger?.mailboxAppKey ?? null,
+      notificationUrl: mailTrigger?.notificationUrl ?? null,
       runtimeEnabled: mailTrigger?.runtimeEnabled === true,
       subscriptionId: mailTrigger?.subscriptionId ?? null,
       subscriptionClientState: mailTrigger?.subscriptionClientState ?? null,
@@ -955,6 +1020,10 @@ export class PlaybookService {
             ? mailTrigger.filters.hasAttachments
             : null,
       },
+      attachmentImportEnabled: mailTrigger?.attachmentImportEnabled === true,
+      allowedAttachmentExtensions: Array.isArray(mailTrigger?.allowedAttachmentExtensions)
+        ? mailTrigger.allowedAttachmentExtensions
+        : [],
       runtimePayloadSchema: null,
     };
     const mailEnabled = normalizedMailTrigger.enabled;

@@ -52,6 +52,24 @@ export class UpsertPlaybookMailTriggerDto {
   @MaxLength(64)
   mailboxAppKey?: string;
 
+  @ApiPropertyOptional({ example: 'https://example.com/api/v1/playbooks/mail/webhook' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  notificationUrl?: string;
+
+  @ApiPropertyOptional({ description: 'Whether matching email attachments should be imported into the playbook workspace.' })
+  @IsOptional()
+  @IsBoolean()
+  attachmentImportEnabled?: boolean;
+
+  @ApiPropertyOptional({ type: [String], description: 'Allowed attachment extensions, without dots.' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(32, { each: true })
+  allowedAttachmentExtensions?: string[];
+
   @ApiPropertyOptional({ type: PlaybookMailTriggerFiltersDto })
   @ValidateIf((o: UpsertPlaybookMailTriggerDto) => o.enabled === true)
   @ValidateNested()

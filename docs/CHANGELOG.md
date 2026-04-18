@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-04-18 06:00 UTC] — Mail trigger v1 complete: runtime, attachments, renewal, UI activation
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Completed the end-to-end mail trigger pipeline: Graph webhook notification → message fetch → dedupe → filter match → attachment import → handoff → playbook execution. Added subscription renewal automation (cron every 10 min), subscription deletion on trigger disable, user-controlled attachment import toggle with allowed-extensions filter, inbox-only subscription scope to prevent duplicate notifications, human-readable mail trigger context in ADK LLM prompts, formalized `trigger_context` proto field with regenerated gRPC stubs, activated the frontend trigger UI (removed "coming soon" messaging, added live subscription status indicators), and comprehensive regression tests (38 tests across 9 suites).
+- **Why:** The mail trigger feature needed a production-ready runtime path from inbox to execution, with proper lifecycle management, user controls, and full test coverage before moving to the next phase.
+- **Impact:** Graph client (subscription CRUD, attachment list/download, renewal, delete), webhook service (post-dedupe attachment import, extension filtering, per-notification error isolation), subscription renewal cron service, playbook schema (attachmentImportEnabled, allowedAttachmentExtensions), proto files (trigger_context field), Python gRPC servicer (_struct_to_dict), ADK prompt builder (mail-specific trigger formatting), frontend UI (live status, attachment toggle, extension input), backend tests (19 new/updated tests), i18n (en/fr).
+
+## [2026-04-17 15:35 UTC] — Wire Graph webhook ingress basics
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added a Microsoft Graph mail client, owner-triggered subscription sync route, public webhook controller/service, persisted mail-trigger subscription metadata, and client-state verification before normalizing real mailbox notifications into the existing trigger pipeline.
+- **Why:** The playbook mail-trigger feature needed a real simple-message Microsoft 365 delivery path beyond the synthetic test-event ingress.
+- **Impact:** New Graph client/webhook services/controllers, playbook mail trigger runtime metadata, and backend tests for Graph fetch and webhook processing.
+
 ## [2026-04-17 15:00 UTC] — Add synthetic mail trigger test ingress
 
 - **Feature:** `playbook`

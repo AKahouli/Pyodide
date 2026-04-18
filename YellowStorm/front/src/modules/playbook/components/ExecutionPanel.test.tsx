@@ -98,7 +98,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
   });
 
-  it('forwards advisor settings when running evaluation for a step', async () => {
+  it('allows manual evaluation while keeping advisor reflection off when disabled on the playbook', async () => {
     const execution = makeExecution({
       status: 'completed',
       advisorAutopilotEnabled: true,
@@ -108,6 +108,7 @@ describe('ExecutionPanel', () => {
     });
     const playbook = makePlaybook({
       id: 'playbook-1',
+      reflectionEnabled: false,
       tasks: [{ ...makePlaybook().tasks[0], id: 't1', stepReplayMode: 'live' }],
     });
     const rerunSpy = vi.spyOn(usePlaybookStore.getState(), 'rerunStepInExecution').mockResolvedValue(undefined as never);
@@ -133,7 +134,7 @@ describe('ExecutionPanel', () => {
       true,
       'live',
       false,
-      true,
+      false,
       true,
       92,
       4,

@@ -217,6 +217,7 @@ export class UpdatePlaybookTaskDto {
     disableAutoSkills?: boolean;
     isEnabled?: boolean;
   }>;
+
 }
 
 export class UpdatePlaybookEdgeDto {
@@ -273,4 +274,24 @@ export class UpdatePlaybookDto {
   @IsArray()
   @IsMongoId({ each: true })
   workspaces?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  reflectionEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  advisorAutopilotEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotTargetScore?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotMaxTurns?: number;
 }

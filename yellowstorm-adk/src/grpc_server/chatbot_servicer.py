@@ -1519,8 +1519,8 @@ class ChatbotServicer(
                     workspace_context=_proto_workspace_context(
                         request.workspace_context
                     ),
-                    trigger_context=dict(request.trigger_context)
-                    if getattr(request, "trigger_context", None)
+                    trigger_context=_struct_to_dict(request.trigger_context)
+                    if request.HasField("trigger_context")
                     else None,
                     queue=queue,
                     thread_id=thread_id,
@@ -2271,6 +2271,13 @@ def _proto_task_result_to_dict(proto_result) -> dict:
         if proto_result.artifacts
         else [],
     }
+
+
+def _struct_to_dict(struct_msg) -> dict:
+    """Convert a google.protobuf.Struct to a plain dict."""
+    if not struct_msg or not struct_msg.fields:
+        return {}
+    return MessageToDict(struct_msg, preserving_proto_field_name=True)
 
 
 def _proto_workspace_context(proto_wc_list) -> list:

@@ -8,6 +8,7 @@ const storeMock = vi.hoisted(() => ({
   clearPlaybookTriggerSchedule: vi.fn(),
   upsertPlaybookTriggerMail: vi.fn(),
   clearPlaybookTriggerMail: vi.fn(),
+  syncPlaybookTriggerMailSubscription: vi.fn(),
   triggerSaving: false,
 }));
 
@@ -58,7 +59,7 @@ describe('PlaybookScheduleSheet', () => {
     expect(screen.getByText('triggers.automated.noneTitle')).toBeInTheDocument();
     expect(screen.getByText('triggers.automated.scheduleTitle')).toBeInTheDocument();
     expect(screen.getByText('triggers.automated.mailTitle')).toBeInTheDocument();
-    expect(screen.getByText('triggers.comingSoon')).toBeInTheDocument();
+    expect(screen.getByText('triggers.automated.mailStatusSetup')).toBeInTheDocument();
     expect(screen.queryByText('schedule.mode')).not.toBeInTheDocument();
   });
 
@@ -72,9 +73,31 @@ describe('PlaybookScheduleSheet', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('radio', { name: /triggers\.automated\.scheduleTitle/i }));
+    await userEvent.click(screen.getByText('triggers.automated.scheduleTitle'));
 
     expect(screen.getByText('schedule.mode')).toBeInTheDocument();
+  });
+
+  it('reveals mail controls when mail is selected from the visible card', async () => {
+    mailboxCapabilityMock.current = {
+      connected: true,
+      mailboxReady: true,
+      missingScopes: [],
+      grantedScopes: ['mail.read'],
+    };
+
+    render(
+      <PlaybookScheduleSheet
+        open
+        onOpenChange={vi.fn()}
+        playbookId="p1"
+        schedule={null}
+      />,
+    );
+
+    await userEvent.click(screen.getByText('triggers.automated.mailTitle'));
+
+    expect(screen.getByRole('textbox', { name: 'triggers.mailConfig.notificationUrl' })).toBeInTheDocument();
   });
 
   it('saves a disabled automated trigger when none is selected', async () => {
@@ -146,6 +169,9 @@ describe('PlaybookScheduleSheet', () => {
           config: {
             enabled: true,
             mailboxAppKey: 'microsoft',
+            notificationUrl: null,
+            attachmentImportEnabled: false,
+            allowedAttachmentExtensions: [],
             filters: {
               from: [],
               subjectContains: [],
@@ -153,6 +179,10 @@ describe('PlaybookScheduleSheet', () => {
               hasAttachments: null,
             },
             runtimeEnabled: false,
+            subscriptionId: null,
+            subscriptionClientState: null,
+            subscriptionExpiresAt: null,
+            runtimePayloadSchema: null,
           },
         }}
       />,
@@ -173,6 +203,57 @@ describe('PlaybookScheduleSheet', () => {
         bodyContains: ['urgent'],
         hasAttachments: true,
       },
+    });
+  });
+
+  it('syncs the Microsoft 365 subscription from the trigger panel', async () => {
+    mailboxCapabilityMock.current = {
+      connected: true,
+      mailboxReady: true,
+      missingScopes: [],
+      grantedScopes: ['mail.read'],
+    };
+
+    render(
+      <PlaybookScheduleSheet
+        open
+        onOpenChange={vi.fn()}
+        playbookId="p1"
+        schedule={null}
+        mailTrigger={{
+          type: 'mail',
+          enabled: true,
+          available: true,
+          config: {
+            enabled: true,
+            mailboxAppKey: 'microsoft',
+            notificationUrl: null,
+            attachmentImportEnabled: false,
+            allowedAttachmentExtensions: [],
+            filters: {
+              from: [],
+              subjectContains: [],
+              bodyContains: [],
+              hasAttachments: null,
+            },
+            runtimeEnabled: false,
+            subscriptionId: null,
+            subscriptionClientState: null,
+            subscriptionExpiresAt: null,
+            runtimePayloadSchema: null,
+          },
+        }}
+      />,
+    );
+
+    await userEvent.type(
+      screen.getByRole('textbox', { name: 'triggers.mailConfig.notificationUrl' }),
+      'https://example.test/webhook',
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'triggers.mailConfig.syncSubscription' }));
+
+    expect(storeMock.syncPlaybookTriggerMailSubscription).toHaveBeenCalledWith('p1', {
+      notificationUrl: 'https://example.test/webhook',
     });
   });
 });

@@ -39,8 +39,41 @@ describe('usePlaybookCanvas', () => {
   });
 
   it('maps tasks to react-flow nodes', () => {
-    const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })]);
-    expect(nodes[0]).toMatchObject({ id: 't1', type: 'playbookStep', position: { x: 11, y: 22 } });
+    const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })], true);
+    expect(nodes[0]).toMatchObject({ id: '__trigger__', type: 'playbookTrigger' });
+    expect(nodes[1]).toMatchObject({ id: 't1', type: 'playbookStep', position: { x: 11, y: 22 } });
+  });
+
+  it('does not inject a trigger node when mail trigger is not active', () => {
+    const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })], false);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({ id: 't1', type: 'playbookStep' });
+  });
+
+  it('persists edges from the synthetic trigger source', () => {
+    currentPlaybookState.value = makePlaybook({ edges: [] });
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: '__trigger__',
+        target: 'task-1',
+        sourceHandle: 'mail_data',
+        targetHandle: 'default',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-__trigger__-mail_data-task-1-default',
+        sourceId: '__trigger__',
+        targetId: 'task-1',
+        sourceOutputPortId: 'mail_data',
+        targetInputPortId: 'default',
+      },
+    ]);
   });
 
   it('adds edge on connect and updates store asynchronously', () => {

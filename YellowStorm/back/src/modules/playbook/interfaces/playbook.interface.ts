@@ -245,6 +245,27 @@ export interface ExecutionTriggerContextData {
   type: 'mail';
   occurredAt: string;
   payload: PlaybookMailTriggerNodeInputData;
+  ports?: {
+    mail_data?: {
+      kind: 'data';
+      value: {
+        receivedAt: string;
+        from: { name: string | null; address: string };
+        to: Array<{ name: string | null; address: string }>;
+        cc: Array<{ name: string | null; address: string }>;
+        subject: string;
+        bodyText: string;
+        bodyHtml: string | null;
+        hasAttachments: boolean;
+        providerMessageId: string;
+        providerThreadId: string | null;
+      };
+    };
+    mail_attachments?: {
+      kind: 'document';
+      documentIds: string[];
+    };
+  };
 }
 
 export interface PlaybookMailTriggerConfigData {
@@ -309,6 +330,10 @@ export interface PlaybookResponse {
   description: string;
   tasks: PlaybookTaskData[];
   edges: PlaybookEdgeData[];
+  reflectionEnabled: boolean;
+  advisorAutopilotEnabled: boolean;
+  advisorAutopilotTargetScore: number;
+  advisorAutopilotMaxTurns: number;
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;

@@ -1776,7 +1776,9 @@ class DynamicGraphBuilder:
         self, tasks: List[TaskConfig], edges: List[EdgeConfig]
     ) -> List[str]:
         all_task_ids = {t["id"] for t in tasks if t.get("id")}
-        target_ids = {e["target_id"] for e in edges}
+        target_ids = {
+            e["target_id"] for e in edges if e.get("source_id") != "__trigger__"
+        }
         entry_ids = list(all_task_ids - target_ids)
 
         if not entry_ids and all_task_ids:
@@ -1800,7 +1802,9 @@ class DynamicGraphBuilder:
         self, tasks: List[TaskConfig], edges: List[EdgeConfig]
     ) -> List[str]:
         all_task_ids = {t["id"] for t in tasks if t.get("id")}
-        source_ids = {e["source_id"] for e in edges}
+        source_ids = {
+            e["source_id"] for e in edges if e.get("source_id") != "__trigger__"
+        }
         exit_ids = list(all_task_ids - source_ids)
 
         if not exit_ids and all_task_ids:
@@ -1859,6 +1863,8 @@ class DynamicGraphBuilder:
             source_id = edge["source_id"]
             target_id = edge["target_id"]
             if not source_id or not target_id:
+                continue
+            if source_id == "__trigger__":
                 continue
             incoming_by_target.setdefault(target_id, []).append(source_id)
 

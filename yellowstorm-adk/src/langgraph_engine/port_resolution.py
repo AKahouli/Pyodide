@@ -11,6 +11,14 @@ from structlog import get_logger
 logger = get_logger(__name__)
 
 
+def _fmt_participant(p: Any) -> str:
+    if not p or not isinstance(p, dict):
+        return ""
+    name = p.get("name")
+    addr = p.get("address", "")
+    return f"{name} <{addr}>" if name else addr
+
+
 def load_prompt_registry(
     prompt_overrides: Optional[Dict[str, str]],
 ) -> Dict[str, Dict[str, Any]]:
@@ -248,10 +256,60 @@ def _find_input_bindings(
     return [
         edge
         for edge in edges
-        if edge.get("target_id") == task_id
-        and _normalize_port_id(edge.get("target_input_port_id"))
+        if (edge.get("target_id") or edge.get("targetId")) == task_id
+        and _normalize_port_id(
+            edge.get("target_input_port_id") or edge.get("targetInputPortId")
+        )
         == _normalize_port_id(port_id)
     ]
+
+
+def _trigger_port_map(
+    trigger_context: Optional[Dict[str, Any]],
+) -> Dict[str, Dict[str, Any]]:
+    ports = (trigger_context or {}).get("ports") or {}
+    return {
+        str(port_id): port_value
+        for port_id, port_value in ports.items()
+        if isinstance(port_id, str) and isinstance(port_value, dict)
+    }
+
+
+def _trigger_artifacts_for_port(
+    trigger_context: Optional[Dict[str, Any]],
+    port_id: str,
+) -> List[Dict[str, Any]]:
+    port_map = _trigger_port_map(trigger_context)
+    port_value = port_map.get(str(port_id)) or {}
+    kind = str(port_value.get("kind") or "").strip()
+
+    if kind == "data":
+        value = port_value.get("value")
+        if value is None:
+            return []
+        return [
+            {
+                "artifact_kind": "data",
+                "content": json.dumps(value, ensure_ascii=True, indent=2),
+                "data": value,
+                "source_task_id": "__trigger__",
+                "source_output_port_id": port_id,
+            }
+        ]
+
+    if kind == "document":
+        document_ids = _unique_strings(port_value.get("documentIds") or [])
+        return [
+            {
+                "artifact_kind": "document",
+                "document_id": document_id,
+                "source_task_id": "__trigger__",
+                "source_output_port_id": port_id,
+            }
+            for document_id in document_ids
+        ]
+
+    return []
 
 
 def validate_port_routing(
@@ -264,13 +322,15 @@ def validate_port_routing(
         for task in tasks
         if isinstance(task, dict) and task.get("id")
     }
+    trigger_port_ids = set(_trigger_port_map(None).keys())
+    trigger_port_ids.update({"mail_data", "mail_attachments"})
 
     for edge in edges or []:
         if not isinstance(edge, dict):
             continue
 
-        target_id = str(edge.get("target_id") or "").strip()
-        source_id = str(edge.get("source_id") or "").strip()
+        target_id = str(edge.get("target_id") or edge.get("targetId") or "").strip()
+        source_id = str(edge.get("source_id") or edge.get("sourceId") or "").strip()
         if not target_id:
             raise ValueError("Encountered edge without a target task id")
         if not source_id:
@@ -283,24 +343,34 @@ def validate_port_routing(
             )
 
         source_task = tasks_by_id.get(source_id)
-        if source_task is None:
+        if source_task is None and source_id != "__trigger__":
             raise ValueError(
                 f"Task '{target_id}' references unknown source task '{source_id}'"
             )
 
         target_ports = _port_map(target_task.get("input_ports") or [])
-        target_port_id = _normalize_port_id(edge.get("target_input_port_id"))
+        target_port_id = _normalize_port_id(
+            edge.get("target_input_port_id") or edge.get("targetInputPortId")
+        )
         if target_ports and target_port_id not in target_ports:
             raise ValueError(
                 f"Task '{target_id}' references unknown input port '{target_port_id}'"
             )
 
-        source_ports = _port_map(source_task.get("output_ports") or [])
-        source_port_id = _normalize_port_id(edge.get("source_output_port_id"))
-        if source_ports and source_port_id not in source_ports:
-            raise ValueError(
-                f"Task '{target_id}' references unknown source output port '{source_port_id}' on task '{source_id}'"
-            )
+        source_port_id = _normalize_port_id(
+            edge.get("source_output_port_id") or edge.get("sourceOutputPortId")
+        )
+        if source_id == "__trigger__":
+            if source_port_id not in trigger_port_ids:
+                raise ValueError(
+                    f"Task '{target_id}' references unknown trigger output port '{source_port_id}'"
+                )
+        else:
+            source_ports = _port_map(source_task.get("output_ports") or [])
+            if source_ports and source_port_id not in source_ports:
+                raise ValueError(
+                    f"Task '{target_id}' references unknown source output port '{source_port_id}' on task '{source_id}'"
+                )
 
 
 def resolve_task_inputs(
@@ -321,6 +391,7 @@ def resolve_task_inputs(
     task_results = state.get("results") or {}
     workspace_context = list(state.get("workspace_context") or [])
     brain_documents = list(state.get("brain_documents") or [])
+    trigger_context = state.get("trigger_context") or {}
 
     port_ids = list(input_ports.keys())
     for port_binding in task_config.get("input_files_by_port") or []:
@@ -331,7 +402,8 @@ def resolve_task_inputs(
 
     if not port_ids:
         has_incoming_edges = any(
-            isinstance(edge, dict) and str(edge.get("target_id") or "") == task_id
+            isinstance(edge, dict)
+            and str(edge.get("target_id") or edge.get("targetId") or "") == task_id
             for edge in edges
         )
         if has_incoming_edges or task_config.get("input_files_by_port"):
@@ -353,12 +425,34 @@ def resolve_task_inputs(
         expected_kind = str(input_port.get("artifact_kind") or "").strip()
 
         for binding in bindings:
-            source_task_id = str(binding.get("source_id") or "")
+            source_task_id = str(
+                binding.get("source_id") or binding.get("sourceId") or ""
+            )
             source_output_port_id = _normalize_port_id(
                 binding.get("source_output_port_id")
+                or binding.get("sourceOutputPortId")
             )
-            artifact_key = f"{source_task_id}:{source_output_port_id}"
-            artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
+            if source_task_id == "__trigger__":
+                artifacts = _trigger_artifacts_for_port(
+                    trigger_context, source_output_port_id
+                )
+                if not artifacts:
+                    # No trigger context available (e.g. manual execution) or
+                    # the requested port has no data — skip silently.
+                    logger.info(
+                        "Trigger port binding skipped: no data for port",
+                        task_id=task_id,
+                        port_id=port_id,
+                        source_port=source_output_port_id,
+                        has_trigger_context=bool(trigger_context),
+                        trigger_ports=list(
+                            (trigger_context or {}).get("ports", {}).keys()
+                        ),
+                    )
+                    continue
+            else:
+                artifact_key = f"{source_task_id}:{source_output_port_id}"
+                artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
 
             if not artifacts and expected_kind in {"", "text", "code"}:
                 fallback_result = task_results.get(source_task_id) or {}
@@ -400,6 +494,18 @@ def resolve_task_inputs(
                 artifact_kind = _artifact_kind(artifact)
                 if artifact_kind in {"text", "code"}:
                     continue
+                if artifact_kind == "document":
+                    document_id = str(artifact.get("document_id") or "").strip()
+                    if document_id:
+                        has_port_sources = True
+                        metadata = _resolve_document_metadata(
+                            document_id,
+                            workspace_context=workspace_context,
+                            brain_documents=brain_documents,
+                        )
+                        if metadata is not None:
+                            resolved_documents.append(metadata)
+                            continue
                 workspace_artifacts.append(artifact)
                 file_ref = _artifact_file_ref(artifact, port_id)
                 if file_ref is not None:
@@ -601,6 +707,15 @@ def build_task_prompt(
                     kind = _artifact_kind(artifact)
                     if kind in {"text", "code"}:
                         block_lines.append("Content:\n" + _artifact_content(artifact))
+                    elif kind == "data":
+                        data_payload = artifact.get("data")
+                        if data_payload is not None:
+                            block_lines.append(
+                                "Data:\n"
+                                + json.dumps(data_payload, ensure_ascii=True, indent=2)
+                            )
+                        else:
+                            block_lines.append("Data:\n" + _artifact_content(artifact))
                     else:
                         artifact_name = (
                             artifact.get("filename")
@@ -672,10 +787,33 @@ def build_task_prompt(
         lines.append(f"User query: {user_query}")
 
     if trigger_context:
-        lines.append(
-            "Trigger context:\n"
-            + json.dumps(trigger_context, ensure_ascii=True, indent=2)
-        )
+        tc_type = trigger_context.get("type")
+        if tc_type == "mail":
+            payload = trigger_context.get("payload", {})
+            msg = payload.get("message", {})
+            trigger_meta = payload.get("trigger", {})
+            mail_lines = [
+                "This playbook was triggered by an incoming email:",
+                f"- Subject: {msg.get('subject', '(no subject)')}",
+                f"- From: {_fmt_participant(msg.get('from'))}",
+                f"- To: {', '.join(_fmt_participant(r) for r in msg.get('to', []))}",
+            ]
+            cc = msg.get("cc", [])
+            if cc:
+                mail_lines.append(f"- Cc: {', '.join(_fmt_participant(r) for r in cc)}")
+            if msg.get("hasAttachments"):
+                mail_lines.append("- Has attachments: yes")
+            if msg.get("receivedAt"):
+                mail_lines.append(f"- Received at: {msg['receivedAt']}")
+            body_text = msg.get("bodyText") or msg.get("bodyHtml") or ""
+            if body_text:
+                mail_lines.append(f"\nEmail body:\n{body_text[:4000]}")
+            lines.append("\n".join(mail_lines))
+        else:
+            lines.append(
+                "Trigger context:\n"
+                + json.dumps(trigger_context, ensure_ascii=True, indent=2)
+            )
 
     if workspace_file_hint:
         lines.append(

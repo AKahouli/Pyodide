@@ -30,6 +30,15 @@ export class PlaybookMailTrigger {
   @Prop({ type: String, default: null })
   mailboxAppKey!: string | null;
 
+  @Prop({ type: String, default: null })
+  notificationUrl!: string | null;
+
+  @Prop({ type: Boolean, default: false })
+  attachmentImportEnabled!: boolean;
+
+  @Prop({ type: [String], default: [] })
+  allowedAttachmentExtensions!: string[];
+
   @Prop({ type: Boolean, default: false })
   runtimeEnabled!: boolean;
 
@@ -197,6 +206,15 @@ export class PlaybookTask {
 
   @Prop({ type: [ToolBindingSchema], default: [], _id: false })
   toolBindings!: ToolBinding[];
+
+  @Prop({ type: Boolean, default: false })
+  advisorAutopilotEnabled!: boolean;
+
+  @Prop({ type: Number, default: 90 })
+  advisorAutopilotTargetScore!: number;
+
+  @Prop({ type: Number, default: 4 })
+  advisorAutopilotMaxTurns!: number;
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);
@@ -234,6 +252,18 @@ export class Playbook extends Document {
 
   @Prop({ type: [PlaybookEdgeSchema], default: [] })
   edges!: PlaybookEdge[];
+
+  @Prop({ type: Boolean, default: true })
+  reflectionEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  advisorAutopilotEnabled!: boolean;
+
+  @Prop({ type: Number, default: 90 })
+  advisorAutopilotTargetScore!: number;
+
+  @Prop({ type: Number, default: 4 })
+  advisorAutopilotMaxTurns!: number;
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Workspace' }], default: [] })
   workspaces!: Types.ObjectId[];

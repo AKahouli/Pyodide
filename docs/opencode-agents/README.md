@@ -1,64 +1,50 @@
 # OpenCode Agent Team
 
-> **Slug:** `opencode-agents` | **Status:** 🚧 draft | **Last Updated:** 2026-04-06 13:50:14
+> **Slug:** `opencode-agents` | **Status:** stable | **Last Updated:** 2026-04-18 UTC
 
 ## Purpose
-Define a project-level OpenCode setup that supports daily development and maintenance with specialist subagents tuned to this repository's NestJS backend, React frontend, and Python ADK/gRPC workflow runtime, plus direct Chrome DevTools MCP access for live browser validation.
+Define the project-level OpenCode setup used in this repository, including the primary workflow, the current project-local subagents, and the MCP/skill access used for implementation, review, diagnostics, browser QA, and documentation sync.
 
 ## Scope
 Included:
-- Project `opencode.json` task-permission routing for built-in primary agents
+- Project `opencode.json` task-permission routing for the built-in `build` and `plan` agents
 - Project-local OpenCode subagent definitions under `.opencode/agents/`
 - Tight bash permission defaults with explicit allowlists for common safe development commands
-- Specialist prompts tailored to `YellowStorm/back`, `YellowStorm/front`, and `yellowstorm-adk`
+- Repo-specific prompts tailored to `YellowStorm/back`, `YellowStorm/front`, and `yellowstorm-adk`
 - Explicit skill permissions for repository-approved OpenCode skills
 - A dedicated browser QA subagent for live web application validation
 - A project-scoped `chrome-devtools` MCP server entry for browser automation and debugging
-- Root `AGENTS.md` guidance aligned with the local OpenCode team and actual repository architecture
-- A dedicated model override for the `docs-maintainer` subagent
+- Root `AGENTS.md` guidance aligned with the current OpenCode team and repository workflow
+- Dedicated model overrides for documentation and validation tasks where useful
 
 Excluded:
 - In-app agent entities or database-seeded agent types
 - Global user-level OpenCode configuration outside this repository
 
 ## Architecture
-The setup uses OpenCode built-in primary agents as entrypoints and delegates specialist work to project-local subagents with scoped permissions. Browser-based validation has two layers: the `chrome-devtools` skill for workflow guidance and the `chrome-devtools-mcp` server for live Chrome tooling exposed through `opencode.json`.
+The setup uses OpenCode built-in primary agents as entrypoints and delegates focused work to a small project-local subagent team with scoped permissions. Browser-based validation has two layers: the `chrome-devtools` skill for workflow guidance and the `chrome-devtools-mcp` server for live Chrome tooling exposed through `opencode.json`.
 
 ```mermaid
 flowchart TD
     A[Build primary agent] --> B[Build task permissions]
     B --> C[general]
     B --> D[explore]
-    B --> E[Backend architect]
-    B --> F[Frontend UI/UX designer]
-    B --> G[Browser QA engineer]
-    B --> H[Code reviewer]
-    B --> I[Test engineer]
-    B --> J[Security auditor]
-    B --> K[Performance engineer]
-    B --> L[Debugger root cause]
-    B --> M[AI systems engineer]
-    B --> N[Refactoring maintainer]
-    B --> O[Docs maintainer]
+    B --> E[Reviewer]
+    B --> F[Diagnostics]
+    B --> G[Frontend QA]
+    B --> H[Maintainer]
     P[Plan primary agent] --> Q[Plan task permissions]
     Q --> D
-    Q --> G
-    Q --> H
-    Q --> J
-    Q --> K
-    Q --> L
-    Q --> O
+    Q --> E
+    Q --> F
     R[chrome-devtools skill] --> G
-    R --> F
-    R --> I
+    R --> H
     S[chrome-devtools MCP server] --> G
-    S --> F
-    S --> I
-    T[openai/gpt-5.4-mini] --> O
+    T[gpt-5.4-mini-oc] --> H
 ```
 
 ## Requirements
-- As a developer, I want specialist OpenCode subagents so that common engineering tasks can be delegated with the right constraints and focus.
+- As a developer, I want a small focused OpenCode subagent team so that common engineering tasks can be delegated with the right constraints and low coordination overhead.
 - As a developer, I want the default `build` and `plan` agents to have explicit task permissions so that delegation remains predictable.
 - As a developer, I want specialist prompts to reflect the actual repo split so that agents do not make stack-level assumptions.
 - As a developer, I want OpenCode to validate web UI behavior in a real browser so frontend changes can be checked directly against the running app.
@@ -66,7 +52,7 @@ flowchart TD
 - As a developer, I want the repository-wide `AGENTS.md` instructions to describe the same architecture and agent team used by the project-local OpenCode setup.
 - As a developer, I want documentation maintenance to use a lighter dedicated model so routine doc synchronization stays fast and targeted.
 - [x] Add a project-level `opencode.json` with task-permission rules for `build` and `plan`.
-- [x] Add project-local subagent markdown files for backend, frontend UX, review, testing, security, performance, debugging, AI systems, refactoring, documentation work, and browser QA.
+- [x] Add project-local subagent markdown files for planning, review, diagnostics, browser QA, and documentation/refactoring work.
 - [x] Keep destructive shell commands on approval for the main implementation path.
 - [x] Tighten bash defaults to `ask` and explicitly allow common safe inspection and test commands.
 - [x] Tune prompts to the NestJS backend, React frontend, and Python ADK/gRPC split.
@@ -74,31 +60,32 @@ flowchart TD
 - [x] Add a project-scoped `chrome-devtools` MCP server entry to `opencode.json`.
 - [x] Teach web-facing agents to use live browser validation when the task affects UI behavior.
 - [x] Update `AGENTS.md` to reflect the current repo architecture, package-specific test commands, and OpenCode specialist roster.
-- [x] Pin `docs-maintainer` to `openai/gpt-5.4-mini`.
+- [x] Pin `maintainer` to `LiteLLM/gpt-5.4-mini-oc`.
 
 ## API / Interfaces
 - `opencode.json`
   - Overrides permissions for built-in `build` and `plan` agents
-  - Restricts `permission.task` to approved built-in task targets and project specialist subagents
+  - Restricts `permission.task` to approved built-in task targets and current project subagents
   - Uses explicit bash allowlists for common repository commands
-  - Restricts `permission.skill` to repository-approved skills, currently `chrome-devtools` and `ai-elements`
+  - Restricts `permission.skill` to repository-approved skills, currently `chrome-devtools`, `ai-elements`, and `graphify-windows`
   - Declares a local `chrome-devtools` MCP server launched via `npx -y chrome-devtools-mcp@latest`
 - `.opencode/agents/*.md`
-  - Defines each subagent with frontmatter fields such as `description`, `mode`, `model`, `tools`, and `permission`
+  - Defines the current subagents: `plan`, `reviewer`, `diagnostics`, `frontend-qa`, and `maintainer`
+  - Uses frontmatter fields such as `description`, `mode`, `model`, `tools`, and `permission`
   - Encodes repo-specific guidance for the relevant area of ownership
-  - Pins `docs-maintainer` to `openai/gpt-5.4-mini`
-  - Adds `browser-qa-engineer.md` for real-browser validation workflows
+  - Pins `maintainer` to `LiteLLM/gpt-5.4-mini-oc`
 - `AGENTS.md`
   - Documents repository-wide coding rules, architecture expectations, testing workflow, and delegation guidance
 
 ## Design Decisions
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|
-| Align `AGENTS.md` with the OpenCode setup | Prevents drift between repo instructions and actual local agent capabilities | Leaving `AGENTS.md` Python-centric and implicitly outdated |
+| Align `AGENTS.md` with the OpenCode setup | Prevents drift between repo instructions and actual local agent capabilities | Leaving `AGENTS.md` inconsistent with the current subagent team |
 | Document the monorepo split explicitly | The repository spans three different stacks and agents need to reason about the correct package boundary | Treating the repository as a single Python-first application |
 | Document package-specific test commands | Improves correctness and reduces unnecessary or wrong validation commands | Keeping a single generic `poetry run pytest` instruction |
+| Keep the project-local subagent team small | Reduces coordination overhead while preserving specialized review, diagnostics, QA, and documentation roles | Reintroducing a larger roster of narrow specialist agents |
 | Document build and plan task permissions separately | Reflects the real `permission.task` configuration instead of implying both primary agents can delegate to the same targets | Describing task access as a single shared pool |
-| Assign a dedicated mini model to `docs-maintainer` | Documentation synchronization is bounded, repetitive work that benefits from a cheaper focused model override | Leaving `docs-maintainer` on inherited model selection |
+| Assign a dedicated mini model to `maintainer` | Documentation synchronization is bounded, repetitive work that benefits from a cheaper focused model override | Leaving `maintainer` on inherited model selection |
 
 ## Related Features
-- [`playbook`](../playbook/README_2026-04-06_09-22-02.md)
+- [`playbook`](../playbook/README_2026-04-11_12-27-13.md)

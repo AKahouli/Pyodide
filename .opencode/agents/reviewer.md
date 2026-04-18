@@ -1,7 +1,7 @@
 ---
 description: Blocking quality gate. Reviews code changes for correctness, security, and performance in a single pass. Must return PASS before a task can close.
 mode: subagent
-model: LiteLLM/gpt-5.4 OC
+model: LiteLLM/gpt-5.4
 tools:
   write: false
   edit: false
@@ -13,6 +13,7 @@ permission:
     "git status*": allow
     "git diff*": allow
     "git log*": allow
+    "npx ctx7*": allow
   task:
     "*": deny
     "explore": allow

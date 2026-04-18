@@ -11,6 +11,7 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
+import { PlaybookMailGraphClientService } from './playbook-mail-graph-client.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -159,6 +160,7 @@ describe('PlaybookService', () => {
   let replayService: Record<string, jest.Mock>;
   let outputFormatService: Record<string, jest.Mock>;
   let connectedAppTokenService: Record<string, jest.Mock>;
+  let playbookMailGraphClientService: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     playbookModel = {
@@ -209,6 +211,13 @@ describe('PlaybookService', () => {
       }),
     };
 
+    playbookMailGraphClientService = {
+      deleteSubscription: jest.fn(),
+      renewSubscription: jest.fn(),
+      createSubscription: jest.fn(),
+      fetchMailMessages: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlaybookService,
@@ -219,6 +228,7 @@ describe('PlaybookService', () => {
         { provide: PlaybookReplayService, useValue: replayService },
         { provide: PlaybookOutputFormatService, useValue: outputFormatService },
         { provide: ConnectedAppTokenService, useValue: connectedAppTokenService },
+        { provide: PlaybookMailGraphClientService, useValue: playbookMailGraphClientService },
       ],
     }).compile();
 
@@ -368,8 +378,11 @@ describe('PlaybookService', () => {
         enabled: false,
         available: false,
         config: {
+          attachmentImportEnabled: false,
+          allowedAttachmentExtensions: [],
           enabled: false,
           mailboxAppKey: null,
+          notificationUrl: null,
           filters: {
             from: [],
             subjectContains: [],
@@ -403,8 +416,11 @@ describe('PlaybookService', () => {
         enabled: false,
         available: true,
         config: {
+          attachmentImportEnabled: false,
+          allowedAttachmentExtensions: [],
           enabled: false,
           mailboxAppKey: null,
+          notificationUrl: null,
           filters: {
             from: [],
             subjectContains: [],
@@ -691,6 +707,38 @@ describe('PlaybookService', () => {
       expect(setArg).toEqual({ name: 'Only Name' });
       expect(setArg.description).toBeUndefined();
       expect(setArg.tasks).toBeUndefined();
+    });
+
+    it('should persist advisor autopilot settings when provided', async () => {
+      const chain = createQueryChain(
+        makeMockPlaybook({
+          advisorAutopilotEnabled: true,
+          advisorAutopilotTargetScore: 95,
+          advisorAutopilotMaxTurns: 3,
+        }),
+      );
+      playbookModel.findByIdAndUpdate.mockReturnValue(chain);
+
+      await service.update(MOCK_PLAYBOOK_ID, {
+        advisorAutopilotEnabled: true,
+        advisorAutopilotTargetScore: 95,
+        advisorAutopilotMaxTurns: 3,
+      });
+
+      const setArg = playbookModel.findByIdAndUpdate.mock.calls[0][1].$set;
+      expect(setArg.advisorAutopilotEnabled).toBe(true);
+      expect(setArg.advisorAutopilotTargetScore).toBe(95);
+      expect(setArg.advisorAutopilotMaxTurns).toBe(3);
+    });
+
+    it('should persist reflection setting when provided', async () => {
+      const chain = createQueryChain(makeMockPlaybook({ reflectionEnabled: false }));
+      playbookModel.findByIdAndUpdate.mockReturnValue(chain);
+
+      await service.update(MOCK_PLAYBOOK_ID, { reflectionEnabled: false });
+
+      const setArg = playbookModel.findByIdAndUpdate.mock.calls[0][1].$set;
+      expect(setArg.reflectionEnabled).toBe(false);
     });
 
     it('should map workspace strings to ObjectIds', async () => {

@@ -37,6 +37,7 @@ import type {
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
   PlaybookUndoSnapshot,
+  SyncPlaybookMailSubscriptionData,
   UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ToolBinding,
@@ -733,6 +734,42 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      syncPlaybookTriggerMailSubscription: async (
+        playbookId: string,
+        data: SyncPlaybookMailSubscriptionData,
+      ) => {
+        set({ triggerSaving: true, triggerError: null });
+        try {
+          await api.syncPlaybookTriggerMailSubscription(playbookId, data);
+          const refreshed = await api.getPlaybook(playbookId);
+          const scheduleEnabled = refreshed.executionSchedule?.enabled === true;
+          set((state) => ({
+            triggerSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: refreshed.executionSchedule,
+                    triggers: refreshed.triggers,
+                    automatedTriggerType: refreshed.automatedTriggerType,
+                  }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: refreshed.automatedTriggerType }
+                  : p,
+              )
+              : state.playbooks,
+          }));
+          toast.success(tPlaybook('store.toasts.triggerMailSubscriptionSynced', 'Mail subscription synced'));
+        } catch (err) {
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       toggleFavorite: async (id) => {
         // Optimistic update
         set((state) => ({
@@ -810,6 +847,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           tasks: currentPlaybook.tasks,
           edges: currentPlaybook.edges,
           workspaces: currentPlaybook.workspaces,
+          reflectionEnabled: currentPlaybook.reflectionEnabled,
+          advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
+          advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore,
+          advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns,
         });
       },
 

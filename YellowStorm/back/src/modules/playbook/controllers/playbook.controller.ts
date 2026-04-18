@@ -266,6 +266,7 @@ export class PlaybookController {
 
     await this.playbookService.syncMailTriggerSubscription(id, {
       mailboxAppKey,
+      notificationUrl: dto.notificationUrl || 'http://localhost:3000/api/v1/playbooks/mail/webhook',
       subscriptionId: subscription.id || null,
       subscriptionClientState: `ys_${id}`,
       subscriptionExpiresAt: subscription.expirationDateTime || null,
@@ -547,7 +548,7 @@ export class PlaybookController {
       dto.runEvaluation === true,
       dto.executionMode,
       dto.streaming === true,
-      dto.runNodeReflection !== false,
+      dto.runNodeReflection,
       user.email,
       dto.advisorAutopilotEnabled === true,
       dto.advisorAutopilotTargetScore,

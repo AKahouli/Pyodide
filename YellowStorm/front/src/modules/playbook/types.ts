@@ -248,13 +248,19 @@ export interface PlaybookMailTrigger {
   config: {
     enabled: boolean;
     mailboxAppKey: string | null;
+    notificationUrl: string | null;
+    attachmentImportEnabled: boolean;
+    allowedAttachmentExtensions: string[];
     filters: {
       from: string[];
       subjectContains: string[];
       bodyContains: string[];
       hasAttachments: boolean | null;
     };
-    runtimeEnabled: false;
+    runtimeEnabled: boolean;
+    subscriptionId: string | null;
+    subscriptionClientState: string | null;
+    subscriptionExpiresAt: string | null;
     runtimePayloadSchema: PlaybookMailTriggerNodeInput | null;
   } | null;
 }
@@ -280,12 +286,18 @@ export interface UpsertPlaybookScheduleData {
 export interface UpsertPlaybookMailTriggerData {
   enabled: boolean;
   mailboxAppKey?: string;
+  attachmentImportEnabled?: boolean;
+  allowedAttachmentExtensions?: string[];
   filters?: {
     from?: string[];
     subjectContains?: string[];
     bodyContains?: string[];
     hasAttachments?: boolean;
   };
+}
+
+export interface SyncPlaybookMailSubscriptionData {
+  notificationUrl?: string;
 }
 
 export interface PlaybookSummary {
@@ -326,6 +338,7 @@ export interface Playbook {
   description: string;
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
+  reflectionEnabled: boolean;
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;
@@ -867,6 +880,10 @@ export interface UpdatePlaybookData {
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
   workspaces?: string[];
+  reflectionEnabled?: boolean;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
 }
 
 export interface ExecutePlaybookData {
@@ -1014,6 +1031,9 @@ export interface PlaybookActions {
   bulkDeletePlaybooks: (ids: string[]) => Promise<void>;
   upsertPlaybookTriggerSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
   clearPlaybookTriggerSchedule: (playbookId: string) => Promise<void>;
+  upsertPlaybookTriggerMail: (playbookId: string, data: UpsertPlaybookMailTriggerData) => Promise<void>;
+  clearPlaybookTriggerMail: (playbookId: string) => Promise<void>;
+  syncPlaybookTriggerMailSubscription: (playbookId: string, data: SyncPlaybookMailSubscriptionData) => Promise<void>;
 
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;

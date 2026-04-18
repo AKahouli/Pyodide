@@ -46,6 +46,7 @@ import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, tasksToNodes } from '../hooks/usePlaybookCanvas';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
+import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
@@ -339,7 +340,7 @@ function PlaybookCanvasInner() {
     prevIsDesigning.current = isDesigning;
   }, [currentExecution?.id, currentExecution?.status, currentExecution?.taskResults, execution?.id, execution?.status, execution?.taskResults, id, isGenerating, isDesigning, refreshUsage]);
 
-  const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode }), []);
+  const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode, playbookTrigger: PlaybookTriggerNode }), []);
   const edgeTypes = useMemo(() => ({
     animated: AiEdge.Animated,
     'animated-warning': AiEdge.AnimatedWarning,
@@ -900,6 +901,52 @@ function PlaybookCanvasInner() {
     });
   }, [id, playbook, isDirty, saveNow, executePlaybook, nodeReflectionEnabled, setPageMode]);
 
+  useEffect(() => {
+    if (!playbook) return;
+    setNodeReflectionEnabled(playbook.reflectionEnabled !== false);
+  }, [playbook?.reflectionEnabled]);
+
+  useEffect(() => {
+    if (!playbook) return;
+    setAdvisorAutopilotEnabled(playbook.advisorAutopilotEnabled === true);
+  }, [playbook?.advisorAutopilotEnabled]);
+
+  const handleNodeReflectionChange = useCallback(
+    async (enabled: boolean) => {
+      setNodeReflectionEnabled(enabled);
+      if (!id || !playbook) return;
+
+      try {
+        await updatePlaybook(id, {
+          reflectionEnabled: enabled,
+          advisorAutopilotEnabled: playbook.advisorAutopilotEnabled,
+          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore,
+          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns,
+        });
+      } catch {
+      }
+    },
+    [id, playbook, updatePlaybook],
+  );
+
+  const handleAdvisorAutopilotChange = useCallback(
+    async (enabled: boolean) => {
+      setAdvisorAutopilotEnabled(enabled);
+      if (!id || !playbook) return;
+
+      try {
+        await updatePlaybook(id, {
+          advisorAutopilotEnabled: enabled,
+          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore,
+          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns,
+        });
+      } catch {
+        // handled by the store/API layer
+      }
+    },
+    [id, playbook, updatePlaybook],
+  );
+
   const handleAutoLayout = useCallback(() => {
     if (!playbook) return;
     captureSnapshot();
@@ -1130,9 +1177,9 @@ function PlaybookCanvasInner() {
             isExecuting={isExecuting}
             canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
             nodeReflectionEnabled={nodeReflectionEnabled}
-            onNodeReflectionChange={setNodeReflectionEnabled}
+            onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
-            onAdvisorAutopilotChange={setAdvisorAutopilotEnabled}
+            onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
             onDownloadAllResults={handleDownloadAllResults}
             canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
             onTriggers={() => setTriggersSheetOpen(true)}

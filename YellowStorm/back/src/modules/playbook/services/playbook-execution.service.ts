@@ -1184,10 +1184,13 @@ export class PlaybookExecutionService {
 
     const enabledTasks = playbook.tasks.filter((task: any) => task.enabled !== false);
     const enabledTaskIds = new Set(enabledTasks.map((task: any) => task.id));
-    const enabledEdges = playbook.edges.filter(
-      (edge: any) => enabledTaskIds.has(edge.sourceId?.toString?.() || edge.sourceId)
-        && enabledTaskIds.has(edge.targetId?.toString?.() || edge.targetId),
-    );
+    const enabledEdges = playbook.edges.filter((edge: any) => {
+      const sourceId = edge.sourceId?.toString?.() || edge.sourceId;
+      const targetId = edge.targetId?.toString?.() || edge.targetId;
+      const sourceAllowed = sourceId === '__trigger__' || enabledTaskIds.has(sourceId);
+      const targetAllowed = enabledTaskIds.has(targetId);
+      return sourceAllowed && targetAllowed;
+    });
     const sanitizedEnabledEdges = this.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
 
     if (!dto.singleStepTaskId && enabledTasks.length === 0) {
@@ -1319,6 +1322,7 @@ export class PlaybookExecutionService {
     const activeOutputFormatMap = await this.outputFormatService.getActiveTemplates(playbookId, executionTaskIds);
 
     const hasReplaySteps = replayTaskIds.length > 0;
+    const reflectionEnabled = dto.runNodeReflection ?? ((playbook as any).reflectionEnabled !== false);
 
     const execution = await this.executionModel.create({
       playbookId: new Types.ObjectId(playbookId),
@@ -1330,7 +1334,7 @@ export class PlaybookExecutionService {
       executionTrigger,
       triggerContext: options?.triggerContext ?? null,
       runEvaluation: dto.runEvaluation === true,
-      reflectionEnabled: dto.runNodeReflection !== false,
+      reflectionEnabled,
       advisorAutopilotEnabled: advisorAutopilot.enabled,
       advisorAutopilotTargetScore: advisorAutopilot.targetScore,
       advisorAutopilotMaxTurns: advisorAutopilot.maxTurns,
@@ -1387,7 +1391,7 @@ export class PlaybookExecutionService {
         status: ExecutionStatus.RUNNING,
         executionMode: globalExecutionMode,
         executionTrigger,
-        reflectionEnabled: dto.runNodeReflection !== false,
+        reflectionEnabled,
         advisorAutopilotEnabled: advisorAutopilot.enabled,
         advisorAutopilotTargetScore: advisorAutopilot.targetScore,
         advisorAutopilotMaxTurns: advisorAutopilot.maxTurns,
@@ -1471,7 +1475,7 @@ export class PlaybookExecutionService {
         validatedReplay,
         dto.streaming === true,
         dto.runEvaluation === true,
-        dto.runNodeReflection !== false,
+        reflectionEnabled,
       ).catch(
         async (err) => {
           this.logger.error('Execution loop failed', {
@@ -1590,10 +1594,13 @@ export class PlaybookExecutionService {
     const globalExecutionMode = dto.executionMode || 'live';
     const enabledTasks = playbook.tasks.filter((task: any) => task.enabled !== false);
     const enabledTaskIds = new Set(enabledTasks.map((task: any) => task.id));
-    const enabledEdges = (playbook.edges || []).filter(
-      (edge: any) => enabledTaskIds.has(edge.sourceId || edge.source_id)
-        && enabledTaskIds.has(edge.targetId || edge.target_id),
-    );
+    const enabledEdges = (playbook.edges || []).filter((edge: any) => {
+      const sourceId = edge.sourceId?.toString?.() || edge.sourceId || edge.source_id;
+      const targetId = edge.targetId?.toString?.() || edge.targetId || edge.target_id;
+      const sourceAllowed = sourceId === '__trigger__' || enabledTaskIds.has(sourceId);
+      const targetAllowed = enabledTaskIds.has(targetId);
+      return sourceAllowed && targetAllowed;
+    });
     const sanitizedEnabledEdges = this.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
 
     // Build RunPlaybookWorkflowRequest
@@ -1980,6 +1987,8 @@ export class PlaybookExecutionService {
   }
 
   private sanitizeEdgesForTasks(tasks: any[], edges: any[]): any[] {
+    const triggerSourceId = '__trigger__';
+    const triggerPortIds = new Set(['mail_data', 'mail_attachments']);
     const taskMap = new Map<string, any>();
     for (const task of tasks || []) {
       taskMap.set(task.id, task);
@@ -1990,8 +1999,9 @@ export class PlaybookExecutionService {
       const targetId = edge.targetId || edge.target_id;
       const sourceTask = taskMap.get(sourceId);
       const targetTask = taskMap.get(targetId);
+      const isTriggerSource = sourceId === triggerSourceId;
 
-      if (!sourceTask || !targetTask) {
+      if ((!sourceTask && !isTriggerSource) || !targetTask) {
         this.logger.warn('Dropping edge with missing task reference', {
           edgeId: edge.id,
           sourceId,
@@ -2002,10 +2012,12 @@ export class PlaybookExecutionService {
 
       const sourcePortId = edge.sourceOutputPortId || edge.source_output_port_id || 'default';
       const targetPortId = edge.targetInputPortId || edge.target_input_port_id || 'default';
-      const sourcePorts = sourceTask.outputPorts || sourceTask.output_ports || [];
+      const sourcePorts = sourceTask?.outputPorts || sourceTask?.output_ports || [];
       const targetPorts = targetTask.inputPorts || targetTask.input_ports || [];
 
-      const sourcePortExists = sourcePorts.length === 0 || sourcePorts.some((p: any) => p.id === sourcePortId);
+      const sourcePortExists = isTriggerSource
+        ? triggerPortIds.has(sourcePortId)
+        : sourcePorts.length === 0 || sourcePorts.some((p: any) => p.id === sourcePortId);
       const targetPortExists = targetPorts.length === 0 || targetPorts.some((p: any) => p.id === targetPortId);
 
       if (!sourcePortExists || !targetPortExists) {
@@ -4077,7 +4089,16 @@ ${detailUrl
       data: { executionId, status: ExecutionStatus.COMPLETED, durationMs },
     });
     this.logger.log('SSE playbook_execution_complete sent (COMPLETED)', { executionId, userId, durationMs });
-    this.judgeEnrichmentService.scheduleExecutionSweep(userId, executionId);
+
+    const completedExecution = await this.executionModel
+      .findById(executionId)
+      .select('reflectionEnabled')
+      .lean()
+      .exec();
+    if (completedExecution?.reflectionEnabled !== false) {
+      this.judgeEnrichmentService.scheduleExecutionSweep(userId, executionId);
+    }
+
     this.notifyScheduledRunFinished(userId, executionId, 'completed');
   }
 
@@ -4169,6 +4190,7 @@ ${detailUrl
 
     const workspaceIds = (playbook.workspaces || []).map((w: any) => w.toString());
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
+    const effectiveReflectionEnabled = runNodeReflection ?? ((playbook as any).reflectionEnabled !== false);
     const playbookSessionId = `playbook:${playbookId}:execution:${execution.executionNumber}:attempt:${attemptNumber}`;
     const grpcAgentMap = await this.resolveGrpcAgentsForTasks(userId, snapshot?.tasks || [], playbookSessionId);
     await this.ensureTaskResultExists(executionId, task, snapshot, grpcAgentMap, attemptNumber);
@@ -4176,7 +4198,7 @@ ${detailUrl
     await this.executionModel.findByIdAndUpdate(executionId, {
       $set: {
         runEvaluation,
-        reflectionEnabled: runNodeReflection,
+        reflectionEnabled: effectiveReflectionEnabled,
       },
     });
 
@@ -4262,7 +4284,7 @@ ${detailUrl
       validatedReplay,
       streamingEnabled,
       runEvaluation,
-      runNodeReflection,
+      effectiveReflectionEnabled,
     ).catch(async (err) => {
       this.logger.error('rerunStepInExecution failed', {
         executionId,
