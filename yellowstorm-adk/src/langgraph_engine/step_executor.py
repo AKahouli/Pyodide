@@ -472,6 +472,7 @@ async def execute_step(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
@@ -503,6 +504,7 @@ async def execute_step(
             agent=agent,
             context_from_dependencies=context_from_dependencies,
             workspace_context=workspace_context,
+            trigger_context=trigger_context,
             edges=edges,
             upstream_results=upstream_results,
             execution_mode=execution_mode,
@@ -517,6 +519,7 @@ async def execute_step(
         agent=agent,
         context_from_dependencies=context_from_dependencies,
         workspace_context=workspace_context,
+        trigger_context=trigger_context,
         edges=edges,
         upstream_results=upstream_results,
         execution_mode=execution_mode,
@@ -584,6 +587,7 @@ async def _execute_step_direct(
             "task_outputs": {},
             "artifacts_by_port": artifacts_by_port,
             "workspace_context": workspace_context,
+            "trigger_context": trigger_context,
         },
     )
     prompt_registry = load_prompt_registry(

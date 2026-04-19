@@ -1,8 +1,11 @@
 import pytest
 
 from src.langgraph_engine.port_resolution import (
+    build_task_prompt,
+    build_task_prompt_context,
     build_tool_scope,
     resolve_task_inputs,
+    task_has_trigger_port_inputs,
     validate_port_routing,
 )
 
@@ -394,4 +397,296 @@ def test_resolve_task_inputs_reads_mail_attachment_document_ids_from_current_tri
         "a.pdf",
         "b.pdf",
     ]
-    assert build_tool_scope(resolved)["all_document_ids"] == []
+    tool_scope = build_tool_scope(resolved)
+    assert tool_scope["all_document_ids"] == ["doc-1", "doc-2"]
+    assert tool_scope["documents_by_port"]["attachments"] == ["doc-1", "doc-2"]
+
+
+def test_build_tool_scope_includes_upstream_document_artifact_ids() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "docs", "name": "Docs", "artifact_kind": "document"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "upstream",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "docs",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {
+                "upstream:default": [
+                    {
+                        "artifact_kind": "document",
+                        "document_id": "doc-7",
+                        "filename": "brief.pdf",
+                        "filepath": "/tmp/brief.pdf",
+                        "workspace_id": "ws-1",
+                    }
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    tool_scope = build_tool_scope(resolved)
+
+    assert tool_scope["all_document_ids"] == ["doc-7"]
+    assert tool_scope["documents_by_port"]["docs"] == ["doc-7"]
+    assert tool_scope["files_by_port"]["docs"][0]["document_id"] == "doc-7"
+
+
+def test_build_task_prompt_context_returns_structured_prompt_ready_inputs() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "Summarize inputs",
+            "input_ports": [{"id": "mail_in", "name": "Mail", "artifact_kind": "data"}],
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "__trigger__",
+                    "target_id": "downstream",
+                    "source_output_port_id": "mail_data",
+                    "target_input_port_id": "mail_in",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "workspace_context": [],
+            "trigger_context": {
+                "type": "mail",
+                "ports": {
+                    "mail_data": {
+                        "kind": "data",
+                        "value": {
+                            "subject": "FW: Yellowsys.ai",
+                            "bodyText": "Mail body",
+                        },
+                    }
+                },
+            },
+        },
+    )
+
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "Summarize inputs",
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        resolved,
+        user_query="FW: Yellowsys.ai",
+        trigger_context={"type": "mail"},
+    )
+
+    assert prompt_context["task"]["id"] == "downstream"
+    assert prompt_context["has_port_sources"] is True
+    assert prompt_context["has_trigger_port_inputs"] is True
+    assert prompt_context["resolved_inputs"][0]["input_port_id"] == "mail_in"
+    assert (
+        prompt_context["resolved_inputs"][0]["sources"][0]["source_task_id"]
+        == "__trigger__"
+    )
+    assert prompt_context["resolved_inputs"][0]["sources"][0]["artifacts"][0][
+        "data"
+    ] == {
+        "subject": "FW: Yellowsys.ai",
+        "bodyText": "Mail body",
+    }
+
+
+def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_section() -> (
+    None
+):
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Task",
+            "description": "Describe the email",
+            "input_ports": [{"id": "mail_in", "name": "Mail", "artifact_kind": "data"}],
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "__trigger__",
+                    "target_id": "downstream",
+                    "source_output_port_id": "mail_data",
+                    "target_input_port_id": "mail_in",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "workspace_context": [],
+            "trigger_context": {
+                "type": "mail",
+                "ports": {
+                    "mail_data": {
+                        "kind": "data",
+                        "value": {"subject": "FW: Yellowsys.ai"},
+                    }
+                },
+                "payload": {
+                    "message": {
+                        "subject": "FW: Yellowsys.ai",
+                        "from": {"name": "Sender", "address": "sender@example.com"},
+                        "to": [],
+                    }
+                },
+            },
+        },
+    )
+
+    prompt = build_task_prompt(
+        {
+            "id": "downstream",
+            "title": "Task",
+            "description": "Describe the email",
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        resolved,
+        trigger_context={
+            "type": "mail",
+            "payload": {
+                "message": {
+                    "subject": "FW: Yellowsys.ai",
+                    "from": {"name": "Sender", "address": "sender@example.com"},
+                    "to": [],
+                }
+            },
+        },
+        user_query="FW: Yellowsys.ai",
+    )
+
+    assert "Structured inputs for this task JSON:" in prompt
+    assert '"input_port_id": "mail_in"' in prompt
+    assert '"subject": "FW: Yellowsys.ai"' in prompt
+    assert "This playbook was triggered by an incoming email:" not in prompt
+
+
+def test_task_has_trigger_port_inputs_detects_bound_trigger_sources() -> None:
+    resolved = {
+        "ports": {
+            "mail_in": {
+                "upstream_bindings": [
+                    {
+                        "source_task_id": "__trigger__",
+                        "source_output_port_id": "mail_data",
+                    }
+                ]
+            }
+        }
+    }
+
+    assert task_has_trigger_port_inputs(resolved) is True
+
+
+def test_resolve_task_inputs_inferrs_single_mail_data_binding_when_trigger_edge_missing() -> (
+    None
+):
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "default", "name": "Input", "artifact_kind": "data"}
+            ],
+        },
+        {
+            "edges": [],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "workspace_context": [],
+            "trigger_context": {
+                "type": "mail",
+                "ports": {
+                    "mail_data": {
+                        "kind": "data",
+                        "value": {
+                            "subject": "FW: Yellowsys.ai",
+                            "bodyText": "Expected body",
+                        },
+                    }
+                },
+            },
+        },
+    )
+
+    assert resolved["has_port_sources"] is True
+    assert (
+        resolved["ports"]["default"]["upstream_binding"]["source_task_id"]
+        == "__trigger__"
+    )
+    assert (
+        resolved["ports"]["default"]["upstream_binding"]["source_output_port_id"]
+        == "mail_data"
+    )
+    assert resolved["ports"]["default"]["upstream_binding"]["artifacts"][0]["data"] == {
+        "subject": "FW: Yellowsys.ai",
+        "bodyText": "Expected body",
+    }
+
+
+def test_resolve_task_inputs_does_not_infer_mail_binding_when_ambiguous() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "mail_a", "name": "Mail A", "artifact_kind": "data"},
+                {"id": "mail_b", "name": "Mail B", "artifact_kind": "data"},
+            ],
+        },
+        {
+            "edges": [],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "workspace_context": [],
+            "trigger_context": {
+                "type": "mail",
+                "ports": {
+                    "mail_data": {
+                        "kind": "data",
+                        "value": {"subject": "FW: Yellowsys.ai"},
+                    }
+                },
+            },
+        },
+    )
+
+    assert resolved["has_port_sources"] is False
+    assert resolved["ports"]["mail_a"]["upstream_bindings"] == []
+    assert resolved["ports"]["mail_b"]["upstream_bindings"] == []

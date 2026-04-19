@@ -508,6 +508,7 @@ message RunStepRequest {
     repeated PlaybookEdgeConfig edges = 10;
     repeated PlaybookTaskResult upstream_results = 11;
     map<string, string> prompt_overrides = 12;
+    google.protobuf.Struct trigger_context = 13;
 }
 
 message ResumeStepRequest {

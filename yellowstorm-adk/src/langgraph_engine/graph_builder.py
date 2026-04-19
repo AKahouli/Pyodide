@@ -630,6 +630,12 @@ class DynamicGraphBuilder:
         resolved_inputs = resolve_task_inputs(task_id, task_config, state)
         prompt_parts: List[str] = []
 
+        if resolved_inputs.get("has_port_sources"):
+            workspace_artifacts: list = []
+            for port_state in (resolved_inputs.get("ports") or {}).values():
+                workspace_artifacts.extend(port_state.get("workspace_artifacts") or [])
+            return "", resolved_inputs, workspace_artifacts
+
         # Legacy fallback — keep raw upstream outputs available for playbooks that
         # still rely on input_keys or edge-walk context.
         input_keys = task_config.get("input_keys") or []

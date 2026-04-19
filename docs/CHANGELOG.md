@@ -1,5 +1,29 @@
 # Changelog
 
+## [2026-04-18 20:57 UTC] — Forward mail trigger context into single-step runs
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Extended the playbook gRPC step contract to carry `trigger_context`, converted backend trigger payloads into protobuf `Struct` form for both full-workflow and single-step requests, and wired ADK single-step execution to pass trigger context through to port resolution.
+- **Why:** Steps rerun or executed individually from a mail-triggered execution were losing the trigger payload before reaching the ADK, so input ports linked to the Mail Trigger node resolved as empty even though the graph mapping was correct.
+- **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `yellowstorm-adk/grpc/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2_grpc.py`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/langgraph_engine/step_executor.py`, and `yellowstorm-adk/src/langgraph_engine/workflow_service.py`.
+
+## [2026-04-18 19:53 UTC] — Align playbook tool scope with resolved port documents
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the ADK playbook runtime so `build_tool_scope()` now includes document ids resolved from upstream document artifacts and trigger-provided document inputs, not only explicit `input_files_by_port` bindings.
+- **Why:** Tool access needed to match the prompt contract and actual resolved port inputs, especially for filtered search and mail attachment flows.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/port_resolution.py` and focused LangGraph runtime tests.
+
+## [2026-04-18 19:37 UTC] — Tighten playbook prompt input context
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Made resolved input ports the canonical task-prompt input contract in the ADK runtime, introduced a derived prompt-ready input context structure, and stopped adding duplicate legacy dependency or trigger narration when a task already has bound port inputs.
+- **Why:** Downstream task prompts were mixing raw execution state with prompt formatting, which made structured inputs harder for the LLM to parse and could duplicate the same upstream context in multiple forms.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/port_resolution.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, and focused LangGraph runtime tests.
+
 ## [2026-04-18 06:00 UTC] — Mail trigger v1 complete: runtime, attachments, renewal, UI activation
 
 - **Feature:** `playbook`

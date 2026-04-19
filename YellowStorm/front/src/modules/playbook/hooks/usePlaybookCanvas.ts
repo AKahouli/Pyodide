@@ -32,7 +32,7 @@ function buildTriggerNode(): Node {
     id: TRIGGER_NODE_ID,
     type: 'playbookTrigger',
     position: { x: 40, y: 160 },
-    draggable: false,
+    draggable: true,
     selectable: true,
     data: {
       title: 'Mail Trigger',

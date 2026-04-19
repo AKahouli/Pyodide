@@ -26,7 +26,7 @@
         },
         "gpt-5.4-nano-oc": {
           "name": "GPT-5.4-Nano-OC"
-        },
+        }
       }
     }
   },
@@ -74,7 +74,8 @@
           "kubectl *": "allow",
           "ls *": "allow",
           "python *": "allow",
-          "pytest *": "allow"
+          "pytest *": "allow",
+          "python3 *": "allow"
         },
         "task": {
           "*": "deny",

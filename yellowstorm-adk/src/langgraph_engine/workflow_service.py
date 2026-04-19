@@ -453,6 +453,7 @@ async def run_single_step_graph(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
@@ -519,6 +520,7 @@ async def run_single_step_graph(
         "node_timings": {},
         "query": "",
         "workspace_context": workspace_context,
+        "trigger_context": trigger_context,
         "evaluation_user_id": evaluation_user_id,
         "execution_mode": execution_mode,
         "validated_replays_by_task": {task_id: validated_replay}

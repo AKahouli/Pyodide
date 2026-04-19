@@ -40,7 +40,7 @@ describe('usePlaybookCanvas', () => {
 
   it('maps tasks to react-flow nodes', () => {
     const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })], true);
-    expect(nodes[0]).toMatchObject({ id: '__trigger__', type: 'playbookTrigger' });
+    expect(nodes[0]).toMatchObject({ id: '__trigger__', type: 'playbookTrigger', draggable: true });
     expect(nodes[1]).toMatchObject({ id: 't1', type: 'playbookStep', position: { x: 11, y: 22 } });
   });
 

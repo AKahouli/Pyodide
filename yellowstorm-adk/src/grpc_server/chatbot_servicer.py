@@ -1737,7 +1737,20 @@ class ChatbotServicer(
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
-        logger.info("[RunStep] Request received", task_id=task_id, agent=agent_name)
+        has_trigger_context = bool(
+            getattr(request, "trigger_context", None)
+            and request.HasField("trigger_context")
+        )
+        trigger_edge_count = sum(
+            1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
+        )
+        logger.info(
+            "[RunStep] Request received",
+            task_id=task_id,
+            agent=agent_name,
+            has_trigger_context=has_trigger_context,
+            trigger_edge_count=trigger_edge_count,
+        )
 
         try:
             task = _proto_task_to_dict(request.task)
@@ -1764,6 +1777,10 @@ class ChatbotServicer(
                 agent=agent,
                 context_from_dependencies=request.context_from_dependencies,
                 workspace_context=_proto_workspace_context(request.workspace_context),
+                trigger_context=_struct_to_dict(request.trigger_context)
+                if getattr(request, "trigger_context", None)
+                and request.HasField("trigger_context")
+                else None,
                 edges=[_proto_edge_to_dict(edge) for edge in request.edges]
                 if request.edges
                 else [],
@@ -1802,8 +1819,19 @@ class ChatbotServicer(
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
+        has_trigger_context = bool(
+            getattr(request, "trigger_context", None)
+            and request.HasField("trigger_context")
+        )
+        trigger_edge_count = sum(
+            1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
+        )
         logger.info(
-            "[RunStepStream] Request received", task_id=task_id, agent=agent_name
+            "[RunStepStream] Request received",
+            task_id=task_id,
+            agent=agent_name,
+            has_trigger_context=has_trigger_context,
+            trigger_edge_count=trigger_edge_count,
         )
 
         queue: asyncio.Queue[dict] = asyncio.Queue(
@@ -1831,6 +1859,10 @@ class ChatbotServicer(
                     workspace_context=_proto_workspace_context(
                         request.workspace_context
                     ),
+                    trigger_context=_struct_to_dict(request.trigger_context)
+                    if getattr(request, "trigger_context", None)
+                    and request.HasField("trigger_context")
+                    else None,
                     edges=[_proto_edge_to_dict(edge) for edge in request.edges]
                     if request.edges
                     else [],

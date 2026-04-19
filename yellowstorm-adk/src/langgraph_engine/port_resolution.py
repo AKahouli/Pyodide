@@ -217,6 +217,41 @@ def _artifact_content(artifact: Dict[str, Any]) -> str:
     return str(artifact.get("content") or artifact.get("output") or "")
 
 
+def _artifact_prompt_payload(artifact: Dict[str, Any]) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "artifact_kind": _artifact_kind(artifact),
+    }
+
+    for source_key, target_key in (
+        ("source_task_id", "source_task_id"),
+        ("source_output_port_id", "source_output_port_id"),
+        ("document_id", "document_id"),
+        ("filename", "filename"),
+        ("name", "name"),
+        ("filepath", "filepath"),
+        ("file_path", "file_path"),
+        ("url", "url"),
+        ("mime_type", "mime_type"),
+    ):
+        value = artifact.get(source_key)
+        if value not in (None, "", []):
+            payload[target_key] = value
+
+    kind = payload["artifact_kind"]
+    if kind == "data" and artifact.get("data") is not None:
+        payload["data"] = artifact.get("data")
+    elif kind in {"text", "code"}:
+        content = _artifact_content(artifact)
+        if content:
+            payload["content"] = content
+    else:
+        content = _artifact_content(artifact)
+        if content:
+            payload["content"] = content
+
+    return payload
+
+
 def _is_sandbox_local_path(path: str) -> bool:
     normalized = str(path or "").strip().lower()
     return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
@@ -261,6 +296,58 @@ def _find_input_bindings(
             edge.get("target_input_port_id") or edge.get("targetInputPortId")
         )
         == _normalize_port_id(port_id)
+    ]
+
+
+def _infer_mail_trigger_binding(
+    task_config: Dict[str, Any],
+    port_id: str,
+    input_port: Dict[str, Any],
+    trigger_context: Optional[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not isinstance(trigger_context, dict) or trigger_context.get("type") != "mail":
+        return []
+
+    artifact_kind = str(input_port.get("artifact_kind") or "").strip()
+    trigger_port_id = ""
+    if artifact_kind == "data":
+        trigger_port_id = "mail_data"
+    elif artifact_kind == "document":
+        trigger_port_id = "mail_attachments"
+
+    if not trigger_port_id:
+        return []
+    if not _trigger_artifacts_for_port(trigger_context, trigger_port_id):
+        return []
+
+    input_ports = [
+        port
+        for port in (task_config.get("input_ports") or [])
+        if isinstance(port, dict)
+    ]
+    compatible_ports = [
+        port
+        for port in input_ports
+        if str(port.get("artifact_kind") or "").strip() == artifact_kind
+    ]
+    if len(compatible_ports) != 1:
+        return []
+    if _normalize_port_id(compatible_ports[0].get("id")) != _normalize_port_id(port_id):
+        return []
+
+    logger.warning(
+        "Inferring missing mail trigger binding from trigger context",
+        task_id=str(task_config.get("id") or ""),
+        port_id=port_id,
+        inferred_source_port_id=trigger_port_id,
+    )
+    return [
+        {
+            "source_id": "__trigger__",
+            "target_id": str(task_config.get("id") or ""),
+            "source_output_port_id": trigger_port_id,
+            "target_input_port_id": port_id,
+        }
     ]
 
 
@@ -417,6 +504,13 @@ def resolve_task_inputs(
             input_ports.get(port_id) or {"id": port_id, "name": port_id}
         )
         bindings = _find_input_bindings(edges, task_id, port_id)
+        if not bindings:
+            bindings = _infer_mail_trigger_binding(
+                task_config,
+                port_id,
+                input_port,
+                trigger_context,
+            )
         upstream_bindings: List[Dict[str, Any]] = []
         workspace_artifacts: List[Dict[str, Any]] = []
         resolved_documents: List[Dict[str, Any]] = []
@@ -555,7 +649,7 @@ def resolve_task_inputs(
 
     fallback_workspace_context = [] if has_port_sources else list(workspace_context)
 
-    return {
+    resolved_inputs = {
         "task_id": task_id,
         "ports": resolved_ports,
         "playbook_workspace_context": list(workspace_context),
@@ -565,6 +659,8 @@ def resolve_task_inputs(
         else "resolved_inputs_only",
         "has_port_sources": has_port_sources,
     }
+
+    return resolved_inputs
 
 
 def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -577,11 +673,26 @@ def build_tool_scope(resolved_inputs: Dict[str, Any]) -> Dict[str, Any]:
     fallback_files: List[Dict[str, Any]] = []
 
     for port_id, port_state in (resolved_inputs.get("ports") or {}).items():
-        document_ids = _unique_strings(
-            (port_state.get("document_bindings") or {}).get("document_ids") or []
-        )
         resolved_documents = list(port_state.get("resolved_documents") or [])
         staged_files = list(port_state.get("staged_files") or [])
+        document_ids = _unique_strings(
+            [
+                *(
+                    (port_state.get("document_bindings") or {}).get("document_ids")
+                    or []
+                ),
+                *[
+                    doc.get("document_id")
+                    for doc in resolved_documents
+                    if isinstance(doc, dict) and doc.get("document_id")
+                ],
+                *[
+                    file_ref.get("document_id")
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict) and file_ref.get("document_id")
+                ],
+            ]
+        )
         documents_by_port[port_id] = document_ids
         files_by_port[port_id] = [*resolved_documents, *staged_files]
         all_document_ids.extend(document_ids)
@@ -655,6 +766,133 @@ def format_workspace_file_hint(
     return ", ".join(visible) + suffix
 
 
+def task_has_trigger_port_inputs(resolved_inputs: Dict[str, Any]) -> bool:
+    for port_state in (resolved_inputs.get("ports") or {}).values():
+        for upstream_binding in port_state.get("upstream_bindings") or []:
+            if str(upstream_binding.get("source_task_id") or "") == "__trigger__":
+                return True
+    return False
+
+
+def build_task_prompt_context(
+    task_config: Dict[str, Any],
+    resolved_inputs: Dict[str, Any],
+    *,
+    context_from_dependencies: str = "",
+    user_query: str = "",
+    workspace_file_hint: str = "",
+    trigger_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    ports = resolved_inputs.get("ports") or {}
+    output_ports = list(task_config.get("output_ports") or [])
+
+    prompt_inputs: List[Dict[str, Any]] = []
+    for port_id, port_state in ports.items():
+        input_port = port_state.get("input_port") or {}
+        upstream_bindings = list(
+            port_state.get("upstream_bindings")
+            or (
+                []
+                if not port_state.get("upstream_binding")
+                else [port_state.get("upstream_binding")]
+            )
+        )
+        resolved_documents = list(port_state.get("resolved_documents") or [])
+        staged_files = list(port_state.get("staged_files") or [])
+        workspace_artifacts = list(port_state.get("workspace_artifacts") or [])
+
+        prompt_inputs.append(
+            {
+                "input_port_id": port_id,
+                "name": str(input_port.get("name") or port_id),
+                "expected_kind": str(input_port.get("artifact_kind") or ""),
+                "sources": [
+                    {
+                        "source_task_id": str(
+                            upstream_binding.get("source_task_id") or ""
+                        ),
+                        "source_output_port_id": str(
+                            upstream_binding.get("source_output_port_id") or ""
+                        ),
+                        "artifact_kind": str(
+                            upstream_binding.get("artifact_kind") or ""
+                        ),
+                        "artifacts": [
+                            _artifact_prompt_payload(artifact)
+                            for artifact in (upstream_binding.get("artifacts") or [])
+                            if isinstance(artifact, dict)
+                        ],
+                    }
+                    for upstream_binding in upstream_bindings
+                ],
+                "documents": [
+                    {
+                        "document_id": str(doc.get("document_id") or ""),
+                        "filename": str(doc.get("filename") or ""),
+                        "filepath": str(doc.get("filepath") or ""),
+                        "workspace_id": str(doc.get("workspace_id") or ""),
+                    }
+                    for doc in resolved_documents
+                    if isinstance(doc, dict)
+                ],
+                "files": [
+                    {
+                        "document_id": str(file_ref.get("document_id") or ""),
+                        "filename": str(file_ref.get("filename") or ""),
+                        "filepath": str(file_ref.get("filepath") or ""),
+                        "workspace_id": str(file_ref.get("workspace_id") or ""),
+                    }
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict)
+                ],
+                "workspace_artifacts": [
+                    _artifact_prompt_payload(artifact)
+                    for artifact in workspace_artifacts
+                    if isinstance(artifact, dict)
+                ],
+                "bound_document_ids": _unique_strings(
+                    (port_state.get("document_bindings") or {}).get("document_ids")
+                    or []
+                ),
+            }
+        )
+
+    return {
+        "task": {
+            "id": str(task_config.get("id") or resolved_inputs.get("task_id") or ""),
+            "title": str(task_config.get("title") or ""),
+            "description": str(task_config.get("description") or ""),
+        },
+        "resolved_inputs": prompt_inputs,
+        "declared_output_ports": [
+            {
+                "id": str(output_port.get("id") or "default").strip() or "default",
+                "name": str(
+                    output_port.get("name") or output_port.get("id") or "default"
+                ).strip()
+                or "default",
+                "artifact_kind": str(output_port.get("artifact_kind") or "").strip(),
+                "description": str(output_port.get("description") or "").strip(),
+            }
+            for output_port in output_ports
+        ],
+        "workspace_context_mode": str(
+            resolved_inputs.get("workspace_context_mode") or "resolved_inputs_only"
+        ),
+        "fallback_workspace_context": list(
+            resolved_inputs.get("fallback_workspace_context") or []
+        ),
+        "has_port_sources": bool(resolved_inputs.get("has_port_sources")),
+        "context_from_dependencies": str(context_from_dependencies or ""),
+        "user_query": str(user_query or ""),
+        "workspace_file_hint": str(workspace_file_hint or ""),
+        "trigger_context": trigger_context
+        if isinstance(trigger_context, dict)
+        else None,
+        "has_trigger_port_inputs": task_has_trigger_port_inputs(resolved_inputs),
+    }
+
+
 def build_task_prompt(
     task_config: Dict[str, Any],
     resolved_inputs: Dict[str, Any],
@@ -668,88 +906,30 @@ def build_task_prompt(
     """Build a consistent task prompt from resolved inputs."""
 
     prompt_registry = load_prompt_registry(prompt_overrides)
+    prompt_context = build_task_prompt_context(
+        task_config,
+        resolved_inputs,
+        context_from_dependencies=context_from_dependencies,
+        user_query=user_query,
+        workspace_file_hint=workspace_file_hint,
+        trigger_context=trigger_context,
+    )
 
     lines = [
         f"Task: {task_config.get('title', '')}\n\nDescription:\n{task_config.get('description', '')}",
     ]
 
-    ports = resolved_inputs.get("ports") or {}
-    output_ports = list(task_config.get("output_ports") or [])
-    structured_blocks: List[str] = []
-
-    for port_id, port_state in ports.items():
-        input_port = port_state.get("input_port") or {}
-        upstream_bindings = list(
-            port_state.get("upstream_bindings")
-            or (
-                []
-                if not port_state.get("upstream_binding")
-                else [port_state.get("upstream_binding")]
-            )
-        )
-        document_ids = (port_state.get("document_bindings") or {}).get(
-            "document_ids"
-        ) or []
-        workspace_artifacts = port_state.get("workspace_artifacts") or []
-
-        block_lines = [f"Input port: {input_port.get('name') or port_id}"]
-        artifact_kind = input_port.get("artifact_kind")
-        if artifact_kind:
-            block_lines.append(f"Expected type: {artifact_kind}")
-
-        if upstream_bindings:
-            for upstream_binding in upstream_bindings:
-                block_lines.append(
-                    f"Upstream source: {upstream_binding.get('source_task_id', '')}.{upstream_binding.get('source_output_port_id', '')}"
-                )
-                artifacts = upstream_binding.get("artifacts") or []
-                for artifact in artifacts:
-                    kind = _artifact_kind(artifact)
-                    if kind in {"text", "code"}:
-                        block_lines.append("Content:\n" + _artifact_content(artifact))
-                    elif kind == "data":
-                        data_payload = artifact.get("data")
-                        if data_payload is not None:
-                            block_lines.append(
-                                "Data:\n"
-                                + json.dumps(data_payload, ensure_ascii=True, indent=2)
-                            )
-                        else:
-                            block_lines.append("Data:\n" + _artifact_content(artifact))
-                    else:
-                        artifact_name = (
-                            artifact.get("filename")
-                            or artifact.get("name")
-                            or artifact.get("url")
-                            or artifact.get("filepath")
-                            or "artifact"
-                        )
-                        if _is_sandbox_local_path(str(artifact_name)):
-                            artifact_name = (
-                                artifact.get("filename")
-                                or artifact.get("name")
-                                or "artifact"
-                            )
-                        block_lines.append(f"Artifact: {artifact_name}")
-        else:
-            block_lines.append("Upstream source: none")
-
-        if document_ids:
-            block_lines.append(f"Bound documents: {len(document_ids)}")
-            block_lines.append(
-                f"Document IDs: {', '.join(repr(d) for d in document_ids[:6])}{'...' if len(document_ids) > 6 else ''}"
-            )
-
-        if workspace_artifacts:
-            block_lines.append(f"Workspace artifacts: {len(workspace_artifacts)}")
-
-        structured_blocks.append("\n".join(block_lines))
-
-    if structured_blocks:
+    if prompt_context.get("resolved_inputs"):
         lines.append(
-            "Structured inputs for this task:\n\n" + "\n\n".join(structured_blocks)
+            "Structured inputs for this task JSON:\n"
+            + json.dumps(
+                prompt_context.get("resolved_inputs") or [],
+                ensure_ascii=True,
+                indent=2,
+            )
         )
 
+    output_ports = list(task_config.get("output_ports") or [])
     if output_ports:
         output_lines = []
         output_ports_intro = resolve_prompt_template(
@@ -780,13 +960,13 @@ def build_task_prompt(
             "No port-bound inputs were resolved. You may use the default playbook workspace context selected for this playbook."
         )
 
-    if context_from_dependencies:
+    if prompt_context.get("context_from_dependencies"):
         lines.append(f"Context from previous tasks:\n{context_from_dependencies}")
 
-    if user_query:
+    if prompt_context.get("user_query"):
         lines.append(f"User query: {user_query}")
 
-    if trigger_context:
+    if trigger_context and not prompt_context.get("has_trigger_port_inputs"):
         tc_type = trigger_context.get("type")
         if tc_type == "mail":
             payload = trigger_context.get("payload", {})
