@@ -43,6 +43,24 @@ logger = get_logger(__name__)
 app_settings = get_settings()
 
 
+def _parse_trigger_context_fallback(request: Any) -> Optional[Dict[str, Any]]:
+    struct_payload = _struct_to_dict(getattr(request, "trigger_context", None))
+    if struct_payload:
+        return struct_payload
+
+    raw_json = str(getattr(request, "trigger_context_json", "") or "").strip()
+    if not raw_json:
+        return None
+
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        logger.warning("[trigger_context] Failed to parse trigger_context_json")
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
 async def _put_progress_event(queue: asyncio.Queue, item: Dict[str, Any]) -> None:
     """Keep streaming queues bounded while preferring newer progress updates."""
 
@@ -1497,6 +1515,19 @@ class ChatbotServicer(
                 replay.task_id for replay in request.validated_replays
             ],
         )
+        resolved_trigger_context = _parse_trigger_context_fallback(request)
+        logger.info(
+            "*************** [RunPlaybookWorkflow] triggerContext received",
+            triggerContext=resolved_trigger_context,
+        )
+        logger.info(
+            "[RunPlaybookWorkflow] Request payload",
+            request_payload=MessageToDict(
+                request,
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            ),
+        )
 
         queue: asyncio.Queue = asyncio.Queue(
             maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
@@ -1519,9 +1550,7 @@ class ChatbotServicer(
                     workspace_context=_proto_workspace_context(
                         request.workspace_context
                     ),
-                    trigger_context=_struct_to_dict(request.trigger_context)
-                    if request.HasField("trigger_context")
-                    else None,
+                    trigger_context=resolved_trigger_context,
                     queue=queue,
                     thread_id=thread_id,
                     execution_mode=request.execution_mode or "live",
@@ -1737,10 +1766,7 @@ class ChatbotServicer(
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
-        has_trigger_context = bool(
-            getattr(request, "trigger_context", None)
-            and request.HasField("trigger_context")
-        )
+        has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
         trigger_edge_count = sum(
             1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
         )
@@ -1771,6 +1797,13 @@ class ChatbotServicer(
                     (validated_replay or {}).get("tool_calls", []) or []
                 ),
             )
+            resolved_trigger_context = _struct_to_dict(request.trigger_context)
+            if not resolved_trigger_context:
+                resolved_trigger_context = _parse_trigger_context_fallback(request)
+            logger.info(
+                "*************** [RunStep] triggerContext received",
+                triggerContext=resolved_trigger_context,
+            )
 
             result = await execute_step(
                 task=task,
@@ -1778,8 +1811,7 @@ class ChatbotServicer(
                 context_from_dependencies=request.context_from_dependencies,
                 workspace_context=_proto_workspace_context(request.workspace_context),
                 trigger_context=_struct_to_dict(request.trigger_context)
-                if getattr(request, "trigger_context", None)
-                and request.HasField("trigger_context")
+                if _has_struct_payload(getattr(request, "trigger_context", None))
                 else None,
                 edges=[_proto_edge_to_dict(edge) for edge in request.edges]
                 if request.edges
@@ -1819,10 +1851,7 @@ class ChatbotServicer(
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
-        has_trigger_context = bool(
-            getattr(request, "trigger_context", None)
-            and request.HasField("trigger_context")
-        )
+        has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
         trigger_edge_count = sum(
             1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
         )
@@ -1860,8 +1889,7 @@ class ChatbotServicer(
                         request.workspace_context
                     ),
                     trigger_context=_struct_to_dict(request.trigger_context)
-                    if getattr(request, "trigger_context", None)
-                    and request.HasField("trigger_context")
+                    if _has_struct_payload(getattr(request, "trigger_context", None))
                     else None,
                     edges=[_proto_edge_to_dict(edge) for edge in request.edges]
                     if request.edges
@@ -2310,6 +2338,15 @@ def _struct_to_dict(struct_msg) -> dict:
     if not struct_msg or not struct_msg.fields:
         return {}
     return MessageToDict(struct_msg, preserving_proto_field_name=True)
+
+
+def _has_struct_payload(struct_msg) -> bool:
+    """Detect whether a Struct-like protobuf field contains data.
+
+    Dynamic gRPC clients may populate Struct message contents without reliable
+    field-presence semantics, so content inspection is safer than `HasField`.
+    """
+    return bool(getattr(struct_msg, "fields", None))
 
 
 def _proto_workspace_context(proto_wc_list) -> list:

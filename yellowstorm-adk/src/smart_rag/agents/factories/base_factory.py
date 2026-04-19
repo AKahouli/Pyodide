@@ -40,6 +40,7 @@ from src.smart_rag.tools import (
     SearchToolkit,
     SearchToolADK,
     construct_json,
+    render_chart,
 )
 
 from src.logger.logging import get_logger
@@ -185,6 +186,8 @@ class AgentFactory:
         # Add calculator tool if requested
         if calculator_tool:
             tools.append(calculator)
+
+        tools.append(render_chart)
 
         # Add HTML diagram tool if requested
         if html_design:

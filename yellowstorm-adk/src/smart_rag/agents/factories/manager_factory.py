@@ -9,6 +9,28 @@ from src.smart_rag.infrastructure.processing import add_additional_context, add_
 
 logger = get_logger("api.routers.agentic_rag.ManagerAgentFactory")
 
+CHART_TOOL_GUIDANCE = """
+
+<chart_tool_guidance>
+You can call the `render_chart` tool when the answer becomes analytical and a visual will help the user.
+
+Use it for:
+- trends over time -> `kind="line"` or `kind="area"`
+- category comparisons -> `kind="bar"`
+- proportions of a whole -> `kind="pie"`
+- correlations -> `kind="scatter"`
+- mixed bar + line views -> `kind="composed"`
+
+Rules:
+- Place the chart between short explanatory paragraphs.
+- Never call `render_chart` with an empty `data` array.
+- For non-scatter charts, always include at least one `series` entry.
+- Each `series.dataKey` must exist on the data rows.
+- For pie charts, prefer rows like `{ category: "A", value: 42 }` with `xAxisKey="category"` and `series=[{"dataKey":"value","label":"Value"}]`.
+- If you do not have concrete numeric data yet, do not call the chart tool.
+</chart_tool_guidance>
+"""
+
 
 class ManagerAgentFactory:
     """Creates and configures manager agents.
@@ -149,7 +171,7 @@ class ManagerAgentFactory:
             str: Enhanced manager instruction with all necessary context and capabilities.
         """
         cleaned_manager_prompt, _ = self.prompt_processor.extract_chatbot_name_and_clean_prompt(manager_prompt)
-        manager_instruction = cleaned_manager_prompt + self.prompt_processor.get_web_search_prompt(1)
+        manager_instruction = cleaned_manager_prompt + self.prompt_processor.get_web_search_prompt(1) + CHART_TOOL_GUIDANCE
 
         if self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter():
             # Add document tree info from all agents (without IDs) for manager context

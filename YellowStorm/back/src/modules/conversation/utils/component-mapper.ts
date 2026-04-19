@@ -97,6 +97,15 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
           config: comp.chart?.config || '',
           xAxisKey: comp.chart?.xAxisKey || '',
           series: comp.chart?.series || '',
+          kind: comp.chart?.kind || 'CHART_KIND_UNSPECIFIED',
+          yAxisKey: comp.chart?.yAxisKey || '',
+          stacked: comp.chart?.stacked || false,
+          layout: comp.chart?.layout || 'CHART_LAYOUT_UNSPECIFIED',
+          innerRadius: comp.chart?.inner_radius || 0,
+          showLegend: comp.chart?.show_legend !== false,
+          showGrid: comp.chart?.show_grid !== false,
+          nameKey: comp.chart?.nameKey || '',
+          zAxisKey: comp.chart?.zAxisKey || '',
         },
       };
     case 'task':

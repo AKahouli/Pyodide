@@ -1,8 +1,36 @@
+import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
 import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
 import type { Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
+
+const chartKindSchema = z.enum(['line', 'bar', 'area', 'pie', 'scatter', 'composed']);
+const chartLayoutSchema = z.enum(['horizontal', 'vertical']);
+const chartSeriesSchema = z.object({
+  dataKey: z.string(),
+  color: z.string().optional(),
+  label: z.string().optional(),
+  kind: chartKindSchema.optional(),
+});
+const chartConfigSchema = z.record(z.object({ label: z.string().optional(), color: z.string().optional() }));
+const chartPayloadSchema = z.object({
+  title: z.string().optional().catch(''),
+  chartData: z.union([z.string(), z.array(z.record(z.unknown()))]).catch([]),
+  config: z.union([z.string(), chartConfigSchema]).catch({}),
+  xAxisKey: z.string().catch(''),
+  yAxisKey: z.string().optional().catch(''),
+  nameKey: z.string().optional().catch(''),
+  zAxisKey: z.string().optional().catch(''),
+  series: z.union([z.string(), z.array(chartSeriesSchema)]).catch([]),
+  kind: z.union([z.string(), chartKindSchema]).optional().catch('bar'),
+  stacked: z.boolean().optional().catch(false),
+  layout: z.union([z.string(), chartLayoutSchema]).optional().catch('horizontal'),
+  innerRadius: z.number().optional().catch(0),
+  showLegend: z.boolean().optional().catch(true),
+  showGrid: z.boolean().optional().catch(true),
+  error: z.string().optional(),
+});
 
 /**
  * Formats milliseconds to a human-readable duration string
@@ -107,14 +135,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         label: (data.label as string) || (data.content as string) || '',
       };
     case 'chart':
-      return {
-        type: 'chart',
-        title: (data.title as string) || '',
-        data: parseChartData(data.chartData),
-        config: (data.config as Record<string, { label: string; color: string }>) || {},
-        xAxisKey: (data.xAxisKey as string) || '',
-        series: (data.series as Array<{ dataKey: string; color?: string; label?: string }>) || [],
-      };
+      return mapChartComponent(data);
     case 'task':
       return {
         type: 'task',
@@ -225,6 +246,66 @@ function parseChartData(data: unknown): Record<string, unknown>[] {
     }
   }
   return [];
+}
+
+function parseJsonValue<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string') {
+    return (value as T) ?? fallback;
+  }
+
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeChartKind(kind: unknown): 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' {
+  const normalized = typeof kind === 'string' ? kind.toLowerCase().replace('chart_kind_', '') : '';
+  return chartKindSchema.catch('bar').parse(normalized || 'bar');
+}
+
+function normalizeChartLayout(layout: unknown): 'horizontal' | 'vertical' {
+  const normalized = typeof layout === 'string' ? layout.toLowerCase().replace('chart_layout_', '') : '';
+  return chartLayoutSchema.catch('horizontal').parse(normalized || 'horizontal');
+}
+
+function mapChartComponent(data: Record<string, unknown>) {
+  const parsed = chartPayloadSchema.safeParse(data);
+  if (!parsed.success) {
+    return {
+      type: 'error' as const,
+      title: '',
+      content: 'ai.chart.errorContent',
+    };
+  }
+
+  const payload = parsed.data;
+  if (payload.error) {
+    return {
+      type: 'error' as const,
+      title: payload.title || '',
+      content: 'ai.chart.errorContent',
+    };
+  }
+
+  return {
+    type: 'chart' as const,
+    title: payload.title || '',
+    data: parseChartData(payload.chartData),
+    config: parseJsonValue<Record<string, { label?: string; color?: string }>>(payload.config, {}),
+    xAxisKey: payload.xAxisKey || '',
+    yAxisKey: payload.yAxisKey || '',
+    nameKey: payload.nameKey || '',
+    zAxisKey: payload.zAxisKey || '',
+    series: parseJsonValue<Array<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>>(payload.series, []),
+    kind: normalizeChartKind(payload.kind),
+    stacked: payload.stacked,
+    layout: normalizeChartLayout(payload.layout),
+    innerRadius: payload.innerRadius,
+    showLegend: payload.showLegend,
+    showGrid: payload.showGrid,
+  };
 }
 
 /**

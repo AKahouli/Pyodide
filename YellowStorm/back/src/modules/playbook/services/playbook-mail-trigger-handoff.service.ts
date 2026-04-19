@@ -110,6 +110,13 @@ export class PlaybookMailTriggerHandoffService {
       },
     };
 
+    this.logger.log('////////////////////// [MailTriggerHandoff] trigger payload created', {
+      playbookId,
+      userId,
+      triggerPayload,
+      triggerPorts,
+    });
+
     this.logger.log('Handoff: triggering playbook execution', {
       playbookId,
       userId,
@@ -119,7 +126,7 @@ export class PlaybookMailTriggerHandoffService {
     const execution = await this.executionService.executePlaybook(
       userId,
       playbookId,
-      { query: ledgerEntry.subject || '' } as any,
+      { query: '' } as any,
       userEmail,
       {
         executionTrigger: 'mail',

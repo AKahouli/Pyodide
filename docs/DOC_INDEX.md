@@ -1,11 +1,13 @@
 # Documentation Index
 
 > Auto-maintained by the coding agent. Do not edit manually.
-> Last updated: 2026-04-18 UTC
+> Last updated: 2026-04-19 00:00 UTC
 
 | Feature Slug | Description | Doc Path | Status | Last Updated |
 |--------------|-------------|----------|--------|--------------|
 | `connectors` | MCP connector catalog, user credentials, playbook/conversation tool bindings, drag-and-drop UX, runtime MCP tool injection, agent-driven workspace import for SharePoint/M365 files/folders, platform JWT auth, workspace document persistence, collision-safe filenames, connected-app selector, structured auth fields, auth type derivation, MCP auto-load actions | `/docs/connectors/README_2026-04-14_23-00-00.md` | stable | 2026-04-17 00:15 |
+| `conversation` | Chat conversation pages, message rendering, streaming APIs, persistence, and ADK orchestration | `/docs/conversation/README.md` | 🚧 draft | 2026-04-19 |
+| `conversation-charts` | Inline analytical charts rendered inside streaming assistant responses using typed chart components across ADK, backend SSE, and React chat UI | `/docs/conversation-charts/README.md` | 🚧 draft | 2026-04-19 |
 | `import-to-workspace` | Dedicated agent-facing connector import tool contract, auth model, workspace targeting, accepted input forms, and failure modes | `/docs/import-to-workspace/README.md` | stable | 2026-04-14 23:20 |
 | `mcp-m365` | M365 MCP server: SharePoint/OneDrive search, browse, read, write tools, item reference contract, richer stable identifiers, agent workflow guidance | `/docs/mcp-m365/README.md` | stable | 2026-04-14 23:00 |
 | `skills` | Skill catalog, import, inheritance, and runtime activation across backend, frontend, ADK, and playbook | `/docs/skills/README_2026-04-08_07-15-54.md` | 🚧 draft | 2026-04-08 07:15 |

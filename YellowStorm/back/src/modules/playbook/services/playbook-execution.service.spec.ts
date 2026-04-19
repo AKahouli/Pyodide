@@ -822,7 +822,7 @@ describe('PlaybookExecutionService', () => {
       ]);
     });
 
-    it('forwards triggerContext to single-step RunStep requests as a grpc struct', async () => {
+    it('forwards triggerContext to single-step RunStep requests as a plain struct object', async () => {
       const playbook = createMockPlaybook({
         tasks: [
           {
@@ -910,14 +910,7 @@ describe('PlaybookExecutionService', () => {
       );
 
       expect(mockGrpcService.runStep).toHaveBeenCalled();
-      expect(mockGrpcService.runStep.mock.calls[0][0].trigger_context).toEqual(
-        expect.objectContaining({
-          fields: expect.objectContaining({
-            type: expect.objectContaining({ stringValue: 'mail' }),
-            ports: expect.any(Object),
-          }),
-        }),
-      );
+      expect(mockGrpcService.runStep.mock.calls[0][0].trigger_context).toEqual(triggerContext);
     });
 
     it('preserves distinct same-node edges when ports differ in snapshot merges', () => {

@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-19 00:00 UTC] — Add inline conversation charts
+
+- **Feature:** `conversation-charts`
+- **Type:** `feat`
+- **Changed:** Extended the conversation chart proto contract with chart kind/layout metadata, added a first-class ADK `render_chart` tool, propagated chart payloads through the Python gRPC stream and NestJS SSE layer, generalized the React chat renderer to support line/bar/area/pie/scatter/composed charts, added localized chart fallbacks, and documented the conversation + conversation-charts features.
+- **Why:** Analytical chat turns need charts to appear inline between explanation paragraphs without breaking the existing structured streaming pipeline.
+- **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/conversation/utils/component-mapper.ts`, `YellowStorm/back/src/modules/conversation/utils/component-mapper.spec.ts`, `yellowstorm-adk/grpc/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2_grpc.py`, `yellowstorm-adk/src/smart_rag/tools/__init__.py`, `yellowstorm-adk/src/smart_rag/tools/utilities/render_chart.py`, `yellowstorm-adk/src/smart_rag/agents/factories/base_factory.py`, `yellowstorm-adk/src/smart_rag/engines/multi_agent/streaming_processor.py`, `yellowstorm-adk/src/smart_rag/engines/multi_agent/team_orchestrator.py`, `YellowStorm/front/src/modules/conversation/utils.ts`, `YellowStorm/front/src/components/ai-elements/ai-message-content.tsx`, `YellowStorm/front/src/components/ai-elements/ai-message-content.chart.test.tsx`, `YellowStorm/front/src/modules/localization/locales/en/common.json`, `YellowStorm/front/src/modules/localization/locales/fr/common.json`, `docs/conversation/README.md`, `docs/conversation-charts/README.md`, `docs/DOC_INDEX.md`, and `docs/CHANGELOG.md`.
+
 ## [2026-04-19 16:45 UTC] — Extract playbook advisor execution helpers
 
 - **Feature:** `playbook`

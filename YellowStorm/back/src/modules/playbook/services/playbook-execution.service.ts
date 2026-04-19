@@ -948,6 +948,12 @@ export class PlaybookExecutionService {
     });
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
     const triggerContext = options?.triggerContext ?? null;
+    this.logger.log('////////////////////// [executePlaybook] trigger context input', {
+      playbookId,
+      executionTrigger,
+      hasTriggerContext: !!triggerContext,
+      triggerContext,
+    });
 
     if (dto.singleStepTaskId) {
       const targetTask = playbook.tasks.find((task: any) => task.id === dto.singleStepTaskId);
@@ -1128,6 +1134,14 @@ export class PlaybookExecutionService {
         tasks: playbook.tasks.map((t) => ((t as any).toObject ? (t as any).toObject() : t)),
         edges: sanitizedEnabledEdges.map((e) => ((e as any).toObject ? (e as any).toObject() : e)),
       },
+    });
+
+    this.logger.log('////////////////////// [executePlaybook] execution created', {
+      executionId: execution._id.toString(),
+      playbookId,
+      executionTrigger,
+      hasTriggerContext: !!(execution as any).triggerContext,
+      triggerContext: (execution as any).triggerContext ?? null,
     });
 
     const executionId = execution._id.toString();
@@ -1370,7 +1384,7 @@ export class PlaybookExecutionService {
 
     const execution = await this.executionModel
       .findById(executionId)
-      .select('taskResults.taskId taskResults.status playbookSnapshot playbookId startedAt')
+      .select('taskResults.taskId taskResults.status playbookSnapshot playbookId startedAt triggerContext')
       .lean()
       .exec();
     if (!execution) {
@@ -1381,6 +1395,19 @@ export class PlaybookExecutionService {
     const startedAt = execution.startedAt!;
     const playbookId = execution.playbookId.toString();
     const triggerContext = (execution as any).triggerContext ?? null;
+    this.logger.log('////////////////////// [runFullWorkflow] execution trigger context read', {
+      executionId,
+      rawExecutionKeys: Object.keys(execution as any),
+      hasCamelCaseTriggerContext: Object.prototype.hasOwnProperty.call(
+        execution as any,
+        'triggerContext',
+      ),
+      hasSnakeCaseTriggerContext: Object.prototype.hasOwnProperty.call(
+        execution as any,
+        'trigger_context',
+      ),
+      triggerContext,
+    });
     const globalExecutionMode = dto.executionMode || 'live';
     const enabledTasks = playbook.tasks.filter((task: any) => task.enabled !== false);
     const enabledTaskIds = new Set(enabledTasks.map((task: any) => task.id));
@@ -1518,8 +1545,18 @@ export class PlaybookExecutionService {
     };
 
     if (triggerContext && typeof triggerContext === 'object') {
-      request.trigger_context = this.toGrpcStruct(this.normalizeStructLike(triggerContext));
+      request.trigger_context = this.normalizeStructLike(triggerContext);
+      request.trigger_context_json = JSON.stringify(this.normalizeStructLike(triggerContext));
     }
+    this.logger.log('////////////////////// [RunPlaybookWorkflow] trigger context after assignment', {
+      executionId,
+      hasTriggerContext: !!request.trigger_context,
+      triggerContextKeys:
+        request.trigger_context && typeof request.trigger_context === 'object'
+          ? Object.keys(request.trigger_context)
+          : [],
+      triggerContextJsonPresent: !!request.trigger_context_json,
+    });
 
     if (activeReplayMap.size > 0) {
       request.validated_replays = Array.from(activeReplayMap.values()).map((replay) => {
@@ -1557,6 +1594,12 @@ export class PlaybookExecutionService {
       taskCount: request.tasks?.length,
       agentCount: request.agents?.length,
       edgeCount: request.edges?.length,
+      requestKeys: Object.keys(request),
+      triggerContextPresent: !!request.trigger_context,
+      triggerContextKeys:
+        request.trigger_context && typeof request.trigger_context === 'object'
+          ? Object.keys(request.trigger_context)
+          : [],
       query: request.query || null,
       tasksWithInputFiles:
         request.tasks
@@ -2953,7 +2996,7 @@ export class PlaybookExecutionService {
     };
 
     if (triggerContext && typeof triggerContext === 'object') {
-      grpcRequest.trigger_context = this.toGrpcStruct(this.normalizeStructLike(triggerContext));
+      grpcRequest.trigger_context = this.normalizeStructLike(triggerContext);
     }
 
     if (grpcAgent) {

@@ -319,6 +319,34 @@ class StreamingEventProcessor:
                         f"[FORMVIZ] Sent 'generating ui' chunk for tool: {func_name}"
                     )
 
+                if func_name == "render_chart" and q:
+                    chart_data = {}
+                    if hasattr(part.function_call, "args") and part.function_call.args:
+                        chart_data = dict(part.function_call.args)
+
+                    call_id = part.function_call.id if hasattr(part.function_call, "id") else None
+                    chart_chunk = self.streaming_formatter.format_component_event(
+                        agent_id="manager",
+                        component_type="chart",
+                        component_data={
+                            "title": chart_data.get("title", ""),
+                            "chartData": chart_data.get("data", []),
+                            "config": chart_data.get("config", {}),
+                            "xAxisKey": chart_data.get("xAxisKey", ""),
+                            "yAxisKey": chart_data.get("yAxisKey", ""),
+                            "series": chart_data.get("series", []),
+                            "kind": chart_data.get("kind", "bar"),
+                            "stacked": chart_data.get("stacked", False),
+                            "layout": chart_data.get("layout", "horizontal"),
+                            "innerRadius": chart_data.get("innerRadius", 0),
+                            "showLegend": chart_data.get("showLegend", True),
+                            "showGrid": chart_data.get("showGrid", True),
+                        },
+                        message_id=current_message_id,
+                        component_id=call_id,
+                    )
+                    await q.put(chart_chunk)
+
                 # Handle python_interpreter function call - send sandbox with code
                 if func_name == "python_interpreter" and q:
                     # Extract code from function arguments
@@ -427,6 +455,10 @@ class StreamingEventProcessor:
                     )
                 if func_name == "python_interpreter" and q:
                     await self._handle_python_interpreter_response(
+                        part.function_response, current_message_id, q
+                    )
+                if func_name == "render_chart" and q:
+                    await self._handle_render_chart_response(
                         part.function_response, current_message_id, q
                     )
 
@@ -743,5 +775,43 @@ class StreamingEventProcessor:
         except Exception as e:
             logger.error(
                 f"[SANDBOX] Error handling python interpreter response: {str(e)}",
+                exc_info=True,
+            )
+
+    async def _handle_render_chart_response(
+        self, function_response, message_id: str, q: asyncio.Queue[dict]
+    ) -> None:
+        try:
+            response_data = function_response.response
+            call_id = function_response.id if hasattr(function_response, "id") else None
+
+            if not isinstance(response_data, dict):
+                return
+
+            chart_chunk = self.streaming_formatter.format_component_event(
+                agent_id="manager",
+                component_type="chart",
+                component_data={
+                    "title": response_data.get("title", ""),
+                    "chartData": response_data.get("chartData", []),
+                    "config": response_data.get("config", {}),
+                    "xAxisKey": response_data.get("xAxisKey", ""),
+                    "yAxisKey": response_data.get("yAxisKey", ""),
+                    "series": response_data.get("series", []),
+                    "kind": response_data.get("kind", "bar"),
+                    "stacked": response_data.get("stacked", False),
+                    "layout": response_data.get("layout", "horizontal"),
+                    "innerRadius": response_data.get("innerRadius", 0),
+                    "showLegend": response_data.get("showLegend", True),
+                    "showGrid": response_data.get("showGrid", True),
+                },
+                message_id=message_id,
+                action="update",
+                component_id=call_id,
+            )
+            await q.put(chart_chunk)
+        except Exception as e:
+            logger.error(
+                f"[CHART] Error handling render_chart response: {str(e)}",
                 exc_info=True,
             )

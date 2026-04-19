@@ -213,12 +213,37 @@ message CheckpointComponent {
     string label = 1;            // Checkpoint label
 }
 
+enum ChartKind {
+    CHART_KIND_UNSPECIFIED = 0;
+    CHART_KIND_BAR = 1;
+    CHART_KIND_LINE = 2;
+    CHART_KIND_AREA = 3;
+    CHART_KIND_PIE = 4;
+    CHART_KIND_SCATTER = 5;
+    CHART_KIND_COMPOSED = 6;
+}
+
+enum ChartLayout {
+    CHART_LAYOUT_UNSPECIFIED = 0;
+    CHART_LAYOUT_HORIZONTAL = 1;
+    CHART_LAYOUT_VERTICAL = 2;
+}
+
 message ChartComponent {
     string title = 1;            // Optional chart title
     string data = 2;             // JSON string of data array
     string config = 3;           // JSON string of ChartConfig
     string xAxisKey = 4;         // Key for X-axis
     string series = 5;           // JSON string of series array
+    ChartKind kind = 6;          // Chart kind. Defaults to BAR when unspecified.
+    string yAxisKey = 7;         // Optional explicit Y-axis key
+    bool stacked = 8;            // Stack compatible chart series
+    ChartLayout layout = 9;      // Chart layout orientation
+    int32 inner_radius = 10;     // Donut inner radius for pie charts
+    bool show_legend = 11;       // Whether the legend should be shown
+    bool show_grid = 12;         // Whether cartesian grid should be shown
+    string nameKey = 13;         // Label/name key for pie-like charts
+    string zAxisKey = 14;        // Optional Z axis key for scatter charts
 }
 
 message ErrorComponent {
@@ -486,6 +511,7 @@ message RunPlaybookWorkflowRequest {
     map<string, string> step_execution_modes = 11;
     map<string, string> prompt_overrides = 12;
     google.protobuf.Struct trigger_context = 13;
+    string trigger_context_json = 14;
 }
 
 message ResumePlaybookWorkflowRequest {
