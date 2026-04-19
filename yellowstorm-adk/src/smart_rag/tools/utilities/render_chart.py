@@ -1,4 +1,3 @@
-import json
 from typing import Any, Literal, Optional
 
 from google.adk.tools.tool_context import ToolContext
@@ -188,5 +187,4 @@ async def render_chart(
         "innerRadius": payload.innerRadius,
         "showLegend": payload.showLegend,
         "showGrid": payload.showGrid,
-        "json": json.dumps(payload.model_dump(mode="json")),
     }

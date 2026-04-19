@@ -10,6 +10,7 @@ Classes:
 
 import asyncio
 import contextlib
+import json
 import uuid
 from typing import Optional, Any, Dict, List
 
@@ -19,7 +20,11 @@ from google.genai import types
 
 from src.logger.logging import get_logger
 from src.smart_rag.engines.multi_agent.config import langfuse_client
-from src.smart_rag.engines.helpers import build_content_with_images
+from src.smart_rag.engines.helpers import (
+    build_content_with_images,
+    coerce_to_dict,
+    coerce_to_plain,
+)
 from src.smart_rag.messaging.component_tracker import ComponentTracker
 
 logger = get_logger("api.routers.agentic_rag.StreamingEventProcessor")
@@ -319,33 +324,7 @@ class StreamingEventProcessor:
                         f"[FORMVIZ] Sent 'generating ui' chunk for tool: {func_name}"
                     )
 
-                if func_name == "render_chart" and q:
-                    chart_data = {}
-                    if hasattr(part.function_call, "args") and part.function_call.args:
-                        chart_data = dict(part.function_call.args)
-
-                    call_id = part.function_call.id if hasattr(part.function_call, "id") else None
-                    chart_chunk = self.streaming_formatter.format_component_event(
-                        agent_id="manager",
-                        component_type="chart",
-                        component_data={
-                            "title": chart_data.get("title", ""),
-                            "chartData": chart_data.get("data", []),
-                            "config": chart_data.get("config", {}),
-                            "xAxisKey": chart_data.get("xAxisKey", ""),
-                            "yAxisKey": chart_data.get("yAxisKey", ""),
-                            "series": chart_data.get("series", []),
-                            "kind": chart_data.get("kind", "bar"),
-                            "stacked": chart_data.get("stacked", False),
-                            "layout": chart_data.get("layout", "horizontal"),
-                            "innerRadius": chart_data.get("innerRadius", 0),
-                            "showLegend": chart_data.get("showLegend", True),
-                            "showGrid": chart_data.get("showGrid", True),
-                        },
-                        message_id=current_message_id,
-                        component_id=call_id,
-                    )
-                    await q.put(chart_chunk)
+                # render_chart: no function_call emission; emit once on function_response.
 
                 # Handle python_interpreter function call - send sandbox with code
                 if func_name == "python_interpreter" and q:
@@ -782,11 +761,32 @@ class StreamingEventProcessor:
         self, function_response, message_id: str, q: asyncio.Queue[dict]
     ) -> None:
         try:
-            response_data = function_response.response
-            call_id = function_response.id if hasattr(function_response, "id") else None
+            response_data = coerce_to_dict(
+                getattr(function_response, "response", None)
+            )
+            call_id = getattr(function_response, "id", None) or str(uuid.uuid4())
 
-            if not isinstance(response_data, dict):
+            if not response_data:
+                logger.warning(
+                    "[CHART] render_chart response empty or un-coercible; "
+                    "raw type=%s",
+                    type(getattr(function_response, "response", None)).__name__,
+                )
                 return
+
+            if response_data.get("error"):
+                logger.warning(
+                    "[CHART] render_chart tool returned error: %s",
+                    response_data.get("details"),
+                )
+                return
+
+            logger.info(
+                "[CHART] emitting render_chart component_id=%s kind=%s data_len=%s",
+                call_id,
+                response_data.get("kind"),
+                len(response_data.get("chartData") or []),
+            )
 
             chart_chunk = self.streaming_formatter.format_component_event(
                 agent_id="manager",
@@ -797,6 +797,8 @@ class StreamingEventProcessor:
                     "config": response_data.get("config", {}),
                     "xAxisKey": response_data.get("xAxisKey", ""),
                     "yAxisKey": response_data.get("yAxisKey", ""),
+                    "nameKey": response_data.get("nameKey", ""),
+                    "zAxisKey": response_data.get("zAxisKey", ""),
                     "series": response_data.get("series", []),
                     "kind": response_data.get("kind", "bar"),
                     "stacked": response_data.get("stacked", False),
@@ -806,7 +808,7 @@ class StreamingEventProcessor:
                     "showGrid": response_data.get("showGrid", True),
                 },
                 message_id=message_id,
-                action="update",
+                action="add",
                 component_id=call_id,
             )
             await q.put(chart_chunk)

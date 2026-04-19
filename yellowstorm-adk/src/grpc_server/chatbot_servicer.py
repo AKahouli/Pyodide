@@ -936,6 +936,26 @@ class ChatbotServicer(
         }
         return status_map.get(status_str.lower(), chatbot_pb2.PENDING)
 
+    @staticmethod
+    def _chart_kind_to_enum(kind_str: str) -> int:
+        kind_map = {
+            "bar": chatbot_pb2.CHART_KIND_BAR,
+            "line": chatbot_pb2.CHART_KIND_LINE,
+            "area": chatbot_pb2.CHART_KIND_AREA,
+            "pie": chatbot_pb2.CHART_KIND_PIE,
+            "scatter": chatbot_pb2.CHART_KIND_SCATTER,
+            "composed": chatbot_pb2.CHART_KIND_COMPOSED,
+        }
+        return kind_map.get((kind_str or "").lower(), chatbot_pb2.CHART_KIND_UNSPECIFIED)
+
+    @staticmethod
+    def _chart_layout_to_enum(layout_str: str) -> int:
+        layout_map = {
+            "horizontal": chatbot_pb2.CHART_LAYOUT_HORIZONTAL,
+            "vertical": chatbot_pb2.CHART_LAYOUT_VERTICAL,
+        }
+        return layout_map.get((layout_str or "").lower(), chatbot_pb2.CHART_LAYOUT_UNSPECIFIED)
+
     def _dict_to_stream_chunk(
         self, chunk_dict: Dict[str, Any]
     ) -> "chatbot_pb2.StreamChunk":
@@ -1077,12 +1097,24 @@ class ChatbotServicer(
                 title=component_data.get("title", ""), items=items
             )
         elif component_type == "chart":
+            chart_data = component_data.get("chartData", component_data.get("data", []))
+            chart_config = component_data.get("config", {})
+            chart_series = component_data.get("series", [])
             component_kwargs["chart"] = chatbot_pb2.ChartComponent(
                 title=component_data.get("title", ""),
-                data=component_data.get("data", ""),
-                config=component_data.get("config", ""),
+                data=chart_data if isinstance(chart_data, str) else json.dumps(chart_data, ensure_ascii=False),
+                config=chart_config if isinstance(chart_config, str) else json.dumps(chart_config, ensure_ascii=False),
                 xAxisKey=component_data.get("xAxisKey", ""),
-                series=component_data.get("series", ""),
+                series=chart_series if isinstance(chart_series, str) else json.dumps(chart_series, ensure_ascii=False),
+                kind=self._chart_kind_to_enum(component_data.get("kind", "bar")),
+                yAxisKey=component_data.get("yAxisKey", ""),
+                stacked=component_data.get("stacked", False),
+                layout=self._chart_layout_to_enum(component_data.get("layout", "horizontal")),
+                inner_radius=component_data.get("innerRadius", 0),
+                show_legend=component_data.get("showLegend", True),
+                show_grid=component_data.get("showGrid", True),
+                nameKey=component_data.get("nameKey", ""),
+                zAxisKey=component_data.get("zAxisKey", ""),
             )
         elif component_type == "task":
             # Build TaskComponent with items array

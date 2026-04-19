@@ -292,7 +292,7 @@ export interface UpsertPlaybookMailTriggerData {
     from?: string[];
     subjectContains?: string[];
     bodyContains?: string[];
-    hasAttachments?: boolean;
+    hasAttachments?: boolean | null;
   };
 }
 

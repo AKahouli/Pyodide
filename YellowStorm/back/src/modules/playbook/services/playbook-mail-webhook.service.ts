@@ -68,6 +68,14 @@ export class PlaybookMailWebhookService {
           resource || `/me/messages/${encodeURIComponent(messageId)}`,
         );
 
+        this.logger.log('////////////////////// [MailWebhook] raw Graph message', {
+          playbookId: playbook._id.toString(),
+          graphMessageId: graphMessage.id,
+          subject: graphMessage.subject ?? '',
+          hasAttachments: graphMessage.hasAttachments === true,
+          conversationId: graphMessage.conversationId ?? null,
+        });
+
         const normalizedEvent: NormalizedMailEventData = {
           provider: 'm365',
           mailboxAppKey: playbook.mailTrigger.mailboxAppKey,
@@ -111,6 +119,22 @@ export class PlaybookMailWebhookService {
           finalStatus: evaluation.finalStatus,
           matched: evaluation.match.matched,
           duplicate: evaluation.ingestion.duplicate,
+          reasons: evaluation.match.reasons,
+          filters: {
+            from: Array.isArray(playbook.mailTrigger?.filters?.from)
+              ? playbook.mailTrigger.filters.from
+              : [],
+            subjectContains: Array.isArray(playbook.mailTrigger?.filters?.subjectContains)
+              ? playbook.mailTrigger.filters.subjectContains
+              : [],
+            bodyContains: Array.isArray(playbook.mailTrigger?.filters?.bodyContains)
+              ? playbook.mailTrigger.filters.bodyContains
+              : [],
+            hasAttachments:
+              typeof playbook.mailTrigger?.filters?.hasAttachments === 'boolean'
+                ? playbook.mailTrigger.filters.hasAttachments
+                : null,
+          },
         });
 
         if (
@@ -141,6 +165,13 @@ export class PlaybookMailWebhookService {
             playbookId: playbook._id.toString(),
             ledgerEntryId: evaluation.ingestion.entry.id,
             attachmentCount: attachments.length,
+          });
+        } else if (graphMessage.hasAttachments === true) {
+          this.logger.log('////////////////////// [MailWebhook] attachment import skipped', {
+            playbookId: playbook._id.toString(),
+            finalStatus: evaluation.finalStatus,
+            duplicate: evaluation.ingestion.duplicate,
+            attachmentImportEnabled: playbook.mailTrigger?.attachmentImportEnabled === true,
           });
         }
 

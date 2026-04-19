@@ -197,11 +197,62 @@ describe('PlaybookScheduleSheet', () => {
     expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
       enabled: true,
       mailboxAppKey: 'microsoft',
+      attachmentImportEnabled: false,
+      allowedAttachmentExtensions: [],
       filters: {
         from: ['alerts@example.com'],
         subjectContains: ['invoice'],
         bodyContains: ['urgent'],
         hasAttachments: true,
+      },
+    });
+  });
+
+  it('does not force hasAttachments false when the checkbox is unchecked', async () => {
+    render(
+      <PlaybookScheduleSheet
+        open
+        onOpenChange={vi.fn()}
+        playbookId="p1"
+        schedule={null}
+        mailTrigger={{
+          type: 'mail',
+          enabled: true,
+          available: true,
+          config: {
+            enabled: true,
+            mailboxAppKey: 'microsoft',
+            notificationUrl: null,
+            attachmentImportEnabled: true,
+            allowedAttachmentExtensions: ['pptx'],
+            filters: {
+              from: [],
+              subjectContains: [],
+              bodyContains: [],
+              hasAttachments: null,
+            },
+            runtimeEnabled: false,
+            subscriptionId: null,
+            subscriptionClientState: null,
+            subscriptionExpiresAt: null,
+            runtimePayloadSchema: null,
+          },
+        }}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
+
+    expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
+      enabled: true,
+      mailboxAppKey: 'microsoft',
+      attachmentImportEnabled: true,
+      allowedAttachmentExtensions: ['pptx'],
+      filters: {
+        from: [],
+        subjectContains: [],
+        bodyContains: [],
+        hasAttachments: null,
       },
     });
   });

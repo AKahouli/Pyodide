@@ -68,7 +68,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
     from: '',
     subjectContains: '',
     bodyContains: '',
-    hasAttachments: false,
+    hasAttachments: null as boolean | null,
   });
   const [automatedTriggerType, setAutomatedTriggerType] = useState<'none' | 'schedule' | 'mail'>('none');
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -556,9 +556,12 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                 <input
                   type="checkbox"
                   aria-label={t('triggers.mailConfig.hasAttachments')}
-                  checked={mailDraft.hasAttachments}
+                  checked={mailDraft.hasAttachments === true}
                   onChange={(e) =>
-                    setMailDraft((current) => ({ ...current, hasAttachments: e.target.checked }))
+                    setMailDraft((current) => ({
+                      ...current,
+                      hasAttachments: e.target.checked ? true : null,
+                    }))
                   }
                 />
                 <span>{t('triggers.mailConfig.hasAttachments')}</span>

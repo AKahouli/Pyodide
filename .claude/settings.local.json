@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(find:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(npx jest *)",
+      "Bash(npx vitest *)",
+      "Bash(python -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
+      "Bash(python *)"
     ]
   }
 }

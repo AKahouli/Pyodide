@@ -89,23 +89,24 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         data: { label: comp.checkpoint?.label || '' },
       };
     case 'chart':
+      const chart = comp.chart || {};
       return {
         type,
         data: {
-          title: comp.chart?.title || '',
-          chartData: comp.chart?.data || '',
-          config: comp.chart?.config || '',
-          xAxisKey: comp.chart?.xAxisKey || '',
-          series: comp.chart?.series || '',
-          kind: comp.chart?.kind || 'CHART_KIND_UNSPECIFIED',
-          yAxisKey: comp.chart?.yAxisKey || '',
-          stacked: comp.chart?.stacked || false,
-          layout: comp.chart?.layout || 'CHART_LAYOUT_UNSPECIFIED',
-          innerRadius: comp.chart?.inner_radius || 0,
-          showLegend: comp.chart?.show_legend !== false,
-          showGrid: comp.chart?.show_grid !== false,
-          nameKey: comp.chart?.nameKey || '',
-          zAxisKey: comp.chart?.zAxisKey || '',
+          title: chart.title || '',
+          chartData: chart.data || chart.chartData || '',
+          config: chart.config || '',
+          xAxisKey: chart.xAxisKey || chart.x_axis_key || '',
+          series: chart.series || '',
+          kind: chart.kind || 'CHART_KIND_UNSPECIFIED',
+          yAxisKey: chart.yAxisKey || chart.y_axis_key || '',
+          stacked: chart.stacked || false,
+          layout: chart.layout || 'CHART_LAYOUT_UNSPECIFIED',
+          innerRadius: chart.inner_radius || chart.innerRadius || 0,
+          showLegend: chart.show_legend ?? chart.showLegend ?? true,
+          showGrid: chart.show_grid ?? chart.showGrid ?? true,
+          nameKey: chart.nameKey || chart.name_key || '',
+          zAxisKey: chart.zAxisKey || chart.z_axis_key || '',
         },
       };
     case 'task':

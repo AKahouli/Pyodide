@@ -40,6 +40,47 @@ describe('component-mapper chart extraction', () => {
     });
   });
 
+  it('maps snake_case chart fields from grpc/proto-loader output', () => {
+    const result = extractComponentData({
+      chart: {
+        title: 'Prices',
+        data: '[{"produit":"Stylo","prix":1.2}]',
+        config: '{"prix":{"label":"Prix (€)","color":"#123456"}}',
+        x_axis_key: 'produit',
+        y_axis_key: 'prix',
+        name_key: '',
+        z_axis_key: '',
+        series: '[{"dataKey":"prix","label":"Prix (€)"}]',
+        kind: 'CHART_KIND_BAR',
+        stacked: false,
+        layout: 'CHART_LAYOUT_HORIZONTAL',
+        inner_radius: 0,
+        show_legend: true,
+        show_grid: true,
+      },
+    });
+
+    expect(result).toEqual({
+      type: 'chart',
+      data: {
+        title: 'Prices',
+        chartData: '[{"produit":"Stylo","prix":1.2}]',
+        config: '{"prix":{"label":"Prix (€)","color":"#123456"}}',
+        xAxisKey: 'produit',
+        series: '[{"dataKey":"prix","label":"Prix (€)"}]',
+        kind: 'CHART_KIND_BAR',
+        yAxisKey: 'prix',
+        nameKey: '',
+        zAxisKey: '',
+        stacked: false,
+        layout: 'CHART_LAYOUT_HORIZONTAL',
+        innerRadius: 0,
+        showLegend: true,
+        showGrid: true,
+      },
+    });
+  });
+
   it('defaults chart fields for older producers', () => {
     const result = extractComponentData({
       chart: {

@@ -19,7 +19,7 @@ from google.genai import types
 from src.smart_rag.infrastructure.monitoring import TraceRecorder
 from src.smart_rag.infrastructure.processing import PromptProcessor
 from src.smart_rag.messaging import MessageTransformer, StreamingFormatter
-from src.smart_rag.engines.helpers import build_content_with_images
+from src.smart_rag.engines.helpers import build_content_with_images, coerce_to_dict
 from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
@@ -522,6 +522,15 @@ class AgentRunner:
                                 part.function_response,
                                 agent_id,
                                 agent_name,
+                                session_id,
+                                q,
+                            )
+
+                        # Check if this is a render_chart tool response
+                        if func_name == "render_chart" and q:
+                            await self._handle_render_chart_response(
+                                part.function_response,
+                                agent_id,
                                 session_id,
                                 q,
                             )
@@ -1172,6 +1181,67 @@ class AgentRunner:
         except Exception as e:
             logger.error(
                 f"[RUNNER SANDBOX] Error handling python interpreter response: {str(e)}",
+                exc_info=True,
+            )
+
+    async def _handle_render_chart_response(
+        self, function_response, agent_id, session_id, q
+    ):
+        """Emit a chart component when a sub-agent calls render_chart."""
+        try:
+            response_data = coerce_to_dict(
+                getattr(function_response, "response", None)
+            )
+            call_id = getattr(function_response, "id", None) or str(uuid.uuid4())
+
+            if not response_data:
+                logger.warning(
+                    "[CHART] render_chart response empty or un-coercible; raw type=%s",
+                    type(getattr(function_response, "response", None)).__name__,
+                )
+                return
+
+            if response_data.get("error"):
+                logger.warning(
+                    "[CHART] render_chart tool returned error: %s",
+                    response_data.get("details"),
+                )
+                return
+
+            logger.info(
+                "[CHART] emitting render_chart component_id=%s kind=%s data_len=%s",
+                call_id,
+                response_data.get("kind"),
+                len(response_data.get("chartData") or []),
+            )
+
+            chart_chunk = self.streaming_formatter.format_component_event(
+                agent_id=agent_id,
+                component_type="chart",
+                component_data={
+                    "title": response_data.get("title", ""),
+                    "chartData": response_data.get("chartData", []),
+                    "config": response_data.get("config", {}),
+                    "xAxisKey": response_data.get("xAxisKey", ""),
+                    "yAxisKey": response_data.get("yAxisKey", ""),
+                    "nameKey": response_data.get("nameKey", ""),
+                    "zAxisKey": response_data.get("zAxisKey", ""),
+                    "series": response_data.get("series", []),
+                    "kind": response_data.get("kind", "bar"),
+                    "stacked": response_data.get("stacked", False),
+                    "layout": response_data.get("layout", "horizontal"),
+                    "innerRadius": response_data.get("innerRadius", 0),
+                    "showLegend": response_data.get("showLegend", True),
+                    "showGrid": response_data.get("showGrid", True),
+                },
+                message_id=session_id,
+                action="add",
+                component_id=call_id,
+            )
+            await q.put(chart_chunk)
+        except Exception as e:
+            logger.error(
+                f"[CHART] Error handling render_chart response: {str(e)}",
                 exc_info=True,
             )
 
