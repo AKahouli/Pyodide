@@ -51,20 +51,12 @@ import {
   MAX_CONCURRENT_STEPS_DEFAULT,
 } from '../utils/execution.utils';
 import type { BufferedStepResult } from '../utils/execution.utils';
+import { PlaybookExecutionGraphService } from './playbook-execution-graph.service';
+import { PlaybookExecutionNotificationService } from './playbook-execution-notification.service';
+import { PlaybookExecutionBufferService } from './playbook-execution-buffer.service';
+import { PlaybookExecutionAdvisorService } from './playbook-execution-advisor.service';
 
 const SKIP_STEP_REASON = '__SKIP_STEP__';
-const ADVISOR_AUTOPILOT_DEFAULT_TARGET_SCORE = 80;
-const ADVISOR_AUTOPILOT_DEFAULT_MAX_TURNS = 2;
-
-type AdvisorAutopilotStatus =
-  | 'idle'
-  | 'running'
-  | 'judging'
-  | 'optimizing'
-  | 'rerunning'
-  | 'completed'
-  | 'stopped'
-  | 'failed';
 
 interface AdvisorAutopilotConfig {
   enabled: boolean;
@@ -83,8 +75,6 @@ type AdvisorAutopilotStopReason =
 export class PlaybookExecutionService {
   private readonly maxComponentsPerTask: number;
   private readonly maxConcurrentSteps: number;
-  private readonly frontendBaseUrl: string;
-  private readonly activeStepBuffers = new Map<string, Map<string, BufferedStepResult>>();
 
   constructor(
     @InjectModel(PlaybookExecution.name)
@@ -109,6 +99,10 @@ export class PlaybookExecutionService {
     private readonly judgeEnrichmentService: PlaybookJudgeEnrichmentService,
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
+    private readonly advisorService: PlaybookExecutionAdvisorService,
+    private readonly graphService: PlaybookExecutionGraphService,
+    private readonly notificationService: PlaybookExecutionNotificationService,
+    private readonly bufferService: PlaybookExecutionBufferService,
   ) {
     this.logger.setContext('PlaybookExecutionService');
     this.maxComponentsPerTask =
@@ -116,9 +110,6 @@ export class PlaybookExecutionService {
       MAX_COMPONENTS_PER_TASK_DEFAULT;
     this.maxConcurrentSteps =
       this.configService.get<number>('playbook.maxConcurrentSteps') || MAX_CONCURRENT_STEPS_DEFAULT;
-    this.frontendBaseUrl = (
-      this.configService.get<string>('app.frontendUrl', 'http://localhost:5173') || ''
-    ).replace(/\/$/, '');
   }
 
   private normalizeStructLike(value: any): any {
@@ -609,65 +600,6 @@ export class PlaybookExecutionService {
     return dto.message?.trim() || dto.feedback?.trim() || dto.reason?.trim() || '';
   }
 
-  private normalizeEdgeId(value: any): string {
-    return value?.toString?.() || value || '';
-  }
-
-  private buildEdgeKey(edge: any): string {
-    const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-    const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-    const sourcePortId =
-      this.normalizeEdgeId(edge.sourceOutputPortId ?? edge.source_output_port_id) || 'default';
-    const targetPortId =
-      this.normalizeEdgeId(edge.targetInputPortId ?? edge.target_input_port_id) || 'default';
-    return `${sourceId}:${sourcePortId}->${targetId}:${targetPortId}`;
-  }
-
-  private buildTaskMapFromSnapshot(snapshot: any): Map<string, any> {
-    const map = new Map<string, any>();
-    for (const task of snapshot?.tasks || []) {
-      map.set(task.id, task);
-    }
-    return map;
-  }
-
-  private findAncestorTaskIds(snapshot: any, taskId: string): string[] {
-    const ancestors = new Set<string>();
-    const queue = [taskId];
-    while (queue.length > 0) {
-      const currentId = queue.shift()!;
-      for (const edge of snapshot?.edges || []) {
-        const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-        const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-        if (targetId !== currentId || ancestors.has(sourceId)) {
-          continue;
-        }
-        ancestors.add(sourceId);
-        queue.push(sourceId);
-      }
-    }
-    return [...ancestors];
-  }
-
-  private findDescendantTaskIds(snapshot: any, taskId: string): string[] {
-    const descendants = new Set<string>();
-    const queue = [taskId];
-    while (queue.length > 0) {
-      const currentId = queue.shift()!;
-      for (const edge of snapshot?.edges || []) {
-        const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-        const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-        if (sourceId !== currentId || descendants.has(targetId)) {
-          continue;
-        }
-        descendants.add(targetId);
-        queue.push(targetId);
-      }
-    }
-    descendants.delete(taskId);
-    return [...descendants];
-  }
-
   private async trySetExecutionTerminalState(
     executionId: string,
     status: ExecutionStatus,
@@ -689,190 +621,6 @@ export class PlaybookExecutionService {
     );
 
     return result.modifiedCount > 0;
-  }
-
-  private seedTaskOutputsFromExecution(
-    execution: any,
-    snapshot: any,
-    ancestorTaskIds: string[],
-  ): Map<string, string> {
-    const taskOutputs = new Map<string, string>();
-    const allowed = new Set(ancestorTaskIds);
-    const taskMap = this.buildTaskMapFromSnapshot(snapshot);
-
-    for (const tr of execution.taskResults || []) {
-      if (
-        !allowed.has(tr.taskId) ||
-        tr.status !== StepStatus.COMPLETED ||
-        !tr.output ||
-        tr.isStale
-      ) {
-        continue;
-      }
-      taskOutputs.set(tr.taskId, tr.output);
-      const task = taskMap.get(tr.taskId);
-      const outputKey = task?.outputKey;
-      if (outputKey) {
-        taskOutputs.set(outputKey, tr.output);
-      }
-    }
-
-    return taskOutputs;
-  }
-
-  private buildWorkspaceContextFromUpstreamArtifacts(
-    execution: any,
-    snapshot: any,
-    taskId: string,
-  ): {
-    workspaceContexts: Array<{ workspace_id: string; workspace_documents: any[] }>;
-    inputFilesByPort: Array<{ port_id: string; document_ids: string[] }>;
-  } {
-    const docsByWorkspace = new Map<string, Map<string, any>>();
-    const docIdsByPort = new Map<string, Set<string>>();
-    const taskResultsById = new Map<string, any>();
-
-    for (const tr of execution.taskResults || []) {
-      taskResultsById.set(tr.taskId, tr);
-    }
-
-    for (const edge of snapshot?.edges || []) {
-      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-      if (targetId !== taskId) continue;
-
-      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-      const sourcePortId = edge.sourceOutputPortId || edge.source_output_port_id || 'default';
-      const targetPortId = edge.targetInputPortId || edge.target_input_port_id || 'default';
-      const taskResult = taskResultsById.get(sourceId);
-      if (!taskResult || taskResult.status !== StepStatus.COMPLETED || taskResult.isStale) {
-        continue;
-      }
-
-      const matchingArtifacts = (taskResult.artifacts || []).filter(
-        (artifact: any) =>
-          artifact?.portId === sourcePortId &&
-          artifact?.artifactKind === 'document' &&
-          typeof artifact?.url === 'string' &&
-          artifact.url.trim() &&
-          typeof artifact?.filename === 'string' &&
-          artifact.filename.trim() &&
-          !artifact.url.startsWith('/box/') &&
-          !artifact.url.startsWith('sandbox:/box/'),
-      );
-
-      if (matchingArtifacts.length === 0) continue;
-      if (!docIdsByPort.has(targetPortId)) {
-        docIdsByPort.set(targetPortId, new Set<string>());
-      }
-
-      matchingArtifacts.forEach((artifact: any, index: number) => {
-        const syntheticDocId = `artifact:${sourceId}:${sourcePortId}:${index}:${artifact.filename}`;
-        const workspaceId =
-          artifact?.metadata?.workspaceId ||
-          artifact?.metadata?.workspace_id ||
-          'playbook_artifacts';
-
-        if (!docsByWorkspace.has(workspaceId)) {
-          docsByWorkspace.set(workspaceId, new Map<string, any>());
-        }
-
-        docsByWorkspace.get(workspaceId)!.set(syntheticDocId, {
-          _id: syntheticDocId,
-          filename: artifact.filename,
-          filepath: artifact.url,
-          in_memory: false,
-          language: 'fr',
-          indexing_token: 1200,
-          workspace_id: workspaceId,
-          createdAt: null,
-        });
-        docIdsByPort.get(targetPortId)!.add(syntheticDocId);
-      });
-    }
-
-    return {
-      workspaceContexts: Array.from(docsByWorkspace.entries()).map(([workspace_id, docMap]) => ({
-        workspace_id,
-        workspace_documents: Array.from(docMap.values()),
-      })),
-      inputFilesByPort: Array.from(docIdsByPort.entries()).map(([port_id, ids]) => ({
-        port_id,
-        document_ids: Array.from(ids),
-      })),
-    };
-  }
-
-  private mergeWorkspaceContexts(
-    baseContexts: Array<{ workspace_id: string; workspace_documents: any[] }>,
-    extraContexts: Array<{ workspace_id: string; workspace_documents: any[] }>,
-  ): Array<{ workspace_id: string; workspace_documents: any[] }> {
-    const merged = new Map<string, Map<string, any>>();
-
-    for (const ctx of [...(baseContexts || []), ...(extraContexts || [])]) {
-      const workspaceId = ctx.workspace_id;
-      if (!workspaceId) continue;
-      if (!merged.has(workspaceId)) {
-        merged.set(workspaceId, new Map<string, any>());
-      }
-      const docs = merged.get(workspaceId)!;
-      for (const doc of ctx.workspace_documents || []) {
-        const docId = doc?._id || doc?.id;
-        if (!docId) continue;
-        docs.set(String(docId), doc);
-      }
-    }
-
-    return Array.from(merged.entries()).map(([workspace_id, docs]) => ({
-      workspace_id,
-      workspace_documents: Array.from(docs.values()),
-    }));
-  }
-
-  private buildRunStepRoutingState(
-    execution: any,
-    snapshot: any,
-    taskId: string,
-  ): {
-    edges: any[];
-    upstreamResults: any[];
-  } {
-    const incomingEdges = (snapshot?.edges || []).filter(
-      (edge: any) => this.normalizeEdgeId(edge.targetId ?? edge.target_id) === taskId,
-    );
-
-    const sourceIds = new Set(
-      incomingEdges
-        .map((edge: any) => this.normalizeEdgeId(edge.sourceId ?? edge.source_id))
-        .filter(Boolean),
-    );
-
-    const upstreamResults = (execution?.taskResults || [])
-      .filter((tr: any) => sourceIds.has(tr.taskId) && !tr.isStale)
-      .map((tr: any) => ({
-        task_id: tr.taskId,
-        status: tr.status,
-        error: tr.error || '',
-        duration_ms: tr.durationMs || 0,
-        artifacts: (tr.artifacts || []).map((artifact: any) => ({
-          port_id: artifact.portId || 'default',
-          artifact_kind: artifact.artifactKind || 'text',
-          content: artifact.content || '',
-          url: artifact.url || '',
-          filename: artifact.filename || '',
-          mime_type: artifact.mimeType || '',
-          size: artifact.size || 0,
-        })),
-      }));
-
-    return {
-      edges: incomingEdges.map((edge: any) => ({
-        source_id: this.normalizeEdgeId(edge.sourceId ?? edge.source_id),
-        target_id: this.normalizeEdgeId(edge.targetId ?? edge.target_id),
-        source_output_port_id: edge.sourceOutputPortId || edge.source_output_port_id || 'default',
-        target_input_port_id: edge.targetInputPortId || edge.target_input_port_id || 'default',
-      })),
-      upstreamResults,
-    };
   }
 
   private async appendAttemptHistory(
@@ -917,104 +665,6 @@ export class PlaybookExecutionService {
     });
   }
 
-  private mergeSnapshotForNewTask(existingSnapshot: any, playbook: any, taskId: string): any {
-    const snapshotTasks = existingSnapshot?.tasks || [];
-    const snapshotEdges = existingSnapshot?.edges || [];
-    const playbookTasks = playbook?.tasks || [];
-    const playbookEdges = playbook?.edges || [];
-
-    const existingTaskIds = new Set<string>(snapshotTasks.map((task: any) => task.id));
-    const playbookTaskMap = new Map<string, any>(playbookTasks.map((task: any) => [task.id, task]));
-    const additionalTaskIds = new Set<string>();
-    const queue = [taskId];
-
-    while (queue.length > 0) {
-      const currentTaskId = queue.shift()!;
-      if (existingTaskIds.has(currentTaskId) || additionalTaskIds.has(currentTaskId)) {
-        continue;
-      }
-
-      const currentTask = playbookTaskMap.get(currentTaskId);
-      if (!currentTask) {
-        continue;
-      }
-
-      additionalTaskIds.add(currentTaskId);
-
-      for (const edge of playbookEdges) {
-        const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-        const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-        if (
-          sourceId === currentTaskId &&
-          !existingTaskIds.has(targetId) &&
-          !additionalTaskIds.has(targetId)
-        ) {
-          queue.push(targetId);
-        }
-        if (
-          targetId === currentTaskId &&
-          !existingTaskIds.has(sourceId) &&
-          !additionalTaskIds.has(sourceId)
-        ) {
-          queue.push(sourceId);
-        }
-      }
-    }
-
-    const mergedTaskIds = new Set<string>([...existingTaskIds, ...additionalTaskIds]);
-    const mergedTasks = [
-      ...snapshotTasks,
-      ...Array.from(additionalTaskIds)
-        .map((id) => playbookTaskMap.get(id))
-        .filter(Boolean)
-        .map((task: any) => ((task as any).toObject ? (task as any).toObject() : task)),
-    ];
-
-    const seenEdges = new Set<string>();
-    const mergedEdges = [...snapshotEdges];
-    for (const edge of snapshotEdges) {
-      seenEdges.add(this.buildEdgeKey(edge));
-    }
-
-    for (const edge of playbookEdges) {
-      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
-      if (!mergedTaskIds.has(sourceId) || !mergedTaskIds.has(targetId)) {
-        continue;
-      }
-      const edgeKey = this.buildEdgeKey(edge);
-      if (seenEdges.has(edgeKey)) {
-        continue;
-      }
-      seenEdges.add(edgeKey);
-      mergedEdges.push((edge as any).toObject ? (edge as any).toObject() : edge);
-    }
-
-    return {
-      tasks: mergedTasks,
-      edges: mergedEdges,
-    };
-  }
-
-  private refreshSnapshotTask(existingSnapshot: any, playbook: any, taskId: string): any {
-    const snapshot = this.mergeSnapshotForNewTask(existingSnapshot, playbook, taskId);
-    const playbookTask = (playbook?.tasks || []).find((task: any) => task.id === taskId);
-    if (!playbookTask) {
-      return snapshot;
-    }
-
-    return {
-      ...snapshot,
-      tasks: (snapshot?.tasks || []).map((task: any) =>
-        task.id === taskId
-          ? (playbookTask as any).toObject
-            ? (playbookTask as any).toObject()
-            : playbookTask
-          : task,
-      ),
-    };
-  }
-
   private async ensureTaskResultExists(
     executionId: string,
     task: any,
@@ -1039,8 +689,8 @@ export class PlaybookExecutionService {
     );
     const enabledTaskIds = new Set(enabledTasks.map((candidate: any) => candidate.id));
     const enabledEdges = (snapshot?.edges || []).filter((edge: any) => {
-      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
+      const sourceId = this.graphService.normalizeEdgeId(edge.sourceId ?? edge.source_id);
+      const targetId = this.graphService.normalizeEdgeId(edge.targetId ?? edge.target_id);
       return enabledTaskIds.has(sourceId) && enabledTaskIds.has(targetId);
     });
     const orderedTasks = topologicalSortByLevel(enabledTasks, enabledEdges).flat();
@@ -1245,7 +895,7 @@ export class PlaybookExecutionService {
           : 'manual';
     const mode = dto.singleStepTaskId ? 'single-step' : 'full-workflow';
     const globalExecutionMode = dto.executionMode || 'live';
-    const advisorAutopilot = this.normalizeAdvisorAutopilotConfig(
+    const advisorAutopilot = this.advisorService.normalizeAdvisorAutopilotConfig(
       dto.singleStepTaskId ? dto.advisorAutopilotEnabled === true : false,
       dto.advisorAutopilotTargetScore,
       dto.advisorAutopilotMaxTurns,
@@ -1296,12 +946,7 @@ export class PlaybookExecutionService {
       const targetAllowed = enabledTaskIds.has(targetId);
       return sourceAllowed && targetAllowed;
     });
-    const sanitizedEnabledEdges = this.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
-
-    if (!dto.singleStepTaskId && enabledTasks.length === 0) {
-      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'No enabled steps to execute');
-    }
-
+    const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
     const triggerContext = options?.triggerContext ?? null;
 
     if (dto.singleStepTaskId) {
@@ -1561,7 +1206,7 @@ export class PlaybookExecutionService {
             error: (err as Error).message,
           });
           try {
-            await this.updateAdvisorAutopilotState(userId, executionId, {
+            await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
               status: 'failed',
               taskId: dto.singleStepTaskId || null,
               lastError: (err as Error).message,
@@ -1746,7 +1391,7 @@ export class PlaybookExecutionService {
       const targetAllowed = enabledTaskIds.has(targetId);
       return sourceAllowed && targetAllowed;
     });
-    const sanitizedEnabledEdges = this.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
+    const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
 
     // Build RunPlaybookWorkflowRequest
     const stepExecutionModesForGrpc: Record<string, string> = {};
@@ -2088,8 +1733,6 @@ export class PlaybookExecutionService {
           taskId,
           status: 'completed',
         });
-        if (completedTask)
-          this.sendStepNotificationEmail(completedTask, 'completed', playbookName, { output });
         break;
       }
 
@@ -2155,7 +1798,7 @@ export class PlaybookExecutionService {
           error,
         });
         if (failedTask)
-          this.sendStepNotificationEmail(failedTask, 'failed', playbookName, { error });
+          this.notificationService.sendStepNotificationEmail(failedTask, 'failed', playbookName, { error });
         break;
       }
 
@@ -2238,166 +1881,6 @@ export class PlaybookExecutionService {
     }
   }
 
-  private sanitizeEdgesForTasks(tasks: any[], edges: any[]): any[] {
-    const triggerSourceId = '__trigger__';
-    const triggerPortIds = new Set(['mail_data', 'mail_attachments']);
-    const taskMap = new Map<string, any>();
-    for (const task of tasks || []) {
-      taskMap.set(task.id, task);
-    }
-
-    return (edges || []).filter((edge: any) => {
-      const sourceId = edge.sourceId || edge.source_id;
-      const targetId = edge.targetId || edge.target_id;
-      const sourceTask = taskMap.get(sourceId);
-      const targetTask = taskMap.get(targetId);
-      const isTriggerSource = sourceId === triggerSourceId;
-
-      if ((!sourceTask && !isTriggerSource) || !targetTask) {
-        this.logger.warn('Dropping edge with missing task reference', {
-          edgeId: edge.id,
-          sourceId,
-          targetId,
-        });
-        return false;
-      }
-
-      const sourcePortId = edge.sourceOutputPortId || edge.source_output_port_id || 'default';
-      const targetPortId = edge.targetInputPortId || edge.target_input_port_id || 'default';
-      const sourcePorts = sourceTask?.outputPorts || sourceTask?.output_ports || [];
-      const targetPorts = targetTask.inputPorts || targetTask.input_ports || [];
-
-      const sourcePortExists = isTriggerSource
-        ? triggerPortIds.has(sourcePortId)
-        : sourcePorts.length === 0 || sourcePorts.some((p: any) => p.id === sourcePortId);
-      const targetPortExists =
-        targetPorts.length === 0 || targetPorts.some((p: any) => p.id === targetPortId);
-
-      if (!sourcePortExists || !targetPortExists) {
-        this.logger.warn('Dropping edge with stale port reference', {
-          edgeId: edge.id,
-          sourceId,
-          sourcePortId,
-          targetId,
-          targetPortId,
-          sourcePortIds: sourcePorts.map((p: any) => p.id),
-          targetPortIds: targetPorts.map((p: any) => p.id),
-        });
-        return false;
-      }
-
-      return true;
-    });
-  }
-
-  /**
-   * Flush all buffered step results to MongoDB.
-   * Preserves existing humanFeedback components (important during resume).
-   */
-  private async flushStepBuffer(
-    executionId: string,
-    stepBuffer: Map<string, BufferedStepResult>,
-    postFlush?: (taskId: string, buffered: BufferedStepResult) => Promise<void>,
-  ): Promise<void> {
-    if (stepBuffer.size === 0) return;
-
-    this.logger.log('Flushing step buffer to DB', {
-      executionId,
-      stepCount: stepBuffer.size,
-    });
-
-    // Read existing humanFeedback components so we can preserve them
-    const execution = await this.executionModel
-      .findById(executionId)
-      .select('taskResults.taskId taskResults.components')
-      .lean()
-      .exec();
-    const hfMap = new Map<string, any[]>();
-    for (const tr of execution?.taskResults || []) {
-      const hf = ((tr as any).components || []).filter((c: any) => c.type === 'humanFeedback');
-      if (hf.length > 0) hfMap.set((tr as any).taskId, hf);
-    }
-
-    for (const [taskId, buffered] of stepBuffer) {
-      await this.flushBufferedTaskResult(executionId, taskId, buffered, hfMap.get(taskId) || []);
-      if (postFlush) {
-        await postFlush(taskId, buffered);
-      }
-    }
-  }
-
-  private async flushBufferedTaskResult(
-    executionId: string,
-    taskId: string,
-    buffered: BufferedStepResult,
-    existingHumanFeedback: any[] = [],
-  ): Promise<void> {
-    const fields: Record<string, any> = {
-      status: buffered.status,
-      startedAt: buffered.startedAt,
-    };
-    if (buffered.output !== undefined) fields.output = buffered.output;
-    if (buffered.error !== undefined) fields.error = buffered.error;
-    if (buffered.durationMs !== undefined) fields.durationMs = buffered.durationMs;
-    if (buffered.completedAt !== undefined) fields.completedAt = buffered.completedAt;
-    if (buffered.inputTokens !== undefined) fields.inputTokens = buffered.inputTokens;
-    if (buffered.outputTokens !== undefined) fields.outputTokens = buffered.outputTokens;
-    if (buffered.totalTokens !== undefined) fields.totalTokens = buffered.totalTokens;
-    if (buffered.modelName !== undefined) fields.modelName = buffered.modelName;
-    if (buffered.semanticMatch !== undefined) fields.semanticMatch = buffered.semanticMatch;
-    if (buffered.toolTrace !== undefined) fields.toolTrace = buffered.toolTrace;
-    if ((buffered as any).llmPromptTrace !== undefined)
-      fields.llmPromptTrace = (buffered as any).llmPromptTrace;
-    if ((buffered as any).artifacts !== undefined) fields.artifacts = (buffered as any).artifacts;
-    if (buffered.components !== undefined) {
-      fields.components = mergeWithExistingHumanFeedback(
-        existingHumanFeedback,
-        buffered.components,
-      );
-    }
-    await this.updateTaskResult(executionId, taskId, fields);
-  }
-
-  private async recordBufferedTaskUsage(
-    userId: string,
-    executionId: string,
-    buffered: BufferedStepResult,
-    startedAt: Date,
-  ): Promise<void> {
-    const inputTokens = buffered.inputTokens ?? 0;
-    const outputTokens = buffered.outputTokens ?? 0;
-    const totalTokens = buffered.totalTokens ?? 0;
-    if (totalTokens <= 0) {
-      return;
-    }
-
-    await this.executionModel.findByIdAndUpdate(executionId, {
-      $inc: {
-        totalInputTokens: inputTokens,
-        totalOutputTokens: outputTokens,
-        totalTokens,
-      },
-    });
-
-    this.usageService
-      .recordUsage({
-        userId,
-        inputTokens,
-        outputTokens,
-        usageType: UsageType.PLAYBOOK,
-        modelName: buffered.modelName || undefined,
-        endpoint: 'playbook.executeStep.stream',
-        durationMs: Date.now() - startedAt.getTime(),
-      })
-      .catch((err) =>
-        this.logger.warn('Failed to record step stream usage', { error: (err as Error).message }),
-      );
-  }
-
-  /**
-   * Handle stream interrupts Ã¢â‚¬â€ multiple steps can suspend per stream.
-   * Creates humanFeedback component + sends SSE for each suspended step.
-   */
   private async handleStreamInterrupts(
     userId: string,
     executionId: string,
@@ -2443,7 +1926,7 @@ export class PlaybookExecutionService {
 
       const interruptTask = taskMap.get(interruptTaskId);
       if (interruptTask) {
-        this.sendStepNotificationEmail(interruptTask, 'interrupted', playbookName, {
+        this.notificationService.sendStepNotificationEmail(interruptTask, 'interrupted', playbookName, {
           output: interrupt?.message || 'Awaiting human input',
           playbookId,
           executionId,
@@ -2476,49 +1959,6 @@ export class PlaybookExecutionService {
   }
 
   /**
-   * Aggregate usage from step buffer and record to DB + usage service.
-   */
-  private async recordStreamUsage(
-    userId: string,
-    executionId: string,
-    stepBuffer: Map<string, BufferedStepResult>,
-    startedAt: Date,
-  ): Promise<void> {
-    let aggInput = 0,
-      aggOutput = 0,
-      aggTotal = 0;
-    let lastModel: string | undefined;
-    for (const buffered of stepBuffer.values()) {
-      if (buffered.inputTokens) aggInput += buffered.inputTokens;
-      if (buffered.outputTokens) aggOutput += buffered.outputTokens;
-      if (buffered.totalTokens) aggTotal += buffered.totalTokens;
-      if (buffered.modelName) lastModel = buffered.modelName;
-    }
-    if (aggTotal > 0) {
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        $inc: {
-          totalInputTokens: aggInput,
-          totalOutputTokens: aggOutput,
-          totalTokens: aggTotal,
-        },
-      });
-      this.usageService
-        .recordUsage({
-          userId,
-          inputTokens: aggInput,
-          outputTokens: aggOutput,
-          usageType: UsageType.PLAYBOOK,
-          modelName: lastModel,
-          endpoint: 'playbook.workflow',
-          durationMs: Date.now() - startedAt.getTime(),
-        })
-        .catch((err) =>
-          this.logger.warn('Failed to record workflow usage', { error: (err as Error).message }),
-        );
-    }
-  }
-
-  /**
    * Shared stream consumer Ã¢â‚¬â€ used by both runFullWorkflow and resume.
    * Collects step updates, detects suspended interrupts, handles completion.
    */
@@ -2534,7 +1974,7 @@ export class PlaybookExecutionService {
     playbookId: string = '',
   ): Promise<void> {
     const stepBuffer = new Map<string, BufferedStepResult>();
-    this.activeStepBuffers.set(executionId, stepBuffer);
+    this.bufferService.activeStepBuffers.set(executionId, stepBuffer);
     const suspendedInterrupts: Array<{ interrupt: any; threadId: string }> = [];
     let streamThreadId = '';
 
@@ -2633,7 +2073,7 @@ export class PlaybookExecutionService {
         if (timeoutHandle) clearTimeout(timeoutHandle);
         this.grpcService.removeStream(executionId);
         try {
-          await this.flushStepBuffer(executionId, stepBuffer, async (taskId, buffered) => {
+          await this.bufferService.flushStepBuffer(executionId, stepBuffer, async (taskId, buffered) => {
             if (buffered.status !== StepStatus.COMPLETED) {
               return;
             }
@@ -2646,8 +2086,8 @@ export class PlaybookExecutionService {
               reflectionEnabled,
             );
           });
-          this.activeStepBuffers.delete(executionId);
-          await this.recordStreamUsage(userId, executionId, stepBuffer, startedAt);
+          this.bufferService.activeStepBuffers.delete(executionId);
+          await this.bufferService.recordStreamUsage(userId, executionId, stepBuffer, startedAt);
 
           const wasCancelled = this.grpcService.wasCancelled(executionId);
           if (wasCancelled) {
@@ -2745,8 +2185,8 @@ export class PlaybookExecutionService {
 
           const wasCancelled = this.grpcService.wasCancelled(executionId);
           if (wasCancelled) {
-            await this.flushStepBuffer(executionId, stepBuffer);
-            this.activeStepBuffers.delete(executionId);
+            await this.bufferService.flushStepBuffer(executionId, stepBuffer);
+            this.bufferService.activeStepBuffers.delete(executionId);
             await this.markExecutionCancelled(userId, executionId, startedAt);
             resolve();
             return;
@@ -2756,8 +2196,8 @@ export class PlaybookExecutionService {
             executionId,
             error: err.message,
           });
-          await this.flushStepBuffer(executionId, stepBuffer);
-          this.activeStepBuffers.delete(executionId);
+          await this.bufferService.flushStepBuffer(executionId, stepBuffer);
+          this.bufferService.activeStepBuffers.delete(executionId);
           await this.markRemainingSkippedAndFail(userId, executionId, err.message, startedAt);
           reject(err);
         })().catch(async (handlerErr: unknown) => {
@@ -2766,7 +2206,7 @@ export class PlaybookExecutionService {
             error: handlerErr instanceof Error ? handlerErr.message : String(handlerErr),
           });
           try {
-            this.activeStepBuffers.delete(executionId);
+            this.bufferService.activeStepBuffers.delete(executionId);
             await this.markRemainingSkippedAndFail(
               userId,
               executionId,
@@ -3051,7 +2491,7 @@ export class PlaybookExecutionService {
             threadId: outcome.response?.thread_id || '',
           },
         });
-        await this.updateAdvisorAutopilotState(userId, executionId, {
+        await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
           status: 'stopped',
           taskId,
           attemptCount: remediationTurn,
@@ -3061,7 +2501,7 @@ export class PlaybookExecutionService {
       }
 
       if (outcome.outcome === 'failed') {
-        await this.updateAdvisorAutopilotState(userId, executionId, {
+        await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
           status: 'failed',
           taskId,
           attemptCount: remediationTurn,
@@ -3076,7 +2516,7 @@ export class PlaybookExecutionService {
         return;
       }
 
-      await this.updateAdvisorAutopilotState(userId, executionId, {
+      await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
         status: 'judging',
         taskId,
         attemptCount: remediationTurn,
@@ -3087,13 +2527,13 @@ export class PlaybookExecutionService {
         await this.judgeEnrichmentService.evaluateNodeNow(userId, executionId, taskId);
         await this.judgeEnrichmentService.evaluateExecutionSummaryNowIfReady(userId, executionId);
       } catch (error) {
-        await this.updateAdvisorAutopilotState(userId, executionId, {
+        await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
           status: 'failed',
           taskId,
           attemptCount: remediationTurn,
           lastError: error instanceof Error ? error.message : 'Advisor evaluation failed',
         });
-        await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+        await this.advisorService.appendAdvisorTurnHistory(userId, executionId, taskId, {
           turn: remediationTurn,
           score: previousScore,
           recommendation: null,
@@ -3106,14 +2546,14 @@ export class PlaybookExecutionService {
         return;
       }
 
-      const taskResult = await this.getExecutionTaskResult(executionId, taskId);
+      const taskResult = await this.advisorService.getExecutionTaskResult(executionId, taskId);
       const judgeResult = taskResult?.judgeResult || null;
       const currentScore = judgeResult?.overallScore ?? null;
       const scoreDelta =
         previousScore !== null && currentScore !== null ? currentScore - previousScore : null;
-      const effectiveSafeAutoFixType = this.resolveAdvisorAutopilotFixType(judgeResult);
+      const effectiveSafeAutoFixType = this.advisorService.resolveAdvisorAutopilotFixType(judgeResult);
 
-      await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+      await this.advisorService.appendAdvisorTurnHistory(userId, executionId, taskId, {
         turn: remediationTurn,
         score: currentScore,
         recommendation: judgeResult?.recommendation ?? null,
@@ -3123,13 +2563,13 @@ export class PlaybookExecutionService {
       });
 
       if (!judgeResult) {
-        await this.updateAdvisorAutopilotState(userId, executionId, {
+        await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
           status: 'failed',
           taskId,
           attemptCount: remediationTurn,
           lastError: 'Advisor evaluation did not produce a result',
         });
-        await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+        await this.advisorService.appendAdvisorTurnHistory(userId, executionId, taskId, {
           turn: remediationTurn,
           score: currentScore,
           recommendation: null,
@@ -3154,7 +2594,7 @@ export class PlaybookExecutionService {
               : null;
 
       if (stopReason) {
-        await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+        await this.advisorService.appendAdvisorTurnHistory(userId, executionId, taskId, {
           turn: remediationTurn,
           score: currentScore,
           recommendation: judgeResult.recommendation,
@@ -3163,7 +2603,7 @@ export class PlaybookExecutionService {
           stopReason,
           scoreDelta,
         });
-        await this.updateAdvisorAutopilotState(userId, executionId, {
+        await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
           status: stopReason === 'target_reached' ? 'completed' : 'stopped',
           taskId,
           attemptCount: remediationTurn,
@@ -3174,13 +2614,13 @@ export class PlaybookExecutionService {
       }
 
       remediationTurn += 1;
-      await this.updateAdvisorAutopilotState(userId, executionId, {
+      await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
         status: 'optimizing',
         taskId,
         attemptCount: remediationTurn,
         lastError: null,
       });
-      await this.appendAdvisorTurnHistory(userId, executionId, taskId, {
+      await this.advisorService.appendAdvisorTurnHistory(userId, executionId, taskId, {
         turn: remediationTurn,
         score: currentScore,
         recommendation: judgeResult.recommendation,
@@ -3208,7 +2648,7 @@ export class PlaybookExecutionService {
       if (!executionForRetry) {
         throw new NotFoundException(ErrorCode.PLAYBOOK_EXECUTION_NOT_FOUND);
       }
-      snapshot = this.refreshSnapshotTask(
+      snapshot = this.graphService.refreshSnapshotTask(
         executionForRetry.playbookSnapshot as any,
         latestPlaybook,
         taskId,
@@ -3221,14 +2661,14 @@ export class PlaybookExecutionService {
       await this.prepareExecutionForRerun(executionId, taskId, nextAttemptNumber);
       await this.resetTaskForAttempt(executionId, taskId, nextAttemptNumber);
       await this.appendAttemptHistory(executionId, nextAttemptNumber, 'rerun_step', taskId, null);
-      await this.updateAdvisorAutopilotState(userId, executionId, {
+      await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
         status: 'rerunning',
         taskId,
         attemptCount: remediationTurn,
         lastError: null,
       });
 
-      const taskMap = this.buildTaskMapFromSnapshot(snapshot);
+      const taskMap = this.graphService.buildTaskMapFromSnapshot(snapshot);
       task = taskMap.get(taskId);
       selectedExecutionMode = (task as any)?.stepReplayMode || selectedExecutionMode;
       validatedReplay =
@@ -3397,7 +2837,7 @@ export class PlaybookExecutionService {
       invalidatedByTaskId: null,
     });
 
-    const contextFromDependencies = this.gatherContext(task, taskOutputs, snapshot);
+    const contextFromDependencies = this.graphService.gatherContext(task, taskOutputs, snapshot);
 
     // Build gRPC request
     const grpcAgent = task.assignedAgentId
@@ -3429,17 +2869,17 @@ export class PlaybookExecutionService {
       .lean()
       .exec();
 
-    const upstreamPortInputs = this.buildWorkspaceContextFromUpstreamArtifacts(
+    const upstreamPortInputs = this.graphService.buildWorkspaceContextFromUpstreamArtifacts(
       currentExecutionState,
       snapshot,
       taskId,
     );
-    const routingState = this.buildRunStepRoutingState(currentExecutionState, snapshot, taskId);
+    const routingState = this.graphService.buildRunStepRoutingState(currentExecutionState, snapshot, taskId);
     if (
       upstreamPortInputs.workspaceContexts.length > 0 ||
       upstreamPortInputs.inputFilesByPort.length > 0
     ) {
-      taskWorkspaceContexts = this.mergeWorkspaceContexts(
+      taskWorkspaceContexts = this.graphService.mergeWorkspaceContexts(
         taskWorkspaceContexts,
         upstreamPortInputs.workspaceContexts,
       );
@@ -3679,7 +3119,7 @@ export class PlaybookExecutionService {
         });
         this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', runEvaluation);
         this.scheduleNodeReflection(userId, executionId, taskId, 'completed', runNodeReflection);
-        this.sendStepNotificationEmail(task, 'completed', playbookName, {
+        this.notificationService.sendStepNotificationEmail(task, 'completed', playbookName, {
           output,
           playbookId,
           executionId,
@@ -3788,7 +3228,7 @@ export class PlaybookExecutionService {
           staleReason: null,
           invalidatedByTaskId: null,
         });
-        this.sendStepNotificationEmail(task, 'interrupted', playbookName, {
+        this.notificationService.sendStepNotificationEmail(task, 'interrupted', playbookName, {
           output: interrupt?.message || 'Awaiting human input',
           playbookId,
           executionId,
@@ -3874,7 +3314,7 @@ export class PlaybookExecutionService {
           taskId,
           status: 'failed',
         });
-        this.sendStepNotificationEmail(task, 'failed', playbookName, {
+        this.notificationService.sendStepNotificationEmail(task, 'failed', playbookName, {
           error,
           playbookId,
           executionId,
@@ -3912,7 +3352,7 @@ export class PlaybookExecutionService {
         taskId,
         status: 'failed',
       });
-      this.sendStepNotificationEmail(task, 'failed', playbookName, {
+      this.notificationService.sendStepNotificationEmail(task, 'failed', playbookName, {
         error,
         playbookId,
         executionId,
@@ -3939,8 +3379,8 @@ export class PlaybookExecutionService {
     const taskId = task.id;
     const startedAt = new Date();
     const sharedBuffer =
-      this.activeStepBuffers.get(executionId) || new Map<string, BufferedStepResult>();
-    this.activeStepBuffers.set(executionId, sharedBuffer);
+      this.bufferService.activeStepBuffers.get(executionId) || new Map<string, BufferedStepResult>();
+    this.bufferService.activeStepBuffers.set(executionId, sharedBuffer);
 
     const taskMap = new Map<string, any>();
     taskMap.set(taskId, task);
@@ -4000,13 +3440,13 @@ export class PlaybookExecutionService {
               (execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)?.components ||
               []
             ).filter((component: any) => component.type === 'humanFeedback');
-            await this.flushBufferedTaskResult(
+            await this.bufferService.flushBufferedTaskResult(
               executionId,
               taskId,
               buffered,
               existingHumanFeedback,
             );
-            await this.recordBufferedTaskUsage(userId, executionId, buffered, startedAt);
+            await this.bufferService.recordBufferedTaskUsage(userId, executionId, buffered, startedAt);
 
             if (buffered.output) {
               taskOutputs.set(taskId, buffered.output);
@@ -4018,7 +3458,7 @@ export class PlaybookExecutionService {
 
           sharedBuffer.delete(taskId);
           if (sharedBuffer.size === 0) {
-            this.activeStepBuffers.delete(executionId);
+            this.bufferService.activeStepBuffers.delete(executionId);
           }
 
           if (interruptPayload) {
@@ -4040,7 +3480,7 @@ export class PlaybookExecutionService {
               staleReason: null,
               invalidatedByTaskId: null,
             });
-            this.sendStepNotificationEmail(task, 'interrupted', playbookName, {
+            this.notificationService.sendStepNotificationEmail(task, 'interrupted', playbookName, {
               output: interruptPayload.message || 'Awaiting human input',
               playbookId,
               executionId,
@@ -4097,7 +3537,7 @@ export class PlaybookExecutionService {
                 (execution?.taskResults || []).find((tr: any) => tr.taskId === taskId)
                   ?.components || []
               ).filter((component: any) => component.type === 'humanFeedback');
-              await this.flushBufferedTaskResult(
+              await this.bufferService.flushBufferedTaskResult(
                 executionId,
                 taskId,
                 buffered,
@@ -4107,7 +3547,7 @@ export class PlaybookExecutionService {
           } finally {
             sharedBuffer.delete(taskId);
             if (sharedBuffer.size === 0) {
-              this.activeStepBuffers.delete(executionId);
+              this.bufferService.activeStepBuffers.delete(executionId);
             }
           }
           reject(err);
@@ -4119,274 +3559,12 @@ export class PlaybookExecutionService {
           });
           sharedBuffer.delete(taskId);
           if (sharedBuffer.size === 0) {
-            this.activeStepBuffers.delete(executionId);
+            this.bufferService.activeStepBuffers.delete(executionId);
           }
           reject(handlerErr instanceof Error ? handlerErr : err);
         });
       });
     });
-  }
-
-  private buildExecutionDetailUrl(playbookId: string, executionId: string): string {
-    return `${this.frontendBaseUrl}/#/playbooks/${playbookId}/executions/${executionId}`;
-  }
-
-  /**
-   * Short line for emails: run number, per-step status counts, duration (when scheduled run ends).
-   * Only standard playbook step statuses contribute to the counts; unrecognized values are omitted.
-   */
-  private formatExecutionSummaryForEmail(doc: {
-    executionNumber?: number;
-    taskResults?: Array<{ status?: string }>;
-    startedAt?: Date;
-    completedAt?: Date | null;
-  }): string | null {
-    const segments: string[] = [];
-
-    const runNum = doc.executionNumber;
-    if (runNum != null && Number.isFinite(Number(runNum))) {
-      segments.push(`Run #${runNum}`);
-    }
-
-    const tasks = doc.taskResults ?? [];
-    if (tasks.length > 0) {
-      const byStatus = new Map<string, number>();
-      for (const t of tasks) {
-        const key = String(t.status ?? '').toLowerCase();
-        if (!key) continue;
-        byStatus.set(key, (byStatus.get(key) ?? 0) + 1);
-      }
-
-      const stepParts = (
-        [
-          [StepStatus.COMPLETED, 'completed'],
-          [StepStatus.FAILED, 'failed'],
-          [StepStatus.SKIPPED, 'skipped'],
-          [StepStatus.RUNNING, 'running'],
-          [StepStatus.PENDING, 'pending'],
-        ] as const
-      )
-        .map(([status, label]) => {
-          const n = byStatus.get(status) ?? 0;
-          return n ? `${n} ${label}` : null;
-        })
-        .filter((s): s is string => s != null);
-
-      if (stepParts.length) {
-        segments.push(`Steps: ${stepParts.join(', ')}`);
-      }
-    }
-
-    if (doc.startedAt && doc.completedAt) {
-      const ms = new Date(doc.completedAt).getTime() - new Date(doc.startedAt).getTime();
-      if (Number.isFinite(ms) && ms >= 0) {
-        segments.push(`Duration: ${Math.round(ms / 1000)}s`);
-      }
-    }
-
-    return segments.length ? segments.join(' · ') : null;
-  }
-
-  /**
-   * Send email notification when a step finishes (completed, failed, or interrupted).
-   * Fire-and-forget Ã¢â‚¬â€ never awaited, never blocks execution. Failures are logged only.
-   */
-  private sendStepNotificationEmail(
-    task: { id: string; title: string; notifyOnComplete?: boolean; notifyEmails?: string[] },
-    status: string,
-    playbookName: string,
-    opts: {
-      output?: string;
-      error?: string;
-      /** When set with executionId, adds an optional link to the execution detail page in the app. */
-      playbookId?: string;
-      executionId?: string;
-      /** Optional one-line summary shown above the link (e.g. scheduled-run summary). */
-      executionSummary?: string;
-    } = {},
-  ): void {
-    if (!task.notifyOnComplete || !task.notifyEmails?.length) return;
-    if (!this.emailService.isAvailable()) return;
-
-    const esc = (s: string) =>
-      s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const nl2br = (s: string) => esc(s).replace(/\n/g, '<br>');
-
-    const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
-    const statusColor =
-      status === 'completed' ? '#22c55e' : status === 'failed' ? '#ef4444' : '#eab308';
-    const safeTitle = esc(task.title);
-    const safeName = esc(playbookName);
-
-    const subject = `Playbook step "${task.title}" Ã¢â‚¬â€ ${statusLabel}`;
-
-    const errorRow = opts.error
-      ? `<tr><td style="padding:8px 16px;color:#ef4444;" colspan="2"><strong>Error:</strong> ${esc(opts.error)}</td></tr>`
-      : '';
-
-    // Truncate output to avoid oversized emails (keep first 5000 chars)
-    const rawOutput = opts.output || '';
-    const truncated = rawOutput.length > 5000;
-    const outputPreview = truncated ? rawOutput.slice(0, 5000) : rawOutput;
-    const outputRow = outputPreview
-      ? `<tr><td colspan="2" style="padding:12px 16px;">
-<div style="font-size:11px;color:#6b7280;margin-bottom:4px;font-weight:600;">Result</div>
-<div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-break:break-word;">${nl2br(outputPreview)}${truncated ? '<br><em style="color:#9ca3af;">Ã¢â‚¬Â¦ truncated</em>' : ''}</div>
-</td></tr>`
-      : '';
-
-    const detailUrl =
-      opts.playbookId && opts.executionId
-        ? this.buildExecutionDetailUrl(opts.playbookId, opts.executionId)
-        : null;
-    const summaryHtml = opts.executionSummary
-      ? `<p style="margin:0 0 8px;font-size:12px;color:#6b7280;"><strong>Execution summary</strong><br/>${esc(opts.executionSummary)}</p>`
-      : '';
-    const detailLinkHtml = detailUrl
-      ? `<p style="margin:0;font-size:13px;"><a href="${esc(detailUrl)}">View execution details</a></p>`
-      : '';
-    const executionBlock =
-      summaryHtml || detailLinkHtml
-        ? `<div style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">${summaryHtml}${detailLinkHtml}</div>`
-        : '';
-
-    const html = `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
-<h2 style="margin:0 0 16px;">Step Notification</h2>
-<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;">
-<tr><td style="padding:8px 16px;color:#6b7280;">Playbook</td><td style="padding:8px 16px;font-weight:600;">${safeName}</td></tr>
-<tr><td style="padding:8px 16px;color:#6b7280;">Step</td><td style="padding:8px 16px;font-weight:600;">${safeTitle}</td></tr>
-<tr><td style="padding:8px 16px;color:#6b7280;">Status</td><td style="padding:8px 16px;font-weight:600;color:${statusColor};">${statusLabel}</td></tr>
-${errorRow}
-${outputRow}
-</table>
-${executionBlock}
-<p style="margin-top:16px;font-size:12px;color:#9ca3af;">Sent by YelloStorm Playbook</p>
-</div>`;
-
-    const textOutput = outputPreview
-      ? `\n\nResult:\n${outputPreview}${truncated ? '\nÃ¢â‚¬Â¦ truncated' : ''}`
-      : '';
-    const textSummary = opts.executionSummary
-      ? `\n\nExecution summary:\n${opts.executionSummary}`
-      : '';
-    const textDetail = detailUrl ? `\n\nExecution details: ${detailUrl}` : '';
-    const text = `Step "${task.title}" in playbook "${playbookName}" finished with status: ${statusLabel}${opts.error ? `\nError: ${opts.error}` : ''}${textOutput}${textSummary}${textDetail}`;
-
-    this.emailService.send({ to: task.notifyEmails, subject, html, text }).catch((err) => {
-      this.logger.warn('Failed to send step notification email', {
-        taskId: task.id,
-        error: (err as Error).message,
-      });
-    });
-  }
-
-  /**
-   * Email the playbook owner when a **scheduled** run reaches a terminal state (success or failure).
-   * Fire-and-forget; failures are logged only and never block persistence or SSE.
-   */
-  private notifyScheduledRunFinished(
-    userId: string,
-    executionId: string,
-    outcome: 'completed' | 'failed',
-    error?: string | null,
-  ): void {
-    void this.notifyScheduledRunFinishedAsync(userId, executionId, outcome, error);
-  }
-
-  private async notifyScheduledRunFinishedAsync(
-    userId: string,
-    executionId: string,
-    outcome: 'completed' | 'failed',
-    error?: string | null,
-  ): Promise<void> {
-    try {
-      const doc = await this.executionModel
-        .findById(executionId)
-        .select(
-          'executionTrigger playbookId playbookSnapshot executionNumber taskResults.status startedAt completedAt',
-        )
-        .lean()
-        .exec();
-      if (!doc || doc.executionTrigger !== 'scheduled') {
-        return;
-      }
-      if (!this.emailService.isAvailable()) {
-        return;
-      }
-
-      const snapshot = doc.playbookSnapshot as { name?: string } | null | undefined;
-      let playbookName = snapshot?.name;
-      if (!playbookName && doc.playbookId) {
-        const pb = await this.playbookService.findRawById(doc.playbookId.toString());
-        playbookName = (pb as { name?: string } | null)?.name;
-      }
-      playbookName = playbookName || 'Playbook';
-
-      const user = await this.userService.findById(userId);
-      const to = user?.email;
-      if (!to) {
-        return;
-      }
-
-      const playbookIdStr = doc.playbookId?.toString() || '';
-      const detailUrl = playbookIdStr
-        ? this.buildExecutionDetailUrl(playbookIdStr, executionId)
-        : '';
-
-      const summaryLine = this.formatExecutionSummaryForEmail({
-        executionNumber: doc.executionNumber,
-        taskResults: doc.taskResults as Array<{ status?: string }> | undefined,
-        startedAt: doc.startedAt as Date | undefined,
-        completedAt: doc.completedAt as Date | null | undefined,
-      });
-
-      const statusLabel = outcome === 'completed' ? 'Completed' : 'Failed';
-      const esc = (s: string) =>
-        s
-          .replace(/&/g, '&amp;')
-          .replace(/</g, '&lt;')
-          .replace(/>/g, '&gt;')
-          .replace(/"/g, '&quot;');
-      const subject = `[YelloStorm] Scheduled playbook "${playbookName}" — ${statusLabel}`;
-
-      const errorBlock =
-        outcome === 'failed' && error
-          ? `<tr><td colspan="2" style="padding:8px 16px;color:#ef4444;"><strong>Error:</strong> ${esc(error)}</td></tr>`
-          : '';
-
-      const html = `<div style="font-family:sans-serif;max-width:560px;margin:0 auto;">
-<h2 style="margin:0 0 16px;">Scheduled run finished</h2>
-<table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;">
-<tr><td style="padding:8px 16px;color:#6b7280;">Playbook</td><td style="padding:8px 16px;font-weight:600;">${esc(playbookName)}</td></tr>
-<tr><td style="padding:8px 16px;color:#6b7280;">Status</td><td style="padding:8px 16px;font-weight:600;">${esc(statusLabel)}</td></tr>
-${errorBlock}
-</table>
-${
-  summaryLine
-    ? `<p style="margin-top:14px;font-size:13px;color:#4b5563;line-height:1.5;"><strong>Summary</strong><br/>${esc(
-        summaryLine,
-      )}</p>`
-    : ''
-}
-${
-  detailUrl
-    ? `<p style="margin-top:12px;"><a href="${esc(detailUrl)}">View execution details</a></p>`
-    : ''
-}
-<p style="margin-top:16px;font-size:12px;color:#9ca3af;">Sent by YelloStorm Playbook</p>
-</div>`;
-
-      const text = `Scheduled playbook "${playbookName}" finished: ${statusLabel}${
-        error ? `\nError: ${error}` : ''
-      }${summaryLine ? `\n\nSummary: ${summaryLine}` : ''}${detailUrl ? `\n\nDetails: ${detailUrl}` : ''}`;
-
-      await this.emailService.send({ to: [to], subject, html, text });
-    } catch (err) {
-      this.logger.warn('Failed to send scheduled execution notification email', {
-        executionId,
-        error: (err as Error).message,
-      });
-    }
   }
 
   /**
@@ -4484,58 +3662,6 @@ ${
   }
 
   /**
-   * Build context string from taskOutputs and incoming edges.
-   * Dual-path: typed port resolution (new) with legacy fallback.
-   */
-  private gatherContext(task: any, taskOutputs: Map<string, string>, snapshot: any): string {
-    const contextParts: string[] = [];
-    const coveredSourceIds = new Set<string>();
-
-    if (task.inputPorts && task.inputPorts.length > 0 && snapshot?.edges) {
-      const inputPortsById = new Map<string, any>();
-      for (const port of task.inputPorts) {
-        inputPortsById.set(port.id, port);
-      }
-
-      for (const edge of snapshot.edges) {
-        if (edge.targetId !== task.id) continue;
-
-        const sourcePortId = edge.sourceOutputPortId || 'default';
-        const targetPortId = edge.targetInputPortId || 'default';
-        const parentOutput =
-          taskOutputs.get(`${edge.sourceId}:${sourcePortId}`) || taskOutputs.get(edge.sourceId);
-
-        if (parentOutput) {
-          const targetPort = inputPortsById.get(targetPortId);
-          const label = targetPort?.name || sourcePortId;
-          contextParts.push(`[${label}]:\n${parentOutput}`);
-          coveredSourceIds.add(edge.sourceId);
-        }
-      }
-    }
-
-    if (task.inputKeys && task.inputKeys.length > 0) {
-      for (const key of task.inputKeys) {
-        const output = taskOutputs.get(key);
-        if (output) contextParts.push(`[${key}]: ${output}`);
-      }
-    }
-
-    if (snapshot?.edges) {
-      for (const edge of snapshot.edges) {
-        if (edge.targetId === task.id && !coveredSourceIds.has(edge.sourceId)) {
-          const parentOutput = taskOutputs.get(edge.sourceId);
-          if (parentOutput && !contextParts.some((p) => p.includes(parentOutput))) {
-            contextParts.push(parentOutput);
-          }
-        }
-      }
-    }
-
-    return contextParts.join('\n\n');
-  }
-
-  /**
    * Mark all remaining PENDING tasks as SKIPPED and fail the execution.
    */
   private async markRemainingSkippedAndFail(
@@ -4609,7 +3735,7 @@ ${
       },
     });
     this.logger.log('SSE playbook_execution_complete sent (FAILED)', { executionId, userId });
-    this.notifyScheduledRunFinished(userId, executionId, 'failed', error);
+    this.notificationService.notifyScheduledRunFinished(userId, executionId, 'failed', error);
   }
 
   /**
@@ -4659,7 +3785,7 @@ ${
       this.judgeEnrichmentService.scheduleExecutionSweep(userId, executionId);
     }
 
-    this.notifyScheduledRunFinished(userId, executionId, 'completed');
+    this.notificationService.notifyScheduledRunFinished(userId, executionId, 'completed');
   }
 
   /**
@@ -4756,14 +3882,14 @@ ${
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Disabled steps cannot be executed');
     }
 
-    let snapshot = this.refreshSnapshotTask(execution.playbookSnapshot as any, playbook, taskId);
-    let taskMap = this.buildTaskMapFromSnapshot(snapshot);
+    let snapshot = this.graphService.refreshSnapshotTask(execution.playbookSnapshot as any, playbook, taskId);
+    let taskMap = this.graphService.buildTaskMapFromSnapshot(snapshot);
     let task = taskMap.get(taskId);
     await this.executionModel.findByIdAndUpdate(executionId, {
       $set: { playbookSnapshot: snapshot },
     });
 
-    const descendants = this.findDescendantTaskIds(snapshot, taskId);
+    const descendants = this.graphService.findDescendantTaskIds(snapshot, taskId);
     const attemptNumber = (execution.currentAttemptNumber ?? 1) + 1;
 
     const workspaceIds = (playbook.workspaces || []).map((w: any) => w.toString());
@@ -4796,7 +3922,7 @@ ${
       selectedExecutionMode !== 'live'
         ? await this.replayService.getActiveReplay(playbookId, taskId)
         : null;
-    const advisorAutopilot = this.normalizeAdvisorAutopilotConfig(
+    const advisorAutopilot = this.advisorService.normalizeAdvisorAutopilotConfig(
       advisorAutopilotEnabled,
       advisorAutopilotTargetScore,
       advisorAutopilotMaxTurns,
@@ -4846,7 +3972,7 @@ ${
           taskId,
           error: (err as Error).message,
         });
-        await this.updateAdvisorAutopilotState(userId, executionId, {
+        await this.advisorService.updateAdvisorAutopilotState(userId, executionId, {
           status: 'failed',
           taskId,
           attemptCount: 0,
@@ -4903,7 +4029,7 @@ ${
   ): Promise<{ status: string; executionId: string }> {
     const execution = await this.getExecutionForReuse(userId, playbookId, executionId);
     const snapshot = execution.playbookSnapshot as any;
-    const taskMap = this.buildTaskMapFromSnapshot(snapshot);
+    const taskMap = this.graphService.buildTaskMapFromSnapshot(snapshot);
     const task = taskMap.get(taskId);
     if (!task) {
       throw new BadRequestException(
@@ -4912,10 +4038,10 @@ ${
       );
     }
 
-    const descendants = this.findDescendantTaskIds(snapshot, taskId);
+    const descendants = this.graphService.findDescendantTaskIds(snapshot, taskId);
     const subgraphIds = [taskId, ...descendants];
     const subgraphIdSet = new Set(subgraphIds);
-    const ancestors = this.findAncestorTaskIds(snapshot, taskId);
+    const ancestors = this.graphService.findAncestorTaskIds(snapshot, taskId);
     const attemptNumber = (execution.currentAttemptNumber ?? 1) + 1;
 
     await this.prepareExecutionForRerun(executionId, taskId, attemptNumber);
@@ -4936,14 +4062,14 @@ ${
       snapshot?.tasks || [],
       playbookSessionId,
     );
-    const taskOutputs = this.seedTaskOutputsFromExecution(execution, snapshot, ancestors);
+    const taskOutputs = this.graphService.seedTaskOutputsFromExecution(execution, snapshot, ancestors);
 
     const subgraphTasks = (snapshot?.tasks || []).filter(
       (t: any) => subgraphIdSet.has(t.id) && t.enabled !== false,
     );
     const subgraphEdges = (snapshot?.edges || []).filter((edge: any) => {
-      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
-      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
+      const sourceId = this.graphService.normalizeEdgeId(edge.sourceId ?? edge.source_id);
+      const targetId = this.graphService.normalizeEdgeId(edge.targetId ?? edge.target_id);
       return subgraphIdSet.has(sourceId) && subgraphIdSet.has(targetId);
     });
     const orderedLevels = topologicalSortByLevel(subgraphTasks, subgraphEdges);
@@ -5416,219 +4542,6 @@ ${
   }
 
   /**
-   * Status weight for merge priority: higher weight wins.
-   */
-  private static readonly STATUS_WEIGHT: Record<string, number> = {
-    [StepStatus.PENDING]: 0,
-    [StepStatus.RUNNING]: 1,
-    [StepStatus.COMPLETED]: 2,
-    [StepStatus.FAILED]: 2,
-    [StepStatus.SKIPPED]: 2,
-  };
-
-  /**
-   * Merge a single DB task result with in-memory buffer data.
-   * Buffer wins when its status weight >= DB status weight.
-   */
-  private mergeTaskResultWithBuffer(dbTr: any, buffered: BufferedStepResult): any {
-    const dbWeight = PlaybookExecutionService.STATUS_WEIGHT[dbTr.status] ?? 0;
-    const bufWeight = PlaybookExecutionService.STATUS_WEIGHT[buffered.status] ?? 0;
-    if (bufWeight < dbWeight) return dbTr;
-
-    return {
-      ...dbTr,
-      status: buffered.status,
-      output: buffered.output !== undefined ? buffered.output : dbTr.output,
-      error: buffered.error !== undefined ? buffered.error : dbTr.error,
-      durationMs: buffered.durationMs !== undefined ? buffered.durationMs : dbTr.durationMs,
-      startedAt: buffered.startedAt !== undefined ? buffered.startedAt : dbTr.startedAt,
-      completedAt: buffered.completedAt !== undefined ? buffered.completedAt : dbTr.completedAt,
-      components: buffered.components !== undefined ? buffered.components : dbTr.components,
-      toolTrace: buffered.toolTrace !== undefined ? buffered.toolTrace : dbTr.toolTrace,
-      llmPromptTrace:
-        (buffered as any).llmPromptTrace !== undefined
-          ? (buffered as any).llmPromptTrace
-          : dbTr.llmPromptTrace,
-      inputTokens: buffered.inputTokens !== undefined ? buffered.inputTokens : dbTr.inputTokens,
-      outputTokens: buffered.outputTokens !== undefined ? buffered.outputTokens : dbTr.outputTokens,
-      totalTokens: buffered.totalTokens !== undefined ? buffered.totalTokens : dbTr.totalTokens,
-      modelName: buffered.modelName !== undefined ? buffered.modelName : dbTr.modelName,
-      semanticMatch:
-        buffered.semanticMatch !== undefined ? buffered.semanticMatch : dbTr.semanticMatch,
-      judgeStatus: buffered.judgeStatus !== undefined ? buffered.judgeStatus : dbTr.judgeStatus,
-      judgeResult: buffered.judgeResult !== undefined ? buffered.judgeResult : dbTr.judgeResult,
-      judgeHistory: buffered.judgeHistory !== undefined ? buffered.judgeHistory : dbTr.judgeHistory,
-      evaluationHistory:
-        buffered.evaluationHistory !== undefined
-          ? buffered.evaluationHistory
-          : dbTr.evaluationHistory,
-      stepExecutions: dbTr.stepExecutions || [],
-      artifacts:
-        (buffered as any).artifacts !== undefined ? (buffered as any).artifacts : dbTr.artifacts,
-    };
-  }
-
-  private normalizeAdvisorAutopilotConfig(
-    enabled: boolean,
-    targetScore?: number | null,
-    maxTurns?: number | null,
-  ): AdvisorAutopilotConfig {
-    const normalizedTarget = Number.isFinite(Number(targetScore))
-      ? Math.max(1, Math.min(100, Number(targetScore)))
-      : ADVISOR_AUTOPILOT_DEFAULT_TARGET_SCORE;
-    const normalizedMaxTurns = Number.isFinite(Number(maxTurns))
-      ? Math.max(0, Math.min(5, Math.floor(Number(maxTurns))))
-      : ADVISOR_AUTOPILOT_DEFAULT_MAX_TURNS;
-
-    return {
-      enabled,
-      targetScore: normalizedTarget,
-      maxTurns: normalizedMaxTurns,
-    };
-  }
-
-  private resolveAdvisorAutopilotFixType(judgeResult: any): 'optimize_step' | 'none' {
-    if (judgeResult?.safeAutoFixType === 'optimize_step') {
-      return 'optimize_step';
-    }
-
-    const hasRewriteHints =
-      Array.isArray(judgeResult?.rewriteHints) && judgeResult.rewriteHints.length > 0;
-    if (judgeResult?.recommendation === 'update_current_playbook' && hasRewriteHints) {
-      return 'optimize_step';
-    }
-
-    return 'none';
-  }
-
-  private async updateAdvisorAutopilotState(
-    userId: string,
-    executionId: string,
-    patch: {
-      status?: AdvisorAutopilotStatus;
-      attemptCount?: number;
-      lastError?: string | null;
-      taskId?: string | null;
-    },
-  ): Promise<void> {
-    await this.executionModel
-      .findByIdAndUpdate(executionId, {
-        $set: {
-          ...(patch.status !== undefined ? { advisorAutopilotStatus: patch.status } : {}),
-          ...(patch.attemptCount !== undefined
-            ? { advisorAutopilotAttemptCount: patch.attemptCount }
-            : {}),
-          ...(patch.lastError !== undefined ? { advisorAutopilotLastError: patch.lastError } : {}),
-          ...(patch.taskId !== undefined ? { advisorAutopilotTaskId: patch.taskId } : {}),
-          updatedAt: new Date(),
-        },
-      })
-      .exec();
-
-    this.streamGateway.sendToUser(userId, {
-      type: 'playbook_advisor_autopilot_updated',
-      data: {
-        executionId,
-        advisorAutopilotStatus: patch.status,
-        advisorAutopilotAttemptCount: patch.attemptCount,
-        advisorAutopilotLastError: patch.lastError,
-        advisorAutopilotTaskId: patch.taskId,
-      },
-    });
-  }
-
-  private async appendAdvisorTurnHistory(
-    userId: string,
-    executionId: string,
-    taskId: string,
-    entry: {
-      turn: number;
-      score: number | null;
-      recommendation: string | null;
-      safeAutoFixType: string | null;
-      actionType: 'evaluate' | 'optimize_step' | 'stop';
-      stopReason?: string | null;
-      scoreDelta?: number | null;
-    },
-  ): Promise<void> {
-    const historyEntry = {
-      turn: entry.turn,
-      createdAt: new Date(),
-      score: entry.score,
-      recommendation: entry.recommendation,
-      safeAutoFixType: entry.safeAutoFixType,
-      actionType: entry.actionType,
-      stopReason: entry.stopReason ?? null,
-    };
-
-    await this.executionModel
-      .updateOne(
-        { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
-        {
-          $set: {
-            'taskResults.$.advisorTurnCount': entry.turn,
-            'taskResults.$.lastAdvisorAction': entry.actionType,
-            'taskResults.$.lastAdvisorScoreDelta': entry.scoreDelta ?? null,
-            'taskResults.$.advisorStopReason': entry.stopReason ?? null,
-            updatedAt: new Date(),
-          },
-          $push: {
-            'taskResults.$.advisorTurnHistory': {
-              $each: [historyEntry],
-              $slice: -25,
-            },
-          },
-        },
-      )
-      .exec();
-
-    const taskResult = await this.getExecutionTaskResult(executionId, taskId);
-
-    this.streamGateway.sendToUser(userId, {
-      type: 'playbook_advisor_autopilot_updated',
-      data: {
-        executionId,
-        taskId,
-        advisorTurnCount: entry.turn,
-        lastAdvisorAction: entry.actionType,
-        lastAdvisorScoreDelta: entry.scoreDelta ?? null,
-        advisorStopReason: entry.stopReason ?? null,
-        advisorTurnHistoryEntry: {
-          ...historyEntry,
-          createdAt: historyEntry.createdAt.toISOString(),
-        },
-        advisorOptimizationHistoryEntry: taskResult?.advisorOptimizationHistory?.length
-          ? (() => {
-              const latestOptimization =
-                taskResult.advisorOptimizationHistory[
-                  taskResult.advisorOptimizationHistory.length - 1
-                ];
-              return {
-                turn: latestOptimization.turn,
-                createdAt:
-                  latestOptimization.createdAt?.toISOString?.() || latestOptimization.createdAt,
-                changedFields: latestOptimization.changedFields || [],
-                beforeTask: latestOptimization.beforeTask || {},
-                afterTask: latestOptimization.afterTask || {},
-              };
-            })()
-          : null,
-      },
-    });
-  }
-
-  private async getExecutionTaskResult(executionId: string, taskId: string): Promise<any | null> {
-    const execution = await this.executionModel
-      .findById(executionId)
-      .select(
-        'taskResults.taskId taskResults.judgeResult taskResults.advisorTurnCount taskResults.advisorTurnHistory taskResults.lastAdvisorAction taskResults.lastAdvisorScoreDelta taskResults.advisorStopReason',
-      )
-      .lean()
-      .exec();
-    return (execution?.taskResults || []).find((item: any) => item.taskId === taskId) || null;
-  }
-
-  /**
    * Find all active (running or interrupted) executions for a given user.
    * Merges in-memory step buffers so catch-up reads (F5, new tab) are fresh
    * without requiring extra DB writes during streaming.
@@ -5644,7 +4557,7 @@ ${
 
     return executions.map((e: any) => {
       const executionId = (e._id || e.id).toString();
-      const buffer = this.activeStepBuffers.get(executionId);
+      const buffer = this.bufferService.activeStepBuffers.get(executionId);
 
       return {
         id: executionId,
@@ -5668,7 +4581,7 @@ ${
         attemptHistory: e.attemptHistory || [],
         taskResults: (e.taskResults || []).map((tr: any) => {
           const merged = buffer?.has(tr.taskId)
-            ? this.mergeTaskResultWithBuffer(tr, buffer.get(tr.taskId)!)
+            ? this.bufferService.mergeTaskResultWithBuffer(tr, buffer.get(tr.taskId)!)
             : tr;
           return {
             taskId: merged.taskId,

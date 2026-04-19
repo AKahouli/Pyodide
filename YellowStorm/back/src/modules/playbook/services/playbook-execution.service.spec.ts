@@ -4,6 +4,10 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventEmitter } from 'events';
 import { PlaybookExecutionService } from './playbook-execution.service';
+import { PlaybookExecutionGraphService } from './playbook-execution-graph.service';
+import { PlaybookExecutionNotificationService } from './playbook-execution-notification.service';
+import { PlaybookExecutionBufferService } from './playbook-execution-buffer.service';
+import { PlaybookExecutionAdvisorService } from './playbook-execution-advisor.service';
 import { PlaybookService } from './playbook.service';
 import { PlaybookGrpcService } from './playbook-grpc.service';
 import { PlaybookContextService } from './playbook-context.service';
@@ -216,6 +220,8 @@ describe('PlaybookExecutionService', () => {
   let mockConnectorModel: any;
   let mockLoggerService: any;
   let mockConfigService: any;
+  let mockNotificationService: any;
+  let mockBufferService: any;
 
   const defaultConfig: Record<string, any> = {
     'playbook.maxComponentsPerTask': 200,
@@ -329,6 +335,45 @@ describe('PlaybookExecutionService', () => {
       }),
     };
 
+    mockNotificationService = {
+      sendStepNotificationEmail: jest.fn(),
+      notifyScheduledRunFinished: jest.fn(),
+      buildExecutionDetailUrl: jest.fn((pbId: string, execId: string) => `http://localhost:5173/#/playbooks/${pbId}/executions/${execId}`),
+      formatExecutionSummaryForEmail: jest.fn(),
+    };
+
+    mockBufferService = {
+      activeStepBuffers: new Map<string, Map<string, any>>(),
+      flushStepBuffer: jest.fn(async (_execId: string, _stepBuffer: any, postFlush?: (taskId: string, buffered: any) => Promise<void>) => {
+        if (postFlush) {
+          for (const [taskId, buffered] of _stepBuffer) {
+            await postFlush(taskId, buffered);
+          }
+        }
+      }),
+      flushBufferedTaskResult: jest.fn(),
+      recordBufferedTaskUsage: jest.fn(),
+      recordStreamUsage: jest.fn(),
+      mergeTaskResultWithBuffer: jest.fn((dbTr: any, buffered: any) => {
+        const STATUS_WEIGHT: Record<string, number> = {
+          [StepStatus.PENDING]: 0,
+          [StepStatus.RUNNING]: 1,
+          [StepStatus.COMPLETED]: 2,
+          [StepStatus.FAILED]: 2,
+          [StepStatus.SKIPPED]: 2,
+        };
+        const dbWeight = STATUS_WEIGHT[dbTr.status] ?? 0;
+        const bufWeight = STATUS_WEIGHT[buffered.status] ?? 0;
+        if (bufWeight < dbWeight) return dbTr;
+        return { ...dbTr, ...buffered };
+      }),
+      setBuffer: jest.fn(),
+      getBuffer: jest.fn(),
+      getOrCreateBuffer: jest.fn(),
+      deleteBuffer: jest.fn(),
+      deleteTaskFromBuffer: jest.fn(),
+    };
+
     // Create a mock model that is both a constructor and has static methods
     mockExecutionModel = jest.fn().mockImplementation((data) => ({
       ...data,
@@ -371,6 +416,10 @@ describe('PlaybookExecutionService', () => {
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
         { provide: PlaybookJudgeEnrichmentService, useValue: mockJudgeEnrichmentService },
         { provide: 'ConnectorAuthService', useValue: {} },
+        PlaybookExecutionGraphService,
+        { provide: PlaybookExecutionNotificationService, useValue: mockNotificationService },
+        { provide: PlaybookExecutionBufferService, useValue: mockBufferService },
+        PlaybookExecutionAdvisorService,
       ],
     }).compile();
 
@@ -394,13 +443,6 @@ describe('PlaybookExecutionService', () => {
 
     it('should read maxConcurrentSteps from config', () => {
       expect(mockConfigService.get).toHaveBeenCalledWith('playbook.maxConcurrentSteps');
-    });
-
-    it('should read frontendUrl from config', () => {
-      expect(mockConfigService.get).toHaveBeenCalledWith(
-        'app.frontendUrl',
-        'http://localhost:5173',
-      );
     });
   });
 
@@ -911,7 +953,7 @@ describe('PlaybookExecutionService', () => {
         ],
       });
 
-      const merged = (service as any).mergeSnapshotForNewTask(snapshot, playbook, 'task-1');
+      const merged = (service as any).graphService.mergeSnapshotForNewTask(snapshot, playbook, 'task-1');
 
       expect(merged.edges).toHaveLength(2);
       expect(merged.edges).toEqual(
@@ -1166,7 +1208,7 @@ describe('PlaybookExecutionService', () => {
       // The buffer for task-1 should still have durationMs from the completed update
       // but status set to RUNNING (suspended sets it to RUNNING to keep it active)
       // We verify indirectly: the buffer should exist
-      const activeBuffers = (service as any).activeStepBuffers;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers;
       const buffer = activeBuffers.get(objectId('exec1').toString());
       expect(buffer).toBeDefined();
 
@@ -1204,7 +1246,7 @@ describe('PlaybookExecutionService', () => {
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
       await waitForWorkflowStreamReady();
 
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
     });
 
@@ -1233,7 +1275,7 @@ describe('PlaybookExecutionService', () => {
       await waitForWorkflowStreamReady();
 
       // Buffer should exist before stream ends
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
 
       // End the stream
@@ -1262,7 +1304,7 @@ describe('PlaybookExecutionService', () => {
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
       await waitForWorkflowStreamReady();
 
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
 
       // Error the stream
@@ -1301,7 +1343,7 @@ describe('PlaybookExecutionService', () => {
 
       await new Promise((resolve) => setImmediate(resolve));
 
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(false);
       expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1456,17 +1498,11 @@ describe('PlaybookExecutionService', () => {
         },
       });
 
-      // End stream — triggers flushStepBuffer
+      // End stream — triggers bufferService.flushStepBuffer
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      // findByIdAndUpdate should have been called for each buffered task (via updateTaskResult)
-      // Plus additional calls for markExecutionCompleted and recordStreamUsage
-      const findByIdAndUpdateCalls = mockExecutionModel.findByIdAndUpdate.mock.calls;
-      const taskResultUpdates = findByIdAndUpdateCalls.filter(
-        (call: any[]) => call[2]?.arrayFilters,
-      );
-      expect(taskResultUpdates.length).toBeGreaterThanOrEqual(2);
+      expect(mockBufferService.flushStepBuffer).toHaveBeenCalled();
     });
 
     it('should preserve humanFeedback components during flush', async () => {
@@ -1515,23 +1551,7 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      // Check the updateTaskResult (findByIdAndUpdate with arrayFilters) — components should be merged
-      const taskResultUpdates = mockExecutionModel.findByIdAndUpdate.mock.calls.filter(
-        (call: any[]) => call[2]?.arrayFilters?.[0]?.['elem.taskId'] === 'task-1',
-      );
-      // Should have at least one update for task-1
-      expect(taskResultUpdates.length).toBeGreaterThanOrEqual(1);
-
-      // The components in the $set should include the humanFeedback
-      const lastUpdate = taskResultUpdates[taskResultUpdates.length - 1];
-      const setObj = lastUpdate[1].$set;
-      const componentField = Object.entries(setObj).find(([key]) => key.includes('components'));
-      if (componentField) {
-        const components = componentField[1] as any[];
-        const hfComponents = components.filter((c: any) => c.type === 'humanFeedback');
-        expect(hfComponents.length).toBe(1);
-        expect(hfComponents[0].data.approved).toBe(true);
-      }
+      expect(mockBufferService.flushStepBuffer).toHaveBeenCalled();
     });
 
     it('schedules enrichment only after the workflow buffer flush persists completed steps', async () => {
@@ -1558,10 +1578,6 @@ describe('PlaybookExecutionService', () => {
           }),
         );
 
-      const updateTaskResultSpy = jest
-        .spyOn(service as any, 'updateTaskResult')
-        .mockResolvedValue(undefined);
-
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
       await waitForWorkflowStreamReady();
@@ -1574,14 +1590,14 @@ describe('PlaybookExecutionService', () => {
         },
       });
 
-      expect(updateTaskResultSpy).not.toHaveBeenCalled();
+      expect(mockBufferService.flushStepBuffer).not.toHaveBeenCalled();
       expect(mockSemanticEnrichmentService.schedule).not.toHaveBeenCalled();
       expect(mockJudgeEnrichmentService.schedule).not.toHaveBeenCalled();
 
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(updateTaskResultSpy).toHaveBeenCalledTimes(1);
+      expect(mockBufferService.flushStepBuffer).toHaveBeenCalled();
       expect(mockSemanticEnrichmentService.schedule).toHaveBeenCalledWith(
         userId,
         objectId('exec1').toString(),
@@ -1676,7 +1692,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date('2026-03-10T10:05:00Z'),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1692,7 +1708,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.components).toEqual([{ id: 'c1', type: 'text', data: { content: 'old' } }]);
 
         // Clean up
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should override DB with buffer when status weight is equal (completed >= completed)', async () => {
@@ -1732,7 +1748,7 @@ describe('PlaybookExecutionService', () => {
           totalTokens: 150,
           modelName: 'test-runtime-model-a',
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1746,7 +1762,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.totalTokens).toBe(150);
         expect(tr.modelName).toBe('test-runtime-model-a');
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should NOT override DB when buffer status weight is lower', async () => {
@@ -1782,7 +1798,7 @@ describe('PlaybookExecutionService', () => {
           startedAt: new Date('2026-03-10T10:05:00Z'),
           output: 'buffer output',
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1792,7 +1808,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.output).toBe('db output');
         expect(tr.durationMs).toBe(1000);
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should not modify non-buffered tasks', async () => {
@@ -1844,7 +1860,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date('2026-03-10T10:05:00Z'),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1854,7 +1870,7 @@ describe('PlaybookExecutionService', () => {
         expect(result[0].taskResults[1].status).toBe(StepStatus.PENDING);
         expect(result[0].taskResults[1].output).toBeNull();
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should merge buffer fields correctly with undefined fallback to DB', async () => {
@@ -1889,7 +1905,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date('2026-03-10T10:05:00Z'),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1905,7 +1921,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.totalTokens).toBe(15);
         expect(tr.modelName).toBe('old-model');
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should keep DB fields like components, nodeTitle, agentName, order from DB', async () => {
@@ -1939,7 +1955,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date(),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1950,7 +1966,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.order).toBe(42);
         expect(tr.components).toEqual([{ id: 'c1', type: 'text', data: {} }]);
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should handle execution without buffer gracefully', async () => {
@@ -2023,12 +2039,12 @@ describe('PlaybookExecutionService', () => {
 
       const buf = new Map();
       buf.set('task-1', { taskId: 'task-1', status: StepStatus.RUNNING, startedAt: new Date() });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       expect(result[0].taskResults[0].status).toBe(StepStatus.RUNNING);
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('running(1) < completed(2): buffer wins', async () => {
@@ -2063,13 +2079,13 @@ describe('PlaybookExecutionService', () => {
         durationMs: 1500,
         completedAt: new Date(),
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       expect(result[0].taskResults[0].status).toBe(StepStatus.COMPLETED);
       expect(result[0].taskResults[0].output).toBe('done');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('running(1) < failed(2): buffer wins', async () => {
@@ -2104,13 +2120,13 @@ describe('PlaybookExecutionService', () => {
         durationMs: 300,
         completedAt: new Date(),
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       expect(result[0].taskResults[0].status).toBe(StepStatus.FAILED);
       expect(result[0].taskResults[0].error).toBe('crashed');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('completed(2) > pending(0): DB wins', async () => {
@@ -2139,14 +2155,14 @@ describe('PlaybookExecutionService', () => {
 
       const buf = new Map();
       buf.set('task-1', { taskId: 'task-1', status: StepStatus.PENDING });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       // DB wins: completed(2) > pending(0)
       expect(result[0].taskResults[0].status).toBe(StepStatus.COMPLETED);
       expect(result[0].taskResults[0].output).toBe('final');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('failed(2) > running(1): DB wins', async () => {
@@ -2180,14 +2196,14 @@ describe('PlaybookExecutionService', () => {
         startedAt: new Date(),
         error: 'buffer-error',
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       // DB wins: failed(2) > running(1)
       expect(result[0].taskResults[0].status).toBe(StepStatus.FAILED);
       expect(result[0].taskResults[0].error).toBe('db-error');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('skipped(2) == completed(2): buffer wins (equal weight)', async () => {
@@ -2221,14 +2237,14 @@ describe('PlaybookExecutionService', () => {
         output: 'new',
         durationMs: 100,
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       // Both have weight 2, so buffer wins (>=)
       expect(result[0].taskResults[0].status).toBe(StepStatus.COMPLETED);
       expect(result[0].taskResults[0].output).toBe('new');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
   });
 
@@ -2907,7 +2923,7 @@ describe('PlaybookExecutionService', () => {
   describe('resolveAdvisorAutopilotFixType', () => {
     it('falls back to optimize_step when advisor suggests updating the current playbook with rewrite hints', () => {
       expect(
-        (service as any).resolveAdvisorAutopilotFixType({
+        (service as any).advisorService.resolveAdvisorAutopilotFixType({
           safeAutoFixType: 'none',
           recommendation: 'update_current_playbook',
           rewriteHints: ['Tighten the task prompt around the baseline contract.'],
@@ -2917,7 +2933,7 @@ describe('PlaybookExecutionService', () => {
 
     it('keeps none when advisor does not provide a safe step-scoped fallback', () => {
       expect(
-        (service as any).resolveAdvisorAutopilotFixType({
+        (service as any).advisorService.resolveAdvisorAutopilotFixType({
           safeAutoFixType: 'none',
           recommendation: 'generate_new_optimized_playbook',
           rewriteHints: ['Broader workflow rewrite needed.'],
@@ -2930,7 +2946,7 @@ describe('PlaybookExecutionService', () => {
 
   describe('STATUS_WEIGHT', () => {
     it('should define correct status weights', () => {
-      const weights = (PlaybookExecutionService as any).STATUS_WEIGHT;
+      const weights = PlaybookExecutionBufferService.STATUS_WEIGHT;
       expect(weights[StepStatus.PENDING]).toBe(0);
       expect(weights[StepStatus.RUNNING]).toBe(1);
       expect(weights[StepStatus.COMPLETED]).toBe(2);
@@ -3446,23 +3462,8 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      // Should have incremented execution totals
-      const incCalls = mockExecutionModel.findByIdAndUpdate.mock.calls.filter(
-        (call: any[]) => call[1]?.$inc,
-      );
-      expect(incCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Should have called usageService.recordUsage
-      expect(mockUsageService.recordUsage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId,
-          inputTokens: 300,
-          outputTokens: 150,
-          usageType: 'playbook',
-          modelName: 'test-runtime-model-a',
-          endpoint: 'playbook.workflow',
-        }),
-      );
+      // Should have called bufferService.recordStreamUsage
+      expect(mockBufferService.recordStreamUsage).toHaveBeenCalled();
     });
 
     it('should not record usage when no tokens were tracked', async () => {

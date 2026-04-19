@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-19 16:45 UTC] — Extract playbook advisor execution helpers
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Moved advisor autopilot normalization, fix-type resolution, state persistence, turn-history persistence, and task-result lookup out of `PlaybookExecutionService` into a dedicated `PlaybookExecutionAdvisorService`, then rewired the execution facade, module providers, and focused backend specs to use the new service.
+- **Why:** The execution service is being split into smaller slices incrementally, and the advisor/autopilot logic was cohesive enough to extract without changing the public execution API.
+- **Impact:** `YellowStorm/back/src/modules/playbook/playbook.module.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution-advisor.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution-advisor.service.spec.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, and `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`.
+
 ## [2026-04-18 20:57 UTC] — Forward mail trigger context into single-step runs
 
 - **Feature:** `playbook`
