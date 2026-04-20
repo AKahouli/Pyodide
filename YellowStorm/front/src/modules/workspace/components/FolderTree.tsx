@@ -226,8 +226,11 @@ export function FolderTree({
               className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-muted-foreground"
               onClick={(e) => {
                 e.stopPropagation();
-                onDownloadDocument?.(document.id);
+                if (!document.isFolder) {
+                  onDownloadDocument?.(document.id);
+                }
               }}
+              disabled={document.isFolder}
             >
               <Download className="h-3.5 w-3.5" />
             </button>
@@ -528,7 +531,17 @@ function DocumentTreeItem({
 }
 
 // Helper function to get document icon based on MIME type
-function getDocumentIcon(mimeType: string) {
+function getDocumentIcon(mimeType?: string) {
+  // Handle folders
+  if (mimeType === 'folder') {
+    return <Folder className="h-4 w-4 text-blue-500" />;
+  }
+
+  // Handle undefined mimeType
+  if (!mimeType) {
+    return <File className="h-4 w-4" />;
+  }
+
   const iconMap: Record<string, string> = {
     'application/pdf': 'FileText',
     'application/msword': 'FileText',

@@ -25,6 +25,8 @@
   "documents.row.actions.index": "Indexer le document",
   "documents.row.actions.reindex": "Réindexer le document",
   "documents.row.actions.view": "Voir le fichier",
+  "documents.row.actions.upload": "Téléverser des fichiers",
+  "documents.row.actions.createSubFolder": "Créer un sous-dossier",
   "documents.row.delete.confirm": "Supprimer",
   "documents.row.delete.deleting": "Suppression...",
   "documents.row.delete.description": "Voulez-vous vraiment supprimer « {{name}} » ? Cette action est irréversible.",

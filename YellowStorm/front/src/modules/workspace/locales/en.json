@@ -24,6 +24,8 @@
   "documents.row.actions.index": "Index document",
   "documents.row.actions.reindex": "Re-index document",
   "documents.row.actions.view": "View file",
+  "documents.row.actions.upload": "Upload files",
+  "documents.row.actions.createSubFolder": "Create subfolder",
   "documents.row.delete.confirm": "Delete",
   "documents.row.delete.deleting": "Deleting...",
   "documents.row.delete.description": "Are you sure you want to delete \"{{name}}\"? This action cannot be undone.",

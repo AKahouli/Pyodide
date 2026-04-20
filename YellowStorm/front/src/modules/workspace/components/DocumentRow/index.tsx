@@ -1,34 +1,48 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { FileText, Download, Eye, RefreshCw, Search, Trash2, Loader2, Folder } from 'lucide-react';
+import { FileText, Download, Eye, RefreshCw, Search, Trash2, Loader2, Folder, Upload, FolderPlus } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 
-import { formatFileSize, formatDate, getFileTypeLabel } from '../../utils';
+import { formatFileSize, getFileTypeLabel } from '../../utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import type { WorkspaceDocument } from '../../types';
-import { useDocumentActions } from '../../hooks';
+import { useDocumentActions, useWorkspaceStore, useSelectedWorkspace } from '../../hooks';
 import { IndexingStatusBadge } from './IndexingStatusBadge';
-import { ConfirmDialog } from '../dialogs';
+import { ConfirmDialog, RenameDialog } from '../dialogs';
+import { CreateFolderDialog } from '../CreateFolderDialog';
 
 type DocumentRowProps = Readonly<{
   document: WorkspaceDocument;
   isSelected: boolean;
   onToggleSelect: () => void;
+  onFolderUpload?: (folderId: string, input: HTMLInputElement) => void;
 }>;
 
-export const DocumentRow = memo(function DocumentRow({ document, isSelected, onToggleSelect }: DocumentRowProps) {
+export const DocumentRow = memo(function DocumentRow({ document, isSelected, onToggleSelect, onFolderUpload }: DocumentRowProps) {
   const { t } = useModuleTranslation('workspace');
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, isViewable, handleDownload, handleDelete, handleReindex, handleViewFile } = useDocumentActions(document);
 
+  const selectedWorkspace = useSelectedWorkspace();
+  const isUploading = useWorkspaceStore((state) => state.isUploading);
+
   const isMobile = useIsMobile();
+  const [isSubFolderDialogOpen, setIsSubFolderDialogOpen] = useState(false);
 
   const handleDeleteClick = useCallback(() => {
     setIsDeleteDialogOpen(true);
   }, [setIsDeleteDialogOpen]);
+
+  const handleUploadClick = useCallback(() => {
+    onFolderUpload?.(document.id);
+  }, [document.id, onFolderUpload]);
+
+  const handleCreateSubFolder = useCallback(async () => {
+    setIsSubFolderDialogOpen(true);
+  }, []);
 
   return (
     <>
@@ -46,21 +60,50 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
             <span className='font-medium truncate max-w-50 md:max-w-75'>{document.originalName}</span>
           </div>
         </TableCell>
-        <TableCell className='text-muted-foreground hidden md:table-cell'>{formatFileSize(document.size)}</TableCell>
+        <TableCell className='text-muted-foreground hidden md:table-cell'>{document.isFolder ? '-' : formatFileSize(document.size)}</TableCell>
         <TableCell className='hidden md:table-cell'>
           <Badge variant='outline' className='text-xs'>
             {document.isFolder ? 'Folder' : getFileTypeLabel(document.mimeType)}
           </Badge>
         </TableCell>
         <TableCell className='hidden lg:table-cell'>
-          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />
+          {!document.isFolder && <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />}
         </TableCell>
-        <TableCell className='text-muted-foreground hidden lg:table-cell'>{formatDate(document.uploadedAt || document.createdAt)}</TableCell>
         <TableCell>
           <div className='flex gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity'>
-            <Button variant='ghost' size='icon' className='h-8 w-8' onClick={handleDownload} disabled={isDownloading}>
-              {isDownloading ? <Loader2 className='h-4 w-4 animate-spin' /> : <Download className='h-4 w-4' />}
-            </Button>
+            {document.isFolder && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant='ghost' size='icon' className='h-8 w-8' onClick={handleUploadClick} disabled={isUploading}>
+                      {isUploading ? <Loader2 className='h-4 w-4 animate-spin' /> : <Upload className='h-4 w-4' />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t('documents.row.actions.upload')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {document.isFolder && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant='ghost' size='icon' className='h-8 w-8' onClick={handleCreateSubFolder}>
+                      <FolderPlus className='h-4 w-4' />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t('documents.row.actions.createSubFolder')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            {!document.isFolder && (
+              <Button variant='ghost' size='icon' className='h-8 w-8' onClick={handleDownload} disabled={isDownloading}>
+                {isDownloading ? <Loader2 className='h-4 w-4 animate-spin' /> : <Download className='h-4 w-4' />}
+              </Button>
+            )}
             {isViewable && !isMobile && (
               <TooltipProvider>
                 <Tooltip>
@@ -75,7 +118,7 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
                 </Tooltip>
               </TooltipProvider>
             )}
-            {canIndex && (
+            {canIndex && !document.isFolder && (
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -89,7 +132,7 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
                 </Tooltip>
               </TooltipProvider>
             )}
-            {canReindex && (
+            {canReindex && !document.isFolder && (
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -111,6 +154,16 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
       </TableRow>
 
       <ConfirmDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen} title={t('documents.row.delete.title')} description={t('documents.row.delete.description', { name: document.originalName })} confirmLabel={isDeleting ? t('documents.row.delete.deleting') : t('documents.row.delete.confirm')} variant='destructive' isLoading={isDeleting} onConfirm={handleDelete} />
+
+      {/* Create Subfolder Dialog */}
+      {document.isFolder && (
+        <CreateFolderDialog
+          open={isSubFolderDialogOpen}
+          onOpenChange={setIsSubFolderDialogOpen}
+          workspaceId={selectedWorkspace?.id || ''}
+          parentFolderId={document.id}
+        />
+      )}
     </>
   );
 });

@@ -3,158 +3,43 @@
  * Main content area showing documents table for selected workspace
  */
 
-import { useMemo, useState, useCallback } from 'react';
-import { Search, MoreHorizontal, Settings, Layers, List, Grid, Plus, FolderOpen } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Search, Layers, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllDocuments } from '../store';
-import { useModalCloseEffect, useDebouncedSearch, useIndexingNotifications, useDocumentDragDrop } from '../hooks';
+import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments } from '../store';
+import { useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
-import { FolderTree } from './FolderTree';
 import { CreateFolderDialog } from './CreateFolderDialog';
-import { ConfirmDialog, RenameDialog } from './dialogs';
 import { UploadDropZone } from './UploadDropZone';
-import { UploadButton } from './UploadButton';
 import { useModuleTranslation } from '@/modules/localization';
 
 export function WorkspaceContent() {
   const { t } = useModuleTranslation('workspace');
   const selectedWorkspace = useSelectedWorkspace();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
-  const { documents } = useAllDocuments();
+  const { documents } = useDocuments();
   const createFolder = useWorkspaceStore((state) => state.createFolder);
-  const getFolderContents = useWorkspaceStore((state) => state.getFolderContents);
-  const isCreating = useWorkspaceStore((state) => state.isCreating);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
 
   // Drag and drop hook
-  const { isDragging, draggedItems, handleDragStart, handleDragEnd, handleDragOver, handleDropOnFolder, handleDropOnRoot } = useDocumentDragDrop();
+  const { isDragging, draggedItems, handleDropOnRoot } = useDocumentDragDrop();
 
-  // View mode: list vs tree
-  const [viewMode, setViewMode] = useState<'list' | 'tree'>('list');
-
-  // Folder states
+  // Create folder dialog state
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
-  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
-
-  // Handle folder selection
-  const handleFolderClick = useCallback((folderId: string) => {
-    setSelectedFolderId(folderId);
-    if (selectedWorkspaceId) {
-      getFolderContents(selectedWorkspaceId, folderId);
-    }
-  }, [selectedWorkspaceId, getFolderContents]);
-
-  // Handle folder expand/collapse
-  const handleToggleExpand = useCallback((folderId: string) => {
-    setExpandedFolders((prev) => {
-      const newSet = new Set(prev);
-      if (newSet.has(folderId)) {
-        newSet.delete(folderId);
-      } else {
-        newSet.add(folderId);
-      }
-      return newSet;
-    });
-  }, []);
-
-  // Handle document selection
-  const handleDocumentClick = useCallback((documentId: string) => {
-    // Toggle selection (could be extended for multi-select)
-    // For now, just log it
-    console.log('Document selected:', documentId);
-  }, []);
-
-  // Handle document download
-  const handleDocumentDownload = useCallback(async (documentId: string) => {
-    // Implementation would call getDownloadUrl
-    console.log('Download document:', documentId);
-  }, []);
-
-  // Handle document rename
-  const handleDocumentRename = useCallback(async (documentId: string, newName: string) => {
-    // Implementation would call renameDocument
-    console.log('Rename document:', documentId, 'to:', newName);
-  }, []);
-
-  // Handle document delete
-  const handleDocumentDelete = useCallback(async (documentId: string) => {
-    // Implementation would call deleteDocument
-    console.log('Delete document:', documentId);
-  }, []);
-
-  // Handle folder rename
-  const handleFolderRename = useCallback(async (folderId: string, newName: string) => {
-    if (selectedWorkspaceId) {
-      await createFolder(selectedWorkspaceId, { name: newName, parentId: null });
-    }
-  }, [selectedWorkspaceId, createFolder]);
-
-  // Handle folder delete
-  const handleFolderDelete = useCallback(async (folderId: string) => {
-    if (selectedWorkspaceId) {
-      const deleteFolder = useWorkspaceStore.getState().deleteFolder;
-      await deleteFolder(selectedWorkspaceId, folderId);
-    }
-  }, [selectedWorkspaceId]);
 
   // Handle create folder
   const handleCreateFolder = useCallback(async (name: string) => {
     if (selectedWorkspaceId) {
       await createFolder(selectedWorkspaceId, {
         name,
-        parentId: selectedFolderId || undefined,
+        parentId: undefined,
       });
       setIsCreateFolderOpen(false);
     }
   }, [selectedWorkspaceId, createFolder]);
-
-  // Organize documents into folder structure for tree view
-  const folderStructure = useMemo(() => {
-    if (!selectedWorkspace || !selectedWorkspaceId) {
-      return { folders: [], documents: [] };
-    }
-
-    // Filter folders and documents
-    const folders = documents.filter((doc) => doc.isFolder) as WorkspaceDocument[];
-    const docs = documents.filter((doc) => !doc.isFolder) as WorkspaceDocument[];
-
-    // Create a map of folder children
-    const folderMap = new Map<string, WorkspaceFolder>();
-    const rootFolders: WorkspaceFolder[] = [];
-
-    folders.forEach((folder) => {
-      const folderData: WorkspaceFolder = {
-        id: folder.id,
-        folderName: folder.folderName!,
-        parentId: folder.parentId,
-        createdAt: folder.createdAt,
-        children: [],
-        isExpanded: expandedFolders.has(folder.id),
-      };
-
-      if (!folder.parentId) {
-        rootFolders.push(folderData);
-      }
-
-      folderMap.set(folder.id, folderData);
-    });
-
-    // Organize documents into folders
-    docs.forEach((doc) => {
-      const folder = folderMap.get(doc.parentId || '');
-      if (folder) {
-        folder.children.push(doc);
-      }
-    });
-
-    return { folders: rootFolders, documents: [] };
-  }, [documents, expandedFolders]);
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-hidden bg-background">
@@ -176,22 +61,8 @@ export function WorkspaceContent() {
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold">{selectedWorkspace.name}</h2>
                 <span className="text-sm text-muted-foreground">
-                  {documents.length} {t('content.documents')}
+                  {documents.filter(d => !d.isFolder).length} {t('content.documents')}
                 </span>
-              </div>
-
-              {/* View mode toggle */}
-              <div className="flex items-center gap-1">
-                <Tabs value={viewMode} onValueChange={setViewMode} className="w-auto">
-                  <TabsList className="w-auto">
-                    <TabsTrigger value="list" className="w-auto">
-                      <List className="h-4 w-4" />
-                    </TabsTrigger>
-                    <TabsTrigger value="tree" className="w-auto">
-                      <FolderOpen className="h-4 w-4" />
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
               </div>
 
               {/* Actions */}
@@ -212,21 +83,6 @@ export function WorkspaceContent() {
                   <Plus className="h-4 w-4" />
                   {t('content.createFolder')}
                 </Button>
-
-                {/* Dropdown menu */}
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-9 w-9">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-56">
-                    <DropdownMenuItem>
-                      <Grid className="h-4 w-4 mr-2" />
-                      {t('content.gridView')}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
               </div>
             </div>
 
@@ -241,29 +97,8 @@ export function WorkspaceContent() {
           {/* Main content */}
           <ScrollArea className="flex-1 bg-background">
             <div className="p-4">
-              {viewMode === 'tree' ? (
-                <>
-                  {/* Tree view */}
-                  <div className="space-y-2">
-                    <FolderTree
-                      workspaceId={selectedWorkspaceId}
-                      items={folderStructure.folders.concat(folderStructure.documents)}
-                      selectedIds={[]}
-                      onToggleExpand={handleToggleExpand}
-                      onSelectDocument={handleDocumentClick}
-                      onRenameFolder={handleFolderRename}
-                      onDeleteFolder={handleFolderDelete}
-                      onDownloadDocument={handleDocumentDownload}
-                      onCreateFolder={handleCreateFolder}
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  {/* List view - existing DocumentsTable */}
-                  <DocumentsTable />
-                </>
-              )}
+              {/* Documents table */}
+              <DocumentsTable />
             </div>
           </ScrollArea>
 
@@ -272,7 +107,7 @@ export function WorkspaceContent() {
             open={isCreateFolderOpen}
             onOpenChange={setIsCreateFolderOpen}
             workspaceId={selectedWorkspaceId}
-            parentFolderId={selectedFolderId}
+            parentFolderId={undefined}
           />
 
           {/* Drag overlay indicator */}
@@ -282,12 +117,12 @@ export function WorkspaceContent() {
                 <p className="text-sm text-muted-foreground">
                   {draggedItems.length > 0 ? (
                     <>
-                      <FolderOpen className="h-5 w-5 text-blue-500 mr-2 inline-block" />
+                      <span className="h-5 w-5 text-blue-500 mr-2 inline-block">📁</span>
                       {t('folder.draggingMultiple', { count: draggedItems.length })}
                     </>
                   ) : (
                     <>
-                      <FileText className="h-5 w-5 text-blue-500 mr-2 inline-block" />
+                      <span className="h-5 w-5 text-blue-500 mr-2 inline-block">📄</span>
                       {t('folder.draggingSingle')}
                     </>
                   )}

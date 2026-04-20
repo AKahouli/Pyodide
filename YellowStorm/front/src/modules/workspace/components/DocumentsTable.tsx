@@ -4,6 +4,7 @@
  * Responsive: Card layout on mobile, table on larger screens
  */
 
+import { useState, useRef } from 'react';
 import { Loader2, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -11,7 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useDocuments, useDocumentPagination, useWorkspaceLoading, useSelectedWorkspace } from '../store';
-import { DEFAULT_PAGE_LIMIT } from '../utils';
+import { DEFAULT_PAGE_LIMIT, ACCEPT_EXTENSIONS, validateFiles } from '../utils';
 import { useDocumentSelection } from '../hooks';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
@@ -24,8 +25,14 @@ export function DocumentsTable() {
   const { currentPage, totalPages, totalDocuments } = useDocumentPagination();
   const { isLoadingDocuments } = useWorkspaceLoading();
   const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
+  const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
+  const startUpload = useWorkspaceStore((state) => state.startUpload);
 
   const { selectedCount, isAllSelected, isSomeSelected, isSelected, toggleSelect, toggleSelectAll, clearSelection, getSelectedIds } = useDocumentSelection(documents);
+
+  // Shared file input ref for folder uploads
+  const folderFileInputRef = useRef<HTMLInputElement>(null);
+  const [currentUploadFolderId, setCurrentUploadFolderId] = useState<string | null>(null);
 
   const handlePrevPage = () => {
     if (selectedWorkspace && currentPage > 1) {
@@ -37,6 +44,25 @@ export function DocumentsTable() {
     if (selectedWorkspace && currentPage < totalPages) {
       fetchDocuments(selectedWorkspace.id, currentPage + 1);
     }
+  };
+
+  const handleFolderUpload = (folderId: string) => {
+    setCurrentUploadFolderId(folderId);
+    folderFileInputRef.current?.click();
+  };
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !selectedWorkspace) return;
+
+    const { validFiles } = validateFiles(files);
+    if (validFiles.length > 0) {
+      addFilesToQueue(validFiles, selectedWorkspace.id);
+      startUpload();
+    }
+
+    e.target.value = '';
+    setCurrentUploadFolderId(null);
   };
 
   if (isLoadingDocuments) {
@@ -87,6 +113,16 @@ export function DocumentsTable() {
 
   return (
     <div className='relative h-full flex flex-col'>
+      {/* Hidden shared file input for folder uploads */}
+      <input
+        ref={folderFileInputRef}
+        type='file'
+        accept={ACCEPT_EXTENSIONS}
+        multiple
+        style={{ position: 'absolute', left: -9999, visibility: 'hidden' }}
+        onChange={handleFileInputChange}
+      />
+
       {/* Mobile: Card layout */}
       <div className='flex flex-col sm:hidden flex-1 min-h-0'>
         {/* Mobile select all header */}
@@ -98,7 +134,7 @@ export function DocumentsTable() {
         <ScrollArea className='h-[calc(100vh-320px)]'>
           <div className='divide-y w-full'>
             {documents.map((document) => (
-              <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} />
+              <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} />
             ))}
           </div>
         </ScrollArea>
@@ -124,7 +160,7 @@ export function DocumentsTable() {
             </TableHeader>
             <TableBody>
               {documents.map((document) => (
-                <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} />
+                <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} />
               ))}
             </TableBody>
           </Table>

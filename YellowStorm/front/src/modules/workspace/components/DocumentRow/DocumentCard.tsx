@@ -1,29 +1,44 @@
-import { memo, useCallback } from 'react';
+import { memo, useCallback, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FileText, Download, RefreshCw, Search, Trash2, Loader2, Folder } from 'lucide-react';
+import { FileText, Download, RefreshCw, Search, Trash2, Loader2, Folder, Upload, FolderPlus } from 'lucide-react';
 
-import { formatFileSize, formatDate, getFileTypeLabel } from '../../utils';
+import { formatFileSize, getFileTypeLabel } from '../../utils';
 import type { WorkspaceDocument } from '../../types';
-import { useDocumentActions } from '../../hooks';
+import { useDocumentActions, useWorkspaceStore, useSelectedWorkspace } from '../../hooks';
 import { IndexingStatusBadge } from './IndexingStatusBadge';
 import { ConfirmDialog } from '../dialogs';
+import { CreateFolderDialog } from '../CreateFolderDialog';
 import { useModuleTranslation } from '@/modules/localization';
 
 interface DocumentCardProps {
   document: WorkspaceDocument;
   isSelected: boolean;
   onToggleSelect: () => void;
+  onFolderUpload?: (folderId: string) => void;
 }
 
-export const DocumentCard = memo(function DocumentCard({ document, isSelected, onToggleSelect }: DocumentCardProps) {
+export const DocumentCard = memo(function DocumentCard({ document, isSelected, onToggleSelect, onFolderUpload }: DocumentCardProps) {
   const { t } = useModuleTranslation('workspace');
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, handleDownload, handleDelete, handleReindex } = useDocumentActions(document);
+
+  const selectedWorkspace = useSelectedWorkspace();
+  const isUploading = useWorkspaceStore((state) => state.isUploading);
+
+  const [isSubFolderDialogOpen, setIsSubFolderDialogOpen] = useState(false);
 
   const handleDeleteClick = useCallback(() => {
     setIsDeleteDialogOpen(true);
   }, [setIsDeleteDialogOpen]);
+
+  const handleUploadClick = useCallback(() => {
+    onFolderUpload?.(document.id);
+  }, [document.id, onFolderUpload]);
+
+  const handleCreateSubFolder = useCallback(() => {
+    setIsSubFolderDialogOpen(true);
+  }, []);
 
   return (
     <>
@@ -37,15 +52,27 @@ export const DocumentCard = memo(function DocumentCard({ document, isSelected, o
           )}
           <span className='font-medium text-sm truncate block max-w-[calc(100vw-180px)]'>{document.originalName}</span>
           <div className='flex gap-0.5 shrink-0 ml-auto'>
-            <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleDownload} disabled={isDownloading}>
-              {isDownloading ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Download className='h-3.5 w-3.5' />}
-            </Button>
-            {canIndex && (
+            {document.isFolder && (
+              <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleUploadClick} disabled={isUploading}>
+                {isUploading ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Upload className='h-3.5 w-3.5' />}
+              </Button>
+            )}
+            {!document.isFolder && (
+              <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleDownload} disabled={isDownloading}>
+                {isDownloading ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Download className='h-3.5 w-3.5' />}
+              </Button>
+            )}
+            {document.isFolder && (
+              <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleCreateSubFolder}>
+                <FolderPlus className='h-3.5 w-3.5' />
+              </Button>
+            )}
+            {canIndex && !document.isFolder && (
               <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleReindex} disabled={isReindexing}>
                 {isReindexing ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Search className='h-3.5 w-3.5' />}
               </Button>
             )}
-            {canReindex && (
+            {canReindex && !document.isFolder && (
               <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleReindex} disabled={isReindexing}>
                 {isReindexing ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <RefreshCw className='h-3.5 w-3.5' />}
               </Button>
@@ -56,16 +83,23 @@ export const DocumentCard = memo(function DocumentCard({ document, isSelected, o
           </div>
         </div>
         <div className='flex items-center gap-2 mt-1.5 ml-6 pl-0.5 flex-wrap'>
-          <span className='text-xs text-muted-foreground'>{formatFileSize(document.size)}</span>
+          <span className='text-xs text-muted-foreground'>{document.isFolder ? '-' : formatFileSize(document.size)}</span>
           <Badge variant='outline' className='text-[10px] h-4 px-1.5'>
             {document.isFolder ? 'Folder' : getFileTypeLabel(document.mimeType)}
           </Badge>
-          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />
-          <span className='text-xs text-muted-foreground'>{formatDate(document.uploadedAt || document.createdAt)}</span>
         </div>
       </div>
 
       <ConfirmDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen} title={t('documents.row.delete.title')} description={t('documents.row.delete.description', { name: document.originalName })} confirmLabel={isDeleting ? t('documents.row.delete.deleting') : t('documents.row.delete.confirm')} variant='destructive' isLoading={isDeleting} onConfirm={handleDelete} />
+
+      {document.isFolder && (
+        <CreateFolderDialog
+          open={isSubFolderDialogOpen}
+          onOpenChange={setIsSubFolderDialogOpen}
+          workspaceId={selectedWorkspace?.id || ''}
+          parentFolderId={document.id}
+        />
+      )}
     </>
   );
 });

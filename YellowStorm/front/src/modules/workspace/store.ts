@@ -25,6 +25,7 @@ import type {
   UploadFileStatus,
   CreateFolderData,
   RenameFolderData,
+  DocumentQueryParams,
 } from './types';
 
 /**
@@ -56,7 +57,7 @@ const getWorkspaceTranslationKey = (segment: string) => `store.${segment}` as Mo
 
 const translateWorkspaceString = (segment: string, fallback: string, params?: TranslationParams) => {
   if (workspaceTranslator) {
-    return workspaceTranslator(getWorkspaceTranslationKey(segment), params, fallback);
+    return workspaceTranslator(getWorkspaceTranslationKey(segment), params) ?? fallback;
   }
   return fallback;
 };
@@ -107,7 +108,6 @@ interface WorkspaceState {
   isLoadingWorkspaces: boolean;
   isLoadingDocuments: boolean;
   isLoadingTemplates: boolean;
-  isLoadingSettings: boolean;
   isCreating: boolean;
   isDeleting: boolean;
 
@@ -230,7 +230,6 @@ const initialState: WorkspaceState = {
   isLoadingWorkspaces: false,
   isLoadingDocuments: false,
   isLoadingTemplates: false,
-  isLoadingSettings: false,
   isCreating: false,
   isDeleting: false,
 
@@ -808,11 +807,15 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     },
 
     updateCurrentWorkspaceSettings: async (data) => {
+      const settingsId = get().settingsTargetWorkspace?.settings;
+      if (!settingsId) {
+        throw new Error('No settings ID found');
+      }
       set({ isSavingSettings: true, error: null });
 
       try {
         const updated = await workspaceApi.updateWorkspaceSetting(
-          get().settingsTargetWorkspace!.settings,
+          settingsId,
           data,
         );
         set({ currentWorkspaceSettings: updated, isSavingSettings: false });
@@ -951,10 +954,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           try {
             await workspaceApi.uploadSmallFile(
               workspaceId,
-              item.file.buffer,
-              item.file.originalname,
-              item.file.type,
-              (progress) => {
+              item.file,
+              (progress: number) => {
                 get().updateUploadProgress(item.id, progress);
               },
             );
@@ -971,7 +972,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         } else {
           // Bulk upload for multiple or large files
           const fileRequests = pendingFiles.map((item) => ({
-            filename: item.file.originalname,
+            filename: item.file.name,
             mimeType: item.file.type,
             size: item.file.size,
           }));

@@ -857,7 +857,7 @@ export class WorkspaceDocumentService {
     // Execute queries
     const [documents, total] = await Promise.all([
       this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments(query),
+      this.documentModel.countDocuments({ ...query, isFolder: false }),
     ]);
 
     return {
@@ -1339,7 +1339,7 @@ export class WorkspaceDocumentService {
       originalName: sanitizedName,
       mimeType: 'folder',
       size: 0,
-      path: '', // Folders don't have physical storage
+      path: undefined, // Folders don't have physical storage paths
       workspaceId: new Types.ObjectId(workspaceId),
       createdBy: new Types.ObjectId(userId),
       status: DocumentStatus.COMPLETED,
@@ -1671,7 +1671,7 @@ export class WorkspaceDocumentService {
     // Execute queries
     const [items, total] = await Promise.all([
       this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments(query),
+      this.documentModel.countDocuments({ ...query, isFolder: false }),
     ]);
 
     return {
