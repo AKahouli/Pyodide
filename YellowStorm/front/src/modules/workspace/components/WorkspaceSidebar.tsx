@@ -3,7 +3,7 @@
  * Sidebar within the workspace modal showing workspace list with pagination
  */
 
-import { memo } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import { Search, Plus, ChevronLeft, ChevronRight, Loader2, X, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -92,25 +92,28 @@ export function WorkspaceSidebar() {
           <>
             {/* Personal workspace section */}
             {personalWorkspaces.length > 0 && (
-              <div className="pb-3 mb-2">
-                <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg">
-                  <FolderOpen className="h-4 w-4" />
-                  <span className="font-medium">{t('sidebar.personalSection')}</span>
+              <>
+                <div className="pb-3 mb-2">
+                  <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg">
+                    <FolderOpen className="h-4 w-4" />
+                    <span className="font-medium">{t('sidebar.personalSection')}</span>
+                  </div>
+                  {personalWorkspaces.map((workspace) => (
+                    <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
+                  ))}
                 </div>
-                {personalWorkspaces.map((workspace) => (
-                  <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
-                ))}
-              </div>
-              <Separator />
+                <Separator />
+              </>
             )}
 
             {/* Regular workspaces */}
             {regularWorkspaces.length > 0 && personalWorkspaces.length > 0 && (
-              <div className="mb-2 px-3 text-xs text-muted-foreground">{t('sidebar.regularSection')}</div>
-              {regularWorkspaces.map((workspace) => (
-                <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
-              ))}
-            </div>
+              <>
+                <div className="mb-2 px-3 text-xs text-muted-foreground">{t('sidebar.regularSection')}</div>
+                {regularWorkspaces.map((workspace) => (
+                  <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
+                ))}
+              </>
             )}
 
             {/* Empty state */}

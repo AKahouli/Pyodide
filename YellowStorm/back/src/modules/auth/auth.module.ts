@@ -11,6 +11,7 @@ import { Session, SessionSchema } from './schemas/session.schema';
 import { UserModule } from '../user';
 import { UsageModule } from '../usage';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { WorkspaceModule } from '../workspace/workspace.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { AuthorizationModule } from '../authorization/authorization.module';
     UserModule,
     forwardRef(() => UsageModule),
     forwardRef(() => AuthorizationModule),
+    forwardRef(() => WorkspaceModule),
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard],

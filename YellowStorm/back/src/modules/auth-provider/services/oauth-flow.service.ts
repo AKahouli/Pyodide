@@ -321,9 +321,10 @@ export class OAuthFlowService {
       },
     });
 
-    // Assign default plan
+    // Assign default plan and create personal workspace
+    let defaultPlan;
     try {
-      const defaultPlan = await this.usageService.getDefaultPlan();
+      defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         newUser._id.toString(),
         defaultPlan._id as Types.ObjectId,

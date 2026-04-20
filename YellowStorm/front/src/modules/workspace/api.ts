@@ -23,6 +23,8 @@ import type {
   UploadUrlResponse,
   InitiateBulkUploadRequest,
   BulkUploadSession,
+  CreateFolderData,
+  RenameFolderData,
 } from './types';
 
 // ===== Workspace APIs =====

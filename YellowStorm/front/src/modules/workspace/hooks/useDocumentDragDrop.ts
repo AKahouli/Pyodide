@@ -24,6 +24,8 @@ interface DropData {
 export function useDocumentDragDrop() {
   const { t } = useModuleTranslation('workspace');
   const moveDocuments = useWorkspaceStore((state) => state.moveDocuments);
+  const selectedWorkspace = useWorkspaceStore((state) => state.selectedWorkspace);
+  const workspaceId = selectedWorkspace?.id ?? '';
 
   const [isDragging, setIsDragging] = useState(false);
   const [draggedItems, setDraggedItems] = useState<DragItem[]>([]);
@@ -54,7 +56,7 @@ export function useDocumentDragDrop() {
     e.stopPropagation();
   }, []);
 
-  const handleDropOnFolder = useCallback((e: React.DragEvent, targetFolderId: string, workspaceId: string) => {
+  const handleDropOnFolder = useCallback(async (e: React.DragEvent, targetFolderId: string, workspaceId: string) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -64,7 +66,7 @@ export function useDocumentDragDrop() {
       const data = e.dataTransfer.getData('application/json');
       if (!data) return;
 
-      const dropData: JSON.parse(data) as DropData;
+      const dropData = JSON.parse(data) as DropData;
 
       // Validate workspace matches
       if (dropData.workspaceId !== workspaceId) {
@@ -90,7 +92,7 @@ export function useDocumentDragDrop() {
     }
   }, [workspaceId, moveDocuments, t]);
 
-  const handleDropOnRoot = useCallback((e: React.DragEvent, workspaceId: string) => {
+  const handleDropOnRoot = useCallback(async (e: React.DragEvent, workspaceId: string) => {
     e.preventDefault();
     e.stopPropagation();
 

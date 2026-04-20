@@ -1428,7 +1428,7 @@ export class WorkspaceDocumentService {
     }
 
     // Recursively delete all contents
-    const result = await this.deleteFolderRecursive(folderId, workspaceId, userId);
+    const result = await this.deleteFolderRecursive(new Types.ObjectId(folderId), workspaceId, userId);
 
     // Delete the folder itself
     await this.documentModel.deleteOne({ _id: folderId });
@@ -1538,7 +1538,7 @@ export class WorkspaceDocumentService {
         // Update parent folder
         document.parentId = targetFolderId
           ? new Types.ObjectId(targetFolderId)
-          : null;
+          : undefined;
         await document.save();
 
         moved.push(documentId);

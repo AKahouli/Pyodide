@@ -19,7 +19,7 @@ import { DocumentCard } from './DocumentRow/DocumentCard';
 
 export function DocumentsTable() {
   const { t } = useModuleTranslation('workspace');
-  const documents = useDocuments();
+  const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
   const { currentPage, totalPages, totalDocuments } = useDocumentPagination();
   const { isLoadingDocuments } = useWorkspaceLoading();

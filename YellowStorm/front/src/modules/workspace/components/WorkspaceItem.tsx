@@ -20,7 +20,7 @@ interface WorkspaceItemProps {
   isSelected: boolean;
 }
 
-export const WorkspaceItem = memo(function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
+export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
   const { t } = useModuleTranslation('workspace');
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -228,4 +228,4 @@ export const WorkspaceItem = memo(function WorkspaceItem({ workspace, isSelected
       />
     </>
   );
-});
+}

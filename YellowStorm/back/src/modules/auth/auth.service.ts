@@ -72,8 +72,9 @@ export class AuthService {
       password: dto.password,
     });
     // Assign default (free) plan to new user
+    let defaultPlan;
     try {
-      const defaultPlan = await this.usageService.getDefaultPlan();
+      defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         user._id.toString(),
         defaultPlan._id as Types.ObjectId,

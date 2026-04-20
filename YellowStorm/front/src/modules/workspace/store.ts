@@ -64,8 +64,6 @@ const translateWorkspaceString = (segment: string, fallback: string, params?: Tr
 const tError = (key: string, fallback: string) => translateWorkspaceString(`errors.${key}`, fallback);
 const tToast = (key: string, fallback: string, params?: TranslationParams) => translateWorkspaceString(`toast.${key}`, fallback, params);
 
-import type { WorkspaceStore, WorkspaceActions, WorkspaceSelectors, WorkspaceState } from './types';
-
 // ===== Initial State =====
 
 interface WorkspaceState {
@@ -194,6 +192,8 @@ interface WorkspaceActions {
   getPersonalWorkspace: () => Promise<void>;
 }
 
+export type WorkspaceStore = WorkspaceState & WorkspaceActions;
+
 // ===== Initial State =====
 
 const initialState: WorkspaceState = {
@@ -244,12 +244,7 @@ const initialState: WorkspaceState = {
 // ===== Store =====
 
 export const useWorkspaceStore = create<WorkspaceStore>()(
-  devtools(
-    (set, get, api) => ({
-      name: 'workspace-store',
-    }),
-  ),
-  (set, get) => ({
+  devtools((set, get) => ({
     ...initialState,
 
     // ===== Modal Controls =====
@@ -346,9 +341,14 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         ]);
 
         // Combine results - personal workspace first if it exists
-        const allWorkspaces = personalWorkspace
-          ? [personalWorkspace, ...result.workspaces]
-          : result.workspaces;
+        let allWorkspaces = result.workspaces;
+        if (personalWorkspace) {
+          // Check if personal workspace is already in the list (avoid duplicates)
+          const personalExists = allWorkspaces.some((w) => w.id === personalWorkspace.id);
+          if (!personalExists) {
+            allWorkspaces = [personalWorkspace, ...allWorkspaces];
+          }
+        }
 
         const newCache = new Map(state.searchQuery ? [] : state.workspaces);
         newCache.set(page, allWorkspaces);
@@ -376,7 +376,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       }
     },
 
-    searchWorkspaces: (query) => {
+    searchWorkspaces: async (query) => {
       set({
         searchQuery: query,
         workspaces: new Map(), // Clear cache on search
@@ -414,8 +414,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       });
 
       try {
-        // Fetch fresh workspace data in parallel with documents
-        const [freshWorkspace] = await Promise.all([workspaceApi.getWorkspace(workspaceId)]);
+        // Fetch fresh workspace data and documents in parallel
+        const freshWorkspace = await workspaceApi.getWorkspace(workspaceId);
+        await get().fetchDocuments(workspaceId, 1);
 
         // Update with fresh data (may have updated counts, storage, etc.)
         set({
@@ -587,7 +588,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       }
     },
 
-    searchDocuments: (query) => {
+    searchDocuments: async (query) => {
       set({
         documentSearchQuery: query,
         documents: new Map(), // Clear cache on search
@@ -712,10 +713,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     },
 
     updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt) => {
-      set((state) => {
-        documents: new Map(state.documents),
-      });
-
+      const state = get();
       const newCache = new Map(state.documents);
       newCache.forEach((documents, page) => {
         const index = documents.findIndex((d) => d.id === documentId);
@@ -1047,7 +1045,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           }
 
           await get().refreshWorkspace(workspaceId);
-        } catch (err) {
+        }
+      } catch (err) {
           const fallbackUpload = tError('uploadFailed', 'Upload failed');
           const message = getApiErrorMessage(err, fallbackUpload);
           set({ error: message, isUploading: false });
@@ -1058,7 +1057,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               get().updateUploadStatus(item.id, 'failed', message);
             }
           });
-        }
       } finally {
         set({ isUploading: false, uploadSessionId: null });
         get().clearCompletedUploads();
@@ -1219,28 +1217,27 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({ error: message });
       }
     },
-  }),
-  { name: 'workspace-store' },
+  }), { name: 'workspace-store' })
 );
 
 // ===== Selector Hooks for Performance =====
 
 export const useWorkspaces = () => {
   const workspaces = useWorkspaceStore((state) => state.workspaces);
-  const currentPage = useWorkspaceStore((state) => state.currentPage);
-  return workspaces.get(currentPage) || [];
+  const currentPage = useWorkspaceStore((state) => state.currentPage) ?? 1;
+  return workspaces?.get(currentPage) || [];
 };
 
 export const useDocumentPagination = () => {
-  const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage);
-  const totalPages = useWorkspaceStore((state) => state.documentsTotalPages);
-  const totalDocuments = useWorkspaceStore((state) => state.totalDocuments);
+  const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage) ?? 1;
+  const totalPages = useWorkspaceStore((state) => state.documentsTotalPages) ?? 1;
+  const totalDocuments = useWorkspaceStore((state) => state.totalDocuments) ?? 0;
   return { currentPage, totalPages, totalDocuments };
 };
 
 export const useUploadQueue = () => {
   const queue = useWorkspaceStore((state) => state.uploadQueue);
-  return queue;
+  return queue ?? [];
 };
 
 export const useUploadState = () => {
@@ -1255,7 +1252,7 @@ export const useUploadState = () => {
 
 export const useHasActiveUploads = () => {
   const queue = useWorkspaceStore((state) => state.uploadQueue);
-  return queue.some((item) => item.status === 'pending' || item.status === 'uploading');
+  return queue?.some((item) => item.status === 'pending' || item.status === 'uploading') ?? false;
 };
 
 export const useWorkspaceModalState = () => useWorkspaceStore(
@@ -1289,4 +1286,32 @@ export const useCurrentWorkspaceSettings = () => {
 
 export const useSettingsTargetWorkspace = () => {
   return useWorkspaceStore((state) => state.settingsTargetWorkspace);
+};
+
+export const useSelectedWorkspace = () => {
+  return useWorkspaceStore((state) => state.selectedWorkspace) ?? null;
+};
+
+export const useDocuments = () => {
+  const documentsMap = useWorkspaceStore((state) => state.documents) ?? new Map();
+  const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage) ?? 1;
+  const totalPages = useWorkspaceStore((state) => state.documentsTotalPages) ?? 1;
+  // Get documents for current page
+  const documents = documentsMap.get(currentPage) ?? [];
+  return { documents, currentPage, totalPages };
+};
+
+// Hook to get all documents as a flat array for tree view
+export const useAllDocuments = () => {
+  const documentsMap = useWorkspaceStore((state) => state.documents) ?? new Map();
+  const currentPage = useWorkspaceStore((state) => state.documentsCurrentPage) ?? 1;
+  // Flatten all documents from the Map into a single array
+  const allDocuments = Array.from(documentsMap.values()).flat();
+  return { documents: allDocuments, currentPage };
+};
+
+export const useWorkspacePagination = () => {
+  const currentPage = useWorkspaceStore((state) => state.currentPage) ?? 1;
+  const totalPages = useWorkspaceStore((state) => state.totalPages) ?? 1;
+  return { currentPage, totalPages };
 };

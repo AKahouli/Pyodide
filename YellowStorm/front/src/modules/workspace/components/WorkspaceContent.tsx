@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments } from '../store';
+import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllDocuments } from '../store';
 import { useModalCloseEffect, useDebouncedSearch, useIndexingNotifications, useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
@@ -25,7 +25,7 @@ export function WorkspaceContent() {
   const { t } = useModuleTranslation('workspace');
   const selectedWorkspace = useSelectedWorkspace();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
-  const documents = useDocuments();
+  const { documents } = useAllDocuments();
   const createFolder = useWorkspaceStore((state) => state.createFolder);
   const getFolderContents = useWorkspaceStore((state) => state.getFolderContents);
   const isCreating = useWorkspaceStore((state) => state.isCreating);

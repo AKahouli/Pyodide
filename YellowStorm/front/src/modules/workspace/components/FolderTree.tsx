@@ -400,7 +400,6 @@ function FolderTreeItem({
             </span>
           </div>
         </div>
-      </div>
 
       {item.isExpanded && item.children.length > 0 && (
         <div className="mt-1">
