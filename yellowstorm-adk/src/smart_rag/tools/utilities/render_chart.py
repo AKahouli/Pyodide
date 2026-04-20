@@ -82,15 +82,24 @@ class RenderChartInput(BaseModel):
         return self
 
 
+_CHART_PALETTE_TOKENS = (
+    "var(--chart-1)",
+    "var(--chart-2)",
+    "var(--chart-3)",
+    "var(--chart-4)",
+    "var(--chart-5)",
+)
+
+
 def _build_chart_config(payload: RenderChartInput) -> dict[str, dict[str, str]]:
     if payload.config:
         return payload.config
 
     config: dict[str, dict[str, str]] = {}
-    for series in payload.series:
+    for idx, series in enumerate(payload.series):
         config[series.dataKey] = {
             "label": series.label or _format_label(series.dataKey),
-            "color": series.color or "hsl(var(--chart-1))",
+            "color": series.color or _CHART_PALETTE_TOKENS[idx % len(_CHART_PALETTE_TOKENS)],
         }
     return config
 

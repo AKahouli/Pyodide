@@ -102,3 +102,34 @@ class TestRenderChart:
         )
 
         assert result.get("error") == "invalid_chart_payload"
+
+    @pytest.mark.asyncio
+    async def test_default_config_uses_theme_tokens_and_rotates(self):
+        result = await render_chart(
+            kind="bar",
+            xAxisKey="month",
+            data=[
+                {"month": "Jan", "revenue": 10, "cost": 4, "profit": 6},
+                {"month": "Feb", "revenue": 12, "cost": 5, "profit": 7},
+            ],
+            series=[
+                {"dataKey": "revenue"},
+                {"dataKey": "cost"},
+                {"dataKey": "profit"},
+            ],
+        )
+
+        colors = [result["config"][key]["color"] for key in ("revenue", "cost", "profit")]
+        assert colors == ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)"]
+        assert all("hsl(" not in c for c in colors)
+
+    @pytest.mark.asyncio
+    async def test_llm_supplied_color_is_preserved(self):
+        result = await render_chart(
+            kind="bar",
+            xAxisKey="month",
+            data=[{"month": "Jan", "revenue": 10}],
+            series=[{"dataKey": "revenue", "color": "#ff0099"}],
+        )
+
+        assert result["config"]["revenue"]["color"] == "#ff0099"

@@ -641,9 +641,8 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 {showPieLegend && <ChartLegend content={<ChartLegendContent />} />}
                 <Pie data={data} dataKey={series[0]?.dataKey || yAxisKey || 'value'} nameKey={nameKey || xAxisKey} innerRadius={innerRadius} outerRadius={90}>
                   {data.map((entry, index) => {
-                    const seriesKey = series[index]?.dataKey || series[0]?.dataKey || 'value';
-                    const fill = entry.fill || `var(--color-${seriesKey})`;
-                    return <Cell key={`${seriesKey}-${index}`} fill={fill} />;
+                    const fill = entry.fill || `var(--chart-${(index % 5) + 1})`;
+                    return <Cell key={`slice-${index}`} fill={fill} />;
                   })}
                   {innerRadius > 0 && <Label position='center'>{title || tCommon('ai.chart.donutLabel')}</Label>}
                 </Pie>

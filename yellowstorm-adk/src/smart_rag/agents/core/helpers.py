@@ -23,16 +23,7 @@ from src.smart_rag.tools import build_tree
 logger = get_logger("api.routers.agentic_rag.AgentHelper")
 settings = get_settings()
 
-CHART_TOOL_GUIDANCE = """
 
-<chart_tool_guidance>
-You can call the `render_chart` tool when the answer becomes analytical and a visual will help the user.
-Only call it with concrete numeric data.
-Never send an empty `data` array.
-For non-scatter charts, always include at least one `series` entry.
-Place charts between explanatory paragraphs rather than at the very end.
-</chart_tool_guidance>
-"""
 
 class AgentHelper:
     """Utility class for sanitizing agent names and preparing prompts and agent data.
@@ -433,7 +424,7 @@ class AgentHelper:
 
 You have access to delegate functions for each agent. Use the appropriate delegate_to_[agent_name] function to call the agent that can best handle the user's request. Do not just mention agents - actually call their delegate functions with the user's task.
 
-{CHART_TOOL_GUIDANCE}
+
 
 <available_agents>
 {agents_json}
