@@ -278,8 +278,8 @@
   "folder.dropError": "Move failed",
   "folder.crossWorkspaceDrop": "You cannot move items between workspaces",
   "folder.dropSuccess": "Move successful",
-  "folder.dropSuccessDescription": "Moved {{count}} items to folder",
-  "folder.dropToRootSuccessDescription": "Moved {{count}} items",
+  "folder.dropSuccessDescription": "Moved {{name}} to folder",
+  "folder.dropToRootSuccessDescription": "Moved {{name}} to root",
   "folder.rename": "Rename",
   "folder.delete": "Delete",
   "folder.deleteConfirm": "Are you sure you want to delete this folder? This will also delete all its contents."

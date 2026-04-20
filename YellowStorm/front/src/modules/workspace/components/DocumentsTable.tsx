@@ -14,6 +14,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useDocuments, useDocumentPagination, useWorkspaceLoading, useSelectedWorkspace } from '../store';
 import { DEFAULT_PAGE_LIMIT, ACCEPT_EXTENSIONS, validateFiles } from '../utils';
 import { useDocumentSelection } from '../hooks';
+import { useDocumentDragDrop } from '../hooks/useDocumentDragDrop';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
@@ -34,6 +35,18 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const startUpload = useWorkspaceStore((state) => state.startUpload);
   const createFolder = useWorkspaceStore((state) => state.createFolder);
   const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
+
+  // Drag and drop
+  const {
+    isDragging,
+    dropTargetId,
+    handleDragStart,
+    handleDragEnd,
+    handleDragOver,
+    handleDragLeave,
+    handleDropOnFolder,
+    handleDropOnRoot,
+  } = useDocumentDragDrop();
 
   const { selectedCount, isAllSelected, isSomeSelected, isSelected, toggleSelect, toggleSelectAll, clearSelection, getSelectedIds } = useDocumentSelection(documents);
 
@@ -164,7 +177,20 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
         <ScrollArea className='h-[calc(100vh-320px)]'>
           <div className='divide-y w-full'>
             {documents.map((document) => (
-              <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} onFolderDoubleClick={onFolderDoubleClick} />
+              <DocumentCard
+                key={document.id}
+                document={document}
+                isSelected={isSelected(document.id)}
+                onToggleSelect={() => toggleSelect(document.id)}
+                onFolderUpload={handleFolderUpload}
+                onFolderDoubleClick={onFolderDoubleClick}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDropOnFolder={handleDropOnFolder}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                isDropTarget={dropTargetId === document.id}
+              />
             ))}
           </div>
         </ScrollArea>
@@ -190,7 +216,20 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
             </TableHeader>
             <TableBody>
               {documents.map((document) => (
-                <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} onFolderDoubleClick={onFolderDoubleClick} />
+                <DocumentRow
+                  key={document.id}
+                  document={document}
+                  isSelected={isSelected(document.id)}
+                  onToggleSelect={() => toggleSelect(document.id)}
+                  onFolderUpload={handleFolderUpload}
+                  onFolderDoubleClick={onFolderDoubleClick}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDropOnFolder={handleDropOnFolder}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  isDropTarget={dropTargetId === document.id}
+                />
               ))}
             </TableBody>
           </Table>

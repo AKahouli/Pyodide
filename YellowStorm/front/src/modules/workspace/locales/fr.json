@@ -279,8 +279,8 @@
   "folder.dropError": "Échec du déplacement",
   "folder.crossWorkspaceDrop": "Impossible de déplacer des éléments entre workspaces",
   "folder.dropSuccess": "Déplacement réussi",
-  "folder.dropSuccessDescription": "Déplacement de {{count}} éléments vers le dossier",
-  "folder.dropToRootSuccessDescription": "Déplacement de {{count}} éléments",
+  "folder.dropSuccessDescription": "Déplacement de {{name}} vers le dossier",
+  "folder.dropToRootSuccessDescription": "Déplacement de {{name}} vers la racine",
   "folder.rename": "Renommer",
   "folder.delete": "Supprimer",
   "folder.deleteConfirm": "Êtes-vous sûr de vouloir supprimer ce dossier ? Cela supprimera également tout son contenu."

@@ -1538,7 +1538,7 @@ export class WorkspaceDocumentService {
   }
 
   /**
-   * Move documents to a different folder
+   * Move documents/folders to a different folder
    */
   async moveDocuments(
     workspaceId: string,
@@ -1547,6 +1547,27 @@ export class WorkspaceDocumentService {
   ): Promise<{ moved: number; failed: string[] }> {
     const moved: string[] = [];
     const failed: string[] = [];
+
+    // Helper function to get all descendant folder IDs (to prevent circular moves)
+    const getDescendantFolderIds = async (folderId: string): Promise<Set<string>> => {
+      const descendants = new Set<string>();
+      const queue = [folderId];
+
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        const children = await this.documentModel.find({
+          parentId: new Types.ObjectId(currentId),
+          isFolder: true,
+        }).select('_id').exec();
+
+        for (const child of children) {
+          descendants.add(child._id.toString());
+          queue.push(child._id.toString());
+        }
+      }
+
+      return descendants;
+    };
 
     for (const documentId of documentIds) {
       try {
@@ -1562,10 +1583,19 @@ export class WorkspaceDocumentService {
           continue;
         }
 
-        // Cannot move folders with this endpoint (use dedicated move for folders)
-        if (document.isFolder) {
-          failed.push(documentId);
-          continue;
+        // If moving a folder, check for circular references
+        if (document.isFolder && targetFolderId) {
+          const descendants = await getDescendantFolderIds(documentId);
+          if (descendants.has(targetFolderId)) {
+            failed.push(documentId);
+            continue;
+          }
+
+          // Cannot move folder into itself
+          if (documentId === targetFolderId) {
+            failed.push(documentId);
+            continue;
+          }
         }
 
         // Update parent folder
@@ -1576,7 +1606,7 @@ export class WorkspaceDocumentService {
 
         moved.push(documentId);
       } catch (error) {
-        this.logger.warn('Failed to move document', {
+        this.logger.warn('Failed to move document/folder', {
           documentId,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
@@ -1584,7 +1614,7 @@ export class WorkspaceDocumentService {
       }
     }
 
-    this.logger.log('Documents moved', {
+    this.logger.log('Documents/folders moved', {
       workspaceId,
       targetFolderId,
       movedCount: moved.length,

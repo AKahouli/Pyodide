@@ -171,6 +171,7 @@ interface WorkspaceActions {
   // Cache management
   invalidateWorkspaceCache: () => void;
   invalidateDocumentCache: () => void;
+  invalidateDocumentData: () => void; // Invalidate only documents, keep currentFolderId
   updateWorkspaceInCache: (workspace: Workspace) => void;
   refreshWorkspace: (workspaceId: string) => Promise<void>;
 
@@ -905,6 +906,17 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       });
     },
 
+    invalidateDocumentData: () => {
+      set({
+        documents: new Map(),
+        documentsCurrentPage: 1,
+        documentsTotalPages: 0,
+        totalDocuments: 0,
+        documentSearchQuery: '',
+        allFolders: [],
+      });
+    },
+
     updateWorkspaceInCache: (workspace) => {
       const state = get();
       const newCache = new Map(state.workspaces);
@@ -1207,8 +1219,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           );
         }
 
-        // Refresh documents list
+        // Invalidate cache and refresh
+        get().invalidateDocumentCache();
+        const currentFolderId = get().currentFolderId;
         await get().fetchDocuments(workspaceId, 1);
+        await get().fetchAllFolders(workspaceId);
         await get().refreshWorkspace(workspaceId);
 
         return result;

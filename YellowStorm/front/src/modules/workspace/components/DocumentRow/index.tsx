@@ -4,7 +4,7 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { FileText, Download, Eye, RefreshCw, Search, Trash2, Loader2, Folder, Upload, FolderPlus } from 'lucide-react';
+import { FileText, Download, Eye, RefreshCw, Search, Trash2, Loader2, Folder, Upload, FolderPlus, FolderOpen } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 
 import { formatFileSize, getFileTypeLabel } from '../../utils';
@@ -12,8 +12,9 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import type { WorkspaceDocument } from '../../types';
 import { useDocumentActions, useWorkspaceStore, useSelectedWorkspace } from '../../hooks';
 import { IndexingStatusBadge } from './IndexingStatusBadge';
-import { ConfirmDialog, RenameDialog } from '../dialogs';
+import { ConfirmDialog } from '../dialogs';
 import { CreateFolderDialog } from '../CreateFolderDialog';
+import { cn } from '@/lib/utils';
 
 type DocumentRowProps = Readonly<{
   document: WorkspaceDocument;
@@ -21,15 +22,32 @@ type DocumentRowProps = Readonly<{
   onToggleSelect: () => void;
   onFolderUpload?: (folderId: string, input: HTMLInputElement) => void;
   onFolderDoubleClick?: (folderId: string) => void;
+  onDragStart?: (e: React.DragEvent, documentId: string, isFolder: boolean, workspaceId: string, name?: string) => void;
+  onDragEnd?: () => void;
+  onDropOnFolder?: (e: React.DragEvent, folderId: string, workspaceId: string) => void;
+  onDragOver?: (e: React.DragEvent, folderId: string) => void;
+  onDragLeave?: (e: React.DragEvent, folderId: string) => void;
+  isDropTarget?: boolean;
 }>;
 
-export const DocumentRow = memo(function DocumentRow({ document, isSelected, onToggleSelect, onFolderUpload, onFolderDoubleClick }: DocumentRowProps) {
+export const DocumentRow = memo(function DocumentRow({
+  document,
+  isSelected,
+  onToggleSelect,
+  onFolderUpload,
+  onFolderDoubleClick,
+  onDragStart,
+  onDragEnd,
+  onDropOnFolder,
+  onDragOver,
+  onDragLeave,
+  isDropTarget,
+}: DocumentRowProps) {
   const { t } = useModuleTranslation('workspace');
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, isViewable, handleDownload, handleDelete, handleReindex, handleViewFile } = useDocumentActions(document);
 
   const selectedWorkspace = useSelectedWorkspace();
   const isUploading = useWorkspaceStore((state) => state.isUploading);
-
   const isMobile = useIsMobile();
   const [isSubFolderDialogOpen, setIsSubFolderDialogOpen] = useState(false);
 
@@ -41,27 +59,80 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
     onFolderUpload?.(document.id);
   }, [document.id, onFolderUpload]);
 
-  const handleCreateSubFolder = useCallback(async () => {
+  const handleCreateSubFolder = useCallback(() => {
     setIsSubFolderDialogOpen(true);
   }, []);
 
+  const handleRowDragStart = useCallback((e: React.DragEvent) => {
+    onDragStart?.(e, document.id, document.isFolder, document.workspaceId, document.originalName);
+  }, [document.id, document.isFolder, document.workspaceId, document.originalName, onDragStart]);
+
+  const handleRowDragEnd = useCallback(() => {
+    onDragEnd?.();
+  }, [onDragEnd]);
+
+  const handleFolderDrop = useCallback((e: React.DragEvent) => {
+    if (document.isFolder && onDropOnFolder) {
+      onDropOnFolder(e, document.id, document.workspaceId);
+    }
+  }, [document.isFolder, document.id, document.workspaceId, onDropOnFolder]);
+
+  const handleFolderDragOver = useCallback((e: React.DragEvent) => {
+    if (document.isFolder && onDragOver) {
+      onDragOver(e, document.id);
+    }
+  }, [document.isFolder, document.id, onDragOver]);
+
+  const handleFolderDragLeave = useCallback((e: React.DragEvent) => {
+    if (document.isFolder && onDragLeave) {
+      onDragLeave(e, document.id);
+    }
+  }, [document.isFolder, document.id, onDragLeave]);
+
   return (
     <>
-      <TableRow className='group'>
+      <TableRow
+        className={cn(
+          'group',
+          document.isFolder && isDropTarget && 'bg-blue-50 dark:bg-blue-950/30',
+          document.isFolder && 'cursor-grab active:cursor-grabbing',
+        )}
+        draggable={true}
+        onDragStart={handleRowDragStart}
+        onDragEnd={handleRowDragEnd}
+        onDrop={handleFolderDrop}
+        onDragOver={handleFolderDragOver}
+        onDragLeave={handleFolderDragLeave}
+      >
         <TableCell>
-          <Checkbox checked={isSelected} onCheckedChange={onToggleSelect} aria-label={t('documents.row.selectCheckbox', { name: document.originalName })} />
+          <Checkbox
+            checked={isSelected}
+            onCheckedChange={onToggleSelect}
+            aria-label={t('documents.row.selectCheckbox', { name: document.originalName })}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
         </TableCell>
         <TableCell>
-          <div
-            className='flex items-center gap-2 cursor-pointer'
-            onDoubleClick={() => document.isFolder && onFolderDoubleClick?.(document.id)}
-          >
+          <div className='flex items-center gap-2'>
             {document.isFolder ? (
-              <Folder className='h-4 w-4 text-blue-500 shrink-0' />
+              <>
+                {isDropTarget ? <FolderOpen className='h-4 w-4 text-blue-600 shrink-0' /> : <Folder className='h-4 w-4 text-blue-500 shrink-0' />}
+                <span
+                  className={cn(
+                    'font-medium truncate max-w-50 md:max-w-75 cursor-pointer hover:text-blue-600',
+                    isDropTarget && 'text-blue-600',
+                  )}
+                  onDoubleClick={() => document.isFolder && onFolderDoubleClick?.(document.id)}
+                >
+                  {document.originalName}
+                </span>
+              </>
             ) : (
-              <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+              <>
+                <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+                <span className='font-medium truncate max-w-50 md:max-w-75'>{document.originalName}</span>
+              </>
             )}
-            <span className={`font-medium truncate max-w-50 md:max-w-75 ${document.isFolder ? 'hover:text-blue-600' : ''}`}>{document.originalName}</span>
           </div>
         </TableCell>
         <TableCell className='text-muted-foreground hidden md:table-cell'>{document.isFolder ? '-' : formatFileSize(document.size)}</TableCell>
