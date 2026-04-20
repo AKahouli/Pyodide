@@ -132,6 +132,8 @@
   "nodeEditor.interruptAfter": "Require review after",
   "nodeEditor.allowClarification": "Allow clarification",
   "nodeEditor.agentRequired": "An agent is required",
+  "nodeEditor.executionMode": "Execution mode",
+  "nodeEditor.action": "Action",
   "nodeEditor.notificationSettings": "Notifications",
   "nodeEditor.notifyOnComplete": "Send email when finished",
   "nodeEditor.notifyEmails": "Recipients",

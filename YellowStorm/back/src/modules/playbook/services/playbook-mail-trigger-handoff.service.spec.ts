@@ -78,22 +78,29 @@ describe('PlaybookMailTriggerHandoffService', () => {
       'u@example.com',
       expect.objectContaining({
         executionTrigger: 'mail',
-        triggerContext: expect.objectContaining({
-          ports: {
-            mail_data: {
-              kind: 'data',
-              value: expect.objectContaining({
+          triggerContext: expect.objectContaining({
+            ports: {
+              mail_data: {
+                kind: 'data',
+                value: expect.objectContaining({
                 subject: 'Invoice',
                 providerMessageId: 'msg-1',
               }),
             },
-            mail_attachments: {
-              kind: 'document',
-              documentIds: ['doc-1'],
+              mail_attachments: {
+                kind: 'document',
+                documentIds: ['doc-1'],
+                documents: [
+                  expect.objectContaining({
+                    documentId: 'doc-1',
+                    filename: 'report.pdf',
+                    mimeType: 'application/pdf',
+                  }),
+                ],
+              },
             },
-          },
+          }),
         }),
-      }),
     );
   });
 

@@ -150,6 +150,12 @@ export class PlaybookTask {
   @Prop({ type: Types.ObjectId, ref: 'Agent', default: null })
   assignedAgentId!: Types.ObjectId | null;
 
+  @Prop({ type: String, enum: ['agent', 'action'], default: 'agent' })
+  executionMode!: string;
+
+  @Prop({ type: String, enum: ['index', 'delete', 'read'], default: null })
+  selectedAction!: string | null;
+
   @Prop({ type: Number, default: 0 })
   executionOrder!: number;
 

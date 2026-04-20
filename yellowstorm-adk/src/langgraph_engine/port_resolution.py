@@ -386,6 +386,43 @@ def _trigger_artifacts_for_port(
 
     if kind == "document":
         document_ids = _unique_strings(port_value.get("documentIds") or [])
+        explicit_documents = [
+            item
+            for item in (port_value.get("documents") or [])
+            if isinstance(item, dict)
+        ]
+        explicit_artifacts = []
+        for item in explicit_documents:
+            document_id = str(
+                item.get("documentId") or item.get("document_id") or ""
+            ).strip()
+            if not document_id:
+                continue
+            artifact = {
+                "artifact_kind": "document",
+                "document_id": document_id,
+                "source_task_id": "__trigger__",
+                "source_output_port_id": port_id,
+            }
+            filename = str(item.get("filename") or item.get("name") or "").strip()
+            filepath = str(item.get("filepath") or item.get("file_path") or "").strip()
+            workspace_id = str(
+                item.get("workspaceId") or item.get("workspace_id") or ""
+            ).strip()
+            mime_type = str(item.get("mimeType") or item.get("mime_type") or "").strip()
+            if filename:
+                artifact["filename"] = filename
+            if filepath:
+                artifact["filepath"] = filepath
+            if workspace_id:
+                artifact["workspace_id"] = workspace_id
+            if mime_type:
+                artifact["mime_type"] = mime_type
+            explicit_artifacts.append(artifact)
+
+        if explicit_artifacts:
+            return explicit_artifacts
+
         return [
             {
                 "artifact_kind": "document",

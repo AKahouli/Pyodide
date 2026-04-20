@@ -107,6 +107,23 @@ export class PlaybookMailTriggerHandoffService {
         documentIds: triggerPayload.message.attachments
           .map((attachment) => attachment.workspaceImport?.workspaceDocumentId)
           .filter((value): value is string => typeof value === 'string' && value.length > 0),
+        documents: triggerPayload.message.attachments
+          .map((attachment) => ({
+            documentId: attachment.workspaceImport?.workspaceDocumentId ?? null,
+            filename: attachment.filename ?? '',
+            filepath: '',
+            workspaceId: '',
+            mimeType: attachment.mimeType ?? '',
+          }))
+          .filter(
+            (value): value is {
+              documentId: string;
+              filename: string;
+              filepath: string;
+              workspaceId: string;
+              mimeType: string;
+            } => typeof value.documentId === 'string' && value.documentId.length > 0,
+          ),
       },
     };
 

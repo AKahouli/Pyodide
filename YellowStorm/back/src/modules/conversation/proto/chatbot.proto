@@ -106,6 +106,10 @@ message Document {
 message WorkspaceContext {
     string workspace_id = 1;
     repeated Document workspace_documents = 2;
+    int32 chunks = 3;
+    bool hybrid_search = 4;
+    string instruction = 5;
+    string tag = 6;
 }
 
 // ===== AGENT SUGGESTION MESSAGE =====
@@ -386,6 +390,8 @@ message PlaybookTaskConfig {
     string title = 2;
     string description = 3;
     string assigned_agent_id = 4;
+    string execution_mode = 19;
+    string selected_action = 20;
     int32 execution_order = 5;
     bool interrupt_before = 6;      // Pause for approval before execution
     bool interrupt_after = 7;       // Pause for review after execution

@@ -488,6 +488,8 @@ export class PlaybookDesignService {
       title: node.title || `Step ${idx + 1}`,
       description: node.description || '',
       assignedAgentId: this.toOptionalObjectId(node.assigned_agent_id),
+      executionMode: node.execution_mode || 'agent',
+      selectedAction: node.selected_action || undefined,
       executionOrder: node.execution_order ?? idx,
       positionX: node.x ?? 0,
       positionY: node.y ?? 0,

@@ -36,7 +36,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
 
   onModuleDestroy() {
     for (const [executionId, call] of this.activeStreamCalls) {
-      this.logger.log('Cancelling active stream on shutdown', { executionId });
+      this.logger.debug('Cancelling active stream on shutdown', { executionId });
       call.cancel();
     }
     this.activeStreamCalls.clear();
@@ -82,7 +82,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve, reject) => {
       const deadline = new Date(Date.now() + this.grpcTimeoutMs);
 
-      this.logger.log('gRPC RunStep call initiated', {
+      this.logger.debug('gRPC RunStep call initiated', {
         taskId: request.task?.id,
         playbookId: request.playbook_id,
         timeoutMs: this.grpcTimeoutMs,
@@ -103,7 +103,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
   }
 
   runStepStream(request: any): grpc.ClientReadableStream<any> {
-    this.logger.log('gRPC RunStepStream initiated', {
+    this.logger.debug('gRPC RunStepStream initiated', {
       taskId: request.task?.id,
       playbookId: request.playbook_id,
       executionMode: request.execution_mode || 'live',
@@ -113,7 +113,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
   }
 
   runPlaybookWorkflow(request: any): grpc.ClientReadableStream<any> {
-    this.logger.log('gRPC RunPlaybookWorkflow stream initiated', {
+    this.logger.debug('gRPC RunPlaybookWorkflow stream initiated', {
       playbookId: request.playbook_id,
       taskCount: request.tasks?.length,
       agentCount: request.agents?.length,
@@ -123,7 +123,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
   }
 
   resumePlaybookWorkflow(request: any): grpc.ClientReadableStream<any> {
-    this.logger.log('gRPC ResumePlaybookWorkflow stream initiated', {
+    this.logger.debug('gRPC ResumePlaybookWorkflow stream initiated', {
       playbookId: request.playbook_id,
       threadId: request.thread_id,
       taskId: request.task_id,
@@ -135,7 +135,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve, reject) => {
       const deadline = new Date(Date.now() + this.grpcTimeoutMs);
 
-      this.logger.log('gRPC ResumeStep call initiated', {
+      this.logger.debug('gRPC ResumeStep call initiated', {
         playbookId: request.playbook_id,
         threadId: request.thread_id,
         taskId: request.task_id,
@@ -164,7 +164,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve, reject) => {
       const deadline = new Date(Date.now() + this.grpcTimeoutMs);
 
-      this.logger.log('gRPC EvaluateSemanticMatch call initiated', {
+      this.logger.debug('gRPC EvaluateSemanticMatch call initiated', {
         taskTitle: request.task_title,
         baselineLength: request.baseline_output?.length ?? 0,
         currentLength: request.current_output?.length ?? 0,
@@ -193,7 +193,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
     return new Promise((resolve, reject) => {
       const deadline = new Date(Date.now() + 10000);
 
-      this.logger.log('gRPC StopPlaybookWorkflow call initiated', {
+      this.logger.debug('gRPC StopPlaybookWorkflow call initiated', {
         playbookId: request.playbook_id,
       });
 
@@ -294,7 +294,7 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
         if (wasAvailable && !this.isGrpcAvailable) {
           this.logger.warn('Playbook gRPC connection lost', { state: newState });
         } else if (!wasAvailable && this.isGrpcAvailable) {
-          this.logger.log('Playbook gRPC connection restored', { state: newState });
+          this.logger.debug('Playbook gRPC connection restored', { state: newState });
         }
 
         this.watchChannelState();

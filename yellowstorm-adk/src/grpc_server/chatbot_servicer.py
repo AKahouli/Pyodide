@@ -1795,6 +1795,9 @@ class ChatbotServicer(
     async def RunStep(self, request, context):
         """Execute a single task with an agent."""
         from src.langgraph_engine.step_executor import execute_step
+        from src.langgraph_engine.action_executor import execute_action_task
+        import time
+        from datetime import datetime
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
@@ -1837,32 +1840,50 @@ class ChatbotServicer(
                 triggerContext=resolved_trigger_context,
             )
 
-            result = await execute_step(
-                task=task,
-                agent=agent,
-                context_from_dependencies=request.context_from_dependencies,
-                workspace_context=_proto_workspace_context(request.workspace_context),
-                trigger_context=_struct_to_dict(request.trigger_context)
+            workspace_context = _proto_workspace_context(request.workspace_context)
+            trigger_context = (
+                _struct_to_dict(request.trigger_context)
                 if _has_struct_payload(getattr(request, "trigger_context", None))
-                else None,
-                edges=[_proto_edge_to_dict(edge) for edge in request.edges]
-                if request.edges
-                else [],
-                upstream_results=[
-                    _proto_task_result_to_dict(item)
-                    for item in request.upstream_results
-                ]
-                if request.upstream_results
-                else [],
-                execution_mode=request.execution_mode or "live",
-                validated_replay=validated_replay,
-                evaluation_user_id=request.user_context.username
-                or request.user_context.user_id
-                or "unknown",
-                prompt_overrides=dict(request.prompt_overrides)
-                if getattr(request, "prompt_overrides", None)
-                else {},
+                else None
             )
+            edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
+            upstream_results = [
+                _proto_task_result_to_dict(item)
+                for item in request.upstream_results
+            ] if request.upstream_results else []
+            artifacts_by_port = _build_artifacts_by_port_from_results(upstream_results)
+
+            if str(task.get("execution_mode") or "agent").strip().lower() == "action":
+                result = await execute_action_task(
+                    task,
+                    task_id=task_id,
+                    start_time=time.time(),
+                    started_at=datetime.utcnow().isoformat() + "Z",
+                    workspace_context=workspace_context,
+                    trigger_context=trigger_context,
+                    edges=edges,
+                    upstream_results=upstream_results,
+                    artifacts_by_port=artifacts_by_port,
+                )
+            else:
+                result = await execute_step(
+                    task=task,
+                    agent=agent,
+                    context_from_dependencies=request.context_from_dependencies,
+                    workspace_context=workspace_context,
+                    trigger_context=trigger_context,
+                    edges=edges,
+                    upstream_results=upstream_results,
+                    artifacts_by_port=artifacts_by_port,
+                    execution_mode=request.execution_mode or "live",
+                    validated_replay=validated_replay,
+                    evaluation_user_id=request.user_context.username
+                    or request.user_context.user_id
+                    or "unknown",
+                    prompt_overrides=dict(request.prompt_overrides)
+                    if getattr(request, "prompt_overrides", None)
+                    else {},
+                )
 
             return _build_step_response(result)
 
@@ -1880,6 +1901,9 @@ class ChatbotServicer(
     async def RunStepStream(self, request, context):
         """Execute a single task and stream step updates in realtime."""
         from src.langgraph_engine.step_executor import execute_step
+        from src.langgraph_engine.action_executor import execute_action_task
+        import time
+        from datetime import datetime
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
@@ -1912,37 +1936,56 @@ class ChatbotServicer(
                 else None
             )
 
-            bg_task = asyncio.create_task(
-                execute_step(
-                    task=task,
-                    agent=agent,
-                    context_from_dependencies=request.context_from_dependencies,
-                    workspace_context=_proto_workspace_context(
-                        request.workspace_context
-                    ),
-                    trigger_context=_struct_to_dict(request.trigger_context)
-                    if _has_struct_payload(getattr(request, "trigger_context", None))
-                    else None,
-                    edges=[_proto_edge_to_dict(edge) for edge in request.edges]
-                    if request.edges
-                    else [],
-                    upstream_results=[
-                        _proto_task_result_to_dict(item)
-                        for item in request.upstream_results
-                    ]
-                    if request.upstream_results
-                    else [],
-                    execution_mode=request.execution_mode or "live",
-                    validated_replay=validated_replay,
-                    evaluation_user_id=request.user_context.username
-                    or request.user_context.user_id
-                    or "unknown",
-                    on_progress=on_progress,
-                    prompt_overrides=dict(request.prompt_overrides)
-                    if getattr(request, "prompt_overrides", None)
-                    else {},
-                )
+            workspace_context = _proto_workspace_context(request.workspace_context)
+            trigger_context = (
+                _struct_to_dict(request.trigger_context)
+                if _has_struct_payload(getattr(request, "trigger_context", None))
+                else None
             )
+            edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
+            upstream_results = [
+                _proto_task_result_to_dict(item)
+                for item in request.upstream_results
+            ] if request.upstream_results else []
+            artifacts_by_port = _build_artifacts_by_port_from_results(upstream_results)
+
+            if str(task.get("execution_mode") or "agent").strip().lower() == "action":
+                bg_task = asyncio.create_task(
+                    execute_action_task(
+                        task,
+                        task_id=task_id,
+                        start_time=time.time(),
+                        started_at=datetime.utcnow().isoformat() + "Z",
+                        workspace_context=workspace_context,
+                        trigger_context=trigger_context,
+                        edges=edges,
+                        upstream_results=upstream_results,
+                        artifacts_by_port=artifacts_by_port,
+                        on_progress=on_progress,
+                    )
+                )
+            else:
+                bg_task = asyncio.create_task(
+                    execute_step(
+                        task=task,
+                        agent=agent,
+                        context_from_dependencies=request.context_from_dependencies,
+                        workspace_context=workspace_context,
+                        trigger_context=trigger_context,
+                        edges=edges,
+                        upstream_results=upstream_results,
+                        artifacts_by_port=artifacts_by_port,
+                        execution_mode=request.execution_mode or "live",
+                        validated_replay=validated_replay,
+                        evaluation_user_id=request.user_context.username
+                        or request.user_context.user_id
+                        or "unknown",
+                        on_progress=on_progress,
+                        prompt_overrides=dict(request.prompt_overrides)
+                        if getattr(request, "prompt_overrides", None)
+                        else {},
+                    )
+                )
 
             while True:
                 if bg_task.done():
@@ -2162,6 +2205,8 @@ def _proto_task_to_dict(proto_task) -> dict:
         "title": proto_task.title,
         "description": proto_task.description,
         "assigned_agent_id": proto_task.assigned_agent_id,
+        "execution_mode": getattr(proto_task, "execution_mode", "") or "agent",
+        "selected_action": getattr(proto_task, "selected_action", "") or None,
         "execution_order": proto_task.execution_order,
         "interrupt_before": proto_task.interrupt_before,
         "interrupt_after": proto_task.interrupt_after,
@@ -2365,6 +2410,23 @@ def _proto_task_result_to_dict(proto_result) -> dict:
     }
 
 
+def _build_artifacts_by_port_from_results(
+    upstream_results: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for result in upstream_results or []:
+        task_id = str(result.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        for artifact in result.get("artifacts") or []:
+            if not isinstance(artifact, dict):
+                continue
+            port_id = str(artifact.get("port_id") or "default").strip() or "default"
+            key = f"{task_id}:{port_id}"
+            artifacts_by_port.setdefault(key, []).append(artifact)
+    return artifacts_by_port
+
+
 def _struct_to_dict(struct_msg) -> dict:
     """Convert a google.protobuf.Struct to a plain dict."""
     if not struct_msg or not struct_msg.fields:
@@ -2390,6 +2452,10 @@ def _proto_workspace_context(proto_wc_list) -> list:
         result.append(
             {
                 "workspace_id": wc.workspace_id,
+                "chunks": wc.chunks,
+                "hybrid_search": wc.hybrid_search,
+                "instruction": wc.instruction,
+                "tag": wc.tag,
                 "documents": [
                     {
                         "id": d._id,

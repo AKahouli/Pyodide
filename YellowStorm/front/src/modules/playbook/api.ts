@@ -57,6 +57,8 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       title: task.title,
       description: task.description,
       assignedAgentId: task.assignedAgentId,
+      executionMode: task.executionMode,
+      selectedAction: task.selectedAction,
       executionOrder: task.executionOrder,
       positionX: task.positionX,
       positionY: task.positionY,

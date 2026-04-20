@@ -71,11 +71,16 @@ export interface InputFile {
   };
 }
 
+export type TaskExecutionMode = 'agent' | 'action';
+export type SelectedAction = 'index' | 'delete' | 'read';
+
 export interface PlaybookTask {
   id: string;
   title: string;
   description: string;
   assignedAgentId: string | null;
+  executionMode?: TaskExecutionMode;
+  selectedAction?: SelectedAction;
   executionOrder: number;
   positionX: number;
   positionY: number;

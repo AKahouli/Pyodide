@@ -318,7 +318,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     return map;
   }, [inputFiles]);
   const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
-  const isConfigured = !!data.assignedAgentId;
+  const isActionMode = data.executionMode === 'action';
+  const isConfigured = isActionMode ? !!data.selectedAction : !!data.assignedAgentId;
+  const selectedActionLabel = data.selectedAction
+    ? `${String(data.selectedAction).charAt(0).toUpperCase()}${String(data.selectedAction).slice(1)}`
+    : null;
   const status = data.stepStatus as StepStatus | undefined;
   const semanticMatch = data.stepSemanticMatch;
   const judgeStatus = data.stepJudgeStatus;
@@ -559,8 +563,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           <NodeContent className="p-3 space-y-2.5">
             <div className="flex items-center gap-2">
               <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className={cn('truncate text-xs', agent ? 'font-medium' : 'italic text-muted-foreground')}>
-                {agent ? agent.name : t('node.noAgent')}
+              <span className={cn(
+                'truncate text-xs',
+                isActionMode
+                  ? (selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground')
+                  : (agent ? 'font-medium' : 'italic text-muted-foreground'),
+              )}>
+                {isActionMode ? (selectedActionLabel || t('node.notConfigured')) : (agent ? agent.name : t('node.noAgent'))}
               </span>
               {!isConfigured && (
                 <Badge variant="outline" className="h-5 border-dashed px-1.5 py-0 text-[10px] text-muted-foreground">

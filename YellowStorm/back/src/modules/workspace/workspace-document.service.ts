@@ -169,7 +169,7 @@ export class WorkspaceDocumentService {
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
-    this.logger.log('Upload URL generated (custom path)', {
+    this.logger.debug('Upload URL generated (custom path)', {
       documentId: document._id,
       workspaceId,
       pathPrefix,
@@ -242,7 +242,7 @@ export class WorkspaceDocumentService {
 
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
-    this.logger.log('Small file uploaded (custom path)', {
+    this.logger.debug('Small file uploaded (custom path)', {
       documentId: document._id,
       workspaceId,
       pathPrefix,
@@ -325,7 +325,7 @@ export class WorkspaceDocumentService {
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
-    this.logger.log('Upload URL generated', {
+    this.logger.debug('Upload URL generated', {
       documentId: document._id,
       workspaceId,
       filename: data.filename,
@@ -389,7 +389,7 @@ export class WorkspaceDocumentService {
       document: this.mapToResponse(document),
     });
 
-    this.logger.log('Upload confirmed', {
+    this.logger.debug('Upload confirmed', {
       documentId: document._id,
       workspaceId,
     });
@@ -464,7 +464,7 @@ export class WorkspaceDocumentService {
     // Update workspace storage
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
-    this.logger.log('Small file uploaded', {
+    this.logger.debug('Small file uploaded', {
       documentId: document._id,
       workspaceId,
       size,
@@ -535,7 +535,7 @@ export class WorkspaceDocumentService {
       });
     }
 
-    this.logger.log('File ingested from URL', {
+    this.logger.debug('File ingested from URL', {
       documentId: doc.id,
       workspaceId,
       filename: doc.originalName,
@@ -655,7 +655,7 @@ export class WorkspaceDocumentService {
       expiresAt,
     });
 
-    this.logger.log('Bulk upload session created', {
+    this.logger.debug('Bulk upload session created', {
       sessionId: session._id,
       workspaceId,
       fileCount: files.length,
@@ -847,7 +847,7 @@ export class WorkspaceDocumentService {
       },
     });
 
-    this.logger.log('Bulk upload completed', {
+    this.logger.debug('Bulk upload completed', {
       sessionId,
       workspaceId,
       status,
@@ -1099,7 +1099,7 @@ export class WorkspaceDocumentService {
       await this.workspaceService.updateStorageUsage(workspaceId, -document.size, -1);
     }
 
-    this.logger.log('Document deleted', {
+    this.logger.debug('Document deleted', {
       documentId,
       workspaceId,
     });
@@ -1194,7 +1194,7 @@ export class WorkspaceDocumentService {
       );
     }
 
-    this.logger.log('All documents deleted from workspace', {
+    this.logger.debug('All documents deleted from workspace', {
       workspaceId,
       count: documents.length,
       indexedCount: indexedDocuments.length,
@@ -1229,7 +1229,7 @@ export class WorkspaceDocumentService {
         return;
       }
 
-      this.logger.log('Starting cleanup of expired upload sessions', {
+      this.logger.debug('Starting cleanup of expired upload sessions', {
         count: expiredSessions.length,
       });
 
@@ -1286,7 +1286,7 @@ export class WorkspaceDocumentService {
 
       const duration = Date.now() - startTime;
 
-      this.logger.log('Expired upload sessions cleanup completed', {
+      this.logger.debug('Expired upload sessions cleanup completed', {
         sessionsExpired: totalSessionsExpired,
         documentsDeleted: totalDocumentsDeleted,
         blobsDeleted: totalBlobsDeleted,

@@ -1,12 +1,23 @@
 import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { LoggerService } from '../../logger';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
+import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
+import {
+  WorkspaceSetting,
+  WorkspaceSettingDocument,
+} from '../../workspace/schemas/workspace-setting.schema';
 
 @Injectable()
 export class PlaybookContextService {
   constructor(
+    @InjectModel(Workspace.name)
+    private readonly workspaceModel: Model<WorkspaceDocument>,
+    @InjectModel(WorkspaceSetting.name)
+    private readonly workspaceSettingModel: Model<WorkspaceSettingDocument>,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
     private readonly logger: LoggerService,
   ) {
@@ -18,15 +29,21 @@ export class PlaybookContextService {
    */
   async buildWorkspaceContexts(
     workspaceIds: string[],
-  ): Promise<Array<{ workspace_id: string; workspace_documents: any[] }>> {
+  ): Promise<Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }>> {
     if (!workspaceIds || workspaceIds.length === 0) {
       return [];
     }
 
     try {
-      const contexts: Array<{ workspace_id: string; workspace_documents: any[] }> = [];
+      const contexts: Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }> = [];
 
       for (const workspaceId of workspaceIds) {
+        const workspace = await this.workspaceModel.findById(workspaceId).lean().exec();
+        let settings: WorkspaceSettingDocument | null = null;
+        if (workspace?.settings) {
+          settings = await this.workspaceSettingModel.findById(workspace.settings).lean().exec() as WorkspaceSettingDocument | null;
+        }
+
         const result = await this.workspaceDocumentService.findAllByWorkspace(workspaceId, {
           limit: 1000,
           status: DocumentStatus.COMPLETED,
@@ -34,6 +51,10 @@ export class PlaybookContextService {
 
         contexts.push({
           workspace_id: workspaceId,
+          chunks: settings?.chunks,
+          hybrid_search: settings?.hybridSearch,
+          instruction: settings?.instruction,
+          tag: settings?.tag,
           workspace_documents: result.documents.map((doc: any) => ({
             _id: doc.id,
             filename: doc.originalName,
@@ -68,7 +89,7 @@ export class PlaybookContextService {
    */
   async buildWorkspaceContextFromInputFiles(
     inputFiles: Array<{ type: string; id: string; name: string; workspaceId?: string; metadata?: any }>,
-  ): Promise<Array<{ workspace_id: string; workspace_documents: any[] }>> {
+  ): Promise<Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }>> {
     if (!inputFiles || inputFiles.length === 0) {
       return [];
     }
@@ -92,10 +113,16 @@ export class PlaybookContextService {
         }
       }
 
-      const contexts: Array<{ workspace_id: string; workspace_documents: any[] }> = [];
+      const contexts: Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }> = [];
 
       // Build contexts for workspaces (all documents from the workspace)
       for (const workspaceId of workspaceIdSet) {
+        const workspace = await this.workspaceModel.findById(workspaceId).lean().exec();
+        let settings: WorkspaceSettingDocument | null = null;
+        if (workspace?.settings) {
+          settings = await this.workspaceSettingModel.findById(workspace.settings).lean().exec() as WorkspaceSettingDocument | null;
+        }
+
         const result = await this.workspaceDocumentService.findAllByWorkspace(workspaceId, {
           limit: 1000,
           status: DocumentStatus.COMPLETED,
@@ -117,6 +144,10 @@ export class PlaybookContextService {
         if (selectedDocuments.length > 0) {
           contexts.push({
             workspace_id: workspaceId,
+            chunks: settings?.chunks,
+            hybrid_search: settings?.hybridSearch,
+            instruction: settings?.instruction,
+            tag: settings?.tag,
             workspace_documents: selectedDocuments.map((doc: any) => ({
               _id: doc.id,
               filename: doc.originalName,
@@ -161,8 +192,17 @@ export class PlaybookContextService {
           limit: 1000,
           status: DocumentStatus.COMPLETED,
         });
+        const workspace = await this.workspaceModel.findById(wsId).lean().exec();
+        let settings: WorkspaceSettingDocument | null = null;
+        if (workspace?.settings) {
+          settings = await this.workspaceSettingModel.findById(workspace.settings).lean().exec() as WorkspaceSettingDocument | null;
+        }
         contextMap.set(wsId, {
           workspace_id: wsId,
+          chunks: settings?.chunks,
+          hybrid_search: settings?.hybridSearch,
+          instruction: settings?.instruction,
+          tag: settings?.tag,
           workspace_documents: result.documents.map((doc: any) => ({
             _id: doc.id,
             filename: doc.originalName,

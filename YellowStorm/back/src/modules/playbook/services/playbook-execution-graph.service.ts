@@ -241,12 +241,16 @@ export class PlaybookExecutionGraphService {
       }));
 
     return {
-      edges: incomingEdges.map((edge: any) => ({
-        source_id: this.normalizeEdgeId(edge.sourceId ?? edge.source_id),
-        target_id: this.normalizeEdgeId(edge.targetId ?? edge.target_id),
-        source_output_port_id: edge.sourceOutputPortId || edge.source_output_port_id || 'default',
-        target_input_port_id: edge.targetInputPortId || edge.target_input_port_id || 'default',
-      })),
+      edges: incomingEdges
+        .map((edge: any) => ({
+          source_id: this.normalizeEdgeId(edge.sourceId ?? edge.source_id),
+          target_id: this.normalizeEdgeId(edge.targetId ?? edge.target_id),
+          source_output_port_id: edge.sourceOutputPortId || edge.source_output_port_id || 'default',
+          target_input_port_id: edge.targetInputPortId || edge.target_input_port_id || 'default',
+        }))
+        // Single-step reruns do not carry live trigger_context, so replayable
+        // upstream artifacts must drive routing instead of dead __trigger__ edges.
+        .filter((edge: any) => edge.source_id !== '__trigger__'),
       upstreamResults,
     };
   }

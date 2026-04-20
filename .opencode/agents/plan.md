@@ -1,7 +1,7 @@
 ---
 description: Strategic analysis agent. Produces scoped action plans for multi-file, multi-slug, or architectural tasks before build implements. Read-only.
 mode: subagent
-model: LiteLLM/gpt-5.4
+model: litellm/gpt-5.4
 tools:
   write: false
   edit: false

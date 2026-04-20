@@ -120,6 +120,16 @@ export class UpdatePlaybookTaskDto {
   assignedAgentId?: string | null;
 
   @IsOptional()
+  @IsString()
+  @IsIn(['agent', 'action'])
+  executionMode?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['index', 'delete', 'read'])
+  selectedAction?: string;
+
+  @IsOptional()
   @IsNumber()
   executionOrder?: number;
 

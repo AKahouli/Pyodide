@@ -359,5 +359,23 @@ describe('PlaybookExecutionGraphService', () => {
       const result = service.buildRunStepRoutingState(execution, snapshot, 't2');
       expect(result.upstreamResults.length).toBe(0);
     });
+
+    it('drops trigger edges for single-step routing replay', () => {
+      const execution = { taskResults: [] };
+      const snapshot = {
+        edges: [
+          {
+            sourceId: '__trigger__',
+            targetId: 't2',
+            sourceOutputPortId: 'mail_attachments',
+            targetInputPortId: 'default',
+          },
+        ],
+      };
+
+      const result = service.buildRunStepRoutingState(execution, snapshot, 't2');
+
+      expect(result.edges).toEqual([]);
+    });
   });
 });

@@ -38,6 +38,8 @@ class TaskConfig(TypedDict):
     title: str
     description: str
     assigned_agent_id: Optional[str]
+    execution_mode: Optional[str]
+    selected_action: Optional[str]
     execution_order: int
     interrupt_before: bool
     interrupt_after: bool

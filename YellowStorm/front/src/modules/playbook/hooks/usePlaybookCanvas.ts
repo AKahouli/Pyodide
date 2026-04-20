@@ -319,7 +319,7 @@ export function usePlaybookCanvas() {
           n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n,
         );
         captureSnapshot();
-        deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+        updateTasks(nodesToTasks(updated));
         return updated;
       });
     },

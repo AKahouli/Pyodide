@@ -85,7 +85,7 @@ export class IndexingService {
       await document.save();
     }
 
-    this.logger.log('Document queued for indexing', {
+    this.logger.debug('Document queued for indexing', {
       documentId,
       workspaceId,
       filename: document.originalName,
@@ -137,7 +137,7 @@ export class IndexingService {
     // Send notification so frontend sees pending → processing transition
     await this.sendIndexingStatusNotification(document);
 
-    this.logger.log('Starting document indexing', {
+    this.logger.debug('Starting document indexing', {
       documentId,
       workspaceId,
       filename: document.originalName,
@@ -183,7 +183,7 @@ export class IndexingService {
       document.chunk_size = settings?.chunks || 4000;
       await document.save();
 
-      this.logger.log('Indexing API call successful, waiting for webhook', {
+      this.logger.debug('Indexing API call successful, waiting for webhook', {
         documentId,
         workspaceId,
         download_id: result.download_id,
@@ -251,7 +251,7 @@ export class IndexingService {
     document.indexingError = undefined;
     await document.save();
 
-    this.logger.log('Document queued for re-indexing', {
+    this.logger.debug('Document queued for re-indexing', {
       documentId,
       workspaceId,
     });
@@ -312,7 +312,7 @@ export class IndexingService {
       return;
     }
 
-    this.logger.log('Deleting document index', {
+    this.logger.debug('Deleting document index', {
       documentId,
       workspaceId,
     });
@@ -324,7 +324,7 @@ export class IndexingService {
       });
 
       if (result.success) {
-        this.logger.log('Document index deleted successfully', {
+        this.logger.debug('Document index deleted successfully', {
           documentId,
           workspaceId,
         });
@@ -354,7 +354,7 @@ export class IndexingService {
     status: string,
     detectedLanguage?: string,
   ): Promise<void> {
-    this.logger.log('Webhook received', {
+    this.logger.debug('Webhook received', {
       documentId,
       status,
     });
@@ -392,7 +392,7 @@ export class IndexingService {
 
     await document.save();
 
-    this.logger.log('Webhook processed successfully', {
+    this.logger.debug('Webhook processed successfully', {
       documentId,
       workspaceId,
       previousStatus,
@@ -505,7 +505,7 @@ export class IndexingService {
         return;
       }
 
-      this.logger.log('Cron: processing pending documents', {
+      this.logger.debug('Cron: processing pending documents', {
         count: pendingDocuments.length,
         batchSize: this.batchSize,
       });
@@ -521,7 +521,7 @@ export class IndexingService {
         }
       }
 
-      this.logger.log('Cron: finished processing pending documents', {
+      this.logger.debug('Cron: finished processing pending documents', {
         total: pendingDocuments.length,
         success: successCount,
         failed: failCount,
@@ -563,7 +563,7 @@ export class IndexingService {
         return;
       }
 
-      this.logger.log('Cron: found stale indexing documents', {
+      this.logger.debug('Cron: found stale indexing documents', {
         count: staleDocuments.length,
         timeoutMs: this.indexingTimeoutMs,
       });
@@ -585,7 +585,7 @@ export class IndexingService {
         await this.sendIndexingStatusNotification(document);
       }
 
-      this.logger.log('Cron: finished timeout check', {
+      this.logger.debug('Cron: finished timeout check', {
         timedOut: staleDocuments.length,
       });
     } catch (error) {

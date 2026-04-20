@@ -475,6 +475,7 @@ async def execute_step(
     trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
+    artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -507,6 +508,7 @@ async def execute_step(
             trigger_context=trigger_context,
             edges=edges,
             upstream_results=upstream_results,
+            artifacts_by_port=artifacts_by_port,
             execution_mode=execution_mode,
             validated_replay=validated_replay,
             evaluation_user_id=evaluation_user_id,
@@ -522,6 +524,7 @@ async def execute_step(
         trigger_context=trigger_context,
         edges=edges,
         upstream_results=upstream_results,
+        artifacts_by_port=artifacts_by_port,
         execution_mode=execution_mode,
         validated_replay=validated_replay,
         evaluation_user_id=evaluation_user_id,
@@ -538,6 +541,7 @@ async def _execute_step_direct(
     trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
+    artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -563,20 +567,23 @@ async def _execute_step_direct(
         for item in (upstream_results or [])
         if isinstance(item, dict) and str(item.get("task_id") or "").strip()
     }
-    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
-    for upstream_task_id, upstream_result in upstream_results_map.items():
-        for artifact in upstream_result.get("artifacts") or []:
-            if not isinstance(artifact, dict):
-                continue
-            port_id = (
-                str(
-                    artifact.get("port_id") or artifact.get("portId") or "default"
-                ).strip()
-                or "default"
-            )
-            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(
-                artifact
-            )
+    resolved_artifacts_by_port: Dict[str, List[Dict[str, Any]]] = dict(
+        artifacts_by_port or {}
+    )
+    if not resolved_artifacts_by_port:
+        for upstream_task_id, upstream_result in upstream_results_map.items():
+            for artifact in upstream_result.get("artifacts") or []:
+                if not isinstance(artifact, dict):
+                    continue
+                port_id = (
+                    str(
+                        artifact.get("port_id") or artifact.get("portId") or "default"
+                    ).strip()
+                    or "default"
+                )
+                resolved_artifacts_by_port.setdefault(
+                    f"{upstream_task_id}:{port_id}", []
+                ).append(artifact)
 
     resolved_inputs = resolve_task_inputs(
         task_id,
@@ -585,7 +592,7 @@ async def _execute_step_direct(
             "edges": edges or [],
             "results": upstream_results_map,
             "task_outputs": {},
-            "artifacts_by_port": artifacts_by_port,
+            "artifacts_by_port": resolved_artifacts_by_port,
             "workspace_context": workspace_context,
             "trigger_context": trigger_context,
         },

@@ -147,6 +147,25 @@ async def render_chart(
     Use this tool for analytical answers when a chart will help explain trends,
     comparisons, distributions, proportions, correlations, or mixed metrics.
     Call it between explanatory paragraphs so the chart appears inline in the chat.
+
+    Picking `kind`:
+      - "line"     : trends over an ordered axis (time, rank).
+      - "bar"      : discrete comparisons where every series has a comparable scale.
+      - "area"     : cumulative trends or part-to-whole over time.
+      - "pie"      : proportions of a single total (3–8 slices max).
+      - "scatter"  : correlation between two numeric variables.
+      - "composed" : MIXED METRICS — use this whenever series live on different
+                     scales or represent fundamentally different quantities
+                     (e.g. a percentage rate alongside a monetary volume,
+                     a policy rate alongside an inflation index, a count
+                     alongside a ratio). Put the smaller-magnitude or continuous
+                     series on a line (set its `kind` to "line") and the
+                     larger-magnitude or discrete series on bars. Do NOT use
+                     plain "bar" for mixed-scale comparisons — the smaller
+                     series will collapse to invisible bars.
+
+    If one of the series is near-constant (e.g. a 0% rate held all year), prefer
+    "composed" with that series rendered as a line so it stays visually present.
     """
 
     try:

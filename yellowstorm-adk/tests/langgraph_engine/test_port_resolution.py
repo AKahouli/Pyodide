@@ -275,6 +275,58 @@ def test_validate_port_routing_accepts_reserved_trigger_source_ports() -> None:
     validate_port_routing(tasks, edges)
 
 
+def test_resolve_task_inputs_uses_explicit_trigger_attachment_documents() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "default", "name": "Input", "artifact_kind": "document"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "__trigger__",
+                    "target_id": "downstream",
+                    "source_output_port_id": "mail_attachments",
+                    "target_input_port_id": "default",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "workspace_context": [],
+            "trigger_context": {
+                "type": "mail",
+                "ports": {
+                    "mail_attachments": {
+                        "kind": "document",
+                        "documentIds": ["doc-1"],
+                        "documents": [
+                            {
+                                "documentId": "doc-1",
+                                "filename": "slides.pptx",
+                                "filepath": "workspace/documents/slides.pptx",
+                                "workspaceId": "ws-1",
+                                "mimeType": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                            }
+                        ],
+                    }
+                },
+            },
+        },
+    )
+
+    default_port = resolved["ports"]["default"]
+    assert default_port["upstream_binding"]["artifact_kind"] == "document"
+    assert default_port["resolved_documents"] == []
+    assert default_port["workspace_artifacts"][0]["document_id"] == "doc-1"
+    assert default_port["staged_files"][0]["filepath"] == "workspace/documents/slides.pptx"
+
+
 def test_resolve_task_inputs_reads_mail_data_from_current_trigger_context_only() -> (
     None
 ):

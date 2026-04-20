@@ -132,6 +132,8 @@
   "nodeEditor.interruptAfter": "Revue requise apr\u00e8s",
   "nodeEditor.allowClarification": "Autoriser la clarification",
   "nodeEditor.agentRequired": "Un agent est requis",
+  "nodeEditor.executionMode": "Mode d'exécution",
+  "nodeEditor.action": "Action",
   "nodeEditor.notificationSettings": "Notifications",
   "nodeEditor.notifyOnComplete": "Envoyer un email une fois terminé",
   "nodeEditor.notifyEmails": "Destinataires",

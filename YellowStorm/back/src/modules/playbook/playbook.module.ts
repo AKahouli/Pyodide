@@ -30,6 +30,11 @@ import {
   PlaybookMailEventLedgerSchema,
 } from './schemas/playbook-mail-event-ledger.schema';
 import { Connector, ConnectorSchema } from '../connector/schemas/connector.schema';
+import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
+import {
+  WorkspaceSetting,
+  WorkspaceSettingSchema,
+} from '../workspace/schemas/workspace-setting.schema';
 
 // Controllers — stream controller must be before playbook controller to avoid :id route conflict
 import { PlaybookStreamController } from './controllers/playbook-stream.controller';
@@ -95,6 +100,8 @@ import playbookConfig from './config/playbook.config';
       { name: PlaybookPromptTemplate.name, schema: PlaybookPromptTemplateSchema },
       { name: PlaybookMailEventLedger.name, schema: PlaybookMailEventLedgerSchema },
       { name: Connector.name, schema: ConnectorSchema },
+      { name: Workspace.name, schema: WorkspaceSchema },
+      { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
       ]),
     JwtModule.register({}),
     forwardRef(() => AuthModule),

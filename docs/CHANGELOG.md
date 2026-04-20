@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-04-20 00:00 UTC] — Update mail-trigger and action-node docs
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Documented the mail-trigger end-to-end `triggerContext` forwarding into ADK port resolution, richer `mail_attachments` handoff metadata for imported attachments, the frontend `hasAttachments = null` behavior when the mail filter is unchecked, ADK action indexing auth and webhook URL shaping, and the new `index` action-node output artifact behavior.
+- **Why:** These runtime behaviors now affect how mail-triggered inputs resolve and how downstream nodes consume indexed document outputs, so the living playbook docs need to match the current contract.
+- **Impact:** `docs/playbook/README_2026-04-11_12-27-13.md`, `docs/playbook/USER_STORIES.md`, `docs/DOC_INDEX.md`, and `docs/CHANGELOG.md`.
+- **Readme:** `docs/playbook/README_2026-04-11_12-27-13.md`
+
 ## [2026-04-19 00:00 UTC] — Add inline conversation charts
 
 - **Feature:** `conversation-charts`

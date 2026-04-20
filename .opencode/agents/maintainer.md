@@ -1,7 +1,7 @@
 ---
 description: Maintains documentation and performs behavior-preserving refactoring. Owns feature READMEs, DOC_INDEX.md, CHANGELOG.md, and code cleanup.
 mode: subagent
-model: LiteLLM/gpt-5.4-mini-oc
+model: litellm/gpt-5.4-mini-oc
 tools:
   write: true
   edit: true

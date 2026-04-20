@@ -622,7 +622,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis />}
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-                {series.map((s) => <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} stackId={stacked ? 'stack' : undefined} />)}
+                {series.map((s) => <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />)}
               </BarChart>
             )}
             {kind === 'area' && (
@@ -674,7 +674,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                   if (resolvedKind === 'area') {
                     return <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} />;
                   }
-                  return <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} />;
+                  return <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} />;
                 })}
               </ComposedChart>
             )}

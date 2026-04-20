@@ -454,6 +454,8 @@ function PlaybookCanvasInner() {
       title: `Step ${existingCount + 1}`,
       description: '',
       assignedAgentId: null,
+      executionMode: 'agent',
+      selectedAction: undefined,
       executionOrder: existingCount,
       positionX: center.x,
       positionY: center.y,
@@ -494,6 +496,8 @@ function PlaybookCanvasInner() {
         title: `${template.title} ${existingCount + 1}`,
         description: template.description,
         assignedAgentId: null,
+        executionMode: 'agent',
+        selectedAction: undefined,
         executionOrder: existingCount,
         positionX: center.x,
         positionY: center.y,
@@ -519,13 +523,19 @@ function PlaybookCanvasInner() {
 
   const handleEditNode = useCallback(
     (nodeId: string) => {
+      const taskFromPlaybook = playbook?.tasks.find((t) => t.id === nodeId) ?? null;
       const node = nodes.find((n) => n.id === nodeId);
+      if (taskFromPlaybook) {
+        setEditingTask(taskFromPlaybook);
+        setEditorOpen(true);
+        return;
+      }
       if (node) {
         setEditingTask(node.data as unknown as PlaybookTask);
         setEditorOpen(true);
       }
     },
-    [nodes],
+    [nodes, playbook?.tasks],
   );
 
   const handleCloneNode = useCallback(
@@ -593,6 +603,8 @@ function PlaybookCanvasInner() {
           title: `${payload.connectorName} Step`,
           description: '',
           assignedAgentId: null,
+          executionMode: 'agent',
+          selectedAction: undefined,
           executionOrder: existingCount,
           positionX: center.x,
           positionY: center.y,
@@ -815,14 +827,15 @@ function PlaybookCanvasInner() {
   const lastSnapshotRef = useRef<{ key: string; task: PlaybookTask | null }>({ key: '', task: null });
   const effectiveEditingTask = useMemo(() => {
     if (!editingTask?.id) return editingTask;
-    const snapshot = getSnapshotTask(activeExecutionForEditor, editingTask.id) || editingTask;
-    const key = JSON.stringify(snapshot);
+    const liveTask = playbook?.tasks.find((task) => task.id === editingTask.id) || null;
+    const resolvedTask = liveTask || getSnapshotTask(activeExecutionForEditor, editingTask.id) || editingTask;
+    const key = JSON.stringify(resolvedTask);
     if (lastSnapshotRef.current.key === key) {
       return lastSnapshotRef.current.task;
     }
-    lastSnapshotRef.current = { key, task: snapshot };
-    return snapshot;
-  }, [activeExecutionForEditor, editingTask]);
+    lastSnapshotRef.current = { key, task: resolvedTask };
+    return resolvedTask;
+  }, [activeExecutionForEditor, editingTask, playbook?.tasks]);
 
   const nodeContextMenuActions = useMemo<NodeContextMenuActions>(
     () => ({
@@ -865,11 +878,12 @@ function PlaybookCanvasInner() {
 
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
-      setEditingTask(node.data);
+      const taskFromPlaybook = playbook?.tasks.find((t) => t.id === node.id) ?? null;
+      setEditingTask(taskFromPlaybook || node.data);
       setEditorOpen(true);
       setDesignerOpen(false);
     },
-    [setDesignerOpen],
+    [playbook?.tasks, setDesignerOpen],
   );
 
   const handleNodeSave = useCallback(
@@ -986,9 +1000,10 @@ function PlaybookCanvasInner() {
       }
 
       if (pageMode === 'design') {
+        const taskFromPlaybook = playbook?.tasks.find((t) => t.id === node.id) ?? null;
         const targetNode = nodes.find((candidate) => candidate.id === node.id);
-        if (targetNode) {
-          setEditingTask(targetNode.data as unknown as PlaybookTask);
+        if (taskFromPlaybook || targetNode) {
+          setEditingTask((taskFromPlaybook || targetNode?.data) as unknown as PlaybookTask);
           setEditorOpen(true);
           setDesignerOpen(false);
         }

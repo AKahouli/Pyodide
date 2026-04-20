@@ -932,6 +932,8 @@ export class PlaybookService {
         title: t.title,
         description: t.description || '',
         assignedAgentId: t.assignedAgentId?.toString() || null,
+        executionMode: t.executionMode || 'agent',
+        selectedAction: t.selectedAction || undefined,
         executionOrder: t.executionOrder || 0,
         positionX: t.positionX || 0,
         positionY: t.positionY || 0,

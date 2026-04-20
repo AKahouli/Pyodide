@@ -699,6 +699,10 @@ class DynamicGraphBuilder:
             start_time = time.time()
             started_at = datetime.utcnow().isoformat() + "Z"
 
+            execution_mode_value = str(
+                task_config.get("execution_mode") or "agent"
+            ).strip().lower()
+
             async def _push_step_update(status, result=None, interrupt_data=None):
                 update: StepUpdate = {
                     "task_id": task_id,
@@ -716,6 +720,38 @@ class DynamicGraphBuilder:
                         f"[{task_id}] step_update callback failed", exc_info=True
                     )
 
+            # === ACTION MODE: bypass agent execution ===
+            if execution_mode_value == "action":
+                from src.langgraph_engine.action_executor import execute_action_task
+
+                logger.info(
+                    f"[{task_id}] Action mode detected",
+                    selected_action=task_config.get("selected_action"),
+                    title=task_config.get("title"),
+                )
+
+                action_result = await execute_action_task(
+                    task_config,
+                    task_id=task_id,
+                    start_time=start_time,
+                    started_at=started_at,
+                    workspace_context=state.get("workspace_context"),
+                    trigger_context=state.get("trigger_context"),
+                    edges=state.get("edges"),
+                    upstream_results=list(
+                        (state.get("results") or {}).values()
+                    ),
+                    on_progress=_push_step_update,
+                )
+
+                action_status = action_result.get("status", "failed")
+                step_result = (action_result.get("results") or {}).get(
+                    task_id, {}
+                )
+                await _push_step_update(action_status, result=step_result)
+                return action_result
+
+            # === AGENT MODE: continue with normal agent execution ===
             if not agent_id or agent_id not in state["agents"]:
                 error_msg = f"No agent assigned to task {task_id}"
                 logger.error(f"[{task_id}] {error_msg}")
