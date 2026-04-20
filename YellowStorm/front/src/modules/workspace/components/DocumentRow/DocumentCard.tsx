@@ -17,9 +17,10 @@ interface DocumentCardProps {
   isSelected: boolean;
   onToggleSelect: () => void;
   onFolderUpload?: (folderId: string) => void;
+  onFolderDoubleClick?: (folderId: string) => void;
 }
 
-export const DocumentCard = memo(function DocumentCard({ document, isSelected, onToggleSelect, onFolderUpload }: DocumentCardProps) {
+export const DocumentCard = memo(function DocumentCard({ document, isSelected, onToggleSelect, onFolderUpload, onFolderDoubleClick }: DocumentCardProps) {
   const { t } = useModuleTranslation('workspace');
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, handleDownload, handleDelete, handleReindex } = useDocumentActions(document);
 
@@ -45,12 +46,17 @@ export const DocumentCard = memo(function DocumentCard({ document, isSelected, o
       <div className={`p-3 overflow-hidden ${isSelected ? 'bg-muted/50' : ''}`}>
         <div className='flex items-center gap-2 w-full min-w-0'>
           <Checkbox checked={isSelected} onCheckedChange={onToggleSelect} aria-label={t('documents.row.selectCheckbox', { name: document.originalName })} className='shrink-0' />
-          {document.isFolder ? (
-            <Folder className='h-4 w-4 text-blue-500 shrink-0' />
-          ) : (
-            <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
-          )}
-          <span className='font-medium text-sm truncate block max-w-[calc(100vw-180px)]'>{document.originalName}</span>
+          <div
+            className='flex items-center gap-2 cursor-pointer min-w-0'
+            onDoubleClick={() => document.isFolder && onFolderDoubleClick?.(document.id)}
+          >
+            {document.isFolder ? (
+              <Folder className='h-4 w-4 text-blue-500 shrink-0' />
+            ) : (
+              <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+            )}
+            <span className={`font-medium text-sm truncate block max-w-[calc(100vw-180px)] ${document.isFolder ? 'hover:text-blue-600' : ''}`}>{document.originalName}</span>
+          </div>
           <div className='flex gap-0.5 shrink-0 ml-auto'>
             {document.isFolder && (
               <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleUploadClick} disabled={isUploading}>

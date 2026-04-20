@@ -215,7 +215,7 @@ export function WorkspaceContent() {
               <ScrollArea className="flex-1 bg-background">
                 <div className="p-4">
                   {/* Documents table for current folder */}
-                  <DocumentsTable />
+                  <DocumentsTable onFolderDoubleClick={handleNavigate} />
                 </div>
               </ScrollArea>
             </div>

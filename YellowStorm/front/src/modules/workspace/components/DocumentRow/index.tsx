@@ -20,9 +20,10 @@ type DocumentRowProps = Readonly<{
   isSelected: boolean;
   onToggleSelect: () => void;
   onFolderUpload?: (folderId: string, input: HTMLInputElement) => void;
+  onFolderDoubleClick?: (folderId: string) => void;
 }>;
 
-export const DocumentRow = memo(function DocumentRow({ document, isSelected, onToggleSelect, onFolderUpload }: DocumentRowProps) {
+export const DocumentRow = memo(function DocumentRow({ document, isSelected, onToggleSelect, onFolderUpload, onFolderDoubleClick }: DocumentRowProps) {
   const { t } = useModuleTranslation('workspace');
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, isViewable, handleDownload, handleDelete, handleReindex, handleViewFile } = useDocumentActions(document);
 
@@ -51,13 +52,16 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
           <Checkbox checked={isSelected} onCheckedChange={onToggleSelect} aria-label={t('documents.row.selectCheckbox', { name: document.originalName })} />
         </TableCell>
         <TableCell>
-          <div className='flex items-center gap-2'>
+          <div
+            className='flex items-center gap-2 cursor-pointer'
+            onDoubleClick={() => document.isFolder && onFolderDoubleClick?.(document.id)}
+          >
             {document.isFolder ? (
               <Folder className='h-4 w-4 text-blue-500 shrink-0' />
             ) : (
               <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
             )}
-            <span className='font-medium truncate max-w-50 md:max-w-75'>{document.originalName}</span>
+            <span className={`font-medium truncate max-w-50 md:max-w-75 ${document.isFolder ? 'hover:text-blue-600' : ''}`}>{document.originalName}</span>
           </div>
         </TableCell>
         <TableCell className='text-muted-foreground hidden md:table-cell'>{document.isFolder ? '-' : formatFileSize(document.size)}</TableCell>

@@ -19,7 +19,11 @@ import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
 import { CreateFolderDialog } from './CreateFolderDialog';
 
-export function DocumentsTable() {
+interface DocumentsTableProps {
+  onFolderDoubleClick?: (folderId: string) => void;
+}
+
+export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const { t } = useModuleTranslation('workspace');
   const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
@@ -160,7 +164,7 @@ export function DocumentsTable() {
         <ScrollArea className='h-[calc(100vh-320px)]'>
           <div className='divide-y w-full'>
             {documents.map((document) => (
-              <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} />
+              <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} onFolderDoubleClick={onFolderDoubleClick} />
             ))}
           </div>
         </ScrollArea>
@@ -186,7 +190,7 @@ export function DocumentsTable() {
             </TableHeader>
             <TableBody>
               {documents.map((document) => (
-                <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} />
+                <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} onFolderDoubleClick={onFolderDoubleClick} />
               ))}
             </TableBody>
           </Table>
