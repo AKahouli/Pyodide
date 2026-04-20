@@ -2,7 +2,7 @@ import { memo, useCallback } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { FileText, Download, RefreshCw, Search, Trash2, Loader2 } from 'lucide-react';
+import { FileText, Download, RefreshCw, Search, Trash2, Loader2, Folder } from 'lucide-react';
 
 import { formatFileSize, formatDate, getFileTypeLabel } from '../../utils';
 import type { WorkspaceDocument } from '../../types';
@@ -30,7 +30,11 @@ export const DocumentCard = memo(function DocumentCard({ document, isSelected, o
       <div className={`p-3 overflow-hidden ${isSelected ? 'bg-muted/50' : ''}`}>
         <div className='flex items-center gap-2 w-full min-w-0'>
           <Checkbox checked={isSelected} onCheckedChange={onToggleSelect} aria-label={t('documents.row.selectCheckbox', { name: document.originalName })} className='shrink-0' />
-          <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+          {document.isFolder ? (
+            <Folder className='h-4 w-4 text-blue-500 shrink-0' />
+          ) : (
+            <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+          )}
           <span className='font-medium text-sm truncate block max-w-[calc(100vw-180px)]'>{document.originalName}</span>
           <div className='flex gap-0.5 shrink-0 ml-auto'>
             <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleDownload} disabled={isDownloading}>
@@ -54,7 +58,7 @@ export const DocumentCard = memo(function DocumentCard({ document, isSelected, o
         <div className='flex items-center gap-2 mt-1.5 ml-6 pl-0.5 flex-wrap'>
           <span className='text-xs text-muted-foreground'>{formatFileSize(document.size)}</span>
           <Badge variant='outline' className='text-[10px] h-4 px-1.5'>
-            {getFileTypeLabel(document.mimeType)}
+            {document.isFolder ? 'Folder' : getFileTypeLabel(document.mimeType)}
           </Badge>
           <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />
           <span className='text-xs text-muted-foreground'>{formatDate(document.uploadedAt || document.createdAt)}</span>

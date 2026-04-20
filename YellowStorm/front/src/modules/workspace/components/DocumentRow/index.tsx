@@ -4,7 +4,7 @@ import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { FileText, Download, Eye, RefreshCw, Search, Trash2, Loader2 } from 'lucide-react';
+import { FileText, Download, Eye, RefreshCw, Search, Trash2, Loader2, Folder } from 'lucide-react';
 import { useModuleTranslation } from '@/modules/localization';
 
 import { formatFileSize, formatDate, getFileTypeLabel } from '../../utils';
@@ -38,14 +38,18 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
         </TableCell>
         <TableCell>
           <div className='flex items-center gap-2'>
-            <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+            {document.isFolder ? (
+              <Folder className='h-4 w-4 text-blue-500 shrink-0' />
+            ) : (
+              <FileText className='h-4 w-4 text-muted-foreground shrink-0' />
+            )}
             <span className='font-medium truncate max-w-50 md:max-w-75'>{document.originalName}</span>
           </div>
         </TableCell>
         <TableCell className='text-muted-foreground hidden md:table-cell'>{formatFileSize(document.size)}</TableCell>
         <TableCell className='hidden md:table-cell'>
           <Badge variant='outline' className='text-xs'>
-            {getFileTypeLabel(document.mimeType)}
+            {document.isFolder ? 'Folder' : getFileTypeLabel(document.mimeType)}
           </Badge>
         </TableCell>
         <TableCell className='hidden lg:table-cell'>

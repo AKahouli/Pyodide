@@ -27,11 +27,11 @@ export interface DocumentQueryParams {
 
 export interface DocumentResponse {
   id: string;
-  filename: string;
+  filename?: string;
   originalName: string;
   mimeType: string;
   size: number;
-  path: string;
+  path?: string;
   url?: string; // Optional for pending documents
   contentHash?: string;
   workspaceId: string;

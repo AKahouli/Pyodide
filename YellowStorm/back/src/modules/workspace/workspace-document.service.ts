@@ -363,12 +363,14 @@ export class WorkspaceDocumentService {
       );
     }
 
-    // Verify blob exists in Azure
-    const exists = await this.documentService.exists(document.path);
-    if (!exists) {
-      throw new BadRequestException(
-        'Document was not uploaded to storage',
-      );
+    // Verify blob exists in Azure (skip for folders)
+    if (!document.isFolder && document.path) {
+      const exists = await this.documentService.exists(document.path);
+      if (!exists) {
+        throw new BadRequestException(
+          'Document was not uploaded to storage',
+        );
+      }
     }
 
     // Update document status
@@ -699,10 +701,10 @@ export class WorkspaceDocumentService {
         continue;
       }
 
-      // Check if blob exists
-      const exists = await this.documentService.exists(document.path);
+      // Check if blob exists (skip for folders)
+      const exists = document.isFolder ? false : document.path ? await this.documentService.exists(document.path) : false;
 
-      if (exists) {
+      if (exists || document.isFolder) {
         // Mark as completed
         document.status = DocumentStatus.COMPLETED;
         document.uploadedAt = new Date();
@@ -715,9 +717,11 @@ export class WorkspaceDocumentService {
         successful.count++;
         successful.documents.push(this.mapToResponse(document));
       } else {
-        // Clean up any partial blob that might exist
+        // Clean up any partial blob that might exist (skip for folders)
         try {
-          await this.documentService.delete(document.path);
+          if (!document.isFolder && document.path) {
+            await this.documentService.delete(document.path);
+          }
         } catch (error) {
           this.logger.warn('Failed to delete orphaned blob during bulk upload completion', {
             sessionId,
@@ -955,13 +959,19 @@ export class WorkspaceDocumentService {
       );
     }
 
+    if (document.isFolder) {
+      throw new BadRequestException(
+        'Folders cannot be downloaded directly',
+      );
+    }
+
     if (document.status !== DocumentStatus.COMPLETED) {
       throw new BadRequestException(
         'Document is not available for download',
       );
     }
 
-    const url = await this.documentService.generateSasUrl(document.path, {
+    const url = await this.documentService.generateSasUrl(document.path!, {
       permissions: 'r',
       expiryMinutes: this.sasUrlExpiryMinutes,
       contentDisposition: `attachment; filename="${document.originalName}"`,
@@ -996,9 +1006,11 @@ export class WorkspaceDocumentService {
       );
     }
 
-    // Delete from blob storage
+    // Delete from blob storage (skip for folders)
     try {
-      await this.documentService.delete(document.path);
+      if (!document.isFolder && document.path) {
+        await this.documentService.delete(document.path);
+      }
     } catch (error) {
       this.logger.warn('Failed to delete blob', {
         documentId,
@@ -1085,11 +1097,12 @@ export class WorkspaceDocumentService {
       await Promise.all(indexDeletions);
     }
 
-    // Delete all blobs
+    // Delete all blobs (skip for folders)
     const blobDeletions = documents.map((doc) =>
-      this.documentService.delete(doc.path).catch((err) => {
-        this.logger.warn('Failed to delete blob during workspace cleanup', {
-          path: doc.path,
+      (!doc.isFolder && doc.path ? this.documentService.delete(doc.path) : Promise.resolve())
+        .catch((err) => {
+          this.logger.warn('Failed to delete blob during workspace cleanup', {
+            path: doc.path,
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       }),
@@ -1176,12 +1189,12 @@ export class WorkspaceDocumentService {
 
             // Only clean up documents still in PENDING status
             // (documents that were never confirmed)
-            if (document.status === DocumentStatus.PENDING) {
+            if (document.status === DocumentStatus.PENDING && !document.isFolder) {
               // Try to delete the blob from Azure (it may or may not exist)
               try {
-                const exists = await this.documentService.exists(document.path);
+                const exists = document.path ? await this.documentService.exists(document.path) : false;
                 if (exists) {
-                  await this.documentService.delete(document.path);
+                  await this.documentService.delete(document.path!);
                   totalBlobsDeleted++;
                 }
               } catch (error) {
@@ -1473,9 +1486,11 @@ export class WorkspaceDocumentService {
         deletedFolders += subResult.deletedFolders + 1;
         deletedDocuments += subResult.deletedDocuments;
       } else {
-        // Delete document file from storage
+        // Delete document file from storage (skip for folders)
         try {
-          await this.documentService.delete(item.path);
+          if (!item.isFolder && item.path) {
+            await this.documentService.delete(item.path);
+          }
         } catch (error) {
           this.logger.warn('Failed to delete blob', {
             documentId: item._id,

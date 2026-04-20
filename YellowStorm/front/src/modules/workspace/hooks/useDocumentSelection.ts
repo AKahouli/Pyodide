@@ -9,7 +9,7 @@ import type { WorkspaceDocument } from '../types';
 export function useDocumentSelection(documents: WorkspaceDocument[]) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const previousDocIdsRef = useRef<string>('');
-console.log('documents', documents);
+
   // Clear selection when documents change (e.g., page navigation, search)
   // We compare document IDs to detect actual data changes
   useEffect(() => {

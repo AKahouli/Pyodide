@@ -155,8 +155,13 @@ export class IndexingService {
         settings = await this.workspaceSettingModel.findById(workspace.settings);
       }
 
+      // Skip indexing for folders
+      if (document.isFolder) {
+        throw new BadRequestException('Folders cannot be indexed');
+      }
+
       // Get blob URL (without SAS token)
-      const blobUrl = this.documentService.getBlobUrl(document.path);
+      const blobUrl = this.documentService.getBlobUrl(document.path!);
 
       // Call indexing API
       const result = await this.indexingClient.indexDocument({

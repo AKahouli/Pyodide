@@ -24,8 +24,8 @@ export enum IndexingStatus {
   collection: 'workspace_documents',
 })
 export class WorkspaceDoc extends Document {
-  @Prop({ required: true, trim: true, maxlength: 255 })
-  filename!: string;
+  @Prop({ required: false, trim: true, maxlength: 255 })
+  filename?: string;
 
   @Prop({ required: true, trim: true, maxlength: 255 })
   originalName!: string;
@@ -36,8 +36,8 @@ export class WorkspaceDoc extends Document {
   @Prop({ required: true, min: 0 })
   size!: number;
 
-  @Prop({ required: true, maxlength: 500 })
-  path!: string;
+  @Prop({ required: false, maxlength: 500 })
+  path?: string;
 
   @Prop({ maxlength: 1000 })
   url?: string;
@@ -112,7 +112,7 @@ WorkspaceDocumentSchema.index({ workspaceId: 1, createdAt: -1 });
 WorkspaceDocumentSchema.index({ workspaceId: 1, status: 1 });
 WorkspaceDocumentSchema.index({ workspaceId: 1, parentId: 1 });
 WorkspaceDocumentSchema.index({ workspaceId: 1, isFolder: 1 });
-WorkspaceDocumentSchema.index({ path: 1 }, { unique: true });
+WorkspaceDocumentSchema.index({ path: 1 });
 
 // JSON transform
 WorkspaceDocumentSchema.set('toJSON', {
