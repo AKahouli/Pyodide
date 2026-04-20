@@ -1334,12 +1334,16 @@ export class WorkspaceDocumentService {
     }
 
     // Create folder record
+    const folderId = new Types.ObjectId();
+    const folderPath = `folder:${folderId}`; // Unique path for folders
+
     const folder = await this.documentModel.create({
+      _id: folderId,
       filename: '', // Folders don't have files
       originalName: sanitizedName,
       mimeType: 'folder',
       size: 0,
-      path: undefined, // Folders don't have physical storage paths
+      path: folderPath, // Unique path for folders to avoid duplicate key error
       workspaceId: new Types.ObjectId(workspaceId),
       createdBy: new Types.ObjectId(userId),
       status: DocumentStatus.COMPLETED,
