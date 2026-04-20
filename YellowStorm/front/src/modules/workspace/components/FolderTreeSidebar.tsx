@@ -31,7 +31,7 @@ export function FolderTreeSidebar({ documents, currentFolderId, onFolderSelect, 
         id: folder.id,
         name: folder.folderName || folder.originalName,
         children: [],
-        parentId: folder.parentId,
+        parentId: folder.parentId ?? null,
         document: folder,
       });
     });

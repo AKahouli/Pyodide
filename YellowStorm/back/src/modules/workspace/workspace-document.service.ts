@@ -835,6 +835,7 @@ export class WorkspaceDocumentService {
       search,
       sortBy = 'createdAt',
       sortOrder = 'desc',
+      parentId,
     } = params;
 
     const skip = (page - 1) * limit;
@@ -845,12 +846,25 @@ export class WorkspaceDocumentService {
       status: status || DocumentStatus.COMPLETED,
     };
 
-    if (search) {
-      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
+    // Filter by parent folder ID
+    if (parentId === null || parentId === undefined) {
+      // Root level: show items with no parent
+      query.parentId = { $in: [null, undefined] };
+    } else if (parentId) {
+      // Specific folder: show items in that folder
+      query.parentId = new Types.ObjectId(parentId);
     }
 
-    // Build sort
+    if (search) {
+      query.$or = [
+        { originalName: { $regex: escapeRegex(search), $options: 'i' } },
+        { folderName: { $regex: escapeRegex(search), $options: 'i' } },
+      ];
+    }
+
+    // Build sort - folders first
     const sort: Record<string, 1 | -1> = {
+      isFolder: -1,
       [sortBy]: sortOrder === 'asc' ? 1 : -1,
     };
 
@@ -1632,6 +1646,24 @@ export class WorkspaceDocumentService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  /**
+   * Get all folders in a workspace (no pagination, for sidebar tree view)
+   */
+  async getAllFolders(workspaceId: string): Promise<DocumentResponse[]> {
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      isFolder: true,
+      status: DocumentStatus.COMPLETED,
+    };
+
+    const folders = await this.documentModel
+      .find(query)
+      .sort({ originalName: 1 })
+      .exec();
+
+    return folders.map((d) => this.mapToResponse(d));
   }
 
   /**

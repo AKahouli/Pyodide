@@ -85,6 +85,8 @@ interface WorkspaceState {
   documentsTotalPages: number;
   totalDocuments: number;
   documentSearchQuery: string;
+  currentFolderId: string | null; // Current folder being viewed
+  allFolders: WorkspaceDocument[]; // All folders for sidebar tree view
 
   // Templates
   templates: WorkspaceSetting[];
@@ -146,6 +148,8 @@ interface WorkspaceActions {
 
   // Document operations
   fetchDocuments: (workspaceId: string, page?: number) => Promise<void>;
+  setCurrentFolderId: (folderId: string | null) => void;
+  fetchAllFolders: (workspaceId: string) => Promise<void>;
   searchDocuments: (query: string) => Promise<void>;
   deleteDocument: (workspaceId: string, docId: string) => Promise<void>;
   bulkDeleteDocuments: (workspaceId: string, docIds: string[]) => Promise<BulkDeleteResult>;
@@ -211,6 +215,8 @@ const initialState: WorkspaceState = {
   documentsTotalPages: 0,
   totalDocuments: 0,
   documentSearchQuery: '',
+  currentFolderId: null,
+  allFolders: [],
 
   templates: [],
 
@@ -261,6 +267,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documents: new Map(),
         documentsCurrentPage: 1,
         documentSearchQuery: '',
+        allFolders: [],
+        currentFolderId: null,
       });
     },
 
@@ -407,13 +415,17 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documents: new Map(),
         documentsCurrentPage: 1,
         documentSearchQuery: '',
+        allFolders: [],
         isMobileSidebarOpen: false, // Close sidebar on mobile when selecting
       });
 
       try {
-        // Fetch fresh workspace data and documents in parallel
-        const freshWorkspace = await workspaceApi.getWorkspace(workspaceId);
-        await get().fetchDocuments(workspaceId, 1);
+        // Fetch fresh workspace data, documents, and folders in parallel
+        const [freshWorkspace] = await Promise.all([
+          workspaceApi.getWorkspace(workspaceId),
+          get().fetchDocuments(workspaceId, 1),
+          get().fetchAllFolders(workspaceId),
+        ]);
 
         // Update with fresh data (may have updated counts, storage, etc.)
         set({
@@ -553,7 +565,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     fetchDocuments: async (workspaceId, page = 1) => {
       const state = get();
 
-      // Check cache first (skip if searching)
+      // Check cache first (skip if searching or folder changed)
       if (!state.documentSearchQuery && state.documents.has(page)) {
         set({ documentsCurrentPage: page });
         return;
@@ -566,6 +578,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           page,
           limit: DEFAULT_PAGE_LIMIT,
           search: state.documentSearchQuery || undefined,
+          parentId: state.currentFolderId,
         });
 
         const newCache = new Map(state.documentSearchQuery ? [] : state.documents);
@@ -582,6 +595,23 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         const fallback = tError('fetchDocuments', 'Failed to fetch documents');
         const message = err instanceof Error ? err.message : fallback;
         set({ error: message, isLoadingDocuments: false });
+      }
+    },
+
+    setCurrentFolderId: (folderId) => {
+      set({
+        currentFolderId: folderId,
+        documents: new Map(),
+        documentsCurrentPage: 1,
+      });
+    },
+
+    fetchAllFolders: async (workspaceId: string) => {
+      try {
+        const folders = await workspaceApi.getAllFolders(workspaceId);
+        set({ allFolders: folders });
+      } catch (err) {
+        console.error('Failed to fetch all folders:', err);
       }
     },
 
@@ -870,6 +900,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documentsTotalPages: 0,
         totalDocuments: 0,
         documentSearchQuery: '',
+        allFolders: [],
+        currentFolderId: null,
       });
     },
 
@@ -1307,6 +1339,11 @@ export const useAllDocuments = () => {
   // Flatten all documents from the Map into a single array
   const allDocuments = Array.from(documentsMap.values()).flat();
   return { documents: allDocuments, currentPage };
+};
+
+// Hook to get all folders for sidebar tree view
+export const useAllFolders = () => {
+  return useWorkspaceStore((state) => state.allFolders) ?? [];
 };
 
 export const useWorkspacePagination = () => {

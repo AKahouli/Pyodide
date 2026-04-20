@@ -4,7 +4,7 @@
  * Responsive: Card layout on mobile, table on larger screens
  */
 
-import { useState, useRef, useMemo, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import { Loader2, Upload, ChevronLeft, ChevronRight, FolderPlus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -19,11 +19,7 @@ import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
 import { CreateFolderDialog } from './CreateFolderDialog';
 
-interface DocumentsTableProps {
-  folderId?: string | null;
-}
-
-export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
+export function DocumentsTable() {
   const { t } = useModuleTranslation('workspace');
   const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
@@ -33,13 +29,9 @@ export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
   const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
   const startUpload = useWorkspaceStore((state) => state.startUpload);
   const createFolder = useWorkspaceStore((state) => state.createFolder);
+  const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
 
-  // Filter documents by folder
-  const filteredDocuments = useMemo(() => {
-    return documents.filter((d) => d.parentId === folderId);
-  }, [documents, folderId]);
-
-  const { selectedCount, isAllSelected, isSomeSelected, isSelected, toggleSelect, toggleSelectAll, clearSelection, getSelectedIds } = useDocumentSelection(filteredDocuments);
+  const { selectedCount, isAllSelected, isSomeSelected, isSelected, toggleSelect, toggleSelectAll, clearSelection, getSelectedIds } = useDocumentSelection(documents);
 
   // Create folder dialog
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
@@ -48,11 +40,14 @@ export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
     if (selectedWorkspace) {
       await createFolder(selectedWorkspace.id, {
         name,
-        parentId: folderId || undefined,
+        parentId: currentFolderId || undefined,
       });
       setIsCreateFolderOpen(false);
+      // Refresh folders in sidebar
+      const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+      await fetchAllFolders(selectedWorkspace.id);
     }
-  }, [selectedWorkspace, createFolder, folderId]);
+  }, [selectedWorkspace, createFolder, currentFolderId]);
 
   // Shared file input ref for folder uploads
   const folderFileInputRef = useRef<HTMLInputElement>(null);
@@ -97,7 +92,7 @@ export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
     );
   }
 
-  if (filteredDocuments.length === 0) {
+  if (documents.length === 0) {
     return (
       <div className='flex flex-col items-center justify-center py-16 text-center w-full'>
         <div className='rounded-full bg-muted/50 p-6 mb-6'>
@@ -164,7 +159,7 @@ export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
         {/* Height: viewport - modal chrome (40px) - header (~180px) - select bar (44px) - pagination (56px) = ~320px */}
         <ScrollArea className='h-[calc(100vh-320px)]'>
           <div className='divide-y w-full'>
-            {filteredDocuments.map((document) => (
+            {documents.map((document) => (
               <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} />
             ))}
           </div>
@@ -190,7 +185,7 @@ export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredDocuments.map((document) => (
+              {documents.map((document) => (
                 <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} onFolderUpload={handleFolderUpload} />
               ))}
             </TableBody>
@@ -209,7 +204,7 @@ export function DocumentsTable({ folderId = null }: DocumentsTableProps) {
       open={isCreateFolderOpen}
       onOpenChange={setIsCreateFolderOpen}
       workspaceId={selectedWorkspace?.id || ''}
-      parentFolderId={folderId || undefined}
+      parentFolderId={currentFolderId || undefined}
     />
   </>
   );

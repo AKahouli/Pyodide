@@ -23,6 +23,7 @@ export interface DocumentQueryParams {
   search?: string;
   sortBy?: 'originalName' | 'createdAt' | 'size';
   sortOrder?: 'asc' | 'desc';
+  parentId?: string | null;
 }
 
 export interface DocumentResponse {

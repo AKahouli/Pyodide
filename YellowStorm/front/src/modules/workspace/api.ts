@@ -282,6 +282,18 @@ export async function getHierarchicalDocuments(
   return response.data.data;
 }
 
+/**
+ * Get all folders in workspace (no pagination, for sidebar)
+ */
+export async function getAllFolders(
+  workspaceId: string,
+): Promise<WorkspaceDocument[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceDocument[]>>(
+    `/workspaces/${workspaceId}/documents/folders/all`,
+  );
+  return response.data.data;
+}
+
 // ===== Workspace Settings APIs =====
 
 /**

@@ -3,13 +3,13 @@
  * Main content area showing documents table with Drive-like folder navigation
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Search, Layers, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments } from '../store';
+import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllFolders } from '../store';
 import { useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
@@ -24,12 +24,13 @@ export function WorkspaceContent() {
   const selectedWorkspace = useSelectedWorkspace();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
   const { documents } = useDocuments();
+  const allFolders = useAllFolders();
   const createFolder = useWorkspaceStore((state) => state.createFolder);
   const deleteFolder = useWorkspaceStore((state) => state.deleteFolder);
+  const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
+  const setCurrentFolderId = useWorkspaceStore((state) => state.setCurrentFolderId);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
-
-  // Folder navigation state
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
 
   // Dialog states
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
@@ -41,17 +42,12 @@ export function WorkspaceContent() {
   // Drag and drop hook
   const { isDragging, draggedItems, handleDropOnRoot } = useDocumentDragDrop();
 
-  // Get current folder contents
-  const currentDocuments = useMemo(() => {
-    return documents.filter((d) => {
-      // For root (null), show items with no parentId
-      if (currentFolderId === null) {
-        return d.parentId === null || d.parentId === undefined;
-      }
-      // For specific folder, show items matching the parentId
-      return d.parentId === currentFolderId;
-    });
-  }, [documents, currentFolderId]);
+  // Fetch documents when folder changes
+  useEffect(() => {
+    if (selectedWorkspaceId) {
+      fetchDocuments(selectedWorkspaceId, 1);
+    }
+  }, [currentFolderId, selectedWorkspaceId, fetchDocuments]);
 
   // Build breadcrumbs
   const breadcrumbs = useMemo(() => {
@@ -59,7 +55,7 @@ export function WorkspaceContent() {
     let currentId = currentFolderId;
 
     while (currentId) {
-      const folder = documents.find((d) => d.id === currentId && d.isFolder);
+      const folder = allFolders.find((d) => d.id === currentId && d.isFolder);
       if (folder) {
         items.unshift({
           id: folder.id,
@@ -72,12 +68,12 @@ export function WorkspaceContent() {
     }
 
     return items;
-  }, [currentFolderId, documents]);
+  }, [currentFolderId, allFolders]);
 
   // Handle folder navigation
   const handleNavigate = useCallback((folderId: string | null) => {
     setCurrentFolderId(folderId);
-  }, []);
+  }, [setCurrentFolderId]);
 
   // Handle create folder
   const handleCreateFolder = useCallback(async (name: string) => {
@@ -88,6 +84,9 @@ export function WorkspaceContent() {
       });
       setIsCreateFolderOpen(false);
       setCreateFolderParentId(undefined);
+      // Refresh folders in sidebar
+      const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+      await fetchAllFolders(selectedWorkspaceId);
     }
   }, [selectedWorkspaceId, createFolder, createFolderParentId]);
 
@@ -98,20 +97,27 @@ export function WorkspaceContent() {
 
   // Handle rename folder
   const handleRenameFolder = useCallback((folderId: string) => {
-    const folder = documents.find((d) => d.id === folderId && d.isFolder);
+    const folder = allFolders.find((d) => d.id === folderId && d.isFolder);
     if (folder) {
       setRenameFolderId(folderId);
       setNewFolderName(folder.folderName || folder.originalName);
       setIsRenameDialogOpen(true);
     }
-  }, [documents]);
+  }, [allFolders]);
 
   const handleConfirmRename = useCallback(async () => {
     if (renameFolderId && selectedWorkspaceId && newFolderName.trim()) {
-      // TODO: Implement rename in store
-      setIsRenameDialogOpen(false);
-      setRenameFolderId(null);
-      setNewFolderName('');
+      try {
+        await useWorkspaceStore.getState().renameFolder(selectedWorkspaceId, renameFolderId, { name: newFolderName });
+        // Refresh folders in sidebar
+        const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+        await fetchAllFolders(selectedWorkspaceId);
+        setIsRenameDialogOpen(false);
+        setRenameFolderId(null);
+        setNewFolderName('');
+      } catch (error) {
+        console.error('Failed to rename folder:', error);
+      }
     }
   }, [renameFolderId, selectedWorkspaceId, newFolderName]);
 
@@ -123,11 +129,14 @@ export function WorkspaceContent() {
         if (currentFolderId === folderId) {
           setCurrentFolderId(null);
         }
+        // Refresh folders in sidebar
+        const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+        await fetchAllFolders(selectedWorkspaceId);
       } catch (error) {
         console.error('Failed to delete folder:', error);
       }
     }
-  }, [selectedWorkspaceId, deleteFolder, currentFolderId, t]);
+  }, [selectedWorkspaceId, deleteFolder, currentFolderId, setCurrentFolderId, t]);
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-hidden bg-background flex flex-col">
@@ -150,7 +159,7 @@ export function WorkspaceContent() {
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold">{selectedWorkspace.name}</h2>
                 <span className="text-sm text-muted-foreground">
-                  {currentDocuments.filter(d => !d.isFolder).length} {t('content.documents')}
+                  {documents.filter(d => !d.isFolder).length} {t('content.documents')}
                 </span>
               </div>
 
@@ -188,7 +197,7 @@ export function WorkspaceContent() {
             {/* Left Sidebar - Folder Tree */}
             <div className="w-64 shrink-0 hidden md:flex border-r bg-muted/30">
               <FolderTreeSidebar
-                documents={documents}
+                documents={allFolders}
                 currentFolderId={currentFolderId}
                 onFolderSelect={handleNavigate}
                 onCreateFolder={handleOpenCreateFolder}
@@ -206,7 +215,7 @@ export function WorkspaceContent() {
               <ScrollArea className="flex-1 bg-background">
                 <div className="p-4">
                   {/* Documents table for current folder */}
-                  <DocumentsTable folderId={currentFolderId} />
+                  <DocumentsTable />
                 </div>
               </ScrollArea>
             </div>

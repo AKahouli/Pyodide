@@ -220,6 +220,33 @@ export class WorkspaceDocumentController {
   }
 
   /**
+   * Get all documents and folders in hierarchical view
+   * NOTE: This route MUST come before :docId route to avoid "hierarchical" being captured as a document ID
+   */
+  @Get('hierarchical')
+  @ApiOperation({ summary: 'Get all documents and folders in hierarchical structure' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async findAllHierarchical(
+    @Param('workspaceId') workspaceId: string,
+    @Query() query: DocumentQueryDto,
+  ) {
+    return this.workspaceDocumentService.findAllHierarchical(workspaceId, query);
+  }
+
+  /**
+   * Get all folders (no pagination, for sidebar tree view)
+   * NOTE: This route MUST come before :docId route to avoid "folders" being captured as a document ID
+   */
+  @Get('folders/all')
+  @ApiOperation({ summary: 'Get all folders in workspace' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async getAllFolders(
+    @Param('workspaceId') workspaceId: string,
+  ) {
+    return this.workspaceDocumentService.getAllFolders(workspaceId);
+  }
+
+  /**
    * Get document metadata
    */
   @Get(':docId')
@@ -391,18 +418,5 @@ export class WorkspaceDocumentController {
       body.documentIds,
       body.targetFolderId,
     );
-  }
-
-  /**
-   * Get all documents and folders in hierarchical view
-   */
-  @Get('hierarchical')
-  @ApiOperation({ summary: 'Get all documents and folders in hierarchical structure' })
-  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
-  async findAllHierarchical(
-    @Param('workspaceId') workspaceId: string,
-    @Query() query: DocumentQueryDto,
-  ) {
-    return this.workspaceDocumentService.findAllHierarchical(workspaceId, query);
   }
 }
