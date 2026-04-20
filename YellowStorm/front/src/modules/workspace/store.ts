@@ -343,11 +343,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         // Combine results - personal workspace first if it exists
         let allWorkspaces = result.workspaces;
         if (personalWorkspace) {
-          // Check if personal workspace is already in the list (avoid duplicates)
-          const personalExists = allWorkspaces.some((w) => w.id === personalWorkspace.id);
-          if (!personalExists) {
-            allWorkspaces = [personalWorkspace, ...allWorkspaces];
-          }
+          // Remove personal workspace from list if it exists, then add it at the beginning
+          allWorkspaces = allWorkspaces.filter((w) => w.id !== personalWorkspace.id);
+          allWorkspaces = [personalWorkspace, ...allWorkspaces];
         }
 
         const newCache = new Map(state.searchQuery ? [] : state.workspaces);

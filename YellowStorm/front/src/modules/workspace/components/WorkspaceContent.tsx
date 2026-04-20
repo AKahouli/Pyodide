@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useState, useCallback } from 'react';
-import { Search, MoreHorizontal, Pencil, Settings, FileX, Trash2, Layers, List, Grid, Plus, FolderOpen } from 'lucide-react';
+import { Search, MoreHorizontal, Settings, Layers, List, Grid, Plus, FolderOpen } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -30,7 +30,6 @@ export function WorkspaceContent() {
   const getFolderContents = useWorkspaceStore((state) => state.getFolderContents);
   const isCreating = useWorkspaceStore((state) => state.isCreating);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
-  const isPersonalWorkspace = selectedWorkspace?.isPersonal || false;
 
   // Drag and drop hook
   const { isDragging, draggedItems, handleDragStart, handleDragEnd, handleDragOver, handleDropOnFolder, handleDropOnRoot } = useDocumentDragDrop();
@@ -176,11 +175,6 @@ export function WorkspaceContent() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-3">
                 <h2 className="text-lg font-semibold">{selectedWorkspace.name}</h2>
-                {isPersonalWorkspace && (
-                  <span className="text-xs bg-primary/10 text-primary px-2 py-1 rounded-full ml-2">
-                    {t('content.personalWorkspaceBadge')}
-                  </span>
-                )}
                 <span className="text-sm text-muted-foreground">
                   {documents.length} {t('content.documents')}
                 </span>

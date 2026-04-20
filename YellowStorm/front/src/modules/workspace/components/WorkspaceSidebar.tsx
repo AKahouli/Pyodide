@@ -4,7 +4,7 @@
  */
 
 import { memo, useCallback, useEffect } from 'react';
-import { Search, Plus, ChevronLeft, ChevronRight, Loader2, X, FolderOpen } from 'lucide-react';
+import { Search, Plus, ChevronLeft, ChevronRight, Loader2, X, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
@@ -50,10 +50,6 @@ export function WorkspaceSidebar() {
     }
   };
 
-  // Separate personal workspaces from regular workspaces
-  const personalWorkspaces = workspaces.filter((w) => w.isPersonal);
-  const regularWorkspaces = workspaces.filter((w) => !w.isPersonal);
-
   return (
     <div className="w-full md:w-64 h-full border-r bg-muted/30 flex flex-col shrink-0">
       {/* Header */}
@@ -90,31 +86,10 @@ export function WorkspaceSidebar() {
           </div>
         ) : (
           <>
-            {/* Personal workspace section */}
-            {personalWorkspaces.length > 0 && (
-              <>
-                <div className="pb-3 mb-2">
-                  <div className="flex items-center gap-2 px-3 py-2 bg-primary/10 text-primary rounded-lg">
-                    <FolderOpen className="h-4 w-4" />
-                    <span className="font-medium">{t('sidebar.personalSection')}</span>
-                  </div>
-                  {personalWorkspaces.map((workspace) => (
-                    <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
-                  ))}
-                </div>
-                <Separator />
-              </>
-            )}
-
-            {/* Regular workspaces */}
-            {regularWorkspaces.length > 0 && personalWorkspaces.length > 0 && (
-              <>
-                <div className="mb-2 px-3 text-xs text-muted-foreground">{t('sidebar.regularSection')}</div>
-                {regularWorkspaces.map((workspace) => (
-                  <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
-                ))}
-              </>
-            )}
+            {/* Workspaces list */}
+            {workspaces.map((workspace) => (
+              <WorkspaceItem key={workspace.id} workspace={workspace} isSelected={selectedWorkspaceId === workspace.id} />
+            ))}
 
             {/* Empty state */}
             {workspaces.length === 0 && !isLoadingWorkspaces && (
