@@ -16,6 +16,7 @@ import { AuthModule } from '@modules/auth/auth.module';
 import { UserModule } from '@modules/user';
 import { UsageModule } from '@modules/usage';
 import { AuthorizationModule } from '@modules/authorization/authorization.module';
+import { WorkspaceModule } from '@modules/workspace/workspace.module';
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { AuthorizationModule } from '@modules/authorization/authorization.module
     UserModule,
     forwardRef(() => UsageModule),
     forwardRef(() => AuthorizationModule),
+    forwardRef(() => WorkspaceModule),
   ],
   controllers: [OAuthController, AuthProviderAdminController],
   providers: [

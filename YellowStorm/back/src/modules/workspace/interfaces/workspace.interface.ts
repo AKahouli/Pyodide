@@ -28,6 +28,8 @@ export interface WorkspaceResponse {
   documentCount: number;
   usedStorage: number;
   allocatedStorage: number;
+  isSystem: boolean;
+  isPersonal: boolean;
   createdAt: string;
   updatedAt: string;
 }

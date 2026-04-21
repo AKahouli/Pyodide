@@ -3,8 +3,8 @@
  * Single workspace item in the sidebar with hover-reveal 3-dot menu
  */
 
-import { useState, useCallback, useMemo, memo } from 'react';
-import { MoreHorizontal, Pencil, Settings, FileX, Trash2, FileText } from 'lucide-react';
+import { useState, useCallback, useMemo } from 'react';
+import { MoreHorizontal, Pencil, Settings, FileX, Trash2, FileText, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
@@ -20,7 +20,7 @@ interface WorkspaceItemProps {
   isSelected: boolean;
 }
 
-export const WorkspaceItem = memo(function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
+export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
   const { t } = useModuleTranslation('workspace');
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -119,31 +119,54 @@ export const WorkspaceItem = memo(function WorkspaceItem({ workspace, isSelected
     setIsDeleteDialogOpen(true);
   }, []);
 
+  // Check if workspace is personal (cannot be renamed/deleted)
+  const isPersonal = workspace.isPersonal || false;
+  const totalFileCount = workspace.isPersonal ? Math.max(0, useWorkspaceStore.getState().totalDocuments) : workspace.documentCount;
+
   return (
     <>
-      <div className={cn('group/item relative flex items-center p-2 rounded-lg cursor-pointer transition-colors', isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50')} onClick={handleSelect}>
+      <div
+        className={cn(
+          'group/item relative flex items-center p-2 rounded-lg cursor-pointer transition-colors',
+          isSelected ? 'bg-accent text-accent-foreground' : 'hover:bg-accent/50',
+        )}
+        onClick={handleSelect}
+      >
         <div className='flex-1 min-w-0 pr-8'>
-          <div className='font-medium text-sm truncate'>{workspace.name}</div>
+          <div className='flex items-center gap-2'>
+            {isPersonal && <User className='h-4 w-4 text-primary' />}
+            <div className='font-medium text-sm truncate'>{workspace.name}</div>
+          </div>
           <div className='flex items-center gap-2 text-xs text-muted-foreground'>
             <span className='flex items-center gap-1'>
               <FileText className='h-3 w-3' />
-              {workspace.documentCount}
+              {totalFileCount}
             </span>
             <span>{formatFileSize(workspace.usedStorage)}</span>
           </div>
         </div>
 
+        {/* Dropdown menu - show all options for regular workspaces, only settings for personal */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant='ghost' size='icon' className='absolute right-1 h-7 w-7 opacity-0 group-hover/item:opacity-100 transition-opacity' onClick={(e) => e.stopPropagation()}>
+            <Button
+              variant='ghost'
+              size='icon'
+              className='absolute right-1 h-7 w-7 opacity-0 group-hover/item:opacity-100 transition-opacity'
+              onClick={(e) => e.stopPropagation()}
+            >
               <MoreHorizontal className='h-4 w-4' />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align='end'>
-            <DropdownMenuItem onClick={handleRenameClick} className='cursor-pointer'>
-              <Pencil className='mr-2 h-4 w-4' />
-              {menuLabels.rename}
-            </DropdownMenuItem>
+            {!isPersonal && (
+              <>
+                <DropdownMenuItem onClick={handleRenameClick} className='cursor-pointer'>
+                  <Pencil className='mr-2 h-4 w-4' />
+                  {menuLabels.rename}
+                </DropdownMenuItem>
+              </>
+            )}
             <DropdownMenuItem onClick={handleSettingsClick} className='cursor-pointer'>
               <Settings className='mr-2 h-4 w-4' />
               {menuLabels.settings}
@@ -153,22 +176,51 @@ export const WorkspaceItem = memo(function WorkspaceItem({ workspace, isSelected
               <FileX className='mr-2 h-4 w-4' />
               {menuLabels.deleteDocs}
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleDeleteClick} className='cursor-pointer text-destructive focus:text-destructive'>
-              <Trash2 className='mr-2 h-4 w-4' />
-              {menuLabels.delete}
-            </DropdownMenuItem>
+            {!isPersonal && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={handleDeleteClick} className='cursor-pointer text-destructive focus:text-destructive'>
+                  <Trash2 className='mr-2 h-4 w-4' />
+                  {menuLabels.delete}
+                </DropdownMenuItem>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
 
       {/* Rename Dialog */}
-      <RenameDialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen} currentName={workspace.name} entityType='workspace' onRename={handleRename} />
+      <RenameDialog
+        open={isRenameDialogOpen}
+        onOpenChange={setIsRenameDialogOpen}
+        currentName={workspace.name}
+        entityType='workspace'
+        onRename={handleRename}
+      />
 
       {/* Delete Workspace Dialog */}
-      <ConfirmDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen} title={deleteWorkspaceLabels.title} description={deleteWorkspaceLabels.description} confirmLabel={isDeleting ? deleteWorkspaceLabels.deleting : deleteWorkspaceLabels.confirm} variant='destructive' isLoading={isDeleting} onConfirm={handleDelete} />
+      <ConfirmDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+        title={deleteWorkspaceLabels.title}
+        description={deleteWorkspaceLabels.description}
+        confirmLabel={isDeleting ? deleteWorkspaceLabels.deleting : deleteWorkspaceLabels.confirm}
+        variant='destructive'
+        isLoading={isDeleting}
+        onConfirm={handleDelete}
+      />
 
       {/* Delete All Docs Dialog */}
-      <ConfirmDialog open={isDeleteDocsDialogOpen} onOpenChange={setIsDeleteDocsDialogOpen} title={deleteDocumentsLabels.title} description={deleteDocumentsLabels.description} confirmLabel={isDeleting ? deleteDocumentsLabels.deleting : deleteDocumentsLabels.confirm} variant='destructive' isLoading={isDeleting} onConfirm={handleDeleteAllDocs} />
+      <ConfirmDialog
+        open={isDeleteDocsDialogOpen}
+        onOpenChange={setIsDeleteDocsDialogOpen}
+        title={deleteDocumentsLabels.title}
+        description={deleteDocumentsLabels.description}
+        confirmLabel={isDeleting ? deleteDocumentsLabels.deleting : deleteDocumentsLabels.confirm}
+        variant='destructive'
+        isLoading={isDeleting}
+        onConfirm={handleDeleteAllDocs}
+      />
     </>
   );
-});
+}

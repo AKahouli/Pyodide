@@ -65,7 +65,8 @@ export const DEFAULT_PAGE_LIMIT = 10;
 /**
  * Format bytes to human-readable size
  */
-export function formatFileSize(bytes: number): string {
+export function formatFileSize(bytes: number | undefined | null): string {
+  if (bytes === undefined || bytes === null || isNaN(bytes)) return '-';
   if (bytes === 0) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB'];

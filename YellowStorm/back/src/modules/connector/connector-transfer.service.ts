@@ -149,7 +149,11 @@ export class ConnectorTransferService {
         throw new Error(`Workspace document not found: ${documentId}`);
       }
 
-      const buffer = await this.documentService.download(doc.path);
+      if (doc.isFolder) {
+        throw new Error(`Cannot download folders directly: ${documentId}`);
+      }
+
+      const buffer = await this.documentService.download(doc.path!);
       const filename = options?.filename || doc.originalName;
 
       const result = await adapter.uploadItem(
