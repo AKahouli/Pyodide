@@ -42,7 +42,7 @@ class TestMessageTransformer:
 
     def test_simple_tag_transformer_with_citation(self):
         """Test simple tag transformer detects complete citations."""
-        # A complete citation like [1] at the end should be detected and removed
+        # A complete citation like [1] at the end should be detected and preserved
         processed, buffer, citations = MessageTransformer.simple_tag_transformer(
             tempmsg="See reference [1]",
             task_n=1,
@@ -51,8 +51,7 @@ class TestMessageTransformer:
         )
 
         assert "[1]" in citations
-        assert "[1]" not in processed
-        assert "See reference " in processed
+        assert processed == "See reference [1]"
 
     def test_simple_tag_transformer_accumulation(self):
         """Test simple tag transformer with message accumulation."""
@@ -133,9 +132,9 @@ class TestMessageTransformer:
         assert "[2]" in citations
         assert "[3]" in citations
         assert len(citations) == 3
-        assert "[1]" not in processed
-        assert "[2]" not in processed
-        assert "[3]" not in processed
+        assert "[1]" in processed
+        assert "[2]" in processed
+        assert "[3]" in processed
         assert buffer == ""
 
     def test_simple_tag_transformer_force_flush(self):
@@ -150,8 +149,7 @@ class TestMessageTransformer:
         )
 
         assert "[42]" in citations
-        assert "[42]" not in processed
-        assert "buffered Final text " in processed
+        assert processed == "buffered Final text [42]"
         assert buffer == ""
 
     def test_simple_tag_transformer_no_citation_bracket(self):
@@ -178,7 +176,7 @@ class TestMessageTransformer:
         )
 
         assert "[123]" in citations
-        assert "[123]" not in processed
+        assert processed == "Reference [123]"
 
     def test_simple_tag_transformer_various_task_numbers(self):
         """Test simple tag transformer with different task numbers (task_n is unused but accepted)."""
@@ -193,7 +191,7 @@ class TestMessageTransformer:
                 max_length=200
             )
             assert "[1]" in citations
-            assert "[1]" not in processed
+            assert processed == message
 
     def test_methods_are_static(self):
         """Test that methods can be called as static methods."""
@@ -216,11 +214,7 @@ class TestMessageTransformer:
 
         assert "[1]" in citations
         assert "[2]" in citations
-        assert "[1]" not in processed
-        assert "[2]" not in processed
-        assert "Text " in processed
-        assert " and more " in processed
-        assert " plus plain text" in processed
+        assert processed == message
 
     def test_simple_tag_transformer_citation_at_boundary(self):
         """Test citation split across buffer boundary."""
