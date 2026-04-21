@@ -4,7 +4,7 @@
  */
 
 import { useMemo } from 'react';
-import { File, Folder, FolderOpen, ChevronRight, FileText, Download, MoreHorizontal } from 'lucide-react';
+import { File, Folder, FolderOpen, ChevronRight, FileText, Download, MoreHorizontal, Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { WorkspaceDocument, WorkspaceFolder } from '../types';
@@ -127,13 +127,13 @@ export function FolderTree({
               <FileText className="h-3.5 w-3.5" />
             </button>
             <button
-              className="h-7 w-7 flex items-center justify-center rounded hover:bg-accent text-muted-foreground"
+              className="h-7 w-7 flex items-center justify-center rounded hover:bg-red-50 hover:text-red-600 text-muted-foreground"
               onClick={(e) => {
                 e.stopPropagation();
                 onDeleteFolder?.(folder.id);
               }}
             >
-              <Download className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -241,7 +241,7 @@ export function FolderTree({
                 onDeleteDocument?.(document.id);
               }}
             >
-              <File className="h-3.5 w-3.5" />
+              <Trash2 className="h-3.5 w-3.5" />
             </button>
           </div>
         </div>
@@ -405,7 +405,7 @@ function FolderTreeItem({
         </div>
 
       {item.isExpanded && item.children.length > 0 && (
-        <div className="mt-1">
+        <div className="mt-1 ml-4" style={{ marginLeft: `${level * 16 + 16}px` }}>
           {item.children.map((child) => {
             if (child.isFolder) {
               return (

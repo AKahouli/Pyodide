@@ -1395,7 +1395,11 @@ export class WorkspaceDocumentService {
   /**
    * Rename a folder
    */
-  async renameFolder(folderId: string, newName: string): Promise<DocumentResponse> {
+  async renameFolder(
+    folderId: string,
+    newName: string,
+    userId: string,
+  ): Promise<DocumentResponse> {
     const folder = await this.documentModel.findById(folderId);
 
     if (!folder) {
@@ -1407,6 +1411,14 @@ export class WorkspaceDocumentService {
 
     if (!folder.isFolder) {
       throw new BadRequestException('Document is not a folder');
+    }
+
+    // Check permission - only creator can rename
+    if (folder.createdBy.toString() !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have permission to rename this folder',
+      );
     }
 
     // Validate new name
@@ -1439,6 +1451,7 @@ export class WorkspaceDocumentService {
 
     this.logger.log('Folder renamed', {
       folderId: folder._id,
+      userId,
       oldName: folder.originalName,
       newName: sanitizedName,
     });
@@ -1560,6 +1573,7 @@ export class WorkspaceDocumentService {
     workspaceId: string,
     documentIds: string[],
     targetFolderId?: string,
+    userId?: string,
   ): Promise<{ moved: number; failed: string[] }> {
     const moved: string[] = [];
     const failed: string[] = [];
@@ -1585,6 +1599,20 @@ export class WorkspaceDocumentService {
       return descendants;
     };
 
+    // If target folder is provided, verify it exists and user has access
+    if (targetFolderId) {
+      const targetFolder = await this.documentModel.findById(targetFolderId);
+      if (!targetFolder || !targetFolder.isFolder) {
+        throw new BadRequestException('Target folder not found');
+      }
+      if (userId && targetFolder.createdBy.toString() !== userId) {
+        throw new ForbiddenException(
+          ErrorCode.WORKSPACE_FORBIDDEN,
+          'You do not have permission to move items into this folder',
+        );
+      }
+    }
+
     for (const documentId of documentIds) {
       try {
         const document = await this.documentModel.findById(documentId);
@@ -1595,6 +1623,12 @@ export class WorkspaceDocumentService {
         }
 
         if (document.workspaceId.toString() !== workspaceId) {
+          failed.push(documentId);
+          continue;
+        }
+
+        // Check permission - only creator can move
+        if (userId && document.createdBy.toString() !== userId) {
           failed.push(documentId);
           continue;
         }
@@ -1646,7 +1680,7 @@ export class WorkspaceDocumentService {
   /**
    * Get all documents and folders in a hierarchical structure
    */
-  async findAllHierarchical(
+  async findAllSorted(
     workspaceId: string,
     params: DocumentQueryParams,
   ): Promise<PaginatedDocuments> {

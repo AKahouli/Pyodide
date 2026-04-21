@@ -85,8 +85,8 @@ export class WorkspaceInitializerService {
   /**
    * Check if a workspace is a personal workspace
    */
-  isPersonalWorkspace(workspaceId: string): boolean {
-    return workspaceId.endsWith('-personal');
+  isPersonalWorkspace(workspace: WorkspaceDocument): boolean {
+    return workspace.isPersonal === true;
   }
 
   /**

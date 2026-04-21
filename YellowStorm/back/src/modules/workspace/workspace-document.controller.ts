@@ -225,17 +225,17 @@ export class WorkspaceDocumentController {
   }
 
   /**
-   * Get all documents and folders in hierarchical view
+   * Get all documents and folders in sorted view (folders first, then documents)
    * NOTE: This route MUST come before :docId route to avoid "hierarchical" being captured as a document ID
    */
   @Get('hierarchical')
-  @ApiOperation({ summary: 'Get all documents and folders in hierarchical structure' })
+  @ApiOperation({ summary: 'Get all documents and folders in sorted structure' })
   @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
   async findAllHierarchical(
     @Param('workspaceId') workspaceId: string,
     @Query() query: DocumentQueryDto,
   ) {
-    return this.workspaceDocumentService.findAllHierarchical(workspaceId, query);
+    return this.workspaceDocumentService.findAllSorted(workspaceId, query);
   }
 
   /**
@@ -368,7 +368,11 @@ export class WorkspaceDocumentController {
     @Param('folderId') folderId: string,
     @Body() body: { name: string },
   ) {
-    return this.workspaceDocumentService.renameFolder(folderId, body.name);
+    return this.workspaceDocumentService.renameFolder(
+      folderId,
+      body.name,
+      user._id.toString(),
+    );
   }
 
   /**
@@ -422,6 +426,7 @@ export class WorkspaceDocumentController {
       workspaceId,
       body.documentIds,
       body.targetFolderId,
+      user._id.toString(),
     );
   }
 }
