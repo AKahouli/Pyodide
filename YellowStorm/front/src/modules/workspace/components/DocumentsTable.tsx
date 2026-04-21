@@ -19,6 +19,7 @@ import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
 import { CreateFolderDialog } from './CreateFolderDialog';
+import { UploadButton } from './UploadButton';
 
 interface DocumentsTableProps {
   onFolderDoubleClick?: (folderId: string) => void;
@@ -55,16 +56,18 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
 
   const handleCreateFolder = useCallback(async (name: string) => {
     if (selectedWorkspace) {
+      const store = useWorkspaceStore.getState();
       await createFolder(selectedWorkspace.id, {
         name,
         parentId: currentFolderId || undefined,
       });
       setIsCreateFolderOpen(false);
-      // Refresh folders in sidebar and documents list
-      const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
-      const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
-      await fetchAllFolders(selectedWorkspace.id);
-      await fetchDocuments(selectedWorkspace.id, 1);
+      // Invalidate cache and refresh
+      store.invalidateDocumentData();
+      await Promise.all([
+        store.fetchAllFolders(selectedWorkspace.id),
+        store.fetchDocuments(selectedWorkspace.id, 1),
+      ]);
     }
   }, [selectedWorkspace, createFolder, currentFolderId]);
 
@@ -124,6 +127,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
             <FolderPlus className='h-4 w-4' />
             {t('content.createFolder')}
           </Button>
+          <UploadButton folderId={currentFolderId ?? undefined} />
         </div>
         <p className='text-xs text-muted-foreground mt-3'>{t('documents.empty.supported')}</p>
       </div>

@@ -86,17 +86,19 @@ export function WorkspaceContent() {
   // Handle create folder
   const handleCreateFolder = useCallback(async (name: string) => {
     if (selectedWorkspaceId) {
+      const store = useWorkspaceStore.getState();
       await createFolder(selectedWorkspaceId, {
         name,
         parentId: createFolderParentId,
       });
       setIsCreateFolderOpen(false);
       setCreateFolderParentId(undefined);
-      // Refresh folders in sidebar and documents list
-      const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
-      const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
-      await fetchAllFolders(selectedWorkspaceId);
-      await fetchDocuments(selectedWorkspaceId, 1);
+      // Invalidate cache and refresh
+      store.invalidateDocumentData();
+      await Promise.all([
+        store.fetchAllFolders(selectedWorkspaceId),
+        store.fetchDocuments(selectedWorkspaceId, 1),
+      ]);
     }
   }, [selectedWorkspaceId, createFolder, createFolderParentId]);
 
@@ -118,12 +120,14 @@ export function WorkspaceContent() {
   const handleConfirmRename = useCallback(async () => {
     if (renameFolderId && selectedWorkspaceId && newFolderName.trim()) {
       try {
-        await useWorkspaceStore.getState().renameFolder(selectedWorkspaceId, renameFolderId, { name: newFolderName });
-        // Refresh folders in sidebar and documents list
-        const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
-        const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
-        await fetchAllFolders(selectedWorkspaceId);
-        await fetchDocuments(selectedWorkspaceId, 1);
+        const store = useWorkspaceStore.getState();
+        await store.renameFolder(selectedWorkspaceId, renameFolderId, { name: newFolderName });
+        // Invalidate cache and refresh
+        store.invalidateDocumentData();
+        await Promise.all([
+          store.fetchAllFolders(selectedWorkspaceId),
+          store.fetchDocuments(selectedWorkspaceId, 1),
+        ]);
         setIsRenameDialogOpen(false);
         setRenameFolderId(null);
         setNewFolderName('');
@@ -137,15 +141,17 @@ export function WorkspaceContent() {
   const handleDeleteFolder = useCallback(async (folderId: string) => {
     if (selectedWorkspaceId && confirm(t('folder.deleteConfirm'))) {
       try {
+        const store = useWorkspaceStore.getState();
         await deleteFolder(selectedWorkspaceId, folderId);
         if (currentFolderId === folderId) {
           setCurrentFolderId(null);
         }
-        // Refresh folders in sidebar and documents list
-        const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
-        const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
-        await fetchAllFolders(selectedWorkspaceId);
-        await fetchDocuments(selectedWorkspaceId, 1);
+        // Invalidate cache and refresh
+        store.invalidateDocumentData();
+        await Promise.all([
+          store.fetchAllFolders(selectedWorkspaceId),
+          store.fetchDocuments(selectedWorkspaceId, 1),
+        ]);
       } catch (error) {
         console.error('Failed to delete folder:', error);
       }

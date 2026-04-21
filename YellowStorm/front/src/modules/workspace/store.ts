@@ -63,7 +63,7 @@ const translateWorkspaceString = (segment: string, fallback: string, params?: Tr
 };
 
 const tError = (key: string, fallback: string) => translateWorkspaceString(`errors.${key}`, fallback);
-const tToast = (key: string, fallback: string, params?: TranslationParams) => translateWorkspaceString(`toast.${key}`, fallback, params);
+const tToast = (key: string, fallback: string, params?: TranslationParams) => translateWorkspaceString(`store.toast.${key}`, fallback, params);
 
 // ===== Initial State =====
 
@@ -1030,11 +1030,14 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             );
             get().updateUploadStatus(item.id, 'completed');
 
-            // Refresh documents and folders if uploaded to current folder
+            // Invalidate cache and refresh documents and folders
             const currentFolderId = get().currentFolderId;
             if (currentFolderId === (item.folderId || null)) {
-              get().fetchAllFolders(workspaceId);
-              get().fetchDocuments(workspaceId, 1);
+              get().invalidateDocumentData();
+              await Promise.all([
+                get().fetchAllFolders(workspaceId),
+                get().fetchDocuments(workspaceId, 1),
+              ]);
             }
 
             toast.success(tToast('upload.successTitle', 'Upload complete'), {
