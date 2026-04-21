@@ -969,7 +969,11 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       refreshWorkspace: async (workspaceId) => {
         try {
           const workspace = await workspaceApi.getWorkspace(workspaceId);
-          get().updateWorkspaceInCache(workspace);
+          const normalizedWorkspace = {
+            ...workspace,
+            documentCount: Math.max(0, workspace.documentCount),
+          };
+          get().updateWorkspaceInCache(normalizedWorkspace);
         } catch (err) {
           console.error('Failed to refresh workspace', err);
         }
@@ -1300,9 +1304,13 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         try {
           const workspace = await workspaceApi.getPersonalWorkspace();
           // Add to cache at page 1
+          const normalizedWorkspace = {
+            ...workspace,
+            documentCount: Math.max(0, workspace.documentCount),
+          };
           const newCache = new Map(state.workspaces);
           const page1Workspaces = state.workspaces.get(1) || [];
-          newCache.set(1, [workspace, ...page1Workspaces]);
+          newCache.set(1, [normalizedWorkspace, ...page1Workspaces]);
 
           set({
             workspaces: newCache,

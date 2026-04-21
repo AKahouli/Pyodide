@@ -18,7 +18,6 @@ import { useDocumentDragDrop } from '../hooks/useDocumentDragDrop';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
-import { UploadButton } from './UploadButton';
 
 interface DocumentsTableProps {
   onFolderDoubleClick?: (folderId: string) => void;
@@ -94,18 +93,16 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
 
   if (documents.length === 0) {
     return (
-      <div className='flex flex-col items-center justify-center py-16 text-center w-full'>
-        <div className='rounded-full bg-muted/50 p-6 mb-6'>
-          <Upload className='h-12 w-12 text-muted-foreground/70' />
+        <div className='flex flex-col items-center justify-center py-16 text-center w-full'>
+          <div className='rounded-full bg-muted/50 p-6 mb-6'>
+            <Upload className='h-12 w-12 text-muted-foreground/70' />
+          </div>
+          <h3 className='text-lg font-medium text-foreground mb-2'>{t('documents.empty.title')}</h3>
+          <p className='text-sm text-muted-foreground max-w-sm mb-4'>{t('documents.empty.description', { action: t('upload.button.add') })}</p>
+        <div />
+          <p className='text-xs text-muted-foreground mt-3'>{t('documents.empty.supported')}</p>
         </div>
-        <h3 className='text-lg font-medium text-foreground mb-2'>{t('documents.empty.title')}</h3>
-        <p className='text-sm text-muted-foreground max-w-sm mb-4'>{t('documents.empty.description', { action: t('upload.button.add') })}</p>
-        <div className='flex gap-2'>
-          <UploadButton folderId={currentFolderId ?? undefined} />
-        </div>
-        <p className='text-xs text-muted-foreground mt-3'>{t('documents.empty.supported')}</p>
-      </div>
-    );
+      );
   }
 
   const PaginationBar = () => {

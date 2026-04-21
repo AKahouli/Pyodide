@@ -13,6 +13,8 @@ import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocume
 import { useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
+import { CreateFolderDialog } from './CreateFolderDialog';
+import { UploadButton } from './UploadButton';
 import { UploadDropZone } from './UploadDropZone';
 import { FolderTreeSidebar } from './FolderTreeSidebar';
 import { FolderNavigation, BreadcrumbItem } from './FolderNavigation';
@@ -31,6 +33,9 @@ export function WorkspaceContent() {
   const setCurrentFolderId = useWorkspaceStore((state) => state.setCurrentFolderId);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
   const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
+
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [createFolderParentId, setCreateFolderParentId] = useState<string | undefined>(undefined);
 
   // Dialog states
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
@@ -83,6 +88,11 @@ export function WorkspaceContent() {
       store.fetchDocuments(selectedWorkspaceId, 1);
     }
   }, [setCurrentFolderId]);
+
+  const handleOpenCreateFolder = useCallback((parentId?: string) => {
+    setCreateFolderParentId(parentId);
+    setIsCreateFolderOpen(true);
+  }, []);
 
   // Handle rename folder
   const handleRenameFolder = useCallback((folderId: string) => {
@@ -153,13 +163,15 @@ export function WorkspaceContent() {
 
               {/* Actions */}
               <div className="flex items-center gap-2">
-                {/* Search */}
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
                 </div>
-
-                {/* Keep only search in the content header */}
+                <UploadButton folderId={currentFolderId ?? undefined} />
+                <Button variant="outline" size="sm" onClick={() => handleOpenCreateFolder(currentFolderId || undefined)} className="gap-2">
+                  <Plus className="h-4 w-4" />
+                  {t('content.createFolder')}
+                </Button>
               </div>
             </div>
 
@@ -179,6 +191,7 @@ export function WorkspaceContent() {
                 documents={allFolders}
                 currentFolderId={currentFolderId}
                 onFolderSelect={handleNavigate}
+                onCreateFolder={handleOpenCreateFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onRenameFolder={handleRenameFolder}
               />
@@ -198,6 +211,13 @@ export function WorkspaceContent() {
               </ScrollArea>
             </div>
           </div>
+
+          <CreateFolderDialog
+            open={isCreateFolderOpen}
+            onOpenChange={setIsCreateFolderOpen}
+            workspaceId={selectedWorkspaceId ?? undefined}
+            parentFolderId={createFolderParentId}
+          />
 
           {/* Rename Folder Dialog */}
           <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>

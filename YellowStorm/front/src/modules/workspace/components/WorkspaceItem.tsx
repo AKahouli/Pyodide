@@ -139,7 +139,7 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
           <div className='flex items-center gap-2 text-xs text-muted-foreground'>
             <span className='flex items-center gap-1'>
               <FileText className='h-3 w-3' />
-              {workspace.documentCount}
+              {Math.max(0, workspace.documentCount)}
             </span>
             <span>{formatFileSize(workspace.usedStorage)}</span>
           </div>
