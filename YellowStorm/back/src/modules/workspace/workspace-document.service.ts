@@ -885,9 +885,10 @@ export class WorkspaceDocumentService {
     };
 
     // Execute queries
+    // Count includes both folders and documents for accurate pagination
     const [documents, total] = await Promise.all([
       this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments({ ...query, isFolder: false }),
+      this.documentModel.countDocuments(query),
     ]);
 
     return {
@@ -1785,9 +1786,10 @@ export class WorkspaceDocumentService {
     };
 
     // Execute queries
+    // Count includes both folders and documents for accurate pagination
     const [items, total] = await Promise.all([
       this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
-      this.documentModel.countDocuments({ ...query, isFolder: false }),
+      this.documentModel.countDocuments(query),
     ]);
 
     return {

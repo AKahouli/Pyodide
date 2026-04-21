@@ -56,18 +56,15 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
 
   const handleCreateFolder = useCallback(async (name: string) => {
     if (selectedWorkspace) {
-      const store = useWorkspaceStore.getState();
+      setIsCreateFolderOpen(false);
+
       await createFolder(selectedWorkspace.id, {
         name,
         parentId: currentFolderId || undefined,
       });
-      setIsCreateFolderOpen(false);
-      // Invalidate cache and refresh
-      store.invalidateDocumentData();
-      await Promise.all([
-        store.fetchAllFolders(selectedWorkspace.id),
-        store.fetchDocuments(selectedWorkspace.id, 1),
-      ]);
+
+      const store = useWorkspaceStore.getState();
+      await Promise.all([store.fetchAllFolders(selectedWorkspace.id), store.fetchDocuments(selectedWorkspace.id, 1)]);
     }
   }, [selectedWorkspace, createFolder, currentFolderId]);
 

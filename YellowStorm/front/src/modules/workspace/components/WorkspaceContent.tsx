@@ -27,6 +27,7 @@ export function WorkspaceContent() {
   const { documents } = useDocuments();
   const allFolders = useAllFolders();
   const createFolder = useWorkspaceStore((state) => state.createFolder);
+  const renameFolder = useWorkspaceStore((state) => state.renameFolder);
   const deleteFolder = useWorkspaceStore((state) => state.deleteFolder);
   const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
   const setCurrentFolderId = useWorkspaceStore((state) => state.setCurrentFolderId);
@@ -81,24 +82,26 @@ export function WorkspaceContent() {
   // Handle folder navigation
   const handleNavigate = useCallback((folderId: string | null) => {
     setCurrentFolderId(folderId);
+    if (selectedWorkspaceId) {
+      const store = useWorkspaceStore.getState();
+      store.fetchDocuments(selectedWorkspaceId, 1);
+    }
   }, [setCurrentFolderId]);
 
   // Handle create folder
   const handleCreateFolder = useCallback(async (name: string) => {
     if (selectedWorkspaceId) {
-      const store = useWorkspaceStore.getState();
+      setIsCreateFolderOpen(false);
+
       await createFolder(selectedWorkspaceId, {
         name,
         parentId: createFolderParentId,
       });
-      setIsCreateFolderOpen(false);
+
+      const store = useWorkspaceStore.getState();
+      await Promise.all([store.fetchAllFolders(selectedWorkspaceId), store.fetchDocuments(selectedWorkspaceId, 1)]);
+
       setCreateFolderParentId(undefined);
-      // Invalidate cache and refresh
-      store.invalidateDocumentData();
-      await Promise.all([
-        store.fetchAllFolders(selectedWorkspaceId),
-        store.fetchDocuments(selectedWorkspaceId, 1),
-      ]);
     }
   }, [selectedWorkspaceId, createFolder, createFolderParentId]);
 
@@ -106,6 +109,12 @@ export function WorkspaceContent() {
     setCreateFolderParentId(parentId);
     setIsCreateFolderOpen(true);
   }, []);
+
+  const handleCreateRootFolder = useCallback(() => {
+    setCurrentFolderId(null);
+    setCreateFolderParentId(undefined);
+    setIsCreateFolderOpen(true);
+  }, [setCurrentFolderId]);
 
   // Handle rename folder
   const handleRenameFolder = useCallback((folderId: string) => {
@@ -119,39 +128,32 @@ export function WorkspaceContent() {
 
   const handleConfirmRename = useCallback(async () => {
     if (renameFolderId && selectedWorkspaceId && newFolderName.trim()) {
+      const folderId = renameFolderId;
+      const folderName = newFolderName;
+
+      setIsRenameDialogOpen(false);
+      setRenameFolderId(null);
+      setNewFolderName('');
+
       try {
+        await renameFolder(selectedWorkspaceId, folderId, { name: folderName });
+
         const store = useWorkspaceStore.getState();
-        await store.renameFolder(selectedWorkspaceId, renameFolderId, { name: newFolderName });
-        // Invalidate cache and refresh
-        store.invalidateDocumentData();
-        await Promise.all([
-          store.fetchAllFolders(selectedWorkspaceId),
-          store.fetchDocuments(selectedWorkspaceId, 1),
-        ]);
-        setIsRenameDialogOpen(false);
-        setRenameFolderId(null);
-        setNewFolderName('');
+        await Promise.all([store.fetchAllFolders(selectedWorkspaceId), store.fetchDocuments(selectedWorkspaceId, 1)]);
       } catch (error) {
         console.error('Failed to rename folder:', error);
+        setIsRenameDialogOpen(true);
+        setRenameFolderId(folderId);
+        setNewFolderName(folderName);
       }
     }
-  }, [renameFolderId, selectedWorkspaceId, newFolderName]);
+  }, [renameFolderId, selectedWorkspaceId, newFolderName, renameFolder]);
 
   // Handle delete folder
   const handleDeleteFolder = useCallback(async (folderId: string) => {
     if (selectedWorkspaceId && confirm(t('folder.deleteConfirm'))) {
       try {
-        const store = useWorkspaceStore.getState();
         await deleteFolder(selectedWorkspaceId, folderId);
-        if (currentFolderId === folderId) {
-          setCurrentFolderId(null);
-        }
-        // Invalidate cache and refresh
-        store.invalidateDocumentData();
-        await Promise.all([
-          store.fetchAllFolders(selectedWorkspaceId),
-          store.fetchDocuments(selectedWorkspaceId, 1),
-        ]);
       } catch (error) {
         console.error('Failed to delete folder:', error);
       }
@@ -220,6 +222,7 @@ export function WorkspaceContent() {
                 currentFolderId={currentFolderId}
                 onFolderSelect={handleNavigate}
                 onCreateFolder={handleOpenCreateFolder}
+                onCreateRootFolder={handleCreateRootFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onRenameFolder={handleRenameFolder}
               />

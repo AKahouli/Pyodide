@@ -161,6 +161,7 @@ interface WorkspaceActions {
   invalidateDocumentData: () => void; // Invalidate only documents, keep currentFolderId
   updateWorkspaceInCache: (workspace: Workspace) => void;
   refreshWorkspace: (workspaceId: string) => Promise<void>;
+  removeFolderFromCache: (folderId: string) => void;
 
   // Error handling
   clearError: () => void;
@@ -556,16 +557,14 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
       fetchDocuments: async (workspaceId, page = 1) => {
         const state = get();
 
-        // Check if folder changed - invalidate cache if folder is different
         const folderChanged = state.currentFolderId !== state.lastFetchedFolderId;
+        const targetPage = folderChanged ? 1 : page;
 
-        // Check cache first (skip if searching or folder changed)
-        if (!state.documentSearchQuery && !folderChanged && state.documents.has(page)) {
-          set({ documentsCurrentPage: page });
+        if (!state.documentSearchQuery && !folderChanged && state.documents.has(targetPage)) {
+          set({ documentsCurrentPage: targetPage });
           return;
         }
 
-        // If folder changed, clear cache
         if (folderChanged) {
           set({
             documents: new Map(),
@@ -577,19 +576,18 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
         try {
           const result = await workspaceApi.getDocuments(workspaceId, {
-            page: folderChanged ? 1 : page,
+            page: targetPage,
             limit: DEFAULT_PAGE_LIMIT,
             search: state.documentSearchQuery || undefined,
             parentId: state.currentFolderId,
           });
 
-          // Always create fresh cache, don't reuse old data
           const newCache = new Map(state.documentSearchQuery ? [] : state.documents);
-          newCache.set(1, result.documents);
+          newCache.set(targetPage, result.documents);
 
           set({
             documents: newCache,
-            documentsCurrentPage: 1,
+            documentsCurrentPage: targetPage,
             documentsTotalPages: result.pagination.totalPages,
             totalDocuments: result.pagination.total,
             lastFetchedFolderId: state.currentFolderId,
@@ -608,6 +606,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           lastFetchedFolderId: null,
           documents: new Map(),
           documentsCurrentPage: 1,
+          documentsTotalPages: 0,
+          totalDocuments: 0,
         });
       },
 
@@ -618,6 +618,41 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         } catch (err) {
           console.error('Failed to fetch all folders:', err);
         }
+      },
+
+      removeFolderFromCache: (folderId: string) => {
+        const state = get();
+        const folderIdsToRemove = new Set<string>([folderId]);
+
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const folder of state.allFolders) {
+            if (folder.parentId && folderIdsToRemove.has(folder.parentId) && !folderIdsToRemove.has(folder.id)) {
+              folderIdsToRemove.add(folder.id);
+              changed = true;
+            }
+          }
+        }
+
+        const filteredFolders = state.allFolders.filter((folder) => !folderIdsToRemove.has(folder.id));
+        const filteredDocuments = new Map<number, WorkspaceDocument[]>();
+
+        state.documents.forEach((documents, page) => {
+          filteredDocuments.set(
+            page,
+            documents.filter((document) => !(document.isFolder && folderIdsToRemove.has(document.id))),
+          );
+        });
+
+        const shouldResetCurrentFolder = state.currentFolderId ? folderIdsToRemove.has(state.currentFolderId) : false;
+
+        set({
+          allFolders: filteredFolders,
+          documents: filteredDocuments,
+          currentFolderId: shouldResetCurrentFolder ? null : state.currentFolderId,
+          lastFetchedFolderId: shouldResetCurrentFolder ? null : state.lastFetchedFolderId,
+        });
       },
 
       searchDocuments: async (query) => {
@@ -899,8 +934,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           totalDocuments: 0,
           documentSearchQuery: '',
           lastFetchedFolderId: null,
-          allFolders: [],
-          currentFolderId: null,
         });
       },
 
@@ -912,7 +945,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           totalDocuments: 0,
           documentSearchQuery: '',
           lastFetchedFolderId: null,
-          allFolders: [],
         });
       },
 
@@ -1141,6 +1173,23 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           toast.success(tToast('folder.createSuccessTitle', 'Folder created'), {
             description: tToast('folder.createSuccessDescription', `"${data.name}" has been created successfully.`, { name: data.name }),
           });
+
+          // Optimistic update: add folder to the current folder listing immediately
+          const state = get();
+          const parentId = data.parentId || null;
+          if (state.currentFolderId === parentId) {
+            const currentPageDocs = state.documents.get(state.documentsCurrentPage) ?? [];
+            const newCache = new Map(state.documents);
+            newCache.set(state.documentsCurrentPage, [folder, ...currentPageDocs]);
+            set({ documents: newCache });
+          }
+
+          if (parentId === null) {
+            const newFolders = [...state.allFolders];
+            newFolders.unshift(folder);
+            set({ allFolders: newFolders });
+          }
+
           return folder;
         } catch (err) {
           const fallback = tError('createFolder', 'Failed to create folder');
@@ -1172,6 +1221,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
         try {
           const result = await workspaceApi.deleteFolder(workspaceId, folderId);
+          get().removeFolderFromCache(folderId);
+          await Promise.all([get().fetchAllFolders(workspaceId), get().fetchDocuments(workspaceId, 1)]);
+
           set({ isDeleting: false });
           toast.success(tToast('folder.deleteSuccessTitle', 'Folder deleted'), {
             description: tToast('folder.deleteSuccessDescription', `Deleted ${result.deletedFolders} folder(s) and ${result.deletedDocuments} file(s).`, { folders: result.deletedFolders, files: result.deletedDocuments }),

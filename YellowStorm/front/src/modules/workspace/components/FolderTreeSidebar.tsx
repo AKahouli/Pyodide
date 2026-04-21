@@ -14,9 +14,10 @@ interface FolderTreeSidebarProps {
   onCreateFolder?: (parentId?: string) => void;
   onDeleteFolder?: (folderId: string) => void;
   onRenameFolder?: (folderId: string) => void;
+  onCreateRootFolder?: () => void;
 }
 
-export function FolderTreeSidebar({ documents, currentFolderId, onFolderSelect, onCreateFolder, onDeleteFolder, onRenameFolder }: FolderTreeSidebarProps) {
+export function FolderTreeSidebar({ documents, currentFolderId, onFolderSelect, onCreateFolder, onDeleteFolder, onRenameFolder, onCreateRootFolder }: FolderTreeSidebarProps) {
   const { t } = useModuleTranslation('workspace');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
 
@@ -148,9 +149,9 @@ export function FolderTreeSidebar({ documents, currentFolderId, onFolderSelect, 
       <div className='p-3 border-b bg-background'>
         <div className='flex items-center justify-between'>
           <span className='text-sm font-medium'>{t('folder.folders')}</span>
-          <Button variant='ghost' size='icon' className='h-6 w-6' onClick={() => onCreateFolder?.()}>
-            <Plus className='h-4 w-4' />
-          </Button>
+            <Button variant='ghost' size='icon' className='h-6 w-6' onClick={() => onCreateRootFolder?.()}>
+              <Plus className='h-4 w-4' />
+            </Button>
         </div>
       </div>
       <ScrollArea className='flex-1'>
@@ -165,7 +166,7 @@ export function FolderTreeSidebar({ documents, currentFolderId, onFolderSelect, 
               className='h-6 w-6 opacity-0 group-hover/folder:opacity-100 transition-opacity'
               onClick={(e) => {
                 e.stopPropagation();
-                onCreateFolder?.();
+                onCreateRootFolder?.();
               }}>
               <Plus className='h-3 w-3' />
             </Button>
