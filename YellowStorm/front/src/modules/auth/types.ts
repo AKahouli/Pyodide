@@ -25,6 +25,9 @@ export interface User {
   email: string;
   emailVerified: boolean;
   profileComplete: boolean;
+  appearance?: {
+    colorTheme: 'default' | 'yellow' | 'orange' | 'blue';
+  };
   profile: UserProfile;
   consents: UserConsents;
   status: 'active' | 'inactive' | 'suspended';

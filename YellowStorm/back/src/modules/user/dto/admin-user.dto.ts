@@ -61,6 +61,9 @@ export interface AdminUserResponse {
   email: string;
   emailVerified: boolean;
   profileComplete: boolean;
+  appearance?: {
+    colorTheme: 'default' | 'yellow' | 'orange' | 'blue';
+  };
   profile: {
     firstName?: string;
     lastName?: string;

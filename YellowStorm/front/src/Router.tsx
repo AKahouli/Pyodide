@@ -33,6 +33,7 @@ import {
   AdminGuard,
   AdminLayout,
   AdminDashboard,
+  AppearancePage,
   UsersPage,
   RolesPage,
   AuditLogsPage,
@@ -145,6 +146,7 @@ export const router = createHashRouter([
         element: <AdminLayout />,
         children: [
           { index: true, element: <AdminDashboard /> },
+          { path: 'appearance', element: <AppearancePage /> },
           { path: "users", element: <UsersPage /> },
           { path: "roles", element: <RolesPage /> },
           { path: "audit", element: <AuditLogsPage /> },

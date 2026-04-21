@@ -1,19 +1,31 @@
 import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue } from './schemas/system-setting.schema';
+import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationValue, AppearanceValue } from './schemas/system-setting.schema';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
+import { AppearanceSettings } from './interfaces/appearance.interface';
 import { LoggerService } from '../logger';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
+const APPEARANCE_KEY = 'appearance_settings';
 const CACHE_TTL_MS = 5000; // 5 seconds
+const DEFAULT_APPEARANCE: AppearanceSettings = {
+  defaultColorTheme: 'default',
+  themes: {
+    default: { labelKey: 'appearance.colorTheme.default', logo: 'yellowmind' },
+    yellow: { labelKey: 'appearance.colorTheme.yellow', logo: 'yellowmind' },
+    orange: { labelKey: 'appearance.colorTheme.orange', logo: 'kpmg' },
+    blue: { labelKey: 'appearance.colorTheme.blue', logo: 'kpmg' },
+  },
+};
 
 @Injectable()
 export class SystemService implements OnApplicationBootstrap {
   private maintenanceCache: MaintenanceStatus | null = null;
   private registrationCache: RegistrationStatus | null = null;
+  private appearanceCache: AppearanceSettings | null = null;
   private lastCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
@@ -32,10 +44,12 @@ export class SystemService implements OnApplicationBootstrap {
       await Promise.all([
         this.refreshMaintenanceCache(),
         this.refreshRegistrationCache(),
+        this.refreshAppearanceCache(),
       ]);
       this.logger.log('System service initialized', {
         maintenanceEnabled: this.maintenanceCache?.enabled ?? false,
         registrationEnabled: this.registrationCache?.enabled ?? true,
+        appearanceDefaultColorTheme: this.appearanceCache?.defaultColorTheme ?? 'default',
       });
 
       // Start periodic refresh
@@ -46,12 +60,16 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshRegistrationCache().catch((err) => {
           this.logger.warn('Periodic registration cache refresh failed', { error: err.message });
         });
+        this.refreshAppearanceCache().catch((err) => {
+          this.logger.warn('Periodic appearance cache refresh failed', { error: err.message });
+        });
       }, CACHE_TTL_MS);
     } catch (error) {
       this.logger.warn('Failed to initialize system service', { error: (error as Error).message });
       // Initialize with safe defaults
       this.maintenanceCache = { enabled: false, message: '' };
       this.registrationCache = { enabled: true };
+      this.appearanceCache = DEFAULT_APPEARANCE;
     }
   }
 
@@ -180,6 +198,33 @@ export class SystemService implements OnApplicationBootstrap {
    */
   async forceRefreshCache(): Promise<void> {
     await this.refreshMaintenanceCache();
+    await this.refreshAppearanceCache();
+  }
+
+  async getAppearanceSettings(): Promise<AppearanceSettings> {
+    const now = Date.now();
+    if (this.appearanceCache && now - this.lastCacheUpdate < CACHE_TTL_MS) {
+      return this.appearanceCache;
+    }
+
+    return this.refreshAppearanceCache();
+  }
+
+  async setAppearanceSettings(settings: AppearanceSettings): Promise<AppearanceSettings> {
+    const value: AppearanceValue = {
+      defaultColorTheme: settings.defaultColorTheme,
+      themes: settings.themes,
+    };
+
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: APPEARANCE_KEY },
+      { key: APPEARANCE_KEY, value },
+      { upsert: true, new: true },
+    );
+
+    this.appearanceCache = settings;
+    this.lastCacheUpdate = Date.now();
+    return settings;
   }
 
   // ─── Registration ───────────────────────────────────────────────
@@ -326,6 +371,31 @@ export class SystemService implements OnApplicationBootstrap {
     }
   }
 
+  private async refreshAppearanceCache(): Promise<AppearanceSettings> {
+    try {
+      const setting = await this.systemSettingModel.findOne({ key: APPEARANCE_KEY });
+
+      if (setting && this.isAppearanceValue(setting.value)) {
+        this.appearanceCache = {
+          defaultColorTheme: setting.value.defaultColorTheme,
+          themes: setting.value.themes,
+        };
+      } else {
+        this.appearanceCache = DEFAULT_APPEARANCE;
+      }
+
+      this.lastCacheUpdate = Date.now();
+      return this.appearanceCache;
+    } catch (error) {
+      this.logger.error('Failed to refresh appearance cache', {
+        error: (error as Error).message,
+      });
+
+      this.appearanceCache ??= DEFAULT_APPEARANCE;
+      return this.appearanceCache;
+    }
+  }
+
   /**
    * Type guard for RegistrationValue
    */
@@ -335,6 +405,15 @@ export class SystemService implements OnApplicationBootstrap {
       value !== null &&
       'enabled' in value &&
       typeof (value as RegistrationValue).enabled === 'boolean'
+    );
+  }
+
+  private isAppearanceValue(value: unknown): value is AppearanceValue {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'defaultColorTheme' in value &&
+      'themes' in value
     );
   }
 

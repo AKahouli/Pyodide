@@ -73,9 +73,9 @@ export function AppearanceSection() {
 
   const colorThemeLabels: Record<ColorTheme, string> = {
     default: t('appearance.colorTheme.default'),
-    yellowsys: t('appearance.colorTheme.yellowsys'),
-    claude: t('appearance.colorTheme.claude'),
-    kpmg: t('appearance.colorTheme.kpmg'),
+    yellow: t('appearance.colorTheme.yellow'),
+    orange: t('appearance.colorTheme.orange'),
+    blue: t('appearance.colorTheme.blue'),
   };
 
   const languageLabel = (code: Language) => t(LANGUAGE_KEYS[code]);

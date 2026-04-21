@@ -1,10 +1,10 @@
 import { createContext, useEffect, useState } from 'react';
 
 export const COLOR_THEMES = [
-  { value: 'default', label: 'Original' },
-  { value: 'yellowsys', label: 'Yellowsys' },
-  { value: 'claude', label: 'Neighbor' },
-  { value: 'kpmg', label: 'KPMG' },
+  { value: 'default', labelKey: 'appearance.colorTheme.default' },
+  { value: 'yellow', labelKey: 'appearance.colorTheme.yellow' },
+  { value: 'orange', labelKey: 'appearance.colorTheme.orange' },
+  { value: 'blue', labelKey: 'appearance.colorTheme.blue' },
 ] as const;
 
 export type ColorTheme = (typeof COLOR_THEMES)[number]['value'];
@@ -13,8 +13,7 @@ type ThemeProviderProps = {
   children: React.ReactNode;
   defaultTheme?: string;
   defaultColorTheme?: ColorTheme;
-  storageKey?: string;
-  colorThemeStorageKey?: string;
+  initialColorTheme?: ColorTheme;
 };
 
 export type ThemeProviderState = {
@@ -22,6 +21,14 @@ export type ThemeProviderState = {
   setTheme: (theme: string) => void;
   colorTheme: ColorTheme;
   setColorTheme: (colorTheme: ColorTheme) => void;
+  colorThemeLabels: Record<ColorTheme, string>;
+};
+
+const COLOR_THEME_LABELS: Record<ColorTheme, string> = {
+  default: 'Original',
+  yellow: 'Jaune',
+  orange: 'Orange',
+  blue: 'Bleu',
 };
 
 const initialState: ThemeProviderState = {
@@ -29,14 +36,14 @@ const initialState: ThemeProviderState = {
   setTheme: () => null,
   colorTheme: 'default',
   setColorTheme: () => null,
+  colorThemeLabels: COLOR_THEME_LABELS,
 };
 
 export const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
-export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorTheme = 'default', storageKey = 'ui-theme', colorThemeStorageKey = 'ui-color-theme', ...props }: ThemeProviderProps) {
-  const [theme, setTheme] = useState(() => localStorage.getItem(storageKey) ?? defaultTheme);
-
-  const [colorTheme, setColorTheme] = useState<ColorTheme>(() => (localStorage.getItem(colorThemeStorageKey) as ColorTheme) ?? defaultColorTheme);
+export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorTheme = 'default', initialColorTheme, ...props }: ThemeProviderProps) {
+  const [theme, setTheme] = useState(() => localStorage.getItem('ui-theme') ?? defaultTheme);
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(initialColorTheme ?? defaultColorTheme);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -45,7 +52,6 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
 
     if (theme === 'system') {
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-
       root.classList.add(systemTheme);
       return;
     }
@@ -56,14 +62,12 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
   useEffect(() => {
     const root = window.document.documentElement;
 
-    // Remove all color theme classes
     for (const t of COLOR_THEMES) {
       if (t.value !== 'default') {
         root.classList.remove(`theme-${t.value}`);
       }
     }
 
-    // Apply the selected color theme
     if (colorTheme !== 'default') {
       root.classList.add(`theme-${colorTheme}`);
     }
@@ -74,15 +78,13 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
       {...props}
       value={{
         theme,
-        setTheme: (theme: string) => {
-          localStorage.setItem(storageKey, theme);
-          setTheme(theme);
+        setTheme: (nextTheme: string) => {
+          localStorage.setItem('ui-theme', nextTheme);
+          setTheme(nextTheme);
         },
         colorTheme,
-        setColorTheme: (colorTheme: ColorTheme) => {
-          localStorage.setItem(colorThemeStorageKey, colorTheme);
-          setColorTheme(colorTheme);
-        },
+        setColorTheme,
+        colorThemeLabels: COLOR_THEME_LABELS,
       }}>
       {children}
     </ThemeProviderContext.Provider>

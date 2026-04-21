@@ -17,8 +17,8 @@ vi.mock('@/contexts/ThemeContext', async () => {
     ThemeProviderContext: React.createContext(themeContextValue),
     COLOR_THEMES: [
       { value: 'default' },
-      { value: 'yellowsys' },
-      { value: 'claude' },
+      { value: 'yellow' },
+      { value: 'orange' },
     ],
   };
 });

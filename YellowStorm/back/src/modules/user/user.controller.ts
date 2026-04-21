@@ -87,6 +87,9 @@ export class UserController {
       email: user.email,
       emailVerified: user.emailVerified,
       profileComplete: user.profileComplete,
+      appearance: {
+        colorTheme: user.appearance?.colorTheme ?? 'default',
+      },
       profile: {
         firstName: user.profile?.firstName,
         lastName: user.profile?.lastName,

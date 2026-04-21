@@ -7,6 +7,7 @@ import { SkipMaintenance } from './decorators/skip-maintenance.decorator';
 import { RateLimitSkip } from '../rate-limiter';
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
+import { AppearanceSettings } from './interfaces/appearance.interface';
 import { RequirePermissions, PermissionsGuard, Permissions, AuditLogService } from '../authorization';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
@@ -152,6 +153,40 @@ export class SystemController {
       metadata: {
         enabled: body.enabled,
       },
+      ipAddress: req.ip,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return result;
+  }
+
+  @Get('appearance')
+  @Public()
+  @SkipMaintenance()
+  @RateLimitSkip()
+  @ApiOperation({ summary: 'Get appearance settings' })
+  async getAppearanceSettings(): Promise<AppearanceSettings> {
+    return this.systemService.getAppearanceSettings();
+  }
+
+  @Post('appearance')
+  @UseGuards(PermissionsGuard)
+  @RequirePermissions(Permissions.SYSTEM_MAINTENANCE)
+  @SkipMaintenance()
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Set appearance settings' })
+  async setAppearanceSettings(
+    @Body() body: AppearanceSettings,
+    @CurrentUser() user: UserDocument,
+    @Req() req: Request,
+  ): Promise<AppearanceSettings> {
+    const result = await this.systemService.setAppearanceSettings(body);
+
+    this.auditLogService.logSuccess({
+      actorId: user._id.toString(),
+      actorEmail: user.email,
+      action: 'system.appearance',
+      metadata: body,
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });
