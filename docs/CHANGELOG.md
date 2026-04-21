@@ -1,5 +1,21 @@
 # Changelog
 
+## [2026-04-21 00:30 UTC] — Add connector citation tracing for MCP tools
+
+- **Feature:** `connectors`, `conversation`
+- **Type:** `fix`
+- **Changed:** Added targeted runtime logging around MCP connector calls, structured response normalization, connector citation registration, source streaming, citation lookup, and citation component emission so connector-backed citation failures can be traced end to end, including `searchv2` tool calls.
+- **Why:** Connector citations were still not visible in the UI for at least one MCP connector flow, so the runtime needed enough observability to show whether source metadata is absent, not normalized, not registered, or not emitted.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/mcp_client_factory.py`, `yellowstorm-adk/src/smart_rag/tools/utilities/connector_tools.py`, `yellowstorm-adk/src/smart_rag/agents/core/runner.py`, and `docs/CHANGELOG.md`.
+
+## [2026-04-21 00:00 UTC] — Add connector source and citation extraction in conversation
+
+- **Feature:** `connectors`, `conversation`
+- **Type:** `feat`
+- **Changed:** Preserved structured MCP connector responses in the ADK conversation path, normalized connector-provided URLs and inline document text into the existing `sources` and `citation` message component shapes, registered connector citation references in session state, and extended the runner to emit source cards for structured connector tool responses while resolving bracketed connector references through the standard inline citation pipeline. Added focused ADK tests for MCP normalization and runner source handling.
+- **Why:** Connector tools previously flattened MCP responses to plain text, which discarded source metadata and prevented the existing chat citation UI from being reused for connector-backed answers.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/mcp_client_factory.py`, `yellowstorm-adk/src/smart_rag/tools/utilities/connector_tools.py`, `yellowstorm-adk/src/smart_rag/agents/core/runner.py`, `yellowstorm-adk/tests/test_langgraph_engine/test_mcp_client_factory.py`, `yellowstorm-adk/tests/test_agents/test_core/test_runner.py`, `docs/connectors/README_2026-04-14_23-00-00.md`, `docs/conversation/README.md`, `docs/DOC_INDEX.md`, and `docs/CHANGELOG.md`.
+
 ## [2026-04-20 00:00 UTC] — Update mail-trigger and action-node docs
 
 - **Feature:** `playbook`

@@ -199,7 +199,11 @@ class TestAgentRunner:
         mock_runner_instance.run_async = mock_run_async
 
         mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
-        mock_message_transformer.simple_tag_transformer.return_value = ("processed", "")
+        mock_message_transformer.simple_tag_transformer.return_value = (
+            "processed",
+            "",
+            [],
+        )
 
         with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance):
             result = await agent_runner._run_standard_agent(
@@ -509,6 +513,255 @@ class TestAgentRunner:
             )
 
         assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_handle_structured_tool_response_streams_sources_component(self):
+        mock_event_extractor = MagicMock()
+        mock_message_transformer = MagicMock()
+        mock_streaming_formatter = MagicMock()
+        mock_prompt_processor = MagicMock()
+
+        runner = AgentRunner(
+            mock_event_extractor,
+            mock_message_transformer,
+            mock_streaming_formatter,
+            mock_prompt_processor
+        )
+
+        function_response = MagicMock()
+        function_response.response = {
+            "text": "Connector result",
+            "sources": [{"title": "Q1 report", "url": "https://contoso.example/q1"}],
+        }
+        queue = AsyncMock()
+        mock_streaming_formatter.format_component_event.return_value = {"type": "sources"}
+
+        await runner._handle_structured_tool_response(
+            function_response=function_response,
+            agent_id="agent_123",
+            session_id="session_123",
+            q=queue,
+        )
+
+        mock_streaming_formatter.format_component_event.assert_called_once_with(
+            agent_id="agent_123",
+            component_type="sources",
+            component_data={"sources": [{"title": "Q1 report", "url": "https://contoso.example/q1"}]},
+            message_id="session_123",
+        )
+        queue.put.assert_called_once_with({"type": "sources"})
+
+    @pytest.mark.asyncio
+    async def test_handle_structured_tool_response_registers_connector_citations_from_response(self):
+        mock_event_extractor = MagicMock()
+        mock_message_transformer = MagicMock()
+        mock_streaming_formatter = MagicMock()
+        mock_prompt_processor = MagicMock()
+
+        runner = AgentRunner(
+            mock_event_extractor,
+            mock_message_transformer,
+            mock_streaming_formatter,
+            mock_prompt_processor
+        )
+
+        function_response = MagicMock()
+        function_response.name = "searchv2_search"
+        function_response.response = {
+            "text": "Connector result [1]",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "SLA_Indicateurs_Performance.docx",
+                    "external_id": "doc-123",
+                    "page": "",
+                    "page_content": "1. Objectifs de Niveau de Service (SLA)",
+                    "workspace_id": "",
+                }
+            ],
+        }
+        session_state = {}
+        queue = AsyncMock()
+
+        await runner._handle_structured_tool_response(
+            function_response=function_response,
+            agent_id="agent_123",
+            session_id="session_123",
+            q=queue,
+            session_state=session_state,
+        )
+
+        assert session_state["_connector_text_sources"][0]["reference"] == "1"
+        assert (
+            session_state["_connector_text_sources"][0]["object"]["content"]["source"]
+            == "SLA_Indicateurs_Performance.docx"
+        )
+        queue.put.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_handle_structured_tool_response_registers_connector_citations_from_raw_result_blocks(self):
+        mock_event_extractor = MagicMock()
+        mock_message_transformer = MagicMock()
+        mock_streaming_formatter = MagicMock()
+        mock_prompt_processor = MagicMock()
+
+        runner = AgentRunner(
+            mock_event_extractor,
+            mock_message_transformer,
+            mock_streaming_formatter,
+            mock_prompt_processor
+        )
+
+        function_response = MagicMock()
+        function_response.name = "searchv2_search_document_blocks"
+        function_response.response = {
+            "result": """
+            [
+              {
+                "document_id": 68,
+                "brain_id": "69e643ae25a48c9410bff159",
+                "external_id": "69e643d725a48c9410bff182",
+                "source": "https://yssametachatbotdev001.blob.core.windows.net/metachatbot/6992fc709968567dc766a12d/69e643ae25a48c9410bff159/69e643d725a48c9410bff182/SLA_Indicateurs_Performance.docx",
+                "block_id": "p0_b0",
+                "block_type": "text",
+                "content": "Le présent document définit les objectifs de performance.",
+                "page_number": 0
+              },
+              {
+                "document_id": 68,
+                "brain_id": "69e643ae25a48c9410bff159",
+                "block_id": "p0_b6",
+                "block_type": "paragraph_title",
+                "content": "1. Objectifs de Niveau de Service (SLA)",
+                "page_number": 0
+              }
+            ]
+            """
+        }
+        session_state = {}
+        queue = AsyncMock()
+
+        await runner._handle_structured_tool_response(
+            function_response=function_response,
+            agent_id="agent_123",
+            session_id="session_123",
+            q=queue,
+            session_state=session_state,
+        )
+
+        assert len(session_state["_connector_text_sources"]) == 2
+        assert session_state["_connector_text_sources"][0]["reference"] == "1"
+        assert (
+            session_state["_connector_text_sources"][0]["object"]["content"]["source"]
+            == "SLA_Indicateurs_Performance.docx"
+        )
+        assert (
+            session_state["_connector_text_sources"][0]["object"]["content"]["external_id"]
+            == "69e643d725a48c9410bff182"
+        )
+        assert (
+            session_state["_connector_text_sources"][0]["object"]["content"]["page"]
+            == "1"
+        )
+        assert session_state["_connector_text_sources"][0]["reference_aliases"] == ["68"]
+        queue.put.assert_not_called()
+
+    def test_find_source_by_reference_reads_connector_sources_from_session_state(self):
+        mock_event_extractor = MagicMock()
+        mock_message_transformer = MagicMock()
+        mock_streaming_formatter = MagicMock()
+        mock_prompt_processor = MagicMock()
+
+        runner = AgentRunner(
+            mock_event_extractor,
+            mock_message_transformer,
+            mock_streaming_formatter,
+            mock_prompt_processor
+        )
+
+        toolkit = MagicMock()
+        toolkit.sources_text = []
+        toolkit.sources_image = []
+        session_state = {
+            "_connector_text_sources": [
+                {
+                    "reference": "1",
+                    "object": {
+                        "content": {
+                            "source": "Q1-report.txt",
+                            "external_id": "item-123",
+                            "page": "",
+                            "page_content": "Quarterly revenue increased by 18%.",
+                            "brain_id": "",
+                        }
+                    },
+                }
+            ]
+        }
+
+        source = runner._find_source_by_reference("1", toolkit, session_state)
+
+        assert source == {
+            "source_object": {
+                "content": {
+                    "source": "Q1-report.txt",
+                    "external_id": "item-123",
+                    "page": "",
+                    "page_content": "Quarterly revenue increased by 18%.",
+                    "brain_id": "",
+                }
+            },
+            "type": "text",
+        }
+
+    def test_find_source_by_reference_matches_connector_alias_reference(self):
+        mock_event_extractor = MagicMock()
+        mock_message_transformer = MagicMock()
+        mock_streaming_formatter = MagicMock()
+        mock_prompt_processor = MagicMock()
+
+        runner = AgentRunner(
+            mock_event_extractor,
+            mock_message_transformer,
+            mock_streaming_formatter,
+            mock_prompt_processor
+        )
+
+        toolkit = MagicMock()
+        toolkit.sources_text = []
+        toolkit.sources_image = []
+        session_state = {
+            "_connector_text_sources": [
+                {
+                    "reference": "4",
+                    "reference_aliases": ["68"],
+                    "object": {
+                        "content": {
+                            "source": "SLA_Indicateurs_Performance.docx",
+                            "external_id": "p0_b0",
+                            "page": "1",
+                            "page_content": "Les indicateurs de performance sont utilises...",
+                            "brain_id": "69e643ae25a48c9410bff159",
+                        }
+                    },
+                }
+            ]
+        }
+
+        source = runner._find_source_by_reference("[68]", toolkit, session_state)
+
+        assert source == {
+            "source_object": {
+                "content": {
+                    "source": "SLA_Indicateurs_Performance.docx",
+                    "external_id": "p0_b0",
+                    "page": "1",
+                    "page_content": "Les indicateurs de performance sont utilises...",
+                    "brain_id": "69e643ae25a48c9410bff159",
+                }
+            },
+            "type": "text",
+        }
 
     @pytest.mark.asyncio
     async def test_run_standard_agent_exception(self):

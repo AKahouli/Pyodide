@@ -6,6 +6,7 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 """
 
 import copy
+import json
 import re
 from typing import Dict, Any, List, Optional, Tuple, Type
 
@@ -19,6 +20,13 @@ from src.smart_rag.tools.utilities.connector_tools import (
 )
 
 logger = get_logger(__name__)
+
+
+def _log_payload(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
 
 _GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
     ".pdf": "document",
@@ -1197,7 +1205,7 @@ def _create_connector_mcp_tools(
                 ah: Dict[str, str] = {**binding_auth_headers, **brain_header},
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
-                async def _execute_mcp(**kwargs: Any) -> str:
+                async def _execute_mcp(**kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
                     if isinstance(raw_params, dict):
                         params = raw_params
@@ -1218,7 +1226,14 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
-                        return await call_mcp_tool(
+                        logger.info(
+                            "playbook_connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
+                            cid,
+                            ak,
+                            tn,
+                            _log_payload(merged_params),
+                        )
+                        response = await call_mcp_tool(
                             tt,
                             su,
                             sc,
@@ -1227,6 +1242,30 @@ def _create_connector_mcp_tools(
                             auth_headers=ah,
                             auth_env=ae,
                         )
+                        logger.info(
+                            "playbook_connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
+                            cid,
+                            ak,
+                            tn,
+                            type(response).__name__,
+                            _log_payload(response),
+                        )
+                        if isinstance(response, dict):
+                            logger.info(
+                                "playbook_connector_tool_normalized_response connector_id=%s action_key=%s tool_name=%s keys=%s source_count=%s citation_source_count=%s normalized_response=%s",
+                                cid,
+                                ak,
+                                tn,
+                                sorted(response.keys()),
+                                len(response.get("sources", []))
+                                if isinstance(response.get("sources"), list)
+                                else 0,
+                                len(response.get("citation_sources", []))
+                                if isinstance(response.get("citation_sources"), list)
+                                else 0,
+                                _log_payload(response),
+                            )
+                        return response
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"
