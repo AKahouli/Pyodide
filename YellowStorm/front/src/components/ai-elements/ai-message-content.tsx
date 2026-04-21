@@ -3,7 +3,7 @@
 import { cn } from '@/lib/utils';
 import { downloadCode } from '@/lib/download';
 import { toast } from 'sonner';
-import { useState, useMemo, useEffect, useRef, type HTMLAttributes } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef, type HTMLAttributes } from 'react';
 import { useShouldAutoOpenPreview, useFileViewerDisplayMode } from './message-context';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -26,6 +26,7 @@ import { ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTool
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
+import { rehypeCitationMarkers } from '@/lib/rehype-citation-markers';
 
 // ============================================================================
 // Message Content Part Types
@@ -222,7 +223,7 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
     case 'checkpoint':
       return <CheckpointPartRenderer label={part.label} />;
     case 'chart':
-      return <ChartPartRenderer title={part.title} kind={part.kind} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
+      return <ChartPartRenderer title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} series={part.series} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
     case 'error':
@@ -242,88 +243,171 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
   }
 };
 
+// Shared markdown component overrides (extracted to avoid duplication)
+const markdownComponents: React.ComponentProps<typeof ReactMarkdown>['components'] = {
+  code({ children, ...props }) {
+    return (
+      <code className='bg-muted px-1.5 py-0.5 rounded text-sm' {...props}>
+        {children}
+      </code>
+    );
+  },
+  pre({ children }) {
+    return <pre className='bg-muted rounded-md p-3 overflow-x-auto my-4 text-sm'>{children}</pre>;
+  },
+  a({ children, ...props }) {
+    return (
+      <a className='inline-flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors' target='_blank' rel='noopener noreferrer' {...props}>
+        {children}
+      </a>
+    );
+  },
+  p({ children }) {
+    return <p className='mb-3 last:mb-0 leading-loose'>{children}</p>;
+  },
+  ul({ children }) {
+    return <ul className='list-disc pl-5 mb-4 space-y-1'>{children}</ul>;
+  },
+  ol({ children }) {
+    return <ol className='list-decimal pl-5 mb-4 space-y-1'>{children}</ol>;
+  },
+  li({ children }) {
+    return <li className='mb-1.5 leading-loose'>{children}</li>;
+  },
+  h1({ children }) {
+    return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0'>{children}</h1>;
+  },
+  h2({ children }) {
+    return <h2 className='text-lg font-bold mb-3 mt-5 first:mt-0'>{children}</h2>;
+  },
+  h3({ children }) {
+    return <h3 className='text-base font-bold mb-2 mt-4 first:mt-0'>{children}</h3>;
+  },
+  hr() {
+    return <hr className='my-8 border-t-2 border-muted-foreground/80' />;
+  },
+  blockquote({ children }) {
+    return <blockquote className='border-l-4 border-muted-foreground/30 pl-4 italic my-4'>{children}</blockquote>;
+  },
+  table({ children }) {
+    return (
+      <div className='overflow-x-auto my-4'>
+        <table className='min-w-full border-collapse border border-border'>{children}</table>
+      </div>
+    );
+  },
+  th({ children }) {
+    return <th className='border border-border bg-muted px-3 py-2 text-left font-semibold'>{children}</th>;
+  },
+  td({ children }) {
+    return <td className='border border-border px-3 py-2'>{children}</td>;
+  },
+};
+
+const remarkPlugins = [remarkGfm];
+const rehypeCitationPlugins = [rehypeCitationMarkers];
+
 // Text Part with Markdown support
 const TextPartRenderer = ({ content, showCursor, citations }: { content: string; showCursor?: boolean; citations?: CitationData[] }) => {
-  const hasCitations = citations && citations.length > 0;
+  // Split citations: those with a reference AND a matching [n] marker in the text are inline
+  // (rendered at [n] positions by rehype), all others are trailing (rendered as badges after text).
+  // This ensures citations with a reference but no matching marker are not silently lost.
+  const { citationMap, trailingCitations } = useMemo(() => {
+    if (!citations || citations.length === 0) {
+      return { citationMap: new Map<string, CitationData>(), trailingCitations: [] as CitationData[] };
+    }
+    const map = new Map<string, CitationData>();
+    const trailing: CitationData[] = [];
+    for (const c of citations) {
+      // Normalize reference to bare digit (e.g. "[1]" → "1") to match rehypeCitationMarkers output
+      const ref = c.reference?.replace(/^\[|\]$/g, '');
+      if (ref && content.includes(`[${ref}]`)) {
+        map.set(ref, c);
+      } else {
+        trailing.push(c);
+      }
+    }
+    return { citationMap: map, trailingCitations: trailing };
+  }, [citations, content]);
+
+  const hasInline = citationMap.size > 0;
+  const hasTrailing = trailingCitations.length > 0;
+
+  // Stable ref for citation map to use in the cite component without re-creating components object
+  const citationMapRef = useRef(citationMap);
+  citationMapRef.current = citationMap;
+
+  // Build components with cite handler for inline citations
+  const componentsWithCite = useMemo(() => {
+    if (!hasInline) return markdownComponents;
+    return {
+      ...markdownComponents,
+      cite: ({ node, ...props }: any) => {
+        const ref = props['data-citation-ref'] as string | undefined;
+        if (ref == null) return null;
+        const c = citationMapRef.current.get(ref);
+        if (!c) return <>[{ref}]</>;
+        return <SingleInlineCitation citation={c} />;
+      },
+    };
+  }, [hasInline]);
+
   return (
-  <div className={cn(
-    showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom",
-    hasCitations && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0',
-  )}>
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        // Inline code
-        code({ children, ...props }) {
-          return (
-            <code className='bg-muted px-1.5 py-0.5 rounded text-sm' {...props}>
-              {children}
-            </code>
-          );
-        },
-        // Code blocks
-        pre({ children }) {
-          return <pre className='bg-muted rounded-md p-3 overflow-x-auto my-4 text-sm'>{children}</pre>;
-        },
-        // Links
-        a({ children, ...props }) {
-          return (
-            <a className='inline-flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors' target='_blank' rel='noopener noreferrer' {...props}>
-              {children}
-            </a>
-          );
-        },
-        // Paragraphs
-        p({ children }) {
-          return <p className='mb-3 last:mb-0 leading-loose'>{children}</p>;
-        },
-        // Lists
-        ul({ children }) {
-          return <ul className='list-disc pl-5 mb-4 space-y-1'>{children}</ul>;
-        },
-        ol({ children }) {
-          return <ol className='list-decimal pl-5 mb-4 space-y-1'>{children}</ol>;
-        },
-        li({ children }) {
-          return <li className='mb-1.5 leading-loose'>{children}</li>;
-        },
-        // Headings
-        h1({ children }) {
-          return <h1 className='text-xl font-bold mb-3 mt-6 first:mt-0'>{children}</h1>;
-        },
-        h2({ children }) {
-          return <h2 className='text-lg font-bold mb-3 mt-5 first:mt-0'>{children}</h2>;
-        },
-        h3({ children }) {
-          return <h3 className='text-base font-bold mb-2 mt-4 first:mt-0'>{children}</h3>;
-        },
-        // Horizontal rule
-        hr() {
-          return <hr className='my-8 border-t-2 border-muted-foreground/80' />;
-        },
-        // Blockquotes
-        blockquote({ children }) {
-          return <blockquote className='border-l-4 border-muted-foreground/30 pl-4 italic my-4'>{children}</blockquote>;
-        },
-        // Tables
-        table({ children }) {
-          return (
-            <div className='overflow-x-auto my-4'>
-              <table className='min-w-full border-collapse border border-border'>{children}</table>
-            </div>
-          );
-        },
-        th({ children }) {
-          return <th className='border border-border bg-muted px-3 py-2 text-left font-semibold'>{children}</th>;
-        },
-        td({ children }) {
-          return <td className='border border-border px-3 py-2'>{children}</td>;
-        },
-      }}>
-      {content}
-    </ReactMarkdown>
-    {hasCitations && <CitationsInline citations={citations} />}
-  </div>
+    <div className={cn(
+      showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom",
+      hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0',
+    )}>
+      <ReactMarkdown
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={hasInline ? rehypeCitationPlugins : undefined}
+        components={componentsWithCite}>
+        {content}
+      </ReactMarkdown>
+      {hasTrailing && <CitationsInline citations={trailingCitations} />}
+    </div>
+  );
+};
+
+// Single inline citation badge rendered at a marker position within text
+const SingleInlineCitation = ({ citation: c }: { citation: CitationData }) => {
+  const { t: tCommon } = useModuleTranslation('common');
+  const fileViewerDisplayMode = useFileViewerDisplayMode();
+
+  const handleClick = useCallback(async () => {
+    try {
+      const { openFileViewer, getMimeTypeFromFilename } = await import('@/modules/file-viewer');
+      const mimeType = getMimeTypeFromFilename(c.source) ?? 'application/octet-stream';
+      const numbers = c.page?.match(/\d+/g);
+      const page = numbers?.length ? parseInt(numbers[numbers.length - 1], 10) : undefined;
+      await openFileViewer(c.workspaceId, c.externalId, c.source || tCommon('ai.citations.defaultSource'), mimeType, {
+        page,
+        highlightText: c.pageContent || undefined,
+        displayMode: fileViewerDisplayMode,
+      });
+    } catch (error) {
+      console.error('Failed to open citation source:', error);
+      toast.error(tCommon('ai.errors.openFileTitle'), {
+        description: tCommon('ai.errors.openFileDescription'),
+      });
+    }
+  }, [c, tCommon, fileViewerDisplayMode]);
+
+  return (
+    <InlineCitation>
+      <InlineCitationCard>
+        <InlineCitationCardTrigger sources={[c.reference || c.source || tCommon('ai.citations.defaultSource')]} className='cursor-pointer' onClick={handleClick} />
+        <InlineCitationCardBody>
+          <InlineCitationCarousel>
+            <InlineCitationCarouselContent>
+              <InlineCitationCarouselItem>
+                <InlineCitationSource title={c.source || tCommon('ai.citations.defaultSource')} description={c.page ? tCommon('ai.citations.page', { page: c.page }) : undefined} />
+                {c.pageContent && <InlineCitationQuote>{c.pageContent}</InlineCitationQuote>}
+              </InlineCitationCarouselItem>
+            </InlineCitationCarouselContent>
+          </InlineCitationCarousel>
+        </InlineCitationCardBody>
+      </InlineCitationCard>
+    </InlineCitation>
   );
 };
 
@@ -556,16 +640,16 @@ const ErrorPartRenderer = ({ title, content }: { title: string; content: string 
   const resolvedContent = content.startsWith('ai.') ? tCommon(content as any) : content;
 
   return (
-    <div className='my-2 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4'>
-      <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10'>
-        <AlertTriangle className='h-4 w-4 text-destructive' />
-      </div>
+  <div className='my-2 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4'>
+    <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10'>
+      <AlertTriangle className='h-4 w-4 text-destructive' />
+    </div>
       <div className='flex min-w-0 flex-col gap-1'>
         {resolvedTitle && <p className='text-sm font-medium text-destructive'>{resolvedTitle}</p>}
         {resolvedContent && <p className='text-sm text-muted-foreground'>{resolvedContent}</p>}
-      </div>
     </div>
-  );
+  </div>
+);
 };
 
 // Sources Part
@@ -586,7 +670,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
   const hasData = data.length > 0;
 
   if (!hasData) {
-    return (
+  return (
       <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>
         {tCommon('ai.chart.noData')}
       </div>
@@ -610,7 +694,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 {showGrid && <CartesianGrid vertical={false} />}
                 <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
                 <YAxis />
-                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />)}
               </LineChart>
@@ -623,7 +707,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />)}
-              </BarChart>
+          </BarChart>
             )}
             {kind === 'area' && (
               <AreaChart accessibilityLayer data={data}>
