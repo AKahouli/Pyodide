@@ -3,7 +3,7 @@
  * Dialog for creating a new folder in personal workspace
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Plus } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -18,12 +18,7 @@ interface CreateFolderDialogProps {
   parentFolderId?: string;
 }
 
-export function CreateFolderDialog({
-  open,
-  onOpenChange,
-  workspaceId,
-  parentFolderId,
-}: CreateFolderDialogProps) {
+export function CreateFolderDialog({ open, onOpenChange, workspaceId, parentFolderId }: CreateFolderDialogProps) {
   const { t } = useModuleTranslation('workspace');
   const createFolder = useWorkspaceStore((state) => state.createFolder);
   const isCreating = useWorkspaceStore((state) => state.isCreating);
@@ -67,7 +62,7 @@ export function CreateFolderDialog({
   );
 
   // Reset form when dialog opens
-  useState(() => {
+  useEffect(() => {
     if (open && !folderName) {
       setFolderName('');
       setError('');
@@ -76,21 +71,21 @@ export function CreateFolderDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className='sm:max-w-md'>
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Plus className="h-5 w-5 text-blue-500" />
+          <DialogTitle className='flex items-center gap-2'>
+            <Plus className='h-5 w-5 text-blue-500' />
             {t('folder.createTitle')}
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className='space-y-4 py-2'>
           <div>
-            <label htmlFor="folder-name" className="block text-sm font-medium mb-2">
+            <label htmlFor='folder-name' className='block text-sm font-medium mb-2'>
               {t('folder.nameLabel')}
             </label>
             <Input
-              id="folder-name"
+              id='folder-name'
               value={folderName}
               onChange={(e) => {
                 setFolderName(e.target.value);
@@ -102,23 +97,14 @@ export function CreateFolderDialog({
               maxLength={50}
               autoFocus
             />
-            {error && (
-              <p className="text-sm text-red-500 mt-1">{error}</p>
-            )}
+            {error && <p className='text-sm text-red-500 mt-1'>{error}</p>}
           </div>
 
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              onClick={handleClose}
-              disabled={isCreating}
-            >
+          <div className='flex justify-end gap-2'>
+            <Button variant='outline' onClick={handleClose} disabled={isCreating}>
               {t('folder.cancel')}
             </Button>
-            <Button
-              onClick={handleCreate}
-              disabled={!folderName.trim() || isCreating}
-            >
+            <Button onClick={handleCreate} disabled={!folderName.trim() || isCreating}>
               {isCreating ? t('folder.creating') : t('folder.create')}
             </Button>
           </div>
