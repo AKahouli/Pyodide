@@ -47,6 +47,7 @@ export const DocumentRow = memo(function DocumentRow({
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, isViewable, handleDownload, handleDelete, handleReindex, handleViewFile } = useDocumentActions(document);
 
   const selectedWorkspace = useSelectedWorkspace();
+  const isPersonalWorkspace = selectedWorkspace?.isPersonal ?? false;
   const isUploading = useWorkspaceStore((state) => state.isUploading);
   const isMobile = useIsMobile();
   const [isSubFolderDialogOpen, setIsSubFolderDialogOpen] = useState(false);
@@ -146,7 +147,7 @@ export const DocumentRow = memo(function DocumentRow({
         </TableCell>
         <TableCell>
           <div className='flex gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity'>
-            {document.isFolder && (
+            {document.isFolder && isPersonalWorkspace && (
               <TooltipProvider>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -231,7 +232,7 @@ export const DocumentRow = memo(function DocumentRow({
       <ConfirmDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen} title={t('documents.row.delete.title')} description={t('documents.row.delete.description', { name: document.originalName })} confirmLabel={isDeleting ? t('documents.row.delete.deleting') : t('documents.row.delete.confirm')} variant='destructive' isLoading={isDeleting} onConfirm={handleDelete} />
 
       {/* Create Subfolder Dialog */}
-      {document.isFolder && (
+      {document.isFolder && isPersonalWorkspace && (
         <CreateFolderDialog
           open={isSubFolderDialogOpen}
           onOpenChange={setIsSubFolderDialogOpen}

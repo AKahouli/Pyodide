@@ -960,20 +960,21 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           }
         });
 
-        set({
-          workspaces: newCache,
-          selectedWorkspace: state.selectedWorkspaceId === workspace.id ? workspace : state.selectedWorkspace,
-        });
+          set({
+            workspaces: newCache,
+            selectedWorkspace: state.selectedWorkspaceId === workspace.id ? workspace : state.selectedWorkspace,
+            totalDocuments: workspace.isPersonal ? Math.max(0, workspace.documentCount) : state.totalDocuments,
+          });
       },
 
       refreshWorkspace: async (workspaceId) => {
         try {
           const workspace = await workspaceApi.getWorkspace(workspaceId);
-          const normalizedWorkspace = {
+          const documentCount = workspace.isPersonal ? get().totalDocuments : workspace.documentCount;
+          get().updateWorkspaceInCache({
             ...workspace,
-            documentCount: Math.max(0, workspace.documentCount),
-          };
-          get().updateWorkspaceInCache(normalizedWorkspace);
+            documentCount: Math.max(0, documentCount),
+          });
         } catch (err) {
           console.error('Failed to refresh workspace', err);
         }
@@ -1192,6 +1193,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             const newFolders = [...state.allFolders];
             newFolders.unshift(folder);
             set({ allFolders: newFolders });
+          } else {
+            // Refresh tree data so nested folders appear immediately in the sidebar
+            await get().fetchAllFolders(workspaceId);
           }
 
           return folder;
@@ -1306,7 +1310,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           // Add to cache at page 1
           const normalizedWorkspace = {
             ...workspace,
-            documentCount: Math.max(0, workspace.documentCount),
+            documentCount: Math.max(0, get().totalDocuments || workspace.documentCount),
           };
           const newCache = new Map(state.workspaces);
           const page1Workspaces = state.workspaces.get(1) || [];

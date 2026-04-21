@@ -33,6 +33,7 @@ export function WorkspaceContent() {
   const setCurrentFolderId = useWorkspaceStore((state) => state.setCurrentFolderId);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
   const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
+  const isPersonalWorkspace = selectedWorkspace?.isPersonal ?? false;
 
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [createFolderParentId, setCreateFolderParentId] = useState<string | undefined>(undefined);
@@ -90,9 +91,12 @@ export function WorkspaceContent() {
   }, [setCurrentFolderId]);
 
   const handleOpenCreateFolder = useCallback((parentId?: string) => {
+    if (!isPersonalWorkspace) {
+      return;
+    }
     setCreateFolderParentId(parentId);
     setIsCreateFolderOpen(true);
-  }, []);
+  }, [isPersonalWorkspace]);
 
   // Handle rename folder
   const handleRenameFolder = useCallback((folderId: string) => {
@@ -167,11 +171,13 @@ export function WorkspaceContent() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
                 </div>
-                <UploadButton folderId={currentFolderId ?? undefined} />
-                <Button variant="outline" size="sm" onClick={() => handleOpenCreateFolder(currentFolderId || undefined)} className="gap-2">
-                  <Plus className="h-4 w-4" />
-                  {t('content.createFolder')}
-                </Button>
+                {isPersonalWorkspace && <UploadButton folderId={currentFolderId ?? undefined} />}
+                {isPersonalWorkspace && (
+                  <Button variant="outline" size="sm" onClick={() => handleOpenCreateFolder(currentFolderId || undefined)} className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    {t('content.createFolder')}
+                  </Button>
+                )}
               </div>
             </div>
 
@@ -186,16 +192,18 @@ export function WorkspaceContent() {
           {/* Main content area with sidebar and content */}
           <div className="flex-1 flex min-h-0">
             {/* Left Sidebar - Folder Tree */}
-            <div className="w-64 shrink-0 hidden md:flex border-r bg-muted/30">
-              <FolderTreeSidebar
-                documents={allFolders}
-                currentFolderId={currentFolderId}
-                onFolderSelect={handleNavigate}
-                onCreateFolder={handleOpenCreateFolder}
-                onDeleteFolder={handleDeleteFolder}
-                onRenameFolder={handleRenameFolder}
-              />
-            </div>
+            {isPersonalWorkspace && (
+              <div className="w-64 shrink-0 hidden md:flex border-r bg-muted/30">
+                <FolderTreeSidebar
+                  documents={allFolders}
+                  currentFolderId={currentFolderId}
+                  onFolderSelect={handleNavigate}
+                  onCreateFolder={handleOpenCreateFolder}
+                  onDeleteFolder={handleDeleteFolder}
+                  onRenameFolder={handleRenameFolder}
+                />
+              </div>
+            )}
 
             {/* Main Content Area */}
             <div className="flex-1 flex flex-col min-w-0">
@@ -212,12 +220,14 @@ export function WorkspaceContent() {
             </div>
           </div>
 
-          <CreateFolderDialog
-            open={isCreateFolderOpen}
-            onOpenChange={setIsCreateFolderOpen}
-            workspaceId={selectedWorkspaceId ?? undefined}
-            parentFolderId={createFolderParentId}
-          />
+          {isPersonalWorkspace && (
+            <CreateFolderDialog
+              open={isCreateFolderOpen}
+              onOpenChange={setIsCreateFolderOpen}
+              workspaceId={selectedWorkspaceId ?? undefined}
+              parentFolderId={createFolderParentId}
+            />
+          )}
 
           {/* Rename Folder Dialog */}
           <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>

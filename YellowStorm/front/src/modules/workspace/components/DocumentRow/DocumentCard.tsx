@@ -44,6 +44,7 @@ export const DocumentCard = memo(function DocumentCard({
   const { isDeleteDialogOpen, setIsDeleteDialogOpen, isDownloading, isDeleting, isReindexing, canIndex, canReindex, handleDownload, handleDelete, handleReindex } = useDocumentActions(document);
 
   const selectedWorkspace = useSelectedWorkspace();
+  const isPersonalWorkspace = selectedWorkspace?.isPersonal ?? false;
   const isUploading = useWorkspaceStore((state) => state.isUploading);
 
   const [isSubFolderDialogOpen, setIsSubFolderDialogOpen] = useState(false);
@@ -138,7 +139,7 @@ export const DocumentCard = memo(function DocumentCard({
                 {isDownloading ? <Loader2 className='h-3.5 w-3.5 animate-spin' /> : <Download className='h-3.5 w-3.5' />}
               </Button>
             )}
-            {document.isFolder && (
+            {document.isFolder && isPersonalWorkspace && (
               <Button variant='ghost' size='icon' className='h-7 w-7' onClick={handleCreateSubFolder}>
                 <FolderPlus className='h-3.5 w-3.5' />
               </Button>
@@ -168,7 +169,7 @@ export const DocumentCard = memo(function DocumentCard({
 
       <ConfirmDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen} title={t('documents.row.delete.title')} description={t('documents.row.delete.description', { name: document.originalName })} confirmLabel={isDeleting ? t('documents.row.delete.deleting') : t('documents.row.delete.confirm')} variant='destructive' isLoading={isDeleting} onConfirm={handleDelete} />
 
-      {document.isFolder && (
+      {document.isFolder && isPersonalWorkspace && (
         <CreateFolderDialog
           open={isSubFolderDialogOpen}
           onOpenChange={setIsSubFolderDialogOpen}

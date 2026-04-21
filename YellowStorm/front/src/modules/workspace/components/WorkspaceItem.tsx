@@ -121,6 +121,7 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
 
   // Check if workspace is personal (cannot be renamed/deleted)
   const isPersonal = workspace.isPersonal || false;
+  const totalFileCount = workspace.isPersonal ? Math.max(0, useWorkspaceStore.getState().totalDocuments) : workspace.documentCount;
 
   return (
     <>
@@ -139,7 +140,7 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
           <div className='flex items-center gap-2 text-xs text-muted-foreground'>
             <span className='flex items-center gap-1'>
               <FileText className='h-3 w-3' />
-              {Math.max(0, workspace.documentCount)}
+              {totalFileCount}
             </span>
             <span>{formatFileSize(workspace.usedStorage)}</span>
           </div>
