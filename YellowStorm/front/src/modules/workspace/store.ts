@@ -159,9 +159,9 @@ interface WorkspaceActions {
   invalidateWorkspaceCache: () => void;
   invalidateDocumentCache: () => void;
   invalidateDocumentData: () => void; // Invalidate only documents, keep currentFolderId
+  clearFolders: () => void;
   updateWorkspaceInCache: (workspace: Workspace) => void;
   refreshWorkspace: (workspaceId: string) => Promise<void>;
-  removeFolderFromCache: (folderId: string) => void;
 
   // Error handling
   clearError: () => void;
@@ -620,39 +620,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }
       },
 
-      removeFolderFromCache: (folderId: string) => {
-        const state = get();
-        const folderIdsToRemove = new Set<string>([folderId]);
-
-        let changed = true;
-        while (changed) {
-          changed = false;
-          for (const folder of state.allFolders) {
-            if (folder.parentId && folderIdsToRemove.has(folder.parentId) && !folderIdsToRemove.has(folder.id)) {
-              folderIdsToRemove.add(folder.id);
-              changed = true;
-            }
-          }
-        }
-
-        const filteredFolders = state.allFolders.filter((folder) => !folderIdsToRemove.has(folder.id));
-        const filteredDocuments = new Map<number, WorkspaceDocument[]>();
-
-        state.documents.forEach((documents, page) => {
-          filteredDocuments.set(
-            page,
-            documents.filter((document) => !(document.isFolder && folderIdsToRemove.has(document.id))),
-          );
-        });
-
-        const shouldResetCurrentFolder = state.currentFolderId ? folderIdsToRemove.has(state.currentFolderId) : false;
-
-        set({
-          allFolders: filteredFolders,
-          documents: filteredDocuments,
-          currentFolderId: shouldResetCurrentFolder ? null : state.currentFolderId,
-          lastFetchedFolderId: shouldResetCurrentFolder ? null : state.lastFetchedFolderId,
-        });
+      clearFolders: () => {
+        set({ allFolders: [] });
       },
 
       searchDocuments: async (query) => {
@@ -672,6 +641,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           // Invalidate cache and refresh documents
           get().invalidateDocumentCache();
           await get().fetchDocuments(workspaceId, 1);
+          await get().fetchAllFolders(workspaceId);
 
           // Refresh workspace to update document count and storage in both sidebar and content
           await get().refreshWorkspace(workspaceId);
@@ -1229,7 +1199,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
         try {
           const result = await workspaceApi.deleteFolder(workspaceId, folderId);
-          get().removeFolderFromCache(folderId);
+          get().clearFolders();
           await Promise.all([get().fetchAllFolders(workspaceId), get().fetchDocuments(workspaceId, 1)]);
           await get().refreshWorkspace(workspaceId);
 
