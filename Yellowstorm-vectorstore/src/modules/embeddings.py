@@ -30,5 +30,5 @@ def get_embeddings(username:Optional[str]="unknown") :
     logger.debug("Getting embedding model")
     settings = get_settings()
     if settings.FAKE_EMBEDDINGS:
-        return FakeEmbeddings(size=1536)
+        return FakeEmbeddings(size=settings.EMBEDDING_DIMENSION)
     return get_azure_openai_embeddings(username)

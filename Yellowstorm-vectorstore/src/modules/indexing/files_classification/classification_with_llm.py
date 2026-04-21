@@ -18,7 +18,6 @@ class ClassificationConstants:
     DEFAULT_EXCEL_SAMPLE_SIZE = 50
     CONFIDENCE_LEVELS = ["faible", "moyen", "eleve"]
 
-
 class DocumentClassificationError(Exception):
     """Custom exception for document classification errors."""
     pass

@@ -104,6 +104,7 @@ celery_app.conf.task_routes = (
         ("dpp-moa.task", {"queue": "dpp-moa.default"}),
         ("classify-indexed-document", {"queue": "data-processing.batch"}),
         ("convert-to-pdf", {"queue": "conversion"}),
+        ("logical-indexing.*", {"queue": "logical-indexing"}),
         ("*", {"queue": "default"}),
     ],
 )
@@ -113,6 +114,116 @@ class BaseTaskWithRetry(celery_app.Task):
     autoretry_for = (Exception,)
     retry_kwargs = {'max_retries': 5}
     retry_backoff = 60
+
+
+# ============================================================================
+# Logical Indexing Task
+# ============================================================================
+
+@celery_app.task(base=BaseTaskWithRetry, name="logical-indexing.parse-document")
+def parse_document_logical_task(
+    file_path: str,
+    external_id: str,
+    brain_id: str,
+    doc_id: str = None,
+) -> dict:
+    """
+    Celery task for logical document indexing.
+
+    Parses document structure using gRPC layout detection + PyMuPDF.
+    Results are stored in PostgreSQL.
+
+    Args:
+        file_path: Azure Data Lake path to the document
+        external_id: External document identifier
+        brain_id: Brain/workspace identifier
+        doc_id: Optional custom document ID
+
+    Returns:
+        Dict with parsing results
+    """
+    from src.modules.logical_indexing.tasks import parse_document_logical_task as _parse_task
+    return _parse_task(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        doc_id=doc_id,
+    )
+
+
+@celery_app.task(base=BaseTaskWithRetry, name="logical-indexing.parse-document-in-chain")
+def parse_document_logical_in_chain_task(
+    previous_result,
+    file_path: str,
+    external_id: str,
+    brain_id: str,
+    doc_id: str = None,
+    source: str = None,
+):
+    """
+    Run logical indexing inside an existing Celery chain without changing the
+    downstream payload expected by later tasks.
+    """
+    from src.modules.logical_indexing.tasks import _parse_document_logical
+
+    local_file_path = previous_result if isinstance(previous_result, str) else None
+
+    _parse_document_logical(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        doc_id=doc_id,
+        local_file_path=local_file_path,
+        source=source,
+    )
+    return previous_result
+
+
+@celery_app.task(base=BaseTaskWithRetry, name="logical-indexing.parse-document-with-local-file")
+def parse_document_logical_with_local_file_task(
+    previous_result,
+    file_path: str,
+    external_id: str,
+    brain_id: str,
+    local_file_path: str,
+    doc_id: str = None,
+):
+    """
+    Run logical indexing against a known local file while preserving the
+    upstream result for the rest of the chain.
+    """
+    from src.modules.logical_indexing.tasks import _parse_document_logical
+
+    _parse_document_logical(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        doc_id=doc_id,
+        local_file_path=local_file_path,
+    )
+    return previous_result
+
+
+@celery_app.task(base=BaseTaskWithRetry, name="logical-indexing.parse-document-and-return-file-path")
+def parse_document_logical_and_return_file_path_task(
+    file_path: str,
+    external_id: str,
+    brain_id: str,
+    doc_id: str = None,
+):
+    """
+    Run logical indexing as the first step in a chain and preserve the original
+    file path for downstream tasks that still operate on the Azure path.
+    """
+    from src.modules.logical_indexing.tasks import _parse_document_logical
+
+    _parse_document_logical(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        doc_id=doc_id,
+    )
+    return file_path
 
 
 ######Indexation Worker####################
@@ -682,13 +793,30 @@ def process_image(img, datalake_dir, language, user_id="unknown"):
 
 
 @celery_app.task(base=BaseTaskWithRetry, name="clear-tmp")
-def delete_temp_folder(temp_folder: str):
-    """Delete the temporary folder."""
-    if os.path.exists(temp_folder):
-        shutil.rmtree(temp_folder)
-        return f"Deleted folder: {temp_folder}"
+def delete_temp_folder(
+    previous_result: Optional[Any] = None,
+    temp_folder: Optional[str] = None,
+):
+    """
+    Delete a temporary folder.
+
+    Supports two call patterns:
+    1. Standalone task: ``clear-tmp(temp_folder)``
+    2. Chain tail task: ``... | clear-tmp.s(temp_folder=...)``
+
+    In chain mode the upstream result is returned unchanged so cleanup does not
+    overwrite the workflow payload used by task-status polling and webhooks.
+    """
+    is_chain_call = temp_folder is not None
+    target_folder = temp_folder if is_chain_call else previous_result
+
+    if target_folder and os.path.exists(target_folder):
+        shutil.rmtree(target_folder)
+        message = f"Deleted folder: {target_folder}"
     else:
-        return f"Folder {temp_folder} does not exist."
+        message = f"Folder {target_folder} does not exist."
+
+    return previous_result if is_chain_call else message
 
 
 @celery_app.task(base=BaseTaskWithRetry, name="get-image-description")

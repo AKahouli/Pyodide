@@ -37,6 +37,7 @@ from src.schema.fastapi.vectorstores.responses import (
     IndexingTokens,
     PendingClassificationTask,
 )
+from src.schema.logical_indexing import LogicalIndexingRequest, LogicalIndexingResponse
 from src.schema.workers.doc_relationship import ProcessRequest
 from src.vectorstores_api_client import (
     async_index_documents_from_azure_datalake,
@@ -137,7 +138,7 @@ async def index_document_from_azure_datalake(
         brain_id = document.brain_id
         sheet_name = document.sheet_name
         external_id = document.external_id
-        request_metadata = document.metadata
+        request_metadata = document.metadata or {}
         separators = document.separators
         keep_separator = document.keep_separator
         chunk_size = document.chunk_size
@@ -163,6 +164,10 @@ async def index_document_from_azure_datalake(
             "external_id": external_id if external_id is not None else file_path,
             "language": lang_code,
         }
+        listener_metadata = {
+            **request_metadata,
+            **metadata,
+        }
         
         result = await async_index_documents_from_azure_datalake(
             collection_name=vectorstore_name,
@@ -186,10 +191,11 @@ async def index_document_from_azure_datalake(
         background_tasks.add_task(
             listen_to_task_status_webhook,
             result.id,
-            request_metadata,
+            listener_metadata,
             logger,
             webhook_url,
             result.id_image,
+            result.logical_task_id,
             result.temp_folder,
         )
 
@@ -829,6 +835,169 @@ async def classify_document(
             detail={
                 "error_code": "UNEXPECTED_ERROR",
                 "message": "An unexpected error occurred during document classification",
+                "details": {"error": str(e)}
+            }
+        )
+
+
+# ============================================================================
+# Logical Indexing Endpoints
+# ============================================================================
+
+@router.post(
+    "/vectorstores/logicalIndexing",
+    response_model=LogicalIndexingResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Parse document structure (logical indexing)",
+    description="""
+    Parse a document's logical structure (headings, sections, TOC, blocks).
+
+    This endpoint triggers asynchronous parsing of document structure using
+    gRPC layout detection + PyMuPDF text extraction. Results are stored in
+    PostgreSQL and can be retrieved using the GET endpoint.
+
+    The logical indexing runs in parallel with vector indexing and provides:
+    - Hierarchical document structure (sections, subsections)
+    - Table of contents generation
+    - Content block extraction (text, tables, images)
+    - High-level document overview for RAG context injection
+
+    Supported document types: PDF, images (converted to PDF first), Office documents.
+    """,
+)
+async def logical_index_document(
+    document: LogicalIndexingRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)]
+) -> LogicalIndexingResponse:
+    """
+    Trigger logical document indexing.
+
+    Request body:
+    - file_path: Azure Data Lake path to the document
+    - external_id: External document identifier
+    - brain_id: Brain/workspace identifier
+    - doc_id: Optional custom document ID (generated if not provided)
+    """
+    try:
+        # Launch logical indexing task
+        celery_task = celery_app.send_task(
+            "logical-indexing.parse-document",
+            kwargs={
+                "file_path": document.file_path,
+                "external_id": document.external_id,
+                "brain_id": document.brain_id,
+                "doc_id": document.doc_id,
+                "source": document.source,
+            },
+            queue="logical-indexing",
+        )
+
+        logger.info(f"Launched logical indexing task {celery_task.id} for file: {document.file_path}")
+
+        return LogicalIndexingResponse(
+            task_id=celery_task.id,
+            status="queued",
+            message=f"Logical indexing task queued for {document.external_id}",
+        )
+    except Exception as e:
+        logger.exception(f"Unexpected error in logical_index_document: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "UNEXPECTED_ERROR",
+                "message": "An unexpected error occurred during logical indexing",
+                "details": {"error": str(e)}
+            }
+        )
+
+
+@router.get(
+    "/vectorstores/logicalIndexing/{external_id}",
+    summary="Get logical indexing result",
+    description="""
+    Retrieve the logical indexing result for a document.
+
+    Returns the parsed document structure including:
+    - Overview: High-level document summary
+    - TOC: Table of contents
+    - Blocks: All content blocks (text, tables, etc.)
+    - Sections: Hierarchical document structure
+    """,
+)
+async def get_logical_indexing_result(
+    external_id: str,
+    brain_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)]
+) -> Dict[str, Any]:
+    """
+    Get logical indexing result by external_id and brain_id.
+    """
+    from src.modules.logical_indexing.tasks import get_logical_indexing_result as get_result
+
+    try:
+        result = get_result(external_id=external_id, brain_id=brain_id)
+
+        if result is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Logical indexing result not found for external_id={external_id}, brain_id={brain_id}"
+            )
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error in get_logical_indexing_result: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "UNEXPECTED_ERROR",
+                "message": "An unexpected error occurred while retrieving logical indexing result",
+                "details": {"error": str(e)}
+            }
+        )
+
+
+@router.delete(
+    "/vectorstores/logicalIndexing/{external_id}",
+    summary="Delete logical indexing result",
+    description="Delete the logical indexing result for a document from PostgreSQL.",
+)
+async def delete_logical_indexing_result(
+    external_id: str,
+    brain_id: str,
+    current_user: Annotated[User, Depends(get_current_active_user)]
+) -> Dict[str, Any]:
+    """
+    Delete logical indexing result by external_id and brain_id.
+    """
+    from src.modules.logical_indexing.tasks import delete_logical_indexing_result as delete_result
+
+    try:
+        deleted = delete_result(external_id=external_id, brain_id=brain_id)
+
+        if not deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Logical indexing result not found for external_id={external_id}, brain_id={brain_id}"
+            )
+
+        return {
+            "status": "deleted",
+            "external_id": external_id,
+            "brain_id": brain_id,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Unexpected error in delete_logical_indexing_result: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "error_code": "UNEXPECTED_ERROR",
+                "message": "An unexpected error occurred while deleting logical indexing result",
                 "details": {"error": str(e)}
             }
         )

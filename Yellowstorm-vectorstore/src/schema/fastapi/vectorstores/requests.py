@@ -82,7 +82,7 @@ class IndexDocument(IndexText):
         examples=["fr"],
     )
     enable_smart_chunk: bool = Field(
-        True,
+        False,
         title="Whether to activate the enable_smart_chunk feature or not.",
         description="A boolean flag that, when set to True, Indexation with the smart chunk alse without smart chunk.",
         examples=[True],

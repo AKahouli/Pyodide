@@ -10,7 +10,7 @@ fi
 tmpfile=$(mktemp)
 today="## Issues referenced in develop  (${changelog_date})"
 
-TODAY_ISSUES=$(git log develop --since="${changelog_date}T00:00:00" --until="${changelog_date}T23:59:59" --pretty=format:"%B" | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)
+TODAY_ISSUES=$(git log develop --no-merges --since="${changelog_date}T00:00:00" --until="${changelog_date}T23:59:59" --pretty=format:"%B" | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)
 
 echo "$today" >> "$tmpfile"
 echo "" >> "$tmpfile"
