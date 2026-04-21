@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-import { Search, Layers, Plus } from 'lucide-react';
+import { Search, Layers, Plus, UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,6 +14,7 @@ import { useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
 import { CreateFolderDialog } from './CreateFolderDialog';
+import { UploadButton } from './UploadButton';
 import { UploadDropZone } from './UploadDropZone';
 import { FolderTreeSidebar } from './FolderTreeSidebar';
 import { FolderNavigation, BreadcrumbItem } from './FolderNavigation';
@@ -41,6 +42,13 @@ export function WorkspaceContent() {
 
   // Drag and drop hook
   const { isDragging, draggedItems, handleDropOnRoot } = useDocumentDragDrop();
+
+  // Wrapper for drop on root with current workspace
+  const handleDropOnRootWithWorkspace = useCallback(async (e: React.DragEvent) => {
+    if (selectedWorkspaceId) {
+      await handleDropOnRoot(e, selectedWorkspaceId);
+    }
+  }, [handleDropOnRoot, selectedWorkspaceId]);
 
   // Fetch documents when folder changes
   useEffect(() => {
@@ -84,9 +92,11 @@ export function WorkspaceContent() {
       });
       setIsCreateFolderOpen(false);
       setCreateFolderParentId(undefined);
-      // Refresh folders in sidebar
+      // Refresh folders in sidebar and documents list
       const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+      const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
       await fetchAllFolders(selectedWorkspaceId);
+      await fetchDocuments(selectedWorkspaceId, 1);
     }
   }, [selectedWorkspaceId, createFolder, createFolderParentId]);
 
@@ -109,9 +119,11 @@ export function WorkspaceContent() {
     if (renameFolderId && selectedWorkspaceId && newFolderName.trim()) {
       try {
         await useWorkspaceStore.getState().renameFolder(selectedWorkspaceId, renameFolderId, { name: newFolderName });
-        // Refresh folders in sidebar
+        // Refresh folders in sidebar and documents list
         const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+        const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
         await fetchAllFolders(selectedWorkspaceId);
+        await fetchDocuments(selectedWorkspaceId, 1);
         setIsRenameDialogOpen(false);
         setRenameFolderId(null);
         setNewFolderName('');
@@ -129,9 +141,11 @@ export function WorkspaceContent() {
         if (currentFolderId === folderId) {
           setCurrentFolderId(null);
         }
-        // Refresh folders in sidebar
+        // Refresh folders in sidebar and documents list
         const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+        const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
         await fetchAllFolders(selectedWorkspaceId);
+        await fetchDocuments(selectedWorkspaceId, 1);
       } catch (error) {
         console.error('Failed to delete folder:', error);
       }
@@ -148,11 +162,7 @@ export function WorkspaceContent() {
           <p className="text-sm text-muted-foreground">{t('content.noWorkspace')}</p>
         </div>
       ) : (
-        <UploadDropZone
-          onDrop={handleDropOnRoot}
-          workspaceId={selectedWorkspaceId}
-          folderId={currentFolderId}
-        >
+        <UploadDropZone onDrop={handleDropOnRootWithWorkspace}>
           {/* Header */}
           <div className="p-3 md:p-4 border-b shrink-0 bg-card">
             <div className="flex items-center justify-between mb-4">
@@ -171,6 +181,9 @@ export function WorkspaceContent() {
                   <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
                 </div>
 
+                {/* Upload button */}
+                <UploadButton folderId={currentFolderId ?? undefined} />
+
                 {/* Create folder button */}
                 <Button
                   variant="outline"
@@ -186,7 +199,7 @@ export function WorkspaceContent() {
 
             {/* Storage info */}
             <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span>{t('content.storageUsed')} {formatFileSize(selectedWorkspace.usedStorage)}</span>
+              <span>{formatFileSize(selectedWorkspace.usedStorage)}</span>
               <span>/</span>
               <span>{formatFileSize(selectedWorkspace.allocatedStorage)}</span>
             </div>
@@ -225,7 +238,7 @@ export function WorkspaceContent() {
           <CreateFolderDialog
             open={isCreateFolderOpen}
             onOpenChange={setIsCreateFolderOpen}
-            workspaceId={selectedWorkspaceId}
+            workspaceId={selectedWorkspaceId ?? undefined}
             parentFolderId={createFolderParentId}
           />
 

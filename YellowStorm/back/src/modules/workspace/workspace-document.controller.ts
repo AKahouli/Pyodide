@@ -68,6 +68,9 @@ export class WorkspaceDocumentController {
           type: 'string',
           format: 'binary',
         },
+        folderId: {
+          type: 'string',
+        },
       },
     },
   })
@@ -77,6 +80,7 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @UploadedFile() file: MulterFile,
+    @Body() body?: { folderId?: string },
   ) {
     return this.workspaceDocumentService.uploadSmallFile(
       workspaceId,
@@ -84,6 +88,7 @@ export class WorkspaceDocumentController {
       file.buffer,
       file.originalname,
       file.mimetype,
+      body?.folderId,
     );
   }
 

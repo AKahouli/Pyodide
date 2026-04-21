@@ -256,6 +256,7 @@ export interface UploadQueueItem {
   id: string; // Local unique ID
   file: File;
   workspaceId: string;
+  folderId?: string;
   status: UploadFileStatus;
   progress: number;
   error?: string;

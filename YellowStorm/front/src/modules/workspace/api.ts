@@ -376,9 +376,13 @@ export async function uploadSmallFile(
   workspaceId: string,
   file: File,
   onProgress?: (progress: number) => void,
+  folderId?: string,
 ): Promise<WorkspaceDocument> {
   const formData = new FormData();
   formData.append('file', file);
+  if (folderId) {
+    formData.append('folderId', folderId);
+  }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.upload(workspaceId),

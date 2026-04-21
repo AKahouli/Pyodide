@@ -407,6 +407,7 @@ export class WorkspaceDocumentService {
     file: Buffer,
     originalName: string,
     mimeType: string,
+    folderId?: string,
   ): Promise<DocumentResponse> {
     const size = file.length;
 
@@ -428,6 +429,19 @@ export class WorkspaceDocumentService {
         ErrorCode.WORKSPACE_STORAGE_QUOTA_EXCEEDED,
         `Insufficient storage. Available: ${Math.round(quota.available / 1024 / 1024)}MB`,
       );
+    }
+
+    // Validate folderId if provided
+    let parentFolder = null;
+    if (folderId) {
+      parentFolder = await this.documentModel.findOne({
+        _id: new Types.ObjectId(folderId),
+        workspaceId: new Types.ObjectId(workspaceId),
+        isFolder: true,
+      });
+      if (!parentFolder) {
+        throw new BadRequestException('Folder not found');
+      }
     }
 
     // Create document record
@@ -460,6 +474,7 @@ export class WorkspaceDocumentService {
       createdBy: new Types.ObjectId(userId),
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
+      parentId: folderId ? new Types.ObjectId(folderId) : undefined,
     });
 
     // Update workspace storage
@@ -469,6 +484,7 @@ export class WorkspaceDocumentService {
       documentId: document._id,
       workspaceId,
       size,
+      folderId,
     });
 
     return this.mapToResponse(document);

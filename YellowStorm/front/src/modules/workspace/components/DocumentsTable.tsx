@@ -60,9 +60,11 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
         parentId: currentFolderId || undefined,
       });
       setIsCreateFolderOpen(false);
-      // Refresh folders in sidebar
+      // Refresh folders in sidebar and documents list
       const fetchAllFolders = useWorkspaceStore.getState().fetchAllFolders;
+      const fetchDocuments = useWorkspaceStore.getState().fetchDocuments;
       await fetchAllFolders(selectedWorkspace.id);
+      await fetchDocuments(selectedWorkspace.id, 1);
     }
   }, [selectedWorkspace, createFolder, currentFolderId]);
 
@@ -93,7 +95,7 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
 
     const { validFiles } = validateFiles(files);
     if (validFiles.length > 0) {
-      addFilesToQueue(validFiles, selectedWorkspace.id);
+      addFilesToQueue(validFiles, selectedWorkspace.id, currentUploadFolderId ?? undefined);
       startUpload();
     }
 

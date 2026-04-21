@@ -86,6 +86,7 @@ interface WorkspaceState {
   totalDocuments: number;
   documentSearchQuery: string;
   currentFolderId: string | null; // Current folder being viewed
+  lastFetchedFolderId: string | null; // Last folder ID for which documents were fetched
   allFolders: WorkspaceDocument[]; // All folders for sidebar tree view
 
   // Templates
@@ -179,7 +180,7 @@ interface WorkspaceActions {
   clearError: () => void;
 
   // Upload operations
-  addFilesToQueue: (files: File[], workspaceId: string) => void;
+  addFilesToQueue: (files: File[], workspaceId: string, folderId?: string) => void;
   removeFromQueue: (fileId: string) => void;
   clearQueue: () => void;
   startUpload: () => Promise<void>;
@@ -217,6 +218,7 @@ const initialState: WorkspaceState = {
   totalDocuments: 0,
   documentSearchQuery: '',
   currentFolderId: null,
+  lastFetchedFolderId: null,
   allFolders: [],
 
   templates: [],
@@ -270,6 +272,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documentSearchQuery: '',
         allFolders: [],
         currentFolderId: null,
+        lastFetchedFolderId: null,
       });
     },
 
@@ -367,8 +370,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           isLoadingWorkspaces: false,
         });
 
-        const { isModalOpen, selectedWorkspaceId } = get();
-        if (isModalOpen && !selectedWorkspaceId && allWorkspaces.length > 0) {
+        const { selectedWorkspaceId } = get();
+        // Auto-select first workspace (personal) when no workspace is selected
+        // This ensures the personal workspace is selected by default when modal opens
+        if (!selectedWorkspaceId && allWorkspaces.length > 0) {
           get()
             .selectWorkspace(allWorkspaces[0].id)
             .catch((err) => {
@@ -416,6 +421,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documents: new Map(),
         documentsCurrentPage: 1,
         documentSearchQuery: '',
+        currentFolderId: null,
+        lastFetchedFolderId: null,
         allFolders: [],
         isMobileSidebarOpen: false, // Close sidebar on mobile when selecting
       });
@@ -566,30 +573,42 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     fetchDocuments: async (workspaceId, page = 1) => {
       const state = get();
 
+      // Check if folder changed - invalidate cache if folder is different
+      const folderChanged = state.currentFolderId !== state.lastFetchedFolderId;
+
       // Check cache first (skip if searching or folder changed)
-      if (!state.documentSearchQuery && state.documents.has(page)) {
+      if (!state.documentSearchQuery && !folderChanged && state.documents.has(page)) {
         set({ documentsCurrentPage: page });
         return;
+      }
+
+      // If folder changed, clear cache
+      if (folderChanged) {
+        set({
+          documents: new Map(),
+          documentsCurrentPage: 1,
+        });
       }
 
       set({ isLoadingDocuments: true, error: null });
 
       try {
         const result = await workspaceApi.getDocuments(workspaceId, {
-          page,
+          page: folderChanged ? 1 : page,
           limit: DEFAULT_PAGE_LIMIT,
           search: state.documentSearchQuery || undefined,
           parentId: state.currentFolderId,
         });
 
         const newCache = new Map(state.documentSearchQuery ? [] : state.documents);
-        newCache.set(page, result.documents);
+        newCache.set(1, result.documents);
 
         set({
           documents: newCache,
-          documentsCurrentPage: page,
+          documentsCurrentPage: 1,
           documentsTotalPages: result.pagination.totalPages,
           totalDocuments: result.pagination.total,
+          lastFetchedFolderId: state.currentFolderId,
           isLoadingDocuments: false,
         });
       } catch (err) {
@@ -602,6 +621,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     setCurrentFolderId: (folderId) => {
       set({
         currentFolderId: folderId,
+        lastFetchedFolderId: null,
         documents: new Map(),
         documentsCurrentPage: 1,
       });
@@ -619,6 +639,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     searchDocuments: async (query) => {
       set({
         documentSearchQuery: query,
+        lastFetchedFolderId: null,
         documents: new Map(), // Clear cache on search
         documentsCurrentPage: 1,
       });
@@ -901,6 +922,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documentsTotalPages: 0,
         totalDocuments: 0,
         documentSearchQuery: '',
+        lastFetchedFolderId: null,
         allFolders: [],
         currentFolderId: null,
       });
@@ -913,6 +935,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         documentsTotalPages: 0,
         totalDocuments: 0,
         documentSearchQuery: '',
+        lastFetchedFolderId: null,
         allFolders: [],
       });
     },
@@ -948,11 +971,12 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
     clearError: () => set({ error: null }),
 
     // ===== Upload Operations =====
-    addFilesToQueue: (files, workspaceId) => {
+    addFilesToQueue: (files, workspaceId, folderId) => {
       const newItems: UploadQueueItem[] = files.map((file) => ({
         id: `${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
         file,
         workspaceId,
+        folderId,
         status: 'pending' as UploadFileStatus,
         progress: 0,
       }));
@@ -1002,8 +1026,17 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               (progress: number) => {
                 get().updateUploadProgress(item.id, progress);
               },
+              item.folderId,
             );
             get().updateUploadStatus(item.id, 'completed');
+
+            // Refresh documents and folders if uploaded to current folder
+            const currentFolderId = get().currentFolderId;
+            if (currentFolderId === (item.folderId || null)) {
+              get().fetchAllFolders(workspaceId);
+              get().fetchDocuments(workspaceId, 1);
+            }
+
             toast.success(tToast('upload.successTitle', 'Upload complete'), {
               description: tToast('upload.singleSuccessDescription', `"${item.file.name}" has been uploaded successfully.`, { name: item.file.name }),
             });
@@ -1085,6 +1118,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           if (selectedId === workspaceId) {
             get().invalidateDocumentCache();
             await get().fetchDocuments(workspaceId, 1);
+            await get().fetchAllFolders(workspaceId);
           }
 
           await get().refreshWorkspace(workspaceId);
