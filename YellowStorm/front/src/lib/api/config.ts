@@ -120,6 +120,7 @@ export const API_ENDPOINTS = {
     fileDelete: (convId: string, docId: string) => `/conversations/${convId}/files/${docId}`,
     stream: '/conversations/stream',
     artifactUrl: '/conversations/artifact-url',
+    composerSuggestions: '/conversations/suggestions',
     // Share endpoints
     shares: (id: string) => `/conversations/${id}/shares`,
     share: (id: string) => `/conversations/${id}/share`,
