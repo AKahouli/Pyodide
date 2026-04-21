@@ -1223,6 +1223,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           const result = await workspaceApi.deleteFolder(workspaceId, folderId);
           get().removeFolderFromCache(folderId);
           await Promise.all([get().fetchAllFolders(workspaceId), get().fetchDocuments(workspaceId, 1)]);
+          await get().refreshWorkspace(workspaceId);
 
           set({ isDeleting: false });
           toast.success(tToast('folder.deleteSuccessTitle', 'Folder deleted'), {

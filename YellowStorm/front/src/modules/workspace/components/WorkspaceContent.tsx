@@ -13,8 +13,6 @@ import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocume
 import { useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
-import { CreateFolderDialog } from './CreateFolderDialog';
-import { UploadButton } from './UploadButton';
 import { UploadDropZone } from './UploadDropZone';
 import { FolderTreeSidebar } from './FolderTreeSidebar';
 import { FolderNavigation, BreadcrumbItem } from './FolderNavigation';
@@ -26,17 +24,15 @@ export function WorkspaceContent() {
   const { isLoadingWorkspaces } = useWorkspaceLoading();
   const { documents } = useDocuments();
   const allFolders = useAllFolders();
-  const createFolder = useWorkspaceStore((state) => state.createFolder);
   const renameFolder = useWorkspaceStore((state) => state.renameFolder);
   const deleteFolder = useWorkspaceStore((state) => state.deleteFolder);
   const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
+  const fetchAllFolders = useWorkspaceStore((state) => state.fetchAllFolders);
   const setCurrentFolderId = useWorkspaceStore((state) => state.setCurrentFolderId);
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
   const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
 
   // Dialog states
-  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
-  const [createFolderParentId, setCreateFolderParentId] = useState<string | undefined>(undefined);
   const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
   const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
@@ -88,34 +84,6 @@ export function WorkspaceContent() {
     }
   }, [setCurrentFolderId]);
 
-  // Handle create folder
-  const handleCreateFolder = useCallback(async (name: string) => {
-    if (selectedWorkspaceId) {
-      setIsCreateFolderOpen(false);
-
-      await createFolder(selectedWorkspaceId, {
-        name,
-        parentId: createFolderParentId,
-      });
-
-      const store = useWorkspaceStore.getState();
-      await Promise.all([store.fetchAllFolders(selectedWorkspaceId), store.fetchDocuments(selectedWorkspaceId, 1)]);
-
-      setCreateFolderParentId(undefined);
-    }
-  }, [selectedWorkspaceId, createFolder, createFolderParentId]);
-
-  const handleOpenCreateFolder = useCallback((parentId?: string) => {
-    setCreateFolderParentId(parentId);
-    setIsCreateFolderOpen(true);
-  }, []);
-
-  const handleCreateRootFolder = useCallback(() => {
-    setCurrentFolderId(null);
-    setCreateFolderParentId(undefined);
-    setIsCreateFolderOpen(true);
-  }, [setCurrentFolderId]);
-
   // Handle rename folder
   const handleRenameFolder = useCallback((folderId: string) => {
     const folder = allFolders.find((d) => d.id === folderId && d.isFolder);
@@ -154,11 +122,13 @@ export function WorkspaceContent() {
     if (selectedWorkspaceId && confirm(t('folder.deleteConfirm'))) {
       try {
         await deleteFolder(selectedWorkspaceId, folderId);
+        const store = useWorkspaceStore.getState();
+        await Promise.all([fetchAllFolders(selectedWorkspaceId), store.fetchDocuments(selectedWorkspaceId, 1)]);
       } catch (error) {
         console.error('Failed to delete folder:', error);
       }
     }
-  }, [selectedWorkspaceId, deleteFolder, currentFolderId, setCurrentFolderId, t]);
+  }, [selectedWorkspaceId, deleteFolder, fetchAllFolders, fetchDocuments, t]);
 
   return (
     <div className="flex-1 min-w-0 h-full overflow-hidden bg-background flex flex-col">
@@ -189,19 +159,7 @@ export function WorkspaceContent() {
                   <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
                 </div>
 
-                {/* Upload button */}
-                <UploadButton folderId={currentFolderId ?? undefined} />
-
-                {/* Create folder button */}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleOpenCreateFolder(currentFolderId || undefined)}
-                  className="gap-2"
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('content.createFolder')}
-                </Button>
+                {/* Keep only search in the content header */}
               </div>
             </div>
 
@@ -221,8 +179,6 @@ export function WorkspaceContent() {
                 documents={allFolders}
                 currentFolderId={currentFolderId}
                 onFolderSelect={handleNavigate}
-                onCreateFolder={handleOpenCreateFolder}
-                onCreateRootFolder={handleCreateRootFolder}
                 onDeleteFolder={handleDeleteFolder}
                 onRenameFolder={handleRenameFolder}
               />
@@ -242,14 +198,6 @@ export function WorkspaceContent() {
               </ScrollArea>
             </div>
           </div>
-
-          {/* Create Folder Dialog */}
-          <CreateFolderDialog
-            open={isCreateFolderOpen}
-            onOpenChange={setIsCreateFolderOpen}
-            workspaceId={selectedWorkspaceId ?? undefined}
-            parentFolderId={createFolderParentId}
-          />
 
           {/* Rename Folder Dialog */}
           <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>

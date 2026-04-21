@@ -18,7 +18,6 @@ import { useDocumentDragDrop } from '../hooks/useDocumentDragDrop';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
-import { CreateFolderDialog } from './CreateFolderDialog';
 import { UploadButton } from './UploadButton';
 
 interface DocumentsTableProps {
@@ -34,7 +33,6 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
   const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
   const startUpload = useWorkspaceStore((state) => state.startUpload);
-  const createFolder = useWorkspaceStore((state) => state.createFolder);
   const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
 
   // Drag and drop
@@ -50,23 +48,6 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   } = useDocumentDragDrop();
 
   const { selectedCount, isAllSelected, isSomeSelected, isSelected, toggleSelect, toggleSelectAll, clearSelection, getSelectedIds } = useDocumentSelection(documents);
-
-  // Create folder dialog
-  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
-
-  const handleCreateFolder = useCallback(async (name: string) => {
-    if (selectedWorkspace) {
-      setIsCreateFolderOpen(false);
-
-      await createFolder(selectedWorkspace.id, {
-        name,
-        parentId: currentFolderId || undefined,
-      });
-
-      const store = useWorkspaceStore.getState();
-      await Promise.all([store.fetchAllFolders(selectedWorkspace.id), store.fetchDocuments(selectedWorkspace.id, 1)]);
-    }
-  }, [selectedWorkspace, createFolder, currentFolderId]);
 
   // Shared file input ref for folder uploads
   const folderFileInputRef = useRef<HTMLInputElement>(null);
@@ -120,10 +101,6 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
         <h3 className='text-lg font-medium text-foreground mb-2'>{t('documents.empty.title')}</h3>
         <p className='text-sm text-muted-foreground max-w-sm mb-4'>{t('documents.empty.description', { action: t('upload.button.add') })}</p>
         <div className='flex gap-2'>
-          <Button variant='outline' size='sm' onClick={() => setIsCreateFolderOpen(true)} className='gap-2'>
-            <FolderPlus className='h-4 w-4' />
-            {t('content.createFolder')}
-          </Button>
           <UploadButton folderId={currentFolderId ?? undefined} />
         </div>
         <p className='text-xs text-muted-foreground mt-3'>{t('documents.empty.supported')}</p>
@@ -245,13 +222,6 @@ export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
         {selectedCount > 0 && <FloatingActionBar selectedCount={selectedCount} selectedIds={getSelectedIds()} onClearSelection={clearSelection} />}
       </div>
 
-      {/* Create Folder Dialog */}
-    <CreateFolderDialog
-      open={isCreateFolderOpen}
-      onOpenChange={setIsCreateFolderOpen}
-      workspaceId={selectedWorkspace?.id || ''}
-      parentFolderId={currentFolderId || undefined}
-    />
   </>
   );
 }
