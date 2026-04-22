@@ -155,6 +155,20 @@ export interface SetRegistrationRequest {
   enabled: boolean;
 }
 
+export type AdminColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
+
+export type AdminThemeLogo = 'yellowmind' | 'kpmg';
+
+export interface AppearanceThemeConfig {
+  labelKey: string;
+  logo: AdminThemeLogo;
+}
+
+export interface AppearanceSettings {
+  defaultColorTheme: AdminColorTheme;
+  themes: Record<AdminColorTheme, AppearanceThemeConfig>;
+}
+
 // Plan Types
 
 export interface PlanResponse {

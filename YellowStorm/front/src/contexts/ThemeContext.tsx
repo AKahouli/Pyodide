@@ -43,7 +43,10 @@ export const ThemeProviderContext = createContext<ThemeProviderState>(initialSta
 
 export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorTheme = 'default', initialColorTheme, ...props }: ThemeProviderProps) {
   const [theme, setTheme] = useState(() => localStorage.getItem('ui-theme') ?? defaultTheme);
-  const [colorTheme, setColorTheme] = useState<ColorTheme>(initialColorTheme ?? defaultColorTheme);
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(() => {
+    const storedColorTheme = localStorage.getItem('ui-color-theme') as ColorTheme | null;
+    return storedColorTheme ?? initialColorTheme ?? defaultColorTheme;
+  });
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -62,15 +65,11 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
   useEffect(() => {
     const root = window.document.documentElement;
 
-    for (const t of COLOR_THEMES) {
-      if (t.value !== 'default') {
-        root.classList.remove(`theme-${t.value}`);
-      }
-    }
-
-    if (colorTheme !== 'default') {
-      root.classList.add(`theme-${colorTheme}`);
-    }
+    root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
+    if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
+    if (colorTheme === 'orange') root.classList.add('theme-claude');
+    if (colorTheme === 'blue') root.classList.add('theme-kpmg');
+    localStorage.setItem('ui-color-theme', colorTheme);
   }, [colorTheme]);
 
   return (

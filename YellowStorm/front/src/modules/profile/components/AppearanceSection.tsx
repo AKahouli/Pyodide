@@ -34,9 +34,9 @@ function ThemeCard({ label, icon, selected, onClick }: ThemeCardProps) {
 
 const COLOR_THEME_SWATCHES: Record<ColorTheme, string> = {
   default: 'bg-neutral-500',
-  yellowsys: 'bg-amber-500',
-  claude: 'bg-orange-700',
-  kpmg: 'bg-blue-600',
+  yellow: 'bg-amber-500',
+  orange: 'bg-orange-700',
+  blue: 'bg-blue-600',
 };
 
 interface ColorThemeCardProps {

@@ -4,6 +4,7 @@
 
 import { apiClient, API_ENDPOINTS, ApiResponse } from '@/lib/api';
 import type { LoginCredentials, RegisterCredentials, LoginResponse, RegisterResponse, User, CompleteProfileData, RefreshResponse, AuthProviderPublic } from './types';
+import type { AppearanceSettings } from '@/modules/admin/types';
 
 /**
  * Register a new user
@@ -102,6 +103,14 @@ export async function exchangeOAuthToken(token: string): Promise<LoginResponse> 
  */
 export async function getRegistrationStatus(): Promise<{ enabled: boolean }> {
   const response = await apiClient.get<ApiResponse<{ enabled: boolean }>>(API_ENDPOINTS.system.registration);
+  return response.data.data;
+}
+
+/**
+ * Get global appearance settings
+ */
+export async function getGlobalAppearanceSettings(): Promise<AppearanceSettings> {
+  const response = await apiClient.get<ApiResponse<AppearanceSettings>>(API_ENDPOINTS.system.appearance);
   return response.data.data;
 }
 

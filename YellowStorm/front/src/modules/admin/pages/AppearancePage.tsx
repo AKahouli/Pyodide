@@ -1,5 +1,6 @@
-import { useContext, useState } from 'react';
+import { useEffect, useContext, useState } from 'react';
 import { Palette, Image, Save, Globe2 } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -7,15 +8,16 @@ import { useModuleTranslation } from '@/modules/localization';
 import { cn } from '@/lib/utils';
 import { ThemeProviderContext } from '@/contexts/ThemeContext';
 import { Icons } from '@/components/icons';
+import { getAppearanceSettings, setAppearanceSettings } from '../api';
 
 type ColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
 type ThemeLogo = 'yellowmind' | 'kpmg';
 
 const COLOR_THEMES: { value: ColorTheme; labelKey: string }[] = [
   { value: 'default', labelKey: 'appearance.colorTheme.default' },
-  { value: 'yellow', labelKey: 'appearance.colorTheme.yellow' },
-  { value: 'orange', labelKey: 'appearance.colorTheme.orange' },
-  { value: 'blue', labelKey: 'appearance.colorTheme.blue' },
+   { value: 'yellow', labelKey: 'appearance.colorTheme.yellow' },
+   { value: 'orange', labelKey: 'appearance.colorTheme.orange' },
+   { value: 'blue', labelKey: 'appearance.colorTheme.blue' },
 ];
 
 const LOGOS: { value: ThemeLogo; label: string }[] = [
@@ -30,11 +32,36 @@ export function AppearancePage() {
   const [themeLogoMap, setThemeLogoMap] = useState<Record<ColorTheme, ThemeLogo>>({
     default: 'yellowmind',
     yellow: 'yellowmind',
-    orange: 'kpmg',
+    orange: 'yellowmind',
     blue: 'kpmg',
   });
+  const [savingTheme, setSavingTheme] = useState(false);
+
+  useEffect(() => {
+    getAppearanceSettings()
+      .then((settings) => {
+        setSelectedTheme(settings.defaultColorTheme);
+        setThemeLogoMap(
+          Object.fromEntries(
+            Object.entries(settings.themes).map(([key, value]) => [key, value.logo]),
+          ) as Record<ColorTheme, ThemeLogo>,
+        );
+      })
+      .catch(() => {
+        // Keep defaults if settings cannot be loaded
+      });
+  }, []);
 
   const selectedLogo = themeLogoMap[selectedTheme];
+
+  const applyThemeImmediately = (colorTheme: ColorTheme) => {
+    localStorage.setItem('ui-color-theme', colorTheme);
+    const root = document.documentElement;
+    root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
+    if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
+    if (colorTheme === 'orange') root.classList.add('theme-claude');
+    if (colorTheme === 'blue') root.classList.add('theme-kpmg');
+  };
 
   return (
     <div className='space-y-6'>
@@ -57,33 +84,57 @@ export function AppearancePage() {
         </CardHeader>
         <CardContent className='space-y-4'>
           <div className='grid gap-3 sm:grid-cols-2 lg:grid-cols-4'>
-            {COLOR_THEMES.map((theme) => (
+            {COLOR_THEMES.map((themeOption) => (
               <button
-                key={theme.value}
+                key={themeOption.value}
                 type='button'
-                onClick={() => setSelectedTheme(theme.value)}
+                onClick={() => setSelectedTheme(themeOption.value)}
                 className={cn(
                   'rounded-lg border p-4 text-left transition-colors',
-                  selectedTheme === theme.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
+                  selectedTheme === themeOption.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
                 )}>
                 <div className='flex items-center gap-3'>
                   <div className={cn('flex h-12 w-28 items-center justify-center rounded-md border bg-background', theme === 'dark' ? 'border-white/10' : 'border-black/10')}>
-                    {theme.value === 'blue' ? (
+                    {themeOption.value === 'blue' ? (
                       <Icons.Kpmg className='max-h-8 w-auto' style={{ color: theme === 'light' ? '#2563eb' : '#ffffff' }} />
                     ) : (
                       <Icons.YellowMind className='max-h-8 w-auto' />
                     )}
                   </div>
-                  <span className='font-medium'>{t(theme.labelKey as never)}</span>
+                  <span className='font-medium'>{t(themeOption.labelKey as never)}</span>
                 </div>
               </button>
             ))}
           </div>
 
           <div className='flex gap-3'>
-            <Button>
+            <Button
+              onClick={async () => {
+                setSavingTheme(true);
+                try {
+                  const nextSettings = {
+                    defaultColorTheme: selectedTheme,
+                    themes: {
+                      default: { labelKey: 'appearance.colorTheme.default', logo: themeLogoMap.default },
+                      yellow: { labelKey: 'appearance.colorTheme.yellow', logo: themeLogoMap.yellow },
+                      orange: { labelKey: 'appearance.colorTheme.orange', logo: themeLogoMap.orange },
+                      blue: { labelKey: 'appearance.colorTheme.blue', logo: themeLogoMap.blue },
+                    },
+                  };
+
+                  await setAppearanceSettings(nextSettings);
+                  applyThemeImmediately(nextSettings.defaultColorTheme);
+                  toast.success(t('appearance.actions.applied'));
+                } catch {
+                  toast.error(t('appearance.actions.applyFailed'));
+                } finally {
+                  setSavingTheme(false);
+                }
+              }}
+              disabled={savingTheme}
+            >
               <Globe2 className='mr-2 h-4 w-4' />
-              {t('appearance.actions.applyToAll')}
+              {savingTheme ? t('appearance.actions.applying') : t('appearance.actions.applyToAll')}
             </Button>
           </div>
         </CardContent>

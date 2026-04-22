@@ -27,6 +27,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [state, setState] = React.useState<AuthState>(initialState);
   const [initialColorTheme, setInitialColorTheme] = React.useState<'default' | 'yellow' | 'orange' | 'blue'>('default');
 
+  const fetchGlobalAppearance = React.useCallback(async (): Promise<'default' | 'yellow' | 'orange' | 'blue'> => {
+    try {
+      const appearance = await authApi.getGlobalAppearanceSettings();
+      return appearance.defaultColorTheme;
+    } catch {
+      return 'default';
+    }
+  }, []);
+
   // Initialize auth state from localStorage on mount
   React.useEffect(() => {
     const fetchRegistration = async (): Promise<boolean> => {
@@ -41,6 +50,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     const initializeAuth = async () => {
       try {
+        const globalAppearance = await fetchGlobalAppearance();
         const token = localStorage.getItem(AUTH_STORAGE_KEYS.accessToken);
         const userJson = localStorage.getItem(AUTH_STORAGE_KEYS.user);
 
@@ -50,7 +60,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
           if (user) {
             localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
-            setInitialColorTheme(user.appearance?.colorTheme ?? 'default');
+            setInitialColorTheme(user.appearance?.colorTheme ?? globalAppearance);
             setState({
               user,
               isAuthenticated: true,
@@ -73,7 +83,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             const refreshedUser = await authApi.getCurrentUser();
             localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(refreshedUser));
 
-            setInitialColorTheme(refreshedUser.appearance?.colorTheme ?? 'default');
+            setInitialColorTheme(refreshedUser.appearance?.colorTheme ?? globalAppearance);
             setState({
               user: refreshedUser,
               isAuthenticated: true,
@@ -95,7 +105,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         } else {
           // No token - guest user, fetch registration status before finishing load
           const registrationEnabled = await fetchRegistration();
-          setInitialColorTheme('default');
+          setInitialColorTheme(globalAppearance);
           setState({ ...initialState, isLoading: false, registrationEnabled });
         }
       } catch {

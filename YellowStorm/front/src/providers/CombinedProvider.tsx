@@ -4,13 +4,14 @@
  * and improve readability.
  */
 
-import { ReactNode, useMemo } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { AuthProvider } from '@/modules/auth';
 import { SettingsModalProvider } from '@/modules/profile';
 import { UsageProvider } from '@/modules/usage';
 import { NotificationsProvider } from '@/modules/notifications';
 import { LocalizationProvider } from '@/modules/localization';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 
 type CombinedProviderProps = Readonly<{
   children: ReactNode;
@@ -27,25 +28,44 @@ type CombinedProviderProps = Readonly<{
  * - SettingsModalProvider: handles settings modals
  */
 export function CombinedProvider({ children }: CombinedProviderProps) {
-  const Provider = useMemo(
-    () =>
-      function ProviderComponent({ children: providerChildren }: { children: ReactNode }) {
-        return (
-          <LocalizationProvider>
-            <AuthProvider>
-              <NotificationsProvider>
-                <UsageProvider>
-                  <ThemeProvider>
-                    <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
-                  </ThemeProvider>
-                </UsageProvider>
-              </NotificationsProvider>
-            </AuthProvider>
-          </LocalizationProvider>
-        );
-      },
-    [],
-  );
+  function ProviderComponent({ children: providerChildren }: { children: ReactNode }) {
+    const [defaultColorTheme, setDefaultColorTheme] = useState<'default' | 'yellow' | 'orange' | 'blue'>('default');
 
-  return <Provider>{children}</Provider>;
+    useEffect(() => {
+      let isMounted = true;
+
+      getGlobalAppearanceSettings()
+        .then((appearance) => {
+          if (isMounted) {
+            setDefaultColorTheme(appearance.defaultColorTheme);
+            localStorage.setItem('ui-color-theme', appearance.defaultColorTheme);
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setDefaultColorTheme('default');
+          }
+        });
+
+      return () => {
+        isMounted = false;
+      };
+    }, []);
+
+    return (
+      <LocalizationProvider>
+        <AuthProvider>
+          <NotificationsProvider>
+            <UsageProvider>
+              <ThemeProvider defaultColorTheme={defaultColorTheme} initialColorTheme={defaultColorTheme}>
+                <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
+              </ThemeProvider>
+            </UsageProvider>
+          </NotificationsProvider>
+        </AuthProvider>
+      </LocalizationProvider>
+    );
+  }
+
+  return <ProviderComponent>{children}</ProviderComponent>;
 }

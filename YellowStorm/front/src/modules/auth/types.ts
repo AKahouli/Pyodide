@@ -27,6 +27,7 @@ export interface User {
   profileComplete: boolean;
   appearance?: {
     colorTheme: 'default' | 'yellow' | 'orange' | 'blue';
+    logo?: 'yellowmind' | 'kpmg';
   };
   profile: UserProfile;
   consents: UserConsents;

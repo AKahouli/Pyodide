@@ -21,6 +21,32 @@ const DEFAULT_APPEARANCE: AppearanceSettings = {
   },
 };
 
+function normalizeAppearanceSettings(value: AppearanceValue): AppearanceSettings {
+  const normalizeLogo = (logo?: string): 'yellowmind' | 'kpmg' => (logo === 'kpmg' ? 'kpmg' : 'yellowmind');
+
+  return {
+    defaultColorTheme: value.defaultColorTheme as AppearanceSettings['defaultColorTheme'],
+    themes: {
+      default: {
+        labelKey: value.themes.default?.labelKey ?? 'appearance.colorTheme.default',
+        logo: normalizeLogo(value.themes.default?.logo),
+      },
+      yellow: {
+        labelKey: value.themes.yellow?.labelKey ?? 'appearance.colorTheme.yellow',
+        logo: normalizeLogo(value.themes.yellow?.logo),
+      },
+      orange: {
+        labelKey: value.themes.orange?.labelKey ?? 'appearance.colorTheme.orange',
+        logo: normalizeLogo(value.themes.orange?.logo),
+      },
+      blue: {
+        labelKey: value.themes.blue?.labelKey ?? 'appearance.colorTheme.blue',
+        logo: normalizeLogo(value.themes.blue?.logo),
+      },
+    },
+  };
+}
+
 @Injectable()
 export class SystemService implements OnApplicationBootstrap {
   private maintenanceCache: MaintenanceStatus | null = null;
@@ -376,10 +402,7 @@ export class SystemService implements OnApplicationBootstrap {
       const setting = await this.systemSettingModel.findOne({ key: APPEARANCE_KEY });
 
       if (setting && this.isAppearanceValue(setting.value)) {
-        this.appearanceCache = {
-          defaultColorTheme: setting.value.defaultColorTheme,
-          themes: setting.value.themes,
-        };
+        this.appearanceCache = normalizeAppearanceSettings(setting.value);
       } else {
         this.appearanceCache = DEFAULT_APPEARANCE;
       }
@@ -391,7 +414,7 @@ export class SystemService implements OnApplicationBootstrap {
         error: (error as Error).message,
       });
 
-      this.appearanceCache ??= DEFAULT_APPEARANCE;
+      this.appearanceCache = this.appearanceCache ?? DEFAULT_APPEARANCE;
       return this.appearanceCache;
     }
   }

@@ -186,7 +186,10 @@ export class SystemController {
       actorId: user._id.toString(),
       actorEmail: user.email,
       action: 'system.appearance',
-      metadata: body,
+      metadata: {
+        defaultColorTheme: body.defaultColorTheme,
+        themes: body.themes,
+      },
       ipAddress: req.ip,
       userAgent: req.headers['user-agent'],
     });
