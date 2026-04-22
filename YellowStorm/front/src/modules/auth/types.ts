@@ -70,7 +70,6 @@ export interface CompleteProfileData {
 
 // Auth context interface
 export interface AuthContextType extends AuthState {
-  colorTheme: 'default' | 'yellow' | 'orange' | 'blue';
   login: (credentials: LoginCredentials) => Promise<void>;
   register: (credentials: RegisterCredentials) => Promise<void>;
   logout: () => Promise<void>;

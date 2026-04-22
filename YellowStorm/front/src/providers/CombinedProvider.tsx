@@ -42,18 +42,19 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
     useEffect(() => {
       let isMounted = true;
 
-        getGlobalAppearanceSettings()
+      getGlobalAppearanceSettings()
         .then((appearance) => {
           if (isMounted) {
             setAppearanceSettings(appearance);
-            applyAppearanceClass('default');
+            console.log('defaultColorTheme', appearance.defaultColorTheme);
+            applyAppearanceClass(appearance.defaultColorTheme);
           }
         })
         .catch(() => {
           if (isMounted) {
             applyAppearanceClass('default');
-            }
-          });
+          }
+        });
 
       return () => {
         isMounted = false;
@@ -61,11 +62,11 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
     }, []);
 
     useEffect(() => {
-    const handleThemeSync = () => {
-          getGlobalAppearanceSettings()
+      const handleThemeSync = () => {
+        getGlobalAppearanceSettings()
           .then((appearance) => {
             setAppearanceSettings(appearance);
-            applyAppearanceClass('default');
+            applyAppearanceClass(appearance.defaultColorTheme);
           })
           .catch(() => {
             // Keep the current theme if sync fails.
@@ -85,7 +86,9 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
         <AuthProvider>
           <NotificationsProvider>
             <UsageProvider>
-              <ThemeProvider resolveLogoForTheme={(colorTheme) => appearanceSettings?.themes[colorTheme]?.logo ?? 'yellowmind'}>
+              <ThemeProvider
+                defaultColorTheme={appearanceSettings?.defaultColorTheme}
+                resolveLogoForTheme={(colorTheme) => appearanceSettings?.themes[colorTheme]?.logo ?? 'yellowmind'}>
                 <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
               </ThemeProvider>
             </UsageProvider>

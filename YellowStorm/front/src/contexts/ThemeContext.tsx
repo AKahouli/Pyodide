@@ -1,5 +1,4 @@
 import { useAuth } from '@/modules/auth';
-import { use } from 'i18next';
 import { createContext, useEffect, useState } from 'react';
 
 export const COLOR_THEMES = [
@@ -47,12 +46,13 @@ const initialState: ThemeProviderState = {
 
 export const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
-export function ThemeProvider({ children, defaultTheme = 'dark', resolveLogoForTheme, ...props }: ThemeProviderProps) {
+export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorTheme = 'default', resolveLogoForTheme, ...props }: ThemeProviderProps) {
   const [theme, setTheme] = useState(defaultTheme);
-  const [colorTheme, setColorTheme] = useState<ColorTheme>('default');
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(defaultColorTheme);
   const [logo, setLogo] = useState<'yellowmind' | 'kpmg'>(() => 'yellowmind');
-  const { user } = useAuth();
+  const { isAuthenticated, user } = useAuth();
 
+  console.log('colorTheme', colorTheme);
   useEffect(() => {
     const root = globalThis.document.documentElement;
 
@@ -78,8 +78,15 @@ export function ThemeProvider({ children, defaultTheme = 'dark', resolveLogoForT
   }, [colorTheme, resolveLogoForTheme]);
 
   useEffect(() => {
-    if (user) setColorTheme(user?.appearance?.colorTheme ?? 'default');
-  }, [user?.appearance?.colorTheme]);
+    if (!isAuthenticated) {
+      setColorTheme(defaultColorTheme);
+      return;
+    }
+
+    if (user) {
+      setColorTheme(user.appearance?.colorTheme ?? defaultColorTheme);
+    }
+  }, [defaultColorTheme, isAuthenticated, user]);
 
   return (
     <ThemeProviderContext.Provider
