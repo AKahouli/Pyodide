@@ -9,6 +9,7 @@ creates its own mini StateGraph.
 import json
 import re
 import time
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, Any, Optional, List
@@ -92,6 +93,61 @@ def _collect_generated_artifacts(
             }
         )
     return generated
+
+
+def _attach_result_text_for_citations(
+    response_text: str,
+    components: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    normalized_response = str(response_text or "").strip()
+    if not normalized_response or not components:
+        return components
+
+    citation_components = [
+        dict(component)
+        for component in components
+        if isinstance(component, dict) and component.get("type") == "citation"
+    ]
+    if not citation_components:
+        return components
+
+    regular_components: List[Dict[str, Any]] = [
+        dict(component)
+        for component in components
+        if isinstance(component, dict) and component.get("type") != "citation"
+    ]
+
+    target_text_component: Optional[Dict[str, Any]] = None
+    for component in reversed(regular_components):
+        if component.get("type") != "text":
+            continue
+        data = component.get("data") or {}
+        if str(data.get("content") or "").strip() != normalized_response:
+            continue
+        target_text_component = component
+        break
+
+    if target_text_component is None:
+        target_text_component = {
+            "id": f"playbook-final-text-{uuid.uuid4().hex}",
+            "type": "text",
+            "data": {"content": response_text},
+        }
+        regular_components.append(target_text_component)
+    elif not target_text_component.get("id"):
+        target_text_component["id"] = f"playbook-final-text-{uuid.uuid4().hex}"
+
+    target_text_id = str(target_text_component.get("id") or "").strip()
+    updated_citations: List[Dict[str, Any]] = []
+    for component in citation_components:
+        data = dict(component.get("data") or {})
+        if not str(data.get("parent_id") or "").strip() and target_text_id:
+            data["parent_id"] = target_text_id
+        updated_component = dict(component)
+        updated_component["data"] = data
+        updated_citations.append(updated_component)
+
+    return regular_components + updated_citations
 
 
 def _find_generated_artifact_match(
@@ -832,7 +888,8 @@ async def _execute_step_direct(
                 system_prompt,
                 user_prompt,
                 lc_tools,
-                collector,
+                task_id=task_id,
+                collector=collector,
                 temperature=temperature,
                 on_progress=on_progress,
             )
@@ -855,6 +912,8 @@ async def _execute_step_direct(
             or agent.get("name") == "Visualizer Agent"
             or "visualizer_agent" in (agent.get("name") or "").lower()
         )
+        if not is_visualizer:
+            components = _attach_result_text_for_citations(response, components)
         if is_visualizer and response:
             components.insert(
                 0,
@@ -956,6 +1015,7 @@ async def _execute_with_tools(
     system_prompt: str,
     user_prompt: str,
     tools: List,
+    task_id: str = "",
     collector=None,
     temperature: float = 0.7,
     on_progress: Optional[StepProgressCallback] = None,
@@ -1077,7 +1137,22 @@ async def _execute_with_tools(
             )
 
             if collector:
-                all_components.extend(collector.get_and_clear())
+                new_components = collector.get_and_clear()
+                all_components.extend(new_components)
+                citation_components = [
+                    component
+                    for component in new_components
+                    if isinstance(component, dict)
+                    and component.get("type") == "citation"
+                ]
+                if citation_components:
+                    logger.warning(
+                        "[%s] PLAYBOOK_MCP_CITATION_DRAINED tool=%s citation_count=%s citations=%s",
+                        task_id or "unknown_task",
+                        tool_call["name"],
+                        len(citation_components),
+                        citation_components,
+                    )
             if on_progress is not None:
                 await on_progress(
                     {

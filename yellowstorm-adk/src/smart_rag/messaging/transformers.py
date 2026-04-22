@@ -53,13 +53,7 @@ class MessageTransformer:
             citation_pattern = r'\[(\d+)\]'
             matches = re.findall(citation_pattern, combined)
             detected_citations = [f"[{m}]" for m in matches]
-
-            # Remove citation markers from text
-            cleaned_text = combined
-            for citation in detected_citations:
-                cleaned_text = cleaned_text.replace(citation, '')
-
-            return cleaned_text, "", detected_citations
+            return combined, "", detected_citations
 
         # Check for potential incomplete citation in last 6 chars (5 + '[')
         search_window = combined[-(MAX_CITATION_BUFFER + 1):] if len(combined) >= (MAX_CITATION_BUFFER + 1) else combined
@@ -75,23 +69,13 @@ class MessageTransformer:
                 citation_pattern = r'\[(\d+)\]'
                 matches = re.findall(citation_pattern, combined)
                 detected_citations = [f"[{m}]" for m in matches]
-
-                # Remove citation markers from text
-                cleaned_text = combined
-                for citation in detected_citations:
-                    cleaned_text = cleaned_text.replace(citation, '')
-
-                return cleaned_text, "", detected_citations
+                return combined, "", detected_citations
 
             # Check if complete citation like [1], [12], [123]
             if re.match(r'\[\d+\]$', potential_citation):
                 # Complete citation - detect and send all
                 detected_citations = [potential_citation]
-
-                # Remove citation marker from text
-                cleaned_text = combined.replace(potential_citation, '')
-
-                return cleaned_text, "", detected_citations
+                return combined, "", detected_citations
             else:
                 # Incomplete citation - buffer it
                 text_to_send = combined[:last_bracket_pos]
@@ -102,10 +86,6 @@ class MessageTransformer:
                     citation_pattern = r'\[(\d+)\]'
                     matches = re.findall(citation_pattern, text_to_send)
                     detected_citations = [f"[{m}]" for m in matches]
-
-                    # Remove citation markers from text
-                    for citation in detected_citations:
-                        text_to_send = text_to_send.replace(citation, '')
                 else:
                     detected_citations = []
 
@@ -115,10 +95,4 @@ class MessageTransformer:
             citation_pattern = r'\[(\d+)\]'
             matches = re.findall(citation_pattern, combined)
             detected_citations = [f"[{m}]" for m in matches]
-
-            # Remove citation markers from text
-            cleaned_text = combined
-            for citation in detected_citations:
-                cleaned_text = cleaned_text.replace(citation, '')
-
-            return cleaned_text, "", detected_citations
+            return combined, "", detected_citations

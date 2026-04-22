@@ -17,6 +17,167 @@ from src.smart_rag.tools.utilities.code_interpreter import _STATE_KEY_BRAIN_DOCS
 logger = get_logger("api.smart_rag.tools.connector_tools")
 _platform_access_token: Optional[str] = None
 _platform_access_token_expires_at = 0.0
+_STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
+_STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
+_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
+_STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
+
+
+def _log_payload(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _build_connector_source_signature(source: Dict[str, Any]) -> str:
+    source_type = str(source.get("type") or "text")
+    if source_type == "image":
+        parts = [
+            source_type,
+            str(source.get("path") or ""),
+            str(source.get("external_id") or ""),
+            str(source.get("page") or ""),
+        ]
+    else:
+        parts = [
+            source_type,
+            str(source.get("source") or ""),
+            str(source.get("external_id") or ""),
+            str(source.get("page") or ""),
+            str(source.get("page_content") or ""),
+        ]
+    return "::".join(parts)
+
+
+def _append_citation_guidance(text: str, references: List[str]) -> str:
+    if not text or not references:
+        return text
+    refs = ", ".join(f"[{ref}]" for ref in references)
+    return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
+
+
+def _register_connector_text_source(
+    source: Dict[str, Any],
+    tool_context: ToolContext,
+) -> Dict[str, Any]:
+    state = tool_context.state
+    signatures = state.setdefault(_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES, {})
+    text_sources = state.setdefault(_STATE_KEY_CONNECTOR_TEXT_SOURCES, [])
+    image_sources = state.setdefault(_STATE_KEY_CONNECTOR_IMAGE_SOURCES, [])
+    signature = _build_connector_source_signature(source)
+
+    existing_reference = signatures.get(signature)
+    if existing_reference:
+        source["reference"] = existing_reference
+        logger.info(
+            "connector_citation_reused reference=%s source_type=%s source=%s external_id=%s page=%s",
+            existing_reference,
+            source.get("type", "text"),
+            source.get("source") or source.get("path") or "",
+            source.get("external_id") or "",
+            source.get("page") or "",
+        )
+        return source
+
+    next_ref = int(state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)) + 1
+    state[_STATE_KEY_CONNECTOR_REFERENCE_COUNTER] = next_ref
+    reference = str(next_ref)
+    signatures[signature] = reference
+    source["reference"] = reference
+
+    source_type = str(source.get("type") or "text")
+    if source_type == "image":
+        image_sources.append(
+            {
+                "reference": reference,
+                "object": {
+                    "content": {
+                        "path": str(source.get("path") or ""),
+                        "page": str(source.get("page") or ""),
+                        "file_name": str(source.get("file_name") or ""),
+                        "external_id": str(source.get("external_id") or ""),
+                        "brain_id": str(source.get("workspace_id") or ""),
+                        "height": str(source.get("height") or ""),
+                        "width": str(source.get("width") or ""),
+                    }
+                },
+            }
+        )
+    else:
+        text_sources.append(
+            {
+                "reference": reference,
+                "object": {
+                    "content": {
+                        "source": str(source.get("source") or ""),
+                        "external_id": str(source.get("external_id") or ""),
+                        "page": str(source.get("page") or ""),
+                        "page_content": str(source.get("page_content") or ""),
+                        "brain_id": str(source.get("workspace_id") or ""),
+                    }
+                },
+            }
+        )
+
+    logger.info(
+        "connector_citation_registered reference=%s source_type=%s source=%s external_id=%s page=%s text_source_total=%s image_source_total=%s",
+        reference,
+        source_type,
+        source.get("source") or source.get("path") or "",
+        source.get("external_id") or "",
+        source.get("page") or "",
+        len(text_sources),
+        len(image_sources),
+    )
+
+    return source
+
+
+def _register_connector_response_sources(
+    response: Any,
+    tool_context: Optional[ToolContext],
+) -> Any:
+    if not tool_context or not isinstance(response, dict):
+        return response
+
+    citation_sources = response.get("citation_sources")
+    logger.info(
+        "connector_response_source_registration response_keys=%s citation_source_count=%s source_count=%s",
+        sorted(response.keys()),
+        len(citation_sources) if isinstance(citation_sources, list) else 0,
+        len(response.get("sources", []))
+        if isinstance(response.get("sources"), list)
+        else 0,
+    )
+    if not isinstance(citation_sources, list):
+        return response
+
+    assigned_references: List[str] = []
+    normalized_sources: List[Dict[str, Any]] = []
+    for source in citation_sources:
+        if not isinstance(source, dict):
+            continue
+        normalized = _register_connector_text_source(dict(source), tool_context)
+        normalized_sources.append(normalized)
+        reference = str(normalized.get("reference") or "").strip()
+        if reference:
+            assigned_references.append(reference)
+
+    if normalized_sources:
+        response = dict(response)
+        response["citation_sources"] = normalized_sources
+        text_value = response.get("text")
+        if isinstance(text_value, str):
+            response["text"] = _append_citation_guidance(text_value, assigned_references)
+        logger.info(
+            "connector_response_source_registration_complete assigned_references=%s text_source_total=%s image_source_total=%s",
+            assigned_references,
+            len(tool_context.state.get(_STATE_KEY_CONNECTOR_TEXT_SOURCES, [])),
+            len(tool_context.state.get(_STATE_KEY_CONNECTOR_IMAGE_SOURCES, [])),
+        )
+
+    return response
 
 
 def _build_connector_import_url(backend_url: str) -> str:
@@ -522,8 +683,9 @@ def create_connector_tools(
                 _fixed_params: Dict[str, Any] = fixed_params,
                 _auth_headers: Dict[str, str] = {**binding_auth_headers, **brain_header},
                 _auth_env: Dict[str, str] = binding_auth_env,
+                tool_context: ToolContext = None,
                 **kwargs: Any,
-            ) -> str:
+            ) -> Any:
                 from src.langgraph_engine.mcp_client_factory import call_mcp_tool
 
                 if not _server_url:
@@ -537,7 +699,14 @@ def create_connector_tools(
                     else kwargs
                 )
                 merged_params = {**_fixed_params, **params}
-                return await call_mcp_tool(
+                logger.info(
+                    "connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
+                    _connector_id,
+                    _action_key,
+                    tool_name,
+                    _log_payload(merged_params),
+                )
+                response = await call_mcp_tool(
                     _transport_type,
                     _server_url,
                     _server_config,
@@ -546,6 +715,34 @@ def create_connector_tools(
                     auth_headers=_auth_headers,
                     auth_env=_auth_env,
                 )
+                logger.info(
+                    "connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
+                    _connector_id,
+                    _action_key,
+                    tool_name,
+                    type(response).__name__,
+                    _log_payload(response),
+                )
+                registered_response = _register_connector_response_sources(
+                    response, tool_context
+                )
+                if isinstance(registered_response, dict):
+                    logger.info(
+                        "connector_tool_registered_response connector_id=%s action_key=%s tool_name=%s source_count=%s citation_source_count=%s registered_response=%s",
+                        _connector_id,
+                        _action_key,
+                        tool_name,
+                        len(registered_response.get("sources", []))
+                        if isinstance(registered_response.get("sources"), list)
+                        else 0,
+                        len(registered_response.get("citation_sources", []))
+                        if isinstance(
+                            registered_response.get("citation_sources"), list
+                        )
+                        else 0,
+                        _log_payload(registered_response),
+                    )
+                return registered_response
 
             logger.info(
                 "connector_tool_created tool_name=%s action_key=%s auth_headers=%s",

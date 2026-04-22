@@ -10,7 +10,8 @@ import json
 import os
 import re2 as re
 import uuid
-from typing import Optional, Tuple, Any, List
+from urllib.parse import urlparse
+from typing import Optional, Tuple, Any, List, Dict
 from google.adk import Agent, Runner
 from google.adk.agents.run_config import StreamingMode, RunConfig
 from google.adk.sessions import InMemorySessionService
@@ -24,6 +25,58 @@ from src.logger.logging import get_logger
 
 logger = get_logger("api.smart_rag.agentic_rag.AgentRunner")
 APP_NAME = "manager_app"
+_STATE_KEY_CONNECTOR_TEXT_SOURCES = "_connector_text_sources"
+_STATE_KEY_CONNECTOR_IMAGE_SOURCES = "_connector_image_sources"
+_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES = "_connector_source_signatures"
+_STATE_KEY_CONNECTOR_REFERENCE_COUNTER = "_connector_reference_counter"
+
+
+def _display_source_name(value: Any) -> str:
+    """Normalize a source field to a filename when it contains a URL or path."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    parsed = urlparse(text)
+    if parsed.scheme and parsed.netloc:
+        path = parsed.path.rstrip("/")
+        if path:
+            candidate = path.rsplit("/", 1)[-1].strip()
+            if candidate:
+                return candidate
+
+    normalized = text.rstrip("/")
+    if "/" in normalized:
+        candidate = normalized.rsplit("/", 1)[-1].strip()
+        if candidate:
+            return candidate
+
+    return text
+
+
+def _normalize_reference_token(value: Any) -> str:
+    """Normalize citation references so `1` and `[1]` resolve identically."""
+    text = str(value or "").strip()
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1].strip()
+    return text
+
+
+def _log_payload(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _replace_citation_marker(text: str, original_ref: str, ui_reference: str) -> str:
+    """Replace a citation marker in text with the mapped UI reference."""
+    if not text:
+        return text
+    normalized_original = _normalize_reference_token(original_ref)
+    if not normalized_original:
+        return text
+    return text.replace(f"[{normalized_original}]", f"[{ui_reference}]")
 
 
 class AgentRunner:
@@ -180,6 +233,7 @@ class AgentRunner:
                     toolkit,
                     mcp_tools_used,
                     agent_id,
+                    session,
                 )
             else:
                 return await self._run_html_agent(
@@ -204,6 +258,7 @@ class AgentRunner:
         toolkit,
         mcp_tools_used,
         agent_id,
+        session=None,
     ):
         """Run a standard agent (non-HTML) with detailed execution recording.
 
@@ -228,7 +283,7 @@ class AgentRunner:
         accumulated_text = ""
         # Citation buffering using MessageTransformer
         citation_buffer = ""
-        # Sequential citation remapping: LLM ref (e.g., "[8]") -> UI ref (e.g., "[1]")
+        # Sequential citation remapping: LLM ref (e.g., "[8]") -> UI ref (e.g., "1")
         citation_mapping = {}
         citation_counter = 0
         # Track current text component ID for citation parent_id
@@ -277,7 +332,7 @@ class AgentRunner:
                         )
 
                         # Process detected citations and send citation components
-                        if detected_citations and toolkit:
+                        if detected_citations:
                             logger.debug(
                                 f"[CITATION DETECTION] Agent referenced {len(detected_citations)} citation(s): {detected_citations}"
                             )
@@ -287,7 +342,7 @@ class AgentRunner:
                                 if citation_ref not in citation_mapping:
                                     citation_counter += 1
                                     citation_mapping[citation_ref] = (
-                                        f"[{citation_counter}]"
+                                        str(citation_counter)
                                     )
                                     logger.debug(
                                         f"[CITATION REMAP] {citation_ref} -> {citation_mapping[citation_ref]}"
@@ -296,7 +351,9 @@ class AgentRunner:
 
                                 # Look up the source
                                 source_info = self._find_source_by_reference(
-                                    citation_ref, toolkit
+                                    citation_ref,
+                                    toolkit,
+                                    getattr(session, "state", {}),
                                 )
                                 if source_info and q:
                                     logger.debug(
@@ -312,6 +369,12 @@ class AgentRunner:
                                     )
                                 else:
                                     logger.debug(f"No source found for {citation_ref}")
+
+                                text_to_send = _replace_citation_marker(
+                                    text_to_send,
+                                    citation_ref,
+                                    ui_reference,
+                                )
 
                         # Send text chunk if we have any (might be empty if buffering)
                         if text_to_send and q:
@@ -515,6 +578,14 @@ class AgentRunner:
                             await self._handle_web_search_response(
                                 part.function_response, agent_id, session_id, q
                             )
+                        elif q:
+                            await self._handle_structured_tool_response(
+                                part.function_response,
+                                agent_id,
+                                session_id,
+                                q,
+                                getattr(session, "state", {}),
+                            )
 
                         # Check if this is a python_interpreter tool response
                         if func_name == "python_interpreter" and q:
@@ -536,70 +607,83 @@ class AgentRunner:
                             )
 
                 if event.is_final_response() and event.content and event.content.parts:
-                    # Force flush any remaining citation buffer on stream end
-                    if citation_buffer:
-                        logger.debug(
-                            f"[STREAM END] Flushing remaining buffer: '{citation_buffer}'"
+                    final_text_for_citations = "".join(
+                        (part.text or "")
+                        for part in event.content.parts
+                        if getattr(part, "text", None)
+                    )
+                    logger.info(
+                        "[STREAM END] final_text_length=%s buffered_length=%s final_text_preview=%s",
+                        len(final_text_for_citations),
+                        len(citation_buffer),
+                        final_text_for_citations[:1000],
+                    )
+
+                    # Force flush the buffer plus any final text because final-only citations
+                    # otherwise bypass the normal non-final streaming detection path.
+                    text_to_send, _, detected_citations = (
+                        MessageTransformer.simple_tag_transformer(
+                            tempmsg=final_text_for_citations,
+                            task_n=1,
+                            buffer=citation_buffer,
+                            force_flush=True,
+                        )
+                    )
+                    citation_buffer = ""
+
+                    # Process detected citations
+                    if detected_citations:
+                        logger.info(
+                            f"[CITATION DETECTION] Found {len(detected_citations)} citation(s) in final flush: {detected_citations}"
                         )
 
-                        # Force flush to detect citations in remaining buffer
-                        text_to_send, _, detected_citations = (
-                            MessageTransformer.simple_tag_transformer(
-                                tempmsg="",
-                                task_n=1,
-                                buffer=citation_buffer,
-                                force_flush=True,
-                            )
-                        )
-
-                        # Process detected citations
-                        if detected_citations and toolkit:
-                            logger.debug(
-                                f"[CITATION DETECTION] Found {len(detected_citations)} citation(s) in flushed buffer: {detected_citations}"
-                            )
-
-                            for citation_ref in detected_citations:
-                                # Assign sequential UI reference on first encounter
-                                if citation_ref not in citation_mapping:
-                                    citation_counter += 1
-                                    citation_mapping[citation_ref] = (
-                                        f"[{citation_counter}]"
-                                    )
-                                    logger.debug(
-                                        f"[CITATION REMAP] {citation_ref} -> {citation_mapping[citation_ref]}"
-                                    )
-                                ui_reference = citation_mapping[citation_ref]
-
-                                source_info = self._find_source_by_reference(
-                                    citation_ref, toolkit
+                        for citation_ref in detected_citations:
+                            # Assign sequential UI reference on first encounter
+                            if citation_ref not in citation_mapping:
+                                citation_counter += 1
+                                citation_mapping[citation_ref] = (
+                                    str(citation_counter)
                                 )
-                                if source_info and q:
-                                    logger.debug(
-                                        f"Sending citation component for {citation_ref} -> {ui_reference}"
-                                    )
-                                    await self._send_citation_component(
-                                        source_info,
-                                        agent_id,
-                                        session_id,
-                                        q,
-                                        current_text_component_id,
-                                        ui_reference,
-                                    )
+                                logger.debug(
+                                    f"[CITATION REMAP] {citation_ref} -> {citation_mapping[citation_ref]}"
+                                )
+                            ui_reference = citation_mapping[citation_ref]
 
-                        # Send any remaining text
-                        if text_to_send and q:
-                            output = self.streaming_formatter.format_streaming_event(
-                                agent_id=agent_id,
-                                agent_name=agent_name,
-                                agent_type=agent_type,
-                                chunk=text_to_send,
-                                message_id=session_id,
-                                content_type="chunk",
+                            source_info = self._find_source_by_reference(
+                                citation_ref,
+                                toolkit,
+                                getattr(session, "state", {}),
                             )
-                            await q.put(output)
+                            if source_info and q:
+                                logger.debug(
+                                    f"Sending citation component for {citation_ref} -> {ui_reference}"
+                                )
+                                await self._send_citation_component(
+                                    source_info,
+                                    agent_id,
+                                    session_id,
+                                    q,
+                                    current_text_component_id,
+                                    ui_reference,
+                                )
+
+                            text_to_send = _replace_citation_marker(
+                                text_to_send,
+                                citation_ref,
+                                ui_reference,
+                            )
+
+                    if not detected_citations:
+                        logger.info("[CITATION DETECTION] No citations found in final flush")
 
                     final_result = await self._handle_final_response(
-                        event, agent_name, toolkit, task_order, q, session_id
+                        event,
+                        agent_name,
+                        toolkit,
+                        task_order,
+                        q,
+                        session_id,
+                        citation_mapping,
                     )
                     if accumulated_text != "":
                         recorder.record_chunk(accumulated_text)
@@ -809,7 +893,14 @@ class AgentRunner:
         return current_text_component_id
 
     async def _handle_final_response(
-        self, event, agent_name, toolkit, task_order, q, session_id
+        self,
+        event,
+        agent_name,
+        toolkit,
+        task_order,
+        q,
+        session_id,
+        citation_mapping: Optional[Dict[str, str]] = None,
     ):
         """Handle final response from agent."""
         # Safely handle empty parts list
@@ -865,6 +956,13 @@ class AgentRunner:
         event_text = await self._replace_diagram_references_during_streaming(
             event_text, session_id
         )
+
+        for citation_ref, ui_reference in (citation_mapping or {}).items():
+            event_text = _replace_citation_marker(
+                event_text,
+                citation_ref,
+                ui_reference,
+            )
 
         return event_text
 
@@ -1123,6 +1221,58 @@ class AgentRunner:
                 exc_info=True,
             )
 
+    async def _handle_structured_tool_response(
+        self,
+        function_response: Any,
+        agent_id: str,
+        session_id: str,
+        q: asyncio.Queue,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Emit supported source components from structured tool responses."""
+        try:
+            response_data = function_response.response
+            logger.info(
+                "[STRUCTURED TOOL RESPONSE] tool=%s response_type=%s full_response=%s",
+                getattr(function_response, "name", "unknown"),
+                type(response_data).__name__,
+                _log_payload(response_data),
+            )
+            if not isinstance(response_data, dict):
+                return
+
+            self._register_connector_citation_sources_from_response(
+                response_data,
+                session_state if session_state is not None else {},
+                getattr(function_response, "name", "unknown"),
+            )
+
+            sources = response_data.get("sources", [])
+            if isinstance(sources, list) and sources:
+                logger.info(
+                    "[STRUCTURED TOOL RESPONSE] tool=%s streaming_sources_count=%s",
+                    getattr(function_response, "name", "unknown"),
+                    len(sources),
+                )
+                sources_chunk = self.streaming_formatter.format_component_event(
+                    agent_id=agent_id,
+                    component_type="sources",
+                    component_data={"sources": sources},
+                    message_id=session_id,
+                )
+                await q.put(sources_chunk)
+            else:
+                logger.info(
+                    "[STRUCTURED TOOL RESPONSE] tool=%s no_sources_to_stream keys=%s",
+                    getattr(function_response, "name", "unknown"),
+                    sorted(response_data.keys()),
+                )
+        except Exception as e:
+            logger.error(
+                f"[STRUCTURED TOOL RESPONSE] Error handling structured tool response: {str(e)}",
+                exc_info=True,
+            )
+
     async def _handle_python_interpreter_response(
         self, function_response, agent_id, agent_name, session_id, q
     ):
@@ -1245,35 +1395,330 @@ class AgentRunner:
                 exc_info=True,
             )
 
-    def _find_source_by_reference(self, citation_ref: str, toolkit) -> Optional[dict]:
+    def _find_source_by_reference(
+        self,
+        citation_ref: str,
+        toolkit,
+        session_state: Optional[Dict[str, Any]] = None,
+    ) -> Optional[dict]:
         """Find source information by citation reference.
 
         Args:
-            citation_ref: Citation reference like "[1]"
+            citation_ref: Citation reference like "1" or "[1]"
             toolkit: The toolkit with sources_text and sources_image
+            session_state: Optional session state containing connector sources
 
         Returns:
             Dictionary with raw source object and type if found, None otherwise
         """
+        logger.info(
+            "[CITATION LOOKUP] looking_for=%s toolkit_text_count=%s toolkit_image_count=%s connector_text_count=%s connector_image_count=%s",
+            citation_ref,
+            len(getattr(toolkit, "sources_text", [])) if toolkit else 0,
+            len(getattr(toolkit, "sources_image", [])) if toolkit else 0,
+            len((session_state or {}).get(_STATE_KEY_CONNECTOR_TEXT_SOURCES, [])),
+            len((session_state or {}).get(_STATE_KEY_CONNECTOR_IMAGE_SOURCES, [])),
+        )
+
+        def _matches_reference(source_entry: Dict[str, Any]) -> bool:
+            if _normalize_reference_token(source_entry.get("reference")) == _normalize_reference_token(citation_ref):
+                return True
+            aliases = source_entry.get("reference_aliases", [])
+            return (
+                isinstance(aliases, list)
+                and _normalize_reference_token(citation_ref)
+                in {_normalize_reference_token(alias) for alias in aliases}
+            )
+
         # Search in text sources
-        for idx, source in enumerate(toolkit.sources_text):
+        for idx, source in enumerate(getattr(toolkit, "sources_text", [])):
             source_ref = source.get("reference")
 
-            if source_ref == citation_ref:
+            if _normalize_reference_token(source_ref) == _normalize_reference_token(citation_ref):
                 source_obj = source.get("object", {})
+                logger.info(
+                    "[CITATION LOOKUP] found_in_toolkit_text reference=%s source=%s external_id=%s",
+                    citation_ref,
+                    source_obj.get("content", {}).get("source", ""),
+                    source_obj.get("content", {}).get("external_id", ""),
+                )
 
                 return {"source_object": source_obj, "type": "text"}
 
         # Search in image sources
-        for idx, source in enumerate(toolkit.sources_image):
+        for idx, source in enumerate(getattr(toolkit, "sources_image", [])):
             source_ref = source.get("reference")
 
-            if source_ref == citation_ref:
+            if _normalize_reference_token(source_ref) == _normalize_reference_token(citation_ref):
                 source_obj = source.get("object", {})
+                logger.info(
+                    "[CITATION LOOKUP] found_in_toolkit_image reference=%s path=%s external_id=%s",
+                    citation_ref,
+                    source_obj.get("content", {}).get("path", ""),
+                    source_obj.get("content", {}).get("external_id", ""),
+                )
 
                 return {"source_object": source_obj, "type": "image"}
 
+        for source in (session_state or {}).get(_STATE_KEY_CONNECTOR_TEXT_SOURCES, []):
+            if _matches_reference(source):
+                logger.info(
+                    "[CITATION LOOKUP] found_in_connector_text reference=%s stored_reference=%s aliases=%s source=%s external_id=%s",
+                    citation_ref,
+                    source.get("reference", ""),
+                    source.get("reference_aliases", []),
+                    source.get("object", {}).get("content", {}).get("source", ""),
+                    source.get("object", {}).get("content", {}).get("external_id", ""),
+                )
+                return {"source_object": source.get("object", {}), "type": "text"}
+
+        for source in (session_state or {}).get(
+            _STATE_KEY_CONNECTOR_IMAGE_SOURCES, []
+        ):
+            if _matches_reference(source):
+                logger.info(
+                    "[CITATION LOOKUP] found_in_connector_image reference=%s stored_reference=%s aliases=%s path=%s external_id=%s",
+                    citation_ref,
+                    source.get("reference", ""),
+                    source.get("reference_aliases", []),
+                    source.get("object", {}).get("content", {}).get("path", ""),
+                    source.get("object", {}).get("content", {}).get("external_id", ""),
+                )
+                return {"source_object": source.get("object", {}), "type": "image"}
+
+        logger.info("[CITATION LOOKUP] not_found reference=%s", citation_ref)
         return None
+
+    def _build_connector_source_signature(self, source: Dict[str, Any]) -> str:
+        source_type = str(source.get("type") or "text")
+        if source_type == "image":
+            parts = [
+                source_type,
+                str(source.get("path") or ""),
+                str(source.get("external_id") or ""),
+                str(source.get("page") or ""),
+            ]
+        else:
+            parts = [
+                source_type,
+                str(source.get("source") or ""),
+                str(source.get("external_id") or ""),
+                str(source.get("page") or ""),
+                str(source.get("page_content") or ""),
+            ]
+        return "::".join(parts)
+
+    def _register_connector_citation_sources_from_response(
+        self,
+        response_data: Dict[str, Any],
+        session_state: Dict[str, Any],
+        tool_name: str,
+    ) -> None:
+        citation_sources = response_data.get("citation_sources")
+        if not isinstance(citation_sources, list):
+            citation_sources = self._extract_connector_citation_sources_from_response(
+                response_data,
+                tool_name,
+            )
+        if not isinstance(citation_sources, list) or session_state is None:
+            return
+
+        text_sources = session_state.setdefault(_STATE_KEY_CONNECTOR_TEXT_SOURCES, [])
+        image_sources = session_state.setdefault(
+            _STATE_KEY_CONNECTOR_IMAGE_SOURCES, []
+        )
+        signatures = session_state.setdefault(_STATE_KEY_CONNECTOR_SOURCE_SIGNATURES, {})
+
+        logger.info(
+            "[STRUCTURED TOOL RESPONSE] tool=%s citation_source_count_in_response=%s existing_connector_text_count=%s existing_connector_image_count=%s",
+            tool_name,
+            len(citation_sources),
+            len(text_sources),
+            len(image_sources),
+        )
+
+        for source in citation_sources:
+            if not isinstance(source, dict):
+                continue
+
+            normalized_source = dict(source)
+            signature = self._build_connector_source_signature(normalized_source)
+            reference = signatures.get(signature)
+
+            if not reference:
+                next_ref = int(session_state.get(_STATE_KEY_CONNECTOR_REFERENCE_COUNTER, 0)) + 1
+                session_state[_STATE_KEY_CONNECTOR_REFERENCE_COUNTER] = next_ref
+                reference = str(next_ref)
+                signatures[signature] = reference
+
+                source_type = str(normalized_source.get("type") or "text")
+                if source_type == "image":
+                    image_sources.append(
+                        {
+                            "reference": reference,
+                            "reference_aliases": list(
+                                normalized_source.get("reference_aliases") or []
+                            ),
+                            "object": {
+                                "content": {
+                                    "path": str(normalized_source.get("path") or ""),
+                                    "page": str(normalized_source.get("page") or ""),
+                                    "file_name": str(
+                                        normalized_source.get("file_name") or ""
+                                    ),
+                                    "external_id": str(
+                                        normalized_source.get("external_id") or ""
+                                    ),
+                                    "brain_id": str(
+                                        normalized_source.get("workspace_id") or ""
+                                    ),
+                                    "height": str(normalized_source.get("height") or ""),
+                                    "width": str(normalized_source.get("width") or ""),
+                                }
+                            },
+                        }
+                    )
+                else:
+                    text_sources.append(
+                        {
+                            "reference": reference,
+                            "reference_aliases": list(
+                                normalized_source.get("reference_aliases") or []
+                            ),
+                            "object": {
+                                "content": {
+                                    "source": str(normalized_source.get("source") or ""),
+                                    "external_id": str(
+                                        normalized_source.get("external_id") or ""
+                                    ),
+                                    "page": str(normalized_source.get("page") or ""),
+                                    "page_content": str(
+                                        normalized_source.get("page_content") or ""
+                                    ),
+                                    "brain_id": str(
+                                        normalized_source.get("workspace_id") or ""
+                                    ),
+                                }
+                            },
+                        }
+                    )
+                logger.info(
+                    "[STRUCTURED TOOL RESPONSE] tool=%s registered_fallback_connector_citation reference=%s aliases=%s source_type=%s source=%s external_id=%s",
+                    tool_name,
+                    reference,
+                    normalized_source.get("reference_aliases") or [],
+                    normalized_source.get("type", "text"),
+                    normalized_source.get("source") or normalized_source.get("path") or "",
+                    normalized_source.get("external_id") or "",
+                )
+            else:
+                logger.info(
+                    "[STRUCTURED TOOL RESPONSE] tool=%s reused_fallback_connector_citation reference=%s aliases=%s source=%s external_id=%s",
+                    tool_name,
+                    reference,
+                    normalized_source.get("reference_aliases") or [],
+                    normalized_source.get("source") or normalized_source.get("path") or "",
+                    normalized_source.get("external_id") or "",
+                )
+
+        logger.info(
+            "[STRUCTURED TOOL RESPONSE] tool=%s connector_source_totals_after_registration text=%s image=%s",
+            tool_name,
+            len(text_sources),
+            len(image_sources),
+        )
+
+    def _extract_connector_citation_sources_from_response(
+        self,
+        response_data: Dict[str, Any],
+        tool_name: str,
+    ) -> List[Dict[str, Any]]:
+        """Build citation sources from raw connector response payloads.
+
+        Handles connectors like searchv2 that return a dict with a JSON-string
+        `result` field containing document blocks.
+        """
+        result_payload = response_data.get("result")
+        if isinstance(result_payload, str):
+            try:
+                result_payload = json.loads(result_payload)
+            except json.JSONDecodeError:
+                logger.info(
+                    "[STRUCTURED TOOL RESPONSE] tool=%s result_field_not_json_string",
+                    tool_name,
+                )
+                return []
+
+        if not isinstance(result_payload, list):
+            return []
+
+        citation_sources: List[Dict[str, Any]] = []
+        seen = set()
+        for block in result_payload:
+            if not isinstance(block, dict):
+                continue
+
+            content = str(block.get("content") or "").strip()
+            if not content:
+                continue
+
+            external_id = str(
+                block.get("external_id")
+                or block.get("doc_id")
+                or block.get("block_id")
+                or block.get("id")
+                or ""
+            ).strip()
+            page_number = block.get("page_number")
+            if isinstance(page_number, int):
+                page = str(page_number + 1)
+            else:
+                page = str(page_number or "").strip()
+
+            source = _display_source_name(
+                block.get("source")
+                or block.get("document_name")
+                or block.get("filename")
+                or block.get("file_name")
+                or tool_name
+            )
+            workspace_id = str(
+                block.get("brain_id") or block.get("workspace_id") or ""
+            ).strip()
+            reference_aliases: List[str] = []
+
+            document_id = block.get("document_id")
+            if document_id is not None:
+                document_id_value = str(document_id).strip()
+                if document_id_value:
+                    reference_aliases.append(document_id_value)
+
+            signature = (source, external_id, page, content)
+            if signature in seen:
+                continue
+            seen.add(signature)
+
+            citation_sources.append(
+                {
+                    "type": "text",
+                    "source": source,
+                    "external_id": external_id,
+                    "page": page,
+                    "page_content": content,
+                    "workspace_id": workspace_id,
+                    "reference": "",
+                    "reference_aliases": reference_aliases,
+                }
+            )
+
+        if citation_sources:
+            logger.info(
+                "[STRUCTURED TOOL RESPONSE] tool=%s extracted_citation_sources_from_result count=%s",
+                tool_name,
+                len(citation_sources),
+            )
+
+        return citation_sources
 
     def _extract_page_number(self, page_info: str) -> str:
         """Extract page number from page info string.
@@ -1363,6 +1808,13 @@ class AgentRunner:
             }
 
         # Each citation is a standalone component (like checkpoints/sandboxes)
+        logger.info(
+            "[CITATION EMIT] parent_text_component_id=%s citation_ref=%s source_type=%s component_data_preview=%s",
+            parent_text_component_id,
+            citation_ref,
+            source_type,
+            str(component_data)[:1000],
+        )
         citation_chunk = self.streaming_formatter.format_component_event(
             agent_id=agent_id,
             component_type="citation",

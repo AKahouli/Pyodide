@@ -6,6 +6,7 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 """
 
 import copy
+import json
 import re
 from typing import Dict, Any, List, Optional, Tuple, Type
 
@@ -19,6 +20,13 @@ from src.smart_rag.tools.utilities.connector_tools import (
 )
 
 logger = get_logger(__name__)
+
+
+def _log_payload(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
 
 _GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
     ".pdf": "document",
@@ -82,6 +90,9 @@ class ToolResultCollector:
 
     def __init__(self):
         self.components: List[dict] = []
+        self._connector_source_signatures: Dict[str, str] = {}
+        self._connector_source_links_seen: set[tuple[str, str]] = set()
+        self._connector_reference_counter = 0
 
     def add_component(self, component_type: str, data: dict):
         self.components.append({"type": component_type, "data": data})
@@ -90,6 +101,191 @@ class ToolResultCollector:
         result = list(self.components)
         self.components.clear()
         return result
+
+    def next_connector_reference(self) -> str:
+        self._connector_reference_counter += 1
+        return str(self._connector_reference_counter)
+
+
+def _append_citation_guidance(text: str, references: List[str]) -> str:
+    if not text or not references:
+        return text
+
+    refs = ", ".join(f"[{ref}]" for ref in references)
+    return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
+
+
+def _build_connector_citation_signature(source: Dict[str, Any]) -> str:
+    source_type = str(source.get("type") or "text")
+    if source_type == "image":
+        parts = [
+            source_type,
+            str(source.get("path") or ""),
+            str(source.get("external_id") or ""),
+            str(source.get("page") or ""),
+        ]
+    else:
+        parts = [
+            source_type,
+            str(source.get("source") or ""),
+            str(source.get("external_id") or ""),
+            str(source.get("page") or ""),
+            str(source.get("page_content") or ""),
+        ]
+    return "::".join(parts)
+
+
+def _collect_connector_response_components(
+    collector: ToolResultCollector,
+    response: Any,
+) -> Any:
+    if not isinstance(response, dict):
+        return response
+
+    normalized_response = dict(response)
+    logger.info(
+        "playbook_connector_component_collection_start response_keys=%s source_count=%s citation_source_count=%s response=%s",
+        sorted(normalized_response.keys()),
+        len(normalized_response.get("sources", []))
+        if isinstance(normalized_response.get("sources"), list)
+        else 0,
+        len(normalized_response.get("citation_sources", []))
+        if isinstance(normalized_response.get("citation_sources"), list)
+        else 0,
+        _log_payload(normalized_response),
+    )
+
+    sources = normalized_response.get("sources")
+    if isinstance(sources, list):
+        new_sources: List[Dict[str, str]] = []
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            title = str(source.get("title") or source.get("url") or "").strip()
+            url = str(source.get("url") or "").strip()
+            if not url:
+                continue
+            signature = (title, url)
+            if signature in collector._connector_source_links_seen:
+                logger.info(
+                    "playbook_connector_source_reused title=%s url=%s",
+                    title,
+                    url,
+                )
+                continue
+            collector._connector_source_links_seen.add(signature)
+            new_sources.append({"title": title, "url": url})
+        if new_sources:
+            collector.add_component("sources", {"sources": new_sources})
+            logger.info(
+                "playbook_connector_sources_component_emitted count=%s sources=%s",
+                len(new_sources),
+                _log_payload(new_sources),
+            )
+
+    citation_sources = normalized_response.get("citation_sources")
+    if not isinstance(citation_sources, list):
+        return normalized_response
+
+    assigned_references: List[str] = []
+    normalized_citation_sources: List[Dict[str, Any]] = []
+
+    for raw_source in citation_sources:
+        if not isinstance(raw_source, dict):
+            continue
+
+        source = dict(raw_source)
+        signature = _build_connector_citation_signature(source)
+        reference = collector._connector_source_signatures.get(signature)
+        is_new_source = reference is None
+        if reference is None:
+            reference = collector.next_connector_reference()
+            collector._connector_source_signatures[signature] = reference
+            logger.warning(
+                "PLAYBOOK_MCP_CITATION_REGISTERED reference=%s source_type=%s source=%s external_id=%s page=%s raw_source=%s",
+                reference,
+                source.get("type", "text"),
+                source.get("source") or source.get("path") or "",
+                source.get("external_id") or "",
+                source.get("page") or "",
+                _log_payload(source),
+            )
+        else:
+            logger.warning(
+                "PLAYBOOK_MCP_CITATION_REUSED reference=%s source_type=%s source=%s external_id=%s page=%s raw_source=%s",
+                reference,
+                source.get("type", "text"),
+                source.get("source") or source.get("path") or "",
+                source.get("external_id") or "",
+                source.get("page") or "",
+                _log_payload(source),
+            )
+        source["reference"] = reference
+        normalized_citation_sources.append(source)
+        assigned_references.append(reference)
+
+        if not is_new_source:
+            continue
+
+        source_type = str(source.get("type") or "text")
+        if source_type == "image":
+            component_payload = {
+                "parent_id": "",
+                "image_source": {
+                    "type": "image",
+                    "path": str(source.get("path") or ""),
+                    "page": str(source.get("page") or ""),
+                    "file_name": str(source.get("file_name") or ""),
+                    "external_id": str(source.get("external_id") or ""),
+                    "workspace_id": str(source.get("workspace_id") or ""),
+                    "height": str(source.get("height") or ""),
+                    "width": str(source.get("width") or ""),
+                    "reference": reference,
+                },
+            }
+            collector.add_component(
+                "citation",
+                component_payload,
+            )
+        else:
+            component_payload = {
+                "parent_id": "",
+                "text_source": {
+                    "type": "text",
+                    "source": str(source.get("source") or ""),
+                    "external_id": str(source.get("external_id") or ""),
+                    "page": str(source.get("page") or ""),
+                    "page_content": str(source.get("page_content") or ""),
+                    "workspace_id": str(source.get("workspace_id") or ""),
+                    "reference": reference,
+                },
+            }
+            collector.add_component(
+                "citation",
+                component_payload,
+            )
+        logger.warning(
+            "PLAYBOOK_MCP_CITATION_COMPONENT_EMITTED reference=%s source_type=%s component=%s",
+            reference,
+            source_type,
+            _log_payload(component_payload),
+        )
+
+    if normalized_citation_sources:
+        normalized_response["citation_sources"] = normalized_citation_sources
+        text = normalized_response.get("text")
+        if isinstance(text, str):
+            normalized_response["text"] = _append_citation_guidance(
+                text,
+                assigned_references,
+            )
+        logger.warning(
+            "PLAYBOOK_MCP_CITATION_COLLECTION_COMPLETE assigned_references=%s citation_sources=%s",
+            assigned_references,
+            _log_payload(normalized_citation_sources),
+        )
+
+    return normalized_response
 
 
 # --- Pydantic schemas for tool inputs ---
@@ -1197,7 +1393,7 @@ def _create_connector_mcp_tools(
                 ah: Dict[str, str] = {**binding_auth_headers, **brain_header},
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
-                async def _execute_mcp(**kwargs: Any) -> str:
+                async def _execute_mcp(**kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
                     if isinstance(raw_params, dict):
                         params = raw_params
@@ -1218,7 +1414,14 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
-                        return await call_mcp_tool(
+                        logger.info(
+                            "playbook_connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
+                            cid,
+                            ak,
+                            tn,
+                            _log_payload(merged_params),
+                        )
+                        response = await call_mcp_tool(
                             tt,
                             su,
                             sc,
@@ -1227,6 +1430,34 @@ def _create_connector_mcp_tools(
                             auth_headers=ah,
                             auth_env=ae,
                         )
+                        logger.info(
+                            "playbook_connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
+                            cid,
+                            ak,
+                            tn,
+                            type(response).__name__,
+                            _log_payload(response),
+                        )
+                        if isinstance(response, dict):
+                            logger.info(
+                                "playbook_connector_tool_normalized_response connector_id=%s action_key=%s tool_name=%s keys=%s source_count=%s citation_source_count=%s normalized_response=%s",
+                                cid,
+                                ak,
+                                tn,
+                                sorted(response.keys()),
+                                len(response.get("sources", []))
+                                if isinstance(response.get("sources"), list)
+                                else 0,
+                                len(response.get("citation_sources", []))
+                                if isinstance(response.get("citation_sources"), list)
+                                else 0,
+                                _log_payload(response),
+                            )
+                            response = _collect_connector_response_components(
+                                collector,
+                                response,
+                            )
+                        return response
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"

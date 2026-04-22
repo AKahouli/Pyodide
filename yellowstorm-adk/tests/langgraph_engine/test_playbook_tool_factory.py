@@ -1,0 +1,161 @@
+import asyncio
+
+import pytest
+
+from src.langgraph_engine.playbook_tool_factory import (
+    ToolResultCollector,
+    _collect_connector_response_components,
+    _create_connector_mcp_tools,
+)
+
+
+def test_collect_connector_response_components_emits_sources_and_citations() -> None:
+    collector = ToolResultCollector()
+    response = {
+        "text": "Quarterly revenue increased by 18%.",
+        "sources": [
+            {
+                "title": "Q1-report.txt",
+                "url": "https://contoso.sharepoint.com/q1-report.txt",
+            }
+        ],
+        "citation_sources": [
+            {
+                "type": "text",
+                "source": "Q1-report.txt",
+                "external_id": "item-123",
+                "page": "2",
+                "page_content": "Quarterly revenue increased by 18%.",
+                "workspace_id": "workspace-1",
+                "reference": "",
+            }
+        ],
+    }
+
+    updated = _collect_connector_response_components(collector, response)
+    components = collector.get_and_clear()
+
+    assert "Use citation [1]" in updated["text"]
+    assert updated["citation_sources"][0]["reference"] == "1"
+    assert components == [
+        {
+            "type": "sources",
+            "data": {
+                "sources": [
+                    {
+                        "title": "Q1-report.txt",
+                        "url": "https://contoso.sharepoint.com/q1-report.txt",
+                    }
+                ]
+            },
+        },
+        {
+            "type": "citation",
+            "data": {
+                "parent_id": "",
+                "text_source": {
+                    "type": "text",
+                    "source": "Q1-report.txt",
+                    "external_id": "item-123",
+                    "page": "2",
+                    "page_content": "Quarterly revenue increased by 18%.",
+                    "workspace_id": "workspace-1",
+                    "reference": "1",
+                },
+            },
+        },
+    ]
+
+
+def test_collect_connector_response_components_reuses_connector_references() -> None:
+    collector = ToolResultCollector()
+    response = {
+        "text": "Quarterly revenue increased by 18%.",
+        "citation_sources": [
+            {
+                "type": "text",
+                "source": "Q1-report.txt",
+                "external_id": "item-123",
+                "page": "2",
+                "page_content": "Quarterly revenue increased by 18%.",
+                "workspace_id": "workspace-1",
+                "reference": "",
+            }
+        ],
+    }
+
+    first = _collect_connector_response_components(collector, response)
+    first_components = collector.get_and_clear()
+    second = _collect_connector_response_components(collector, response)
+    second_components = collector.get_and_clear()
+
+    assert first["citation_sources"][0]["reference"] == "1"
+    assert second["citation_sources"][0]["reference"] == "1"
+    assert len(first_components) == 1
+    assert second_components == []
+
+
+def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_call_mcp_tool(*args, **kwargs):
+        return {
+            "text": "Quarterly revenue increased by 18%.",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "Q1-report.txt",
+                    "external_id": "item-123",
+                    "page": "2",
+                    "page_content": "Quarterly revenue increased by 18%.",
+                    "workspace_id": "workspace-1",
+                    "reference": "",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.mcp_client_factory.call_mcp_tool",
+        fake_call_mcp_tool,
+    )
+
+    collector = ToolResultCollector()
+    tools = _create_connector_mcp_tools(
+        [
+            {
+                "connector_id": "connector-1",
+                "connector_name": "SharePoint",
+                "connector_slug": "sharepoint",
+                "mcp_transport_type": "streamable_http",
+                "mcp_server_url": "https://example.com/mcp",
+                "actions": [
+                    {
+                        "action_key": "searchv2_search_document_blocks",
+                        "label": "Search",
+                        "description": "Search documents",
+                    }
+                ],
+            }
+        ],
+        collector,
+    )
+
+    result = asyncio.run(tools[0].ainvoke({"query": "revenue"}))
+    components = collector.get_and_clear()
+
+    assert "Use citation [1]" in result["text"]
+    assert components == [
+        {
+            "type": "citation",
+            "data": {
+                "parent_id": "",
+                "text_source": {
+                    "type": "text",
+                    "source": "Q1-report.txt",
+                    "external_id": "item-123",
+                    "page": "2",
+                    "page_content": "Quarterly revenue increased by 18%.",
+                    "workspace_id": "workspace-1",
+                    "reference": "1",
+                },
+            },
+        }
+    ]
