@@ -128,10 +128,11 @@ export async function getArtifactDownloadUrl(filePath: string, filename?: string
 export async function fetchComposerSuggestions(
   partialText: string,
   signal?: AbortSignal,
+  agentId?: string,
 ): Promise<{ content: string }> {
   const response = await apiClient.post<ApiResponse<{ content: string }>>(
     API_ENDPOINTS.conversations.composerSuggestions,
-    { partialText },
+    { partialText, agentId },
     { signal },
   );
   return response.data.data;

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsString, MaxLength, MinLength, IsOptional, IsMongoId } from 'class-validator';
 
 export class ComposerSuggestionsDto {
   @ApiProperty({
@@ -11,4 +11,12 @@ export class ComposerSuggestionsDto {
   @MinLength(3)
   @MaxLength(2000)
   partialText!: string;
+
+  @ApiProperty({
+    description: 'Optional agent ID to use for generating suggestions (default agent of type "composer-suggestions" used if not provided)',
+    required: false,
+  })
+  @IsOptional()
+  @IsMongoId()
+  agentId?: string;
 }

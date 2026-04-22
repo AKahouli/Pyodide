@@ -3,34 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import axios, { AxiosError } from 'axios';
 import { LoggerService } from '../../logger';
 import { ModelsService } from '../../models/models.service';
-
-const COMPOSER_SUGGESTIONS_PROMPT_PREFIX = `Tu es un assistant intelligent spécialisé dans l'amélioration de texte.
-Ton objectif est d'analyser le message écrit par l'utilisateur et de proposer des améliorations pertinentes.
-
-Pour chaque message utilisateur, tu dois :
-- Corriger les fautes (orthographe, grammaire, conjugaison).
-- Améliorer la clarté et la fluidité sans changer le sens.
-- Proposer plusieurs suggestions reformulées (au moins 3), très proches du message original.
-- Garder le même ton et intention que l'utilisateur (informel, professionnel, etc.).
-- Si le message est en mélange de langues (ex: arabe dialecte + français), proposer une version corrigée naturelle.
-
-Ne pas trop transformer le message. Rester fidèle à l'idée originale. Proposer des phrases naturelles et utilisées dans la vraie vie.
-
-Réponds UNIQUEMENT avec le format suivant (respecte les libellés et les sauts de ligne) :
-- Aucun texte avant la ligne commençant par ✅.
-- La version corrigée peut tenir sur une ou plusieurs lignes, puis une ligne vide.
-- Après ✨, écris exactement 3 lignes : une phrase complète par ligne (pas de numérotation du type "Suggestion 1", pas de tiret).
-
-✅ Version corrigée
-[ta version corrigée ici]
-
-✨ Suggestions similaires :
-[phrase 1]
-[phrase 2]
-[phrase 3]
-
-Message de l'utilisateur :
-`;
+import { AgentService } from '../../agent/agent.service';
+import { AgentTypeService } from '../../agent-type/agent-type.service';
+import type { IAgentResponse } from '../../agent/interfaces/agent.interface';
 
 /** Same LiteLLM/OpenAI identifier shape as playbooks and other backend callers. */
 const resolveAdkModelName = (defaultModel: Awaited<ReturnType<ModelsService['getDefaultModel']>>) =>
@@ -46,10 +21,16 @@ export class ComposerSuggestionsService {
   private adkTokenCache: { token: string; expiresAtMs: number } | null = null;
   private static readonly ADK_TOKEN_CACHE_MS = 25 * 60 * 1000;
 
+  /** Cache agent prompts to avoid DB queries on every keystroke. */
+  private agentPromptCache: { agentId: string; prompt: string; expiresAt: number } | null = null;
+  private static readonly AGENT_PROMPT_CACHE_MS = 5 * 60 * 1000; // 5 minutes
+
   constructor(
     private readonly configService: ConfigService,
     private readonly modelsService: ModelsService,
     private readonly logger: LoggerService,
+    private readonly agentService: AgentService,
+    private readonly agentTypeService: AgentTypeService,
   ) {
     this.logger.setContext(ComposerSuggestionsService.name);
   }
@@ -110,18 +91,125 @@ export class ComposerSuggestionsService {
     }
   }
 
-  async fetchSuggestions(partialText: string): Promise<ComposerSuggestionsAdkResult> {
+  /**
+   * Get the agent to use for composer suggestions.
+   * Priority: 1) specific agentId, 2) composer-suggestions default agent, 3) any default agent
+   */
+  private async getAgentForComposer(agentId?: string): Promise<IAgentResponse> {
+    // If agentId provided, fetch specific agent
+    if (agentId) {
+      return this.agentService.findDefaultAgentById(agentId);
+    }
+
+    // Try to find default composer-suggestions agent
+    const composerAgentType = await this.agentTypeService.findBySlug('composer-suggestions');
+    if (composerAgentType) {
+      const composerAgent = await this.agentService.findDefaultByAgentType(composerAgentType.id);
+      if (composerAgent) return composerAgent;
+    }
+
+    // Fallback: any active default agent
+    const defaultAgents = await this.agentService.findDefaultAgents({ isActive: true, limit: 1 });
+    if (defaultAgents.data && defaultAgents.data.length > 0) {
+      return defaultAgents.data[0];
+    }
+
+    throw new BadGatewayException('No agent available for composer suggestions');
+  }
+
+  /**
+   * Build the prompt from the agent's configuration.
+   * Caches the result for 5 minutes.
+   */
+  private async buildAgentPrompt(agent: IAgentResponse): Promise<string> {
+    // Check cache first
+    if (this.agentPromptCache?.agentId === agent.id && this.agentPromptCache.expiresAt > Date.now()) {
+      return this.agentPromptCache.prompt;
+    }
+
+    // Build prompt from agent type + role
+    const agentType = await this.agentTypeService.findById(agent.agentType.id);
+    const prompt = agent.ignorePrePrompt
+      ? agent.role
+      : `${agentType?.defaultPrompt || ''}\n\n${agent.role}`;
+
+    // Cache the result
+    this.agentPromptCache = {
+      agentId: agent.id,
+      prompt,
+      expiresAt: Date.now() + ComposerSuggestionsService.AGENT_PROMPT_CACHE_MS,
+    };
+
+    return prompt;
+  }
+
+  /**
+   * Resolve the model to use for suggestions.
+   * Priority: 1) agent's configured model (llmModel), 2) default system model
+   */
+  private async resolveModel(agent: IAgentResponse): Promise<string> {
+    // Use agent's model if configured
+    if (agent.model) {
+      this.logger.debug('Using agent-configured model for composer suggestions', {
+        agentId: agent.id,
+        agentName: agent.name,
+        agentModel: agent.model,
+      });
+      return agent.model;
+    }
+
+    // Fallback to default model
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const modelName = resolveAdkModelName(defaultModel);
+    this.logger.debug('Using default model for composer suggestions (agent has no model override)', {
+      agentId: agent.id,
+      agentName: agent.name,
+      defaultModel: modelName,
+    });
+    return modelName;
+  }
+
+  async fetchSuggestions(partialText: string, agentId?: string): Promise<ComposerSuggestionsAdkResult> {
     const adkUrl = (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(
       /\/$/,
       '',
     );
-    const model = resolveAdkModelName(await this.modelsService.getDefaultModel());
+
+    // Get agent and build prompt
+    const agent = await this.getAgentForComposer(agentId);
+    const agentPrompt = await this.buildAgentPrompt(agent);
+    const model = await this.resolveModel(agent);
+
     if (!model) {
       throw new BadGatewayException('Composer suggestions model is not configured');
     }
 
     const bearer = `Bearer ${await this.getAdkAccessToken(adkUrl)}`;
-    const message = `${COMPOSER_SUGGESTIONS_PROMPT_PREFIX}${partialText}`;
+
+    // Log the agent metadata being used
+    this.logger.debug('Composer suggestions using agent', {
+      agentId: agent.id,
+      agentName: agent.name,
+      agentTypeName: agent.agentType.name,
+      agentTypeSlug: agent.agentType.name,
+      agentModel: agent.model || 'default',
+      resolvedModel: model,
+      isDefault: agent.isDefault,
+      ignorePrePrompt: agent.ignorePrePrompt,
+      textLength: partialText.length,
+      promptCached: this.agentPromptCache?.agentId === agent.id,
+    });
+
+    // Build the final message with the agent's prompt
+    const message = `${agentPrompt}
+
+Analysez le message ci-dessous et proposez une seule version améliorée et corrigée.
+Conservez le sens original, mais améliorez la clarté, la grammaire et l'orthographe.
+
+Message de l'utilisateur :
+${partialText}
+
+Répondez UNIQUEMENT avec la suggestion corrigée, sans aucun texte supplémentaire ni formatage.`;
 
     try {
       const { data } = await axios.post<{ status: string; content: string }>(

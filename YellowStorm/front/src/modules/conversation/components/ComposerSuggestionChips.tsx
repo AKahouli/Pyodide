@@ -12,7 +12,7 @@ export interface ComposerSuggestionChipsProps {
 export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChipsProps) {
   const { t } = useModuleTranslation('conversation');
   const { textInput } = usePromptInputController();
-  const { suggestions, loading, fetchError } = useComposerSuggestions({
+  const {  suggestion, loading, fetchError } = useComposerSuggestions({
     draftText: textInput.value,
     enabled: !fetchDisabled,
   });
@@ -21,7 +21,7 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
     return null;
   }
 
-  const showBar = loading || fetchError || (suggestions !== null && suggestions.length > 0);
+  const showBar = loading || fetchError || (suggestion !== null && suggestion.length > 0);
 
   if (!showBar) {
     return null;
@@ -43,18 +43,17 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
       {fetchError && !loading && (
         <span className='text-muted-foreground text-xs'>{t('composerSuggestions.unavailable')}</span>
       )}
-      {suggestions?.map((suggestion, index) => (
+      {suggestion && suggestion.length > 0 && (
         <Button
           aria-label={t('composerSuggestions.applySuggestion', { suggestion })}
           className='h-auto max-w-full whitespace-normal px-2.5 py-1 text-left text-xs font-normal'
-          key={`${index}-${suggestion.slice(0, 24)}`}
           onClick={() => textInput.setInput(suggestion)}
           type='button'
           variant='outline'
         >
           <span className='line-clamp-2'>{suggestion}</span>
         </Button>
-      ))}
+      )}
     </div>
   );
 }

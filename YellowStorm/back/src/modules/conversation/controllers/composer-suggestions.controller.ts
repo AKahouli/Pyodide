@@ -14,6 +14,6 @@ export class ComposerSuggestionsController {
   @RateLimit({ limit: 60, windowMs: 60000, keyPrefix: 'conversation:suggestions' })
   @ApiOperation({ summary: 'Generate short composition suggestions from a partial message (ADK proxy)' })
   async composerSuggestions(@Body() dto: ComposerSuggestionsDto) {
-    return this.composerSuggestionsService.fetchSuggestions(dto.partialText);
+    return this.composerSuggestionsService.fetchSuggestions(dto.partialText, dto.agentId);
   }
 }

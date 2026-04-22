@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { fetchComposerSuggestions } from '../api';
 import { parseComposerSuggestionsContent } from '../utils/parseComposerSuggestions';
+import { getAllAgents } from '@/modules/agent/api';
 
 const DEFAULT_DEBOUNCE_MS = 400;
 const DEFAULT_MIN_LENGTH = 3;
@@ -23,6 +24,7 @@ export interface UseComposerSuggestionsOptions {
   enabled: boolean;
   debounceMs?: number;
   minLength?: number;
+  agentId?: string;
 }
 
 export function useComposerSuggestions({
@@ -30,12 +32,37 @@ export function useComposerSuggestions({
   enabled,
   debounceMs = DEFAULT_DEBOUNCE_MS,
   minLength = DEFAULT_MIN_LENGTH,
+  agentId,
 }: UseComposerSuggestionsOptions) {
-  const [suggestions, setSuggestions] = useState<string[] | null>(null);
+  const [suggestion, setSuggestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
+  const [resolvedAgentId, setResolvedAgentId] = useState<string | undefined>(agentId);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Fetch composer-suggestions agent once on mount if no agentId provided
+  useEffect(() => {
+    if (agentId) {
+      setResolvedAgentId(agentId);
+      return;
+    }
+
+    const fetchComposerAgent = async () => {
+      try {
+        const agents = await getAllAgents();
+        const composerAgent = agents.find(
+          (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
+        );
+        if (composerAgent) {
+          setResolvedAgentId(composerAgent.id);
+        }
+      } catch (err) {
+        console.error('Failed to fetch composer agent:', err);
+      }
+    };
+    fetchComposerAgent();
+  }, [agentId]);
 
   useEffect(() => {
     if (debounceTimerRef.current) {
@@ -45,7 +72,7 @@ export function useComposerSuggestions({
     abortRef.current?.abort();
 
     if (!enabled) {
-      setSuggestions(null);
+      setSuggestion(null);
       setLoading(false);
       setFetchError(false);
       return;
@@ -53,7 +80,7 @@ export function useComposerSuggestions({
 
     const text = draftText.trim();
     if (text.length < minLength) {
-      setSuggestions(null);
+      setSuggestion(null);
       setLoading(false);
       setFetchError(false);
       return;
@@ -63,27 +90,33 @@ export function useComposerSuggestions({
       debounceTimerRef.current = null;
       const ac = new AbortController();
       abortRef.current = ac;
-      setSuggestions(null);
+      setSuggestion(null);
       setLoading(true);
       setFetchError(false);
 
-      fetchComposerSuggestions(text, ac.signal)
+      fetchComposerSuggestions(text, ac.signal, resolvedAgentId)
         .then(({ content }) => {
           if (ac.signal.aborted) return;
           const parsed = parseComposerSuggestionsContent(content);
-          setSuggestions(parsed);
-          setFetchError(parsed === null);
+          // Don't show suggestion if it's the same as the original text
+          if (parsed && parsed.toLowerCase() !== text.toLowerCase()) {
+            setSuggestion(parsed);
+            setFetchError(false);
+          } else {
+            setSuggestion(null);
+            setFetchError(false);
+          }
         })
         .catch((err) => {
           if (ac.signal.aborted) return;
           const statusCode = httpStatusFromComposerError(err);
           // Nest returns 502 when ADK is down or misconfigured; avoid noisy "unavailable" UX.
           if (statusCode === 502) {
-            setSuggestions(null);
+            setSuggestion(null);
             setFetchError(false);
             return;
           }
-          setSuggestions(null);
+          setSuggestion(null);
           setFetchError(true);
         })
         .finally(() => {
@@ -100,7 +133,7 @@ export function useComposerSuggestions({
       }
       abortRef.current?.abort();
     };
-  }, [draftText, enabled, debounceMs, minLength]);
+  }, [draftText, enabled, debounceMs, minLength, resolvedAgentId]);
 
-  return { suggestions, loading, fetchError };
+  return { suggestion, loading, fetchError };
 }

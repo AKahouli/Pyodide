@@ -1,18 +1,47 @@
 /**
- * Parses ADK chat_completion content into four chip strings:
- * [version corrigée, suggestion1, suggestion2, suggestion3].
+ * Parses ADK chat_completion content into a single suggestion string.
  *
- * Supports (1) structured French layout with ✅ / ✨ sections, (2) legacy JSON { suggestions: string[4] }.
+ * Supports various response formats and extracts the first meaningful suggestion.
  */
 
 const MIN_PHRASE_LEN = 2;
 
-function parseLegacyJsonSuggestions(content: string): string[] | null {
+/** Lines that are only placeholders, not real suggestions */
+function isPlaceholderLine(line: string): boolean {
+  return /^Suggestion\s*\d+\s*$/i.test(line) || /^[-*]\s*$/.test(line) || /^✅/.test(line) || /^✨/.test(line);
+}
+
+/**
+ * Parses various response formats to extract a single suggestion.
+ * Handles:
+ * 1. Structured French layout with ✅ / ✨ sections (legacy)
+ * 2. Plain text responses
+ * 3. JSON { suggestions: string[] } (legacy)
+ */
+export function parseComposerSuggestionsContent(content: string): string | null {
   const trimmed = content.trim();
   if (!trimmed) return null;
 
-  let jsonText = trimmed;
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/im);
+  // Try legacy JSON format first
+  const jsonParsed = parseLegacyJsonSuggestions(trimmed);
+  if (jsonParsed) return jsonParsed;
+
+  // Try structured format (✅ Version corrigée / ✨ Suggestions)
+  const structured = parseStructuredComposerResponse(trimmed);
+  if (structured) return structured;
+
+  // Fallback: return first meaningful line
+  const lines = trimmed
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length >= MIN_PHRASE_LEN && !isPlaceholderLine(l));
+
+  return lines[0] || trimmed;
+}
+
+function parseLegacyJsonSuggestions(content: string): string | null {
+  let jsonText = content;
+  const fenceMatch = content.match(/^```(?:json)?\s*([\s\S]*?)```$/im);
   if (fenceMatch?.[1]) {
     jsonText = fenceMatch[1].trim();
   }
@@ -34,63 +63,38 @@ function parseLegacyJsonSuggestions(content: string): string[] | null {
   }
 
   const raw = (parsed as { suggestions: unknown[] }).suggestions;
-  if (raw.length !== 4) return null;
+  if (raw.length === 0) return null;
 
-  const out: string[] = [];
-  for (const item of raw) {
-    if (typeof item !== 'string') return null;
-    const s = item.trim();
-    if (!s) return null;
-    out.push(s);
+  const firstSuggestion = raw[0];
+  if (typeof firstSuggestion === 'string') {
+    return firstSuggestion.trim();
   }
 
-  return out;
-}
-
-/** Lines that are only placeholders, not real suggestions */
-function isPlaceholderLine(line: string): boolean {
-  return /^Suggestion\s*\d+\s*$/i.test(line) || /^[-*]\s*$/.test(line);
+  return null;
 }
 
 /**
- * ✅ Version corrigée ... ✨ Suggestions similaires : ... 3 lines
+ * Extracts the first meaningful suggestion from structured format.
  */
-function parseStructuredComposerResponse(text: string): string[] | null {
-  const t = text.trim();
-  if (!t) return null;
-
-  const similarSplit = t.split(/✨\s*Suggestions\s+similaires\s*:?\s*\n/i);
-  if (similarSplit.length < 2) return null;
-
-  const beforeSimilar = similarSplit[0].trim();
-  const afterSimilar = similarSplit[1].trim();
-
-  let corrected = '';
-  const versionMatch =
-    beforeSimilar.match(/✅\s*Version\s+corrigée\s*\n+([\s\S]*)/i) ||
-    beforeSimilar.match(/Version\s+corrigée\s*\n+([\s\S]*)/i);
-  if (versionMatch?.[1]) {
-    corrected = versionMatch[1].trim().replace(/\s*\n\s*/g, ' ').trim();
+function parseStructuredComposerResponse(text: string): string | null {
+  const similarSplit = text.split(/✨\s*Suggestions\s+similaires\s*:?\s*\n/i);
+  if (similarSplit.length < 2) {
+    // If no suggestions section, try to extract the corrected version
+    const versionMatch =
+      text.match(/✅\s*Version\s+corrigée\s*\n+([\s\S]*)/i) ||
+      text.match(/Version\s+corrigée\s*\n+([\s\S]*)/i);
+    if (versionMatch?.[1]) {
+      const corrected = versionMatch[1].trim().replace(/\s*\n\s*/g, ' ').trim();
+      if (corrected.length >= MIN_PHRASE_LEN) return corrected;
+    }
+    return null;
   }
 
+  const afterSimilar = similarSplit[1].trim();
   const suggestionLines = afterSimilar
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length >= MIN_PHRASE_LEN && !isPlaceholderLine(l));
 
-  if (corrected.length >= MIN_PHRASE_LEN && suggestionLines.length >= 3) {
-    return [corrected, ...suggestionLines.slice(0, 3)];
-  }
-
-  return null;
-}
-
-export function parseComposerSuggestionsContent(content: string): string[] | null {
-  const structured = parseStructuredComposerResponse(content);
-  if (structured && structured.length === 4) return structured;
-
-  const legacy = parseLegacyJsonSuggestions(content);
-  if (legacy) return legacy;
-
-  return null;
+  return suggestionLines[0] || null;
 }
