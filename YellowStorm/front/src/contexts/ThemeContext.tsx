@@ -1,3 +1,5 @@
+import { useAuth } from '@/modules/auth';
+import { use } from 'i18next';
 import { createContext, useEffect, useState } from 'react';
 
 export const COLOR_THEMES = [
@@ -13,7 +15,6 @@ type ThemeProviderProps = {
   children: React.ReactNode;
   defaultTheme?: string;
   defaultColorTheme?: ColorTheme;
-  initialColorTheme?: ColorTheme;
   resolveLogoForTheme?: (colorTheme: ColorTheme) => 'yellowmind' | 'kpmg';
 };
 
@@ -46,30 +47,19 @@ const initialState: ThemeProviderState = {
 
 export const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
-export function ThemeProvider({
-  children,
-  defaultTheme = 'dark',
-  defaultColorTheme = 'default',
-  initialColorTheme,
-  resolveLogoForTheme,
-  ...props
-}: ThemeProviderProps) {
+export function ThemeProvider({ children, defaultTheme = 'dark', resolveLogoForTheme, ...props }: ThemeProviderProps) {
   const [theme, setTheme] = useState(defaultTheme);
-  const [colorTheme, setColorTheme] = useState<ColorTheme>(initialColorTheme ?? defaultColorTheme);
-  const [logo, setLogo] = useState<'yellowmind' | 'kpmg'>(() => resolveLogoForTheme?.(initialColorTheme ?? defaultColorTheme) ?? 'yellowmind');
+  const [colorTheme, setColorTheme] = useState<ColorTheme>('default');
+  const [logo, setLogo] = useState<'yellowmind' | 'kpmg'>(() => 'yellowmind');
+  const { user } = useAuth();
 
   useEffect(() => {
-    setColorTheme(initialColorTheme ?? defaultColorTheme);
-    setLogo(resolveLogoForTheme?.(initialColorTheme ?? defaultColorTheme) ?? 'yellowmind');
-  }, [defaultColorTheme, initialColorTheme, resolveLogoForTheme]);
-
-  useEffect(() => {
-    const root = window.document.documentElement;
+    const root = globalThis.document.documentElement;
 
     root.classList.remove('light', 'dark');
 
     if (theme === 'system') {
-      const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+      const systemTheme = globalThis.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       root.classList.add(systemTheme);
       return;
     }
@@ -78,7 +68,7 @@ export function ThemeProvider({
   }, [theme]);
 
   useEffect(() => {
-    const root = window.document.documentElement;
+    const root = globalThis.document.documentElement;
 
     root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
     if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
@@ -86,6 +76,10 @@ export function ThemeProvider({
     if (colorTheme === 'blue') root.classList.add('theme-kpmg');
     setLogo(resolveLogoForTheme?.(colorTheme) ?? (colorTheme === 'blue' ? 'kpmg' : 'yellowmind'));
   }, [colorTheme, resolveLogoForTheme]);
+
+  useEffect(() => {
+    if (user) setColorTheme(user?.appearance?.colorTheme ?? 'default');
+  }, [user?.appearance?.colorTheme]);
 
   return (
     <ThemeProviderContext.Provider

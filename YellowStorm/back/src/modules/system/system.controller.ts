@@ -181,6 +181,7 @@ export class SystemController {
     @Req() req: Request,
   ): Promise<AppearanceSettings> {
     const result = await this.systemService.setAppearanceSettings(body);
+    await this.systemService.applyAppearanceToAllUsers(body.defaultColorTheme);
 
     this.auditLogService.logSuccess({
       actorId: user._id.toString(),

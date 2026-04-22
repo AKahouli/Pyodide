@@ -6,6 +6,7 @@ import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
 import { LoggerService } from '../logger';
+import { User, UserDocument } from '../user/schemas/user.schema';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
@@ -59,6 +60,8 @@ export class SystemService implements OnApplicationBootstrap {
   constructor(
     @InjectModel(SystemSetting.name)
     private readonly systemSettingModel: Model<SystemSettingDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(SystemService.name);
@@ -251,6 +254,16 @@ export class SystemService implements OnApplicationBootstrap {
     this.appearanceCache = settings;
     this.lastCacheUpdate = Date.now();
     return settings;
+  }
+
+  async applyAppearanceToAllUsers(colorTheme: AppearanceSettings['defaultColorTheme']): Promise<number> {
+    const result = await this.userModel.updateMany({}, { $set: { 'appearance.colorTheme': colorTheme } });
+    this.logger.log('Applied appearance theme to all users', {
+      colorTheme,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    });
+    return result.modifiedCount;
   }
 
   // ─── Registration ───────────────────────────────────────────────

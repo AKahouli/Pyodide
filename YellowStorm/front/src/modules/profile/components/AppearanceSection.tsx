@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 import { ThemeProviderContext, COLOR_THEMES, type ColorTheme } from '@/contexts/ThemeContext';
 import { useLocalization, useModuleTranslation } from '@/modules/localization';
 import type { Language, ModuleTranslationKey } from '@/modules/localization';
+import { updateAppearance } from '../api';
+import { useAuth } from '@/modules/auth';
 
 type ThemeOption = 'light' | 'dark' | 'system';
 
@@ -62,6 +64,7 @@ const LANGUAGE_KEYS: Record<Language, ModuleTranslationKey<'profile'>> = {
 
 export function AppearanceSection() {
   const { theme, setTheme, colorTheme, setColorTheme } = React.useContext(ThemeProviderContext);
+  const { user } = useAuth();
   const { language, availableLanguages, changeLanguage } = useLocalization();
   const { t } = useModuleTranslation('profile');
 
@@ -79,6 +82,17 @@ export function AppearanceSection() {
   };
 
   const languageLabel = (code: Language) => t(LANGUAGE_KEYS[code]);
+
+  React.useEffect(() => {
+    if (user?.appearance?.colorTheme && user.appearance.colorTheme !== colorTheme) {
+      setColorTheme(user.appearance.colorTheme);
+    }
+  }, [user?.appearance?.colorTheme, colorTheme, setColorTheme]);
+
+  const handleColorThemeChange = async (nextColorTheme: ColorTheme) => {
+    setColorTheme(nextColorTheme);
+    await updateAppearance(nextColorTheme);
+  };
 
   return (
     <div className='space-y-6'>
@@ -134,7 +148,7 @@ export function AppearanceSection() {
 
         <div className='grid grid-cols-3 gap-4 pt-2'>
           {COLOR_THEMES.map((ct) => (
-            <ColorThemeCard key={ct.value} value={ct.value} label={colorThemeLabels[ct.value]} selected={colorTheme === ct.value} onClick={() => setColorTheme(ct.value)} />
+            <ColorThemeCard key={ct.value} value={ct.value} label={colorThemeLabels[ct.value]} selected={colorTheme === ct.value} onClick={() => handleColorThemeChange(ct.value)} />
           ))}
         </div>
       </div>

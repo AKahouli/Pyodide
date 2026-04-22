@@ -47,6 +47,7 @@ export class UserController {
 
     const updatedUser = await this.userService.updateProfile(user._id.toString(), {
       profile: Object.keys(profile).length > 0 ? profile : undefined,
+      appearance: dto.appearance?.colorTheme ? { colorTheme: dto.appearance.colorTheme } : undefined,
       consents: Object.keys(consents).length > 0 ? consents : undefined,
     });
     return this.mapUserToResponse(updatedUser);

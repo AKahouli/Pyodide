@@ -1,5 +1,20 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, MaxLength, MinLength } from 'class-validator';
+import { IsString, IsOptional, MaxLength, MinLength, IsEnum, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
+
+export enum ColorThemeDto {
+  DEFAULT = 'default',
+  YELLOW = 'yellow',
+  ORANGE = 'orange',
+  BLUE = 'blue',
+}
+
+class UpdateAppearanceDto {
+  @ApiPropertyOptional({ description: 'Color theme', enum: ColorThemeDto })
+  @IsOptional()
+  @IsEnum(ColorThemeDto)
+  colorTheme?: ColorThemeDto;
+}
 
 export class UpdateProfileDto {
   @ApiPropertyOptional({ description: 'First name', maxLength: 100 })
@@ -30,4 +45,10 @@ export class UpdateProfileDto {
   @ApiPropertyOptional({ description: 'Accept data sharing' })
   @IsOptional()
   dataSharing?: boolean;
+
+  @ApiPropertyOptional({ description: 'Appearance preferences' })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdateAppearanceDto)
+  appearance?: UpdateAppearanceDto;
 }
