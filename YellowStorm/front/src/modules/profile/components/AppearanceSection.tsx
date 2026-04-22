@@ -67,6 +67,7 @@ export function AppearanceSection() {
   const { user } = useAuth();
   const { language, availableLanguages, changeLanguage } = useLocalization();
   const { t } = useModuleTranslation('profile');
+  const lastUserColorTheme = React.useRef<ColorTheme | undefined>(user?.appearance?.colorTheme);
 
   const themeOptions: { value: ThemeOption; label: string; icon: React.ReactNode }[] = [
     { value: 'light', label: t('appearance.theme.light'), icon: <Sun className='h-5 w-5' /> },
@@ -84,10 +85,13 @@ export function AppearanceSection() {
   const languageLabel = (code: Language) => t(LANGUAGE_KEYS[code]);
 
   React.useEffect(() => {
-    if (user?.appearance?.colorTheme && user.appearance.colorTheme !== colorTheme) {
+    if (!user?.appearance?.colorTheme) return;
+
+    if (user.appearance.colorTheme !== lastUserColorTheme.current) {
+      lastUserColorTheme.current = user.appearance.colorTheme;
       setColorTheme(user.appearance.colorTheme);
     }
-  }, [user?.appearance?.colorTheme, colorTheme, setColorTheme]);
+  }, [user?.appearance?.colorTheme, setColorTheme]);
 
   const handleColorThemeChange = async (nextColorTheme: ColorTheme) => {
     setColorTheme(nextColorTheme);
