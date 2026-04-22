@@ -14,6 +14,20 @@ import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 type ColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
 type ThemeLogo = 'yellowmind' | 'kpmg';
 
+const COLOR_THEME_SWATCHES: Record<ColorTheme, string> = {
+  default: 'bg-neutral-500',
+  yellow: 'bg-amber-500',
+  orange: 'bg-orange-700',
+  blue: 'bg-blue-600',
+};
+
+const COLOR_THEME_SELECTED_STYLES: Record<ColorTheme, string> = {
+  default: 'border-neutral-500/60 bg-neutral-500/10 ring-neutral-500/20',
+  yellow: 'border-amber-500/60 bg-amber-500/10 ring-amber-500/20',
+  orange: 'border-orange-700/60 bg-orange-700/10 ring-orange-700/20',
+  blue: 'border-blue-600/60 bg-blue-600/10 ring-blue-600/20',
+};
+
 const COLOR_THEMES: { value: ColorTheme; labelKey: string }[] = [
   { value: 'default', labelKey: 'appearance.colorTheme.default' },
    { value: 'yellow', labelKey: 'appearance.colorTheme.yellow' },
@@ -121,7 +135,9 @@ export function AppearancePage() {
                 onClick={() => setSelectedTheme(themeOption.value)}
                 className={cn(
                   'rounded-lg border p-4 text-left transition-colors',
-                  selectedTheme === themeOption.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40',
+                  selectedTheme === themeOption.value
+                    ? cn('ring-2 ring-offset-2', COLOR_THEME_SELECTED_STYLES[themeOption.value])
+                    : 'border-border hover:border-primary/40',
                 )}>
                 <div className='flex items-center gap-3'>
                   <div className={cn('flex h-12 w-28 items-center justify-center rounded-md border bg-background', theme === 'dark' ? 'border-white/10' : 'border-black/10')}>
@@ -131,7 +147,10 @@ export function AppearancePage() {
                       <Icons.YellowMind className='max-h-8 w-auto' />
                     )}
                   </div>
-                  <span className='font-medium'>{t(themeOption.labelKey as never)}</span>
+                  <div className='flex min-w-0 flex-1 items-center gap-3'>
+                    <span className={cn('h-4 w-4 shrink-0 rounded-full border border-background shadow-sm', COLOR_THEME_SWATCHES[themeOption.value])} />
+                    <span className={cn('font-medium', selectedTheme === themeOption.value && 'text-foreground')}>{t(themeOption.labelKey as never)}</span>
+                  </div>
                 </div>
               </button>
             ))}
