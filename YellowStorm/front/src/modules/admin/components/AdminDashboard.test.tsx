@@ -27,6 +27,8 @@ describe('AdminDashboard', () => {
 
     expect(screen.getByText('dashboard.title')).toBeInTheDocument();
     expect(screen.getByText('dashboard.description')).toBeInTheDocument();
+    expect(screen.getByText('appearance.title')).toBeInTheDocument();
+    expect(screen.getByText('appearance.description')).toBeInTheDocument();
     expect(screen.getByText('menu.users.label')).toBeInTheDocument();
     expect(screen.getByText('menu.users.description')).toBeInTheDocument();
   });

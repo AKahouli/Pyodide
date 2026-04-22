@@ -44,6 +44,7 @@ export const API_ENDPOINTS = {
   system: {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
+    appearance: '/experimental/system/appearance',
   },
   usage: {
     status: '/usage/status',

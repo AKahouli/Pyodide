@@ -265,6 +265,9 @@ export class AdminUserController {
       email: user.email as string,
       emailVerified: user.emailVerified as boolean,
       profileComplete: user.profileComplete as boolean,
+      appearance: {
+        colorTheme: (user as { appearance?: { colorTheme?: 'default' | 'yellow' | 'orange' | 'blue' } }).appearance?.colorTheme ?? 'default',
+      },
       profile: {
         firstName: profile.firstName,
         lastName: profile.lastName,
