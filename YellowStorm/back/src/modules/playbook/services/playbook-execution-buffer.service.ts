@@ -120,6 +120,7 @@ export class PlaybookExecutionBufferService {
     if ((buffered as any).llmPromptTrace !== undefined)
       fields.llmPromptTrace = (buffered as any).llmPromptTrace;
     if ((buffered as any).artifacts !== undefined) fields.artifacts = (buffered as any).artifacts;
+    if ((buffered as any).artifactsByPort !== undefined) fields.artifactsByPort = (buffered as any).artifactsByPort;
     if (buffered.components !== undefined) {
       fields.components = mergeWithExistingHumanFeedback(
         existingHumanFeedback,

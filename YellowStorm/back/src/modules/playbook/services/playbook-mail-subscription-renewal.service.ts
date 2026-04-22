@@ -44,12 +44,16 @@ export class PlaybookMailSubscriptionRenewalService {
     for (const playbook of playbooks) {
       const trigger = playbook.mailTrigger;
       if (!trigger?.subscriptionId || !trigger?.mailboxAppKey) continue;
+      if (trigger.autoRenewUntil && new Date(trigger.autoRenewUntil).getTime() <= Date.now()) {
+        continue;
+      }
 
       try {
         const result = await this.graphClient.renewSubscription(
           (playbook.createdBy as any).toString(),
           trigger.mailboxAppKey,
           trigger.subscriptionId,
+          trigger.autoRenewUntil,
         );
 
         await this.playbookService.syncMailTriggerSubscription(
@@ -57,6 +61,9 @@ export class PlaybookMailSubscriptionRenewalService {
           {
             mailboxAppKey: trigger.mailboxAppKey,
             notificationUrl: trigger.notificationUrl,
+            autoRenewUntil: trigger.autoRenewUntil instanceof Date
+              ? trigger.autoRenewUntil.toISOString()
+              : trigger.autoRenewUntil ?? null,
             subscriptionId: trigger.subscriptionId,
             subscriptionClientState: trigger.subscriptionClientState || '',
             subscriptionExpiresAt: result.expirationDateTime || null,

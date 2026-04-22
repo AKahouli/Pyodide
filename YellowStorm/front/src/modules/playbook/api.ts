@@ -581,3 +581,44 @@ export async function clonePlaybook(id: string): Promise<Playbook> {
   );
   return response.data.data;
 }
+
+export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
+  id: string;
+  key: string;
+  type: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  category: string;
+  inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+  outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+  promptTemplate: string;
+  recommendedAgentTypeSlug: string | null;
+  requiredToolNames: string[];
+  executionMode?: string;
+  assignedAgentId?: string | null;
+  selectedAction?: string | null;
+}> }> {
+  const response = await apiClient.get<ApiResponse<{ items: Array<{
+    id: string;
+    key: string;
+    type: string;
+    title: string;
+    description?: string;
+    icon?: string;
+    color?: string;
+    category: string;
+    inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+    outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    promptTemplate: string;
+    recommendedAgentTypeSlug: string | null;
+    requiredToolNames: string[];
+    executionMode?: string;
+    assignedAgentId?: string | null;
+    selectedAction?: string | null;
+  }> }>>(
+    API_ENDPOINTS.playbookNodeTemplates.list,
+  );
+  return response.data.data;
+}

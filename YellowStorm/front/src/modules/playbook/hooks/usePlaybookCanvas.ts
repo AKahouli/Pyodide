@@ -146,6 +146,15 @@ export function usePlaybookCanvas() {
   // Track which playbook snapshot we've synced to avoid re-syncing on every store update
   const syncedKeyRef = useRef<string | null>(null);
 
+  // Remember trigger node position across rebuilds (not persisted to backend)
+  const triggerPositionRef = useRef({ x: 40, y: 160 });
+
+  function buildNodesWithTrigger(tasks: PlaybookTask[], includeTrigger: boolean): Node[] {
+    return tasksToNodes(tasks, includeTrigger).map((n) =>
+      n.id === TRIGGER_NODE_ID ? { ...n, position: triggerPositionRef.current } : n,
+    );
+  }
+
   // Sync ReactFlow state when playbook is loaded/changed from the API
   useEffect(() => {
     if (!playbook) {
@@ -157,7 +166,7 @@ export function usePlaybookCanvas() {
     const syncKey = `${playbook.id}::${playbook.updatedAt}`;
     if (syncedKeyRef.current !== syncKey) {
       syncedKeyRef.current = syncKey;
-      setNodes(tasksToNodes(playbook.tasks, playbook.automatedTriggerType === 'mail'));
+      setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
       setEdges(playbookEdgesToFlowEdges(playbook.edges));
     }
   }, [playbook]);
@@ -166,7 +175,7 @@ export function usePlaybookCanvas() {
   useEffect(() => {
     if (!playbook || canvasSyncVersion === 0) return;
     syncedKeyRef.current = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
-    setNodes(tasksToNodes(playbook.tasks, playbook.automatedTriggerType === 'mail'));
+    setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
     setEdges(playbookEdgesToFlowEdges(playbook.edges));
   }, [canvasSyncVersion, playbook]);
 
@@ -208,8 +217,13 @@ export function usePlaybookCanvas() {
 
   // Sync positions to store only when drag ends.
   // Reads from nodesRef instead of setState updater to avoid nested updates.
+  // Trigger node position is kept in a ref only (not persisted to backend).
   const onNodeDragStop: OnNodeDrag = useCallback(
-    () => {
+    (_event, node) => {
+      if (node.id === TRIGGER_NODE_ID) {
+        triggerPositionRef.current = { ...node.position };
+        return;
+      }
       captureSnapshot();
       updateTasks(nodesToTasks(nodesRef.current));
     },

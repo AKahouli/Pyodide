@@ -63,6 +63,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
   const [mailDraft, setMailDraft] = useState({
     mailboxAppKey: 'microsoft',
     notificationUrl: '',
+    autoRenewUntil: '',
     attachmentImportEnabled: false,
     allowedAttachmentExtensions: '',
     from: '',
@@ -70,6 +71,22 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
     bodyContains: '',
     hasAttachments: null as boolean | null,
   });
+
+  /** Returns today's local date as YYYY-MM-DD for date input min/max */
+  const getLocalToday = (): string => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  /** Converts a local YYYY-MM-DD into an ISO UTC timestamp at end-of-day */
+  const localDateToEndOfDayUtc = (localDate: string): string => {
+    const [y, m, d] = localDate.split('-').map(Number);
+    const date = new Date(y, m - 1, d, 23, 59, 59, 999);
+    return date.toISOString();
+  };
   const [automatedTriggerType, setAutomatedTriggerType] = useState<'none' | 'schedule' | 'mail'>('none');
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [mailboxCapabilityLoaded, setMailboxCapabilityLoaded] = useState(false);
@@ -88,6 +105,15 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
       setMailDraft({
         mailboxAppKey: mailTrigger?.config?.mailboxAppKey ?? mailboxCapability?.appKey ?? 'microsoft',
         notificationUrl: mailTrigger?.config?.notificationUrl ?? '',
+        autoRenewUntil: mailTrigger?.config?.autoRenewUntil
+          ? (() => {
+              const d = new Date(mailTrigger.config.autoRenewUntil!);
+              const y = d.getFullYear();
+              const m = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              return `${y}-${m}-${day}`;
+            })()
+          : '',
         attachmentImportEnabled: mailTrigger?.config?.attachmentImportEnabled === true,
         allowedAttachmentExtensions: mailTrigger?.config?.allowedAttachmentExtensions?.join(', ') ?? '',
         from: mailTrigger?.config?.filters.from.join('\n') ?? '',
@@ -178,6 +204,7 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
         await upsertPlaybookTriggerMail(playbookId, {
           enabled: true,
           mailboxAppKey: mailDraft.mailboxAppKey,
+          autoRenewUntil: mailDraft.autoRenewUntil ? localDateToEndOfDayUtc(mailDraft.autoRenewUntil) : null,
           attachmentImportEnabled: mailDraft.attachmentImportEnabled,
           allowedAttachmentExtensions: mailDraft.allowedAttachmentExtensions
             .split(',')
@@ -446,6 +473,24 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                 />
               </div>
 
+              <div className="space-y-2">
+                <label className="text-sm font-medium" htmlFor="mail-auto-renew-until">
+                  {t('triggers.mailConfig.autoRenewUntil')}
+                </label>
+                <input
+                  id="mail-auto-renew-until"
+                  type="date"
+                  aria-label={t('triggers.mailConfig.autoRenewUntil')}
+                  className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  value={mailDraft.autoRenewUntil}
+                  min={getLocalToday()}
+                  onChange={(e) =>
+                    setMailDraft((current) => ({ ...current, autoRenewUntil: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground">{t('triggers.mailConfig.autoRenewUntilHint')}</p>
+              </div>
+
               <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1">
                 {mailTrigger?.config?.runtimeEnabled && mailTrigger?.config?.subscriptionId ? (
                   <>
@@ -477,6 +522,9 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                   onClick={() =>
                     void syncPlaybookTriggerMailSubscription(playbookId, {
                       notificationUrl: mailDraft.notificationUrl.trim(),
+                      autoRenewUntil: mailDraft.autoRenewUntil
+                        ? localDateToEndOfDayUtc(mailDraft.autoRenewUntil)
+                        : null,
                     })
                   }
                 >
@@ -571,6 +619,13 @@ export function PlaybookScheduleSheet({ open, onOpenChange, playbookId, schedule
                 <p className="text-xs text-emerald-600 dark:text-emerald-400">{t('triggers.mailConfig.runtimeNotice')}</p>
               ) : (
                 <p className="text-xs text-muted-foreground">{t('triggers.mailConfig.runtimeNotice')}</p>
+              )}
+              {mailTrigger?.config?.autoRenewUntil && (
+                <p className="text-xs text-muted-foreground">
+                  {t('triggers.mailConfig.autoRenewUntilValue', {
+                    value: new Date(mailTrigger.config.autoRenewUntil).toLocaleDateString(language),
+                  })}
+                </p>
               )}
             </section>
           )}

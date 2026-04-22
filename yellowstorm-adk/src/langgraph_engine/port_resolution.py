@@ -512,6 +512,7 @@ def resolve_task_inputs(
     input_ports = _port_map(task_config.get("input_ports") or [])
     edges = state.get("edges") or []
     artifacts_by_port = state.get("artifacts_by_port") or {}
+    node_inputs_by_port = state.get("node_inputs_by_port") or {}
     task_results = state.get("results") or {}
     workspace_context = list(state.get("workspace_context") or [])
     brain_documents = list(state.get("brain_documents") or [])
@@ -582,8 +583,19 @@ def resolve_task_inputs(
                     )
                     continue
             else:
-                artifact_key = f"{source_task_id}:{source_output_port_id}"
-                artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
+                artifacts = [
+                    artifact
+                    for artifact in _artifact_list(node_inputs_by_port.get(port_id))
+                    if str(artifact.get("source_task_id") or "").strip() == source_task_id
+                    and _normalize_port_id(
+                        artifact.get("source_output_port_id")
+                        or artifact.get("source_port_id")
+                    )
+                    == source_output_port_id
+                ]
+                if not artifacts:
+                    artifact_key = f"{source_task_id}:{source_output_port_id}"
+                    artifacts = _artifact_list(artifacts_by_port.get(artifact_key))
 
             if not artifacts and expected_kind in {"", "text", "code"}:
                 fallback_result = task_results.get(source_task_id) or {}
@@ -997,7 +1009,7 @@ def build_task_prompt(
             "No port-bound inputs were resolved. You may use the default playbook workspace context selected for this playbook."
         )
 
-    if prompt_context.get("context_from_dependencies"):
+    if prompt_context.get("context_from_dependencies") and not prompt_context.get("has_port_sources"):
         lines.append(f"Context from previous tasks:\n{context_from_dependencies}")
 
     if prompt_context.get("user_query"):

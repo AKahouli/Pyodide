@@ -260,6 +260,23 @@ function parseJsonValue<T>(value: unknown, fallback: T): T {
   }
 }
 
+function parseJsonArrayValue<T>(value: unknown): T[] {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function normalizeChartKind(kind: unknown): 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' {
   if (typeof kind === 'number') {
     const numericKindMap: Record<number, 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed'> = {
@@ -318,7 +335,7 @@ function mapChartComponent(data: Record<string, unknown>) {
     yAxisKey: payload.yAxisKey || '',
     nameKey: payload.nameKey || '',
     zAxisKey: payload.zAxisKey || '',
-    series: parseJsonValue<Array<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>>(payload.series, []),
+    series: parseJsonArrayValue<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>(payload.series),
     kind: normalizeChartKind(payload.kind),
     stacked: payload.stacked,
     layout: normalizeChartLayout(payload.layout),

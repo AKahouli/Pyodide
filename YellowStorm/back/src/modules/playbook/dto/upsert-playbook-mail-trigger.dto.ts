@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsBoolean,
+  IsDateString,
   IsOptional,
   IsString,
   MaxLength,
@@ -57,6 +58,14 @@ export class UpsertPlaybookMailTriggerDto {
   @IsString()
   @MaxLength(500)
   notificationUrl?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-05-01T00:00:00.000Z',
+    description: 'Stop auto-renewing the Microsoft 365 subscription after this UTC timestamp.',
+  })
+  @IsOptional()
+  @IsDateString()
+  autoRenewUntil?: string;
 
   @ApiPropertyOptional({ description: 'Whether matching email attachments should be imported into the playbook workspace.' })
   @IsOptional()

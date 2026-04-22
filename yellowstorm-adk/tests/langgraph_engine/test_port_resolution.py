@@ -155,6 +155,135 @@ def test_resolve_task_inputs_merges_multiple_upstream_sources_on_one_port() -> N
     ]
 
 
+def test_resolve_task_inputs_filters_node_inputs_by_current_source_binding() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "default", "name": "Input", "artifact_kind": "document"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "source_a",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "default",
+                },
+                {
+                    "source_id": "source_b",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "default",
+                },
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "node_inputs_by_port": {
+                "default": [
+                    {
+                        "artifact_kind": "document",
+                        "filename": "a.pdf",
+                        "url": "https://example.com/a.pdf",
+                        "source_task_id": "source_a",
+                        "source_output_port_id": "default",
+                    },
+                    {
+                        "artifact_kind": "document",
+                        "filename": "b.pdf",
+                        "url": "https://example.com/b.pdf",
+                        "source_task_id": "source_b",
+                        "source_output_port_id": "default",
+                    },
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    default_port = resolved["ports"]["default"]
+    assert len(default_port["upstream_bindings"]) == 2
+    assert default_port["upstream_bindings"][0]["artifacts"] == [
+        {
+            "artifact_kind": "document",
+            "filename": "a.pdf",
+            "url": "https://example.com/a.pdf",
+            "source_task_id": "source_a",
+            "source_output_port_id": "default",
+        }
+    ]
+    assert default_port["upstream_bindings"][1]["artifacts"] == [
+        {
+            "artifact_kind": "document",
+            "filename": "b.pdf",
+            "url": "https://example.com/b.pdf",
+            "source_task_id": "source_b",
+            "source_output_port_id": "default",
+        }
+    ]
+
+
+def test_resolve_task_inputs_filters_prefixed_node_inputs_by_normalized_source_binding() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "in-shared", "name": "Input", "artifact_kind": "document"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "source_a",
+                    "target_id": "downstream",
+                    "source_output_port_id": "a1",
+                    "target_input_port_id": "shared",
+                },
+                {
+                    "source_id": "source_b",
+                    "target_id": "downstream",
+                    "source_output_port_id": "b1",
+                    "target_input_port_id": "shared",
+                },
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "node_inputs_by_port": {
+                "shared": [
+                    {
+                        "artifact_kind": "document",
+                        "filename": "a.pdf",
+                        "url": "https://example.com/a.pdf",
+                        "source_task_id": "source_a",
+                        "source_output_port_id": "out-a1",
+                    },
+                    {
+                        "artifact_kind": "document",
+                        "filename": "b.pdf",
+                        "url": "https://example.com/b.pdf",
+                        "source_task_id": "source_b",
+                        "source_output_port_id": "out-b1",
+                    },
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    shared_port = resolved["ports"]["shared"]
+    assert shared_port["upstream_bindings"][0]["artifacts"][0]["filename"] == "a.pdf"
+    assert shared_port["upstream_bindings"][1]["artifacts"][0]["filename"] == "b.pdf"
+
+
 def test_resolve_task_inputs_rejects_artifact_kind_mismatch() -> None:
     with pytest.raises(
         ValueError, match="expects artifact kind 'document' but received 'text'"

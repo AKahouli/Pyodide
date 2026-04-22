@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 
 import { PORT_COLORS } from '../utils/port-colors';
-import { TASK_TEMPLATES } from '../utils/task-template-registry';
+import { usePlaybookStore } from '../store';
 import type { TaskTemplate } from '../types';
 
 interface Props {
@@ -55,6 +55,9 @@ export function PlaybookCanvasFloatingToolbar({
   disabled = false,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
+  const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
+  const nodeTemplatesLoading = usePlaybookStore((s) => s.nodeTemplatesLoading);
+  const fetchNodeTemplates = usePlaybookStore((s) => s.fetchNodeTemplates);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
   const dragOffsetRef = useRef<Position>({ x: 0, y: 0 });
@@ -62,6 +65,10 @@ export function PlaybookCanvasFloatingToolbar({
   const [position, setPosition] = useState<Position>(DEFAULT_POSITION);
   const [collapsed, setCollapsed] = useState(false);
   const titleId = useId();
+
+  useEffect(() => {
+    void fetchNodeTemplates();
+  }, [fetchNodeTemplates]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -276,15 +283,24 @@ export function PlaybookCanvasFloatingToolbar({
                     {t('toolbar.addBlankStep')}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  {TASK_TEMPLATES.map((template) => {
-                    const KindIcon = PORT_COLORS[template.inputPorts[0]?.artifactKind || 'text'].icon;
-                    return (
-                      <DropdownMenuItem key={template.id} onClick={() => onAddStepFromTemplate(template)}>
-                        <KindIcon className="mr-2 h-4 w-4 text-muted-foreground" />
-                        {t(`taskType.${template.type}` as any)}
-                      </DropdownMenuItem>
-                    );
-                  })}
+                  {nodeTemplatesLoading ? (
+                    <DropdownMenuItem disabled>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Loading...
+                    </DropdownMenuItem>
+                  ) : nodeTemplates.length === 0 ? (
+                    <DropdownMenuItem disabled>No templates available</DropdownMenuItem>
+                  ) : (
+                    nodeTemplates.map((template) => {
+                      const KindIcon = PORT_COLORS[template.inputPorts[0]?.artifactKind || 'text'].icon;
+                      return (
+                        <DropdownMenuItem key={template.id} onClick={() => onAddStepFromTemplate(template)}>
+                          <KindIcon className="mr-2 h-4 w-4 text-muted-foreground" />
+                          {template.title}
+                        </DropdownMenuItem>
+                      );
+                    })
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

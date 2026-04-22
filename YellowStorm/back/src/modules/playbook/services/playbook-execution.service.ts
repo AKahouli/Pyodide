@@ -46,7 +46,9 @@ import {
   topologicalSortByLevel,
   mergeWithExistingHumanFeedback,
   extractArtifactsFromResult,
+  mapGrpcPortPayloads,
   mapGrpcTaskArtifacts,
+  TaskArtifactEntry,
   MAX_COMPONENTS_PER_TASK_DEFAULT,
   MAX_CONCURRENT_STEPS_DEFAULT,
 } from '../utils/execution.utils';
@@ -110,7 +112,11 @@ export class PlaybookExecutionService {
       MAX_COMPONENTS_PER_TASK_DEFAULT;
     this.maxConcurrentSteps =
       this.configService.get<number>('playbook.maxConcurrentSteps') || MAX_CONCURRENT_STEPS_DEFAULT;
+    this.portUnificationV2Enabled =
+      this.configService.get<boolean>('playbook.portUnification.v2') ?? true;
   }
+
+  private readonly portUnificationV2Enabled: boolean;
 
   private normalizeStructLike(value: any): any {
     if (Array.isArray(value)) {
@@ -1097,6 +1103,7 @@ export class PlaybookExecutionService {
       executionNumber,
       currentAttemptNumber: 1,
       status: ExecutionStatus.RUNNING,
+      engineVersion: this.portUnificationV2Enabled ? 2 : 1,
       executionMode: globalExecutionMode,
       executionTrigger,
       triggerContext: options?.triggerContext ?? null,
@@ -1672,10 +1679,11 @@ export class PlaybookExecutionService {
         const llmPromptTrace = this.mapGrpcLlmPromptTrace(result?.llm_prompt_trace || []);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const activeTask = taskMap.get(taskId);
-        const artifacts =
-          grpcArtifacts.length > 0
-            ? grpcArtifacts
-            : extractArtifactsFromResult(activeTask, grpcComps);
+        const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const artifacts = this.mergeTaskArtifacts(
+          grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(activeTask, grpcComps),
+          emittedPayloadArtifacts,
+        );
 
         stepBuffer.set(taskId, {
           taskId,
@@ -1728,10 +1736,11 @@ export class PlaybookExecutionService {
         const existing = stepBuffer.get(taskId);
         const completedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
-        const artifacts =
-          grpcArtifacts.length > 0
-            ? grpcArtifacts
-            : extractArtifactsFromResult(completedTask, grpcComps);
+        const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const artifacts = this.mergeTaskArtifacts(
+          grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(completedTask, grpcComps),
+          emittedPayloadArtifacts,
+        );
 
         const usage = result?.usage;
         const usageFields = usage
@@ -1755,8 +1764,9 @@ export class PlaybookExecutionService {
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
           artifacts,
+          artifactsByPort: this.groupArtifactsByPort(artifacts),
           ...usageFields,
-        });
+        } as any);
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_step_complete',
           data: {
@@ -1792,10 +1802,11 @@ export class PlaybookExecutionService {
         const existing = stepBuffer.get(taskId);
         const failedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
-        const artifacts =
-          grpcArtifacts.length > 0
-            ? grpcArtifacts
-            : extractArtifactsFromResult(failedTask, grpcComps);
+        const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const artifacts = this.mergeTaskArtifacts(
+          grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(failedTask, grpcComps),
+          emittedPayloadArtifacts,
+        );
 
         const usage = result?.usage;
         const usageFields = usage
@@ -1818,8 +1829,10 @@ export class PlaybookExecutionService {
           durationMs,
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
+          artifacts,
+          artifactsByPort: this.groupArtifactsByPort(artifacts),
           ...usageFields,
-        });
+        } as any);
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_step_complete',
           data: {
@@ -1857,10 +1870,11 @@ export class PlaybookExecutionService {
         const existing = stepBuffer.get(taskId);
         const skippedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
-        const artifacts =
-          grpcArtifacts.length > 0
-            ? grpcArtifacts
-            : extractArtifactsFromResult(skippedTask, grpcComps);
+        const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const artifacts = this.mergeTaskArtifacts(
+          grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(skippedTask, grpcComps),
+          emittedPayloadArtifacts,
+        );
 
         const usage = result?.usage;
         const usageFields = usage
@@ -2920,6 +2934,7 @@ export class PlaybookExecutionService {
       taskId,
     );
     const routingState = this.graphService.buildRunStepRoutingState(currentExecutionState, snapshot, taskId);
+    const nodeInputs = this.graphService.resolveNodeInputs(currentExecutionState, snapshot, taskId);
     if (
       upstreamPortInputs.workspaceContexts.length > 0 ||
       upstreamPortInputs.inputFilesByPort.length > 0
@@ -2996,6 +3011,10 @@ export class PlaybookExecutionService {
       execution_mode: executionMode,
       edges: routingState.edges,
       upstream_results: routingState.upstreamResults,
+      node_inputs: this.portUnificationV2Enabled ? nodeInputs : [],
+      declared_output_ports: this.portUnificationV2Enabled
+        ? (task.outputPorts || []).map((p: any) => p.id)
+        : [],
       prompt_overrides: promptOverrides,
     };
 
@@ -3085,8 +3104,11 @@ export class PlaybookExecutionService {
         const semanticMatch = this.mapGrpcSemanticMatch(response.result?.semantic_match);
         const output = extractTextFromComponents(grpcComps);
         const grpcArtifacts = mapGrpcTaskArtifacts(response.result?.artifacts);
-        const artifacts =
-          grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(task, grpcComps);
+        const emittedPayloadArtifacts = mapGrpcPortPayloads(response.result?.emitted_payloads);
+        const artifacts = this.mergeTaskArtifacts(
+          grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(task, grpcComps),
+          emittedPayloadArtifacts,
+        );
 
         const usage = response.result?.usage;
         const usageFields = usage
@@ -3670,6 +3692,56 @@ export class PlaybookExecutionService {
     );
 
     await this.syncStepExecutionHistoryEntry(executionId, taskId);
+  }
+
+  private mergeTaskArtifacts(
+    primary: TaskArtifactEntry[],
+    secondary: TaskArtifactEntry[],
+  ): TaskArtifactEntry[] {
+    const merged = new Map<string, TaskArtifactEntry>();
+
+    for (const artifact of [...(primary || []), ...(secondary || [])]) {
+      if (!artifact || typeof artifact !== 'object') {
+        continue;
+      }
+
+      const key = JSON.stringify({
+        portId: artifact.portId,
+        artifactKind: artifact.artifactKind,
+        content: artifact.content,
+        data: artifact.data,
+        url: artifact.url,
+        filename: artifact.filename,
+        mimeType: artifact.mimeType,
+        sourceTaskId: artifact.sourceTaskId,
+        sourcePortId: artifact.sourcePortId,
+        producedAt: artifact.producedAt,
+        targetInputPortId: artifact.metadata?.target_input_port_id,
+      });
+
+      const existing = merged.get(key);
+      merged.set(key, {
+        ...(existing || {}),
+        ...artifact,
+        metadata: {
+          ...(existing?.metadata || {}),
+          ...(artifact.metadata || {}),
+        },
+      });
+    }
+
+    return Array.from(merged.values());
+  }
+
+  private groupArtifactsByPort(
+    artifacts: Array<{ portId: string; [key: string]: any }>,
+  ): Record<string, Array<{ portId: string; [key: string]: any }>> {
+    const byPort: Record<string, Array<any>> = {};
+    for (const artifact of artifacts || []) {
+      const key = artifact.portId || 'default';
+      (byPort[key] ??= []).push(artifact);
+    }
+    return byPort;
   }
 
   private isTerminalStepStatus(status: string | undefined | null): boolean {

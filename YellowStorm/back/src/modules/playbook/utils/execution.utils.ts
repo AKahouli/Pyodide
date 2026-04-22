@@ -290,11 +290,15 @@ export interface TaskArtifactEntry {
   portId: string;
   artifactKind: string;
   content?: string;
+  data?: Record<string, unknown>;
   url?: string;
   filename?: string;
   mimeType?: string;
   size?: number;
   metadata?: Record<string, unknown>;
+  sourceTaskId?: string;
+  sourcePortId?: string;
+  producedAt?: string;
 }
 
 const ARTIFACT_KIND_BY_EXTENSION: Record<string, string> = {
@@ -601,4 +605,43 @@ export function mapGrpcTaskArtifacts(grpcArtifacts: any[] | undefined | null): T
       mimeType: artifact.mime_type || artifact.mimeType || undefined,
       size: typeof artifact.size === 'string' ? Number(artifact.size) : artifact.size,
     }));
+}
+
+export function mapGrpcPortPayloads(grpcPayloads: any[] | undefined | null): TaskArtifactEntry[] {
+  return (grpcPayloads || [])
+    .filter((payload: any) => payload && typeof payload === 'object')
+    .map((payload: any) => {
+      const ref = payload.ref || {};
+      const metadata = payload.metadata && typeof payload.metadata === 'object'
+        ? payload.metadata
+        : undefined;
+
+      return {
+        portId: payload.port_id || payload.portId || 'default',
+        artifactKind: payload.artifact_kind || payload.artifactKind || 'text',
+        content: typeof payload.content === 'string' && payload.content.length > 0
+          ? payload.content
+          : typeof metadata?.content === 'string' && metadata.content.length > 0
+            ? metadata.content
+          : undefined,
+        data: payload.data && typeof payload.data === 'object'
+          ? payload.data
+          : undefined,
+        url: ref.url || metadata?.url || undefined,
+        filename: ref.filename || metadata?.filename || undefined,
+        mimeType: ref.mime_type || ref.mimeType || metadata?.mime_type || metadata?.mimeType || undefined,
+        sourceTaskId: payload.source_task_id || payload.sourceTaskId || undefined,
+        sourcePortId: payload.source_port_id || payload.sourcePortId || undefined,
+        producedAt: payload.produced_at || payload.producedAt || undefined,
+        metadata: {
+          ...(metadata || {}),
+          ...(ref.document_id || ref.documentId ? { document_id: ref.document_id || ref.documentId } : {}),
+          ...(ref.workspace_id || ref.workspaceId ? { workspace_id: ref.workspace_id || ref.workspaceId } : {}),
+          ...(payload.source_task_id || payload.sourceTaskId ? { source_task_id: payload.source_task_id || payload.sourceTaskId } : {}),
+          ...(payload.source_port_id || payload.sourcePortId ? { source_port_id: payload.source_port_id || payload.sourcePortId } : {}),
+          ...(payload.produced_at || payload.producedAt ? { produced_at: payload.produced_at || payload.producedAt } : {}),
+          ...(payload.data ? { data: payload.data } : {}),
+        },
+      };
+    });
 }

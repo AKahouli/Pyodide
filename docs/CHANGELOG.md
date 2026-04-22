@@ -1,29 +1,56 @@
 # Changelog
 
-## [2026-04-20 00:00 UTC] — Update mail-trigger and action-node docs
+## [2026-04-22 00:00 UTC] — Harden chart payload parsing
+
+- **Feature:** `conversation`
+- **Type:** `fix`
+- **Changed:** Hardened chart payload parsing in `YellowStorm/front/src/modules/conversation/utils.ts` so malformed chart `series` payloads are normalized safely instead of calling `.map` on non-arrays; added a regression test in `YellowStorm/front/src/components/ai-elements/ai-message-content.chart.test.tsx`.
+- **Why:** Malformed chart payloads could crash the frontend with `s.map is not a function` during AI message rendering.
+- **Impact:** `YellowStorm/front/src/modules/conversation/utils.ts`, `YellowStorm/front/src/components/ai-elements/ai-message-content.chart.test.tsx`
+- **Readme:** `/docs/conversation/README.md`
+
+## [2026-04-22 00:00 UTC] — Harden playbook node template normalization
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Hardened playbook node template normalization in `YellowStorm/front/src/modules/playbook/store.ts` so malformed node-template payload arrays are normalized safely instead of calling `.map` on non-arrays.
+- **Why:** Malformed node-template payloads could crash the frontend with `s.map is not a function` during playbook store processing.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-22 00:00 UTC] — Add frontend developer OpenCode agent
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Added a new project-local `frontend-developer` subagent, allowed `build` to delegate to it in `opencode.json`, and updated repository workflow documentation to describe the new frontend implementation role.
+- **Why:** Frontend-heavy tasks in `YellowStorm/front` needed a dedicated implementation specialist that stays distinct from read-only browser QA.
+- **Impact:** `.opencode/agents/frontend-developer.md`, `opencode.json`, `AGENTS.md`, `docs/opencode-agents/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/opencode-agents/README.md`
+
+## [2026-04-22 00:00 UTC] — Document mail-trigger auto-renew cutoff
 
 - **Feature:** `playbook`
 - **Type:** `docs`
-- **Changed:** Documented the mail-trigger end-to-end `triggerContext` forwarding into ADK port resolution, richer `mail_attachments` handoff metadata for imported attachments, the frontend `hasAttachments = null` behavior when the mail filter is unchecked, ADK action indexing auth and webhook URL shaping, and the new `index` action-node output artifact behavior.
-- **Why:** These runtime behaviors now affect how mail-triggered inputs resolve and how downstream nodes consume indexed document outputs, so the living playbook docs need to match the current contract.
-- **Impact:** `docs/playbook/README_2026-04-11_12-27-13.md`, `docs/playbook/USER_STORIES.md`, `docs/DOC_INDEX.md`, and `docs/CHANGELOG.md`.
-- **Readme:** `docs/playbook/README_2026-04-11_12-27-13.md`
+- **Changed:** Updated the playbook README with a factual note about the `autoRenewUntil` mail-trigger cutoff and refreshed the documentation index entry for the playbook slug.
+- **Why:** The feature was implemented in the backend and frontend and needed matching maintainer documentation for the existing playbook feature area.
+- **Impact:** `docs/playbook/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/playbook/README.md`
 
-## [2026-04-19 00:00 UTC] — Add inline conversation charts
-
-- **Feature:** `conversation-charts`
-- **Type:** `feat`
-- **Changed:** Extended the conversation chart proto contract with chart kind/layout metadata, added a first-class ADK `render_chart` tool, propagated chart payloads through the Python gRPC stream and NestJS SSE layer, generalized the React chat renderer to support line/bar/area/pie/scatter/composed charts, added localized chart fallbacks, and documented the conversation + conversation-charts features.
-- **Why:** Analytical chat turns need charts to appear inline between explanation paragraphs without breaking the existing structured streaming pipeline.
-- **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/conversation/utils/component-mapper.ts`, `YellowStorm/back/src/modules/conversation/utils/component-mapper.spec.ts`, `yellowstorm-adk/grpc/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2_grpc.py`, `yellowstorm-adk/src/smart_rag/tools/__init__.py`, `yellowstorm-adk/src/smart_rag/tools/utilities/render_chart.py`, `yellowstorm-adk/src/smart_rag/agents/factories/base_factory.py`, `yellowstorm-adk/src/smart_rag/engines/multi_agent/streaming_processor.py`, `yellowstorm-adk/src/smart_rag/engines/multi_agent/team_orchestrator.py`, `YellowStorm/front/src/modules/conversation/utils.ts`, `YellowStorm/front/src/components/ai-elements/ai-message-content.tsx`, `YellowStorm/front/src/components/ai-elements/ai-message-content.chart.test.tsx`, `YellowStorm/front/src/modules/localization/locales/en/common.json`, `YellowStorm/front/src/modules/localization/locales/fr/common.json`, `docs/conversation/README.md`, `docs/conversation-charts/README.md`, `docs/DOC_INDEX.md`, and `docs/CHANGELOG.md`.
-
-## [2026-04-19 16:45 UTC] — Extract playbook advisor execution helpers
+## [2026-04-22 00:00 UTC] — Scope playbook execution UI to the active route
 
 - **Feature:** `playbook`
-- **Type:** `refactor`
-- **Changed:** Moved advisor autopilot normalization, fix-type resolution, state persistence, turn-history persistence, and task-result lookup out of `PlaybookExecutionService` into a dedicated `PlaybookExecutionAdvisorService`, then rewired the execution facade, module providers, and focused backend specs to use the new service.
-- **Why:** The execution service is being split into smaller slices incrementally, and the advisor/autopilot logic was cohesive enough to extract without changing the public execution API.
-- **Impact:** `YellowStorm/back/src/modules/playbook/playbook.module.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution-advisor.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution-advisor.service.spec.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, and `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`.
+- **Type:** `fix`
+- **Changed:** Scoped execution history and current-execution rendering to the active playbook route in the frontend. The store now keeps per-playbook execution history alongside the global cache, and the execution panel, history dropdown, playbook canvas, execution page, designer panel, and interrupt dialog now ignore foreign executions when their route playbook id does not match.
+- **Why:** A streaming execution from playbook A could surface in playbook B's results UI after navigation, which made the active panel show the wrong execution state.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookExecutionPage.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionHistoryDropdown.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookDesignerPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/InterruptDialog.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.test.tsx`.
+
+## [2026-04-21 21:05 UTC] — Condition mail-trigger auto-renewal on user-selected expiration date
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added `autoRenewUntil` to the mail trigger config across frontend and backend. Users can now select a date in the trigger panel after which Microsoft 365 subscription auto-renewal stops. The Graph client clamps `expirationDateTime` to the earlier of the 45-minute Graph window and the user cutoff. The renewal cron skips playbooks whose cutoff has passed. The sync-subscription endpoint rejects past cutoffs with a 400 error. Frontend date handling uses local calendar semantics to avoid timezone off-by-one issues.
+- **Why:** Previously, mail-trigger subscriptions renewed indefinitely, which could lead to unwanted ongoing webhook costs and execution noise. Users need control over how long the automation remains active.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/dto/upsert-playbook-mail-trigger.dto.ts`, `YellowStorm/back/src/modules/playbook/dto/sync-playbook-mail-subscription.dto.ts`, `YellowStorm/back/src/modules/playbook/services/playbook.service.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook.controller.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-mail-graph-client.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-mail-subscription-renewal.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/schedule/PlaybookScheduleSheet.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, and corresponding test files.
 
 ## [2026-04-18 20:57 UTC] — Forward mail trigger context into single-step runs
 

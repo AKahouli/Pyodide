@@ -4,7 +4,8 @@ Provides a non-LLM execution path for tasks with execution_mode='action'.
 Actions operate on resolved document inputs from upstream ports.
 
 Indexing calls the vectorstores API directly (no backend HTTP hop).
-Status polling uses Redis via DocumentStatusRedis (no backend HTTP hop).
+Completion is signalled via a webhook POST from vectorstores back to the ADK,
+which resolves asyncio.Futures registered before each trigger call.
 """
 
 import asyncio
@@ -27,6 +28,27 @@ logger = logging.getLogger(__name__)
 _cached_token: Optional[str] = None
 _cached_token_expires_at: float = 0.0
 
+# Registry of pending indexing completions: document_id → Future
+_pending_indexing: Dict[str, "asyncio.Future[Dict[str, Any]]"] = {}
+
+
+def _register_indexing_future(doc_id: str) -> "asyncio.Future[Dict[str, Any]]":
+    future: asyncio.Future[Dict[str, Any]] = asyncio.get_running_loop().create_future()
+    _pending_indexing[doc_id] = future
+    return future
+
+
+def resolve_indexing_webhook(doc_id: str, status: str, payload: Dict[str, Any]) -> bool:
+    """Called by the webhook endpoint when vectorstores POSTs a completion callback.
+
+    Returns True if a waiting Future was found and resolved.
+    """
+    future = _pending_indexing.pop(doc_id, None)
+    if future is None or future.done():
+        return False
+    future.set_result({"status": status, "payload": payload})
+    return True
+
 
 def _get_vectorstores_url() -> str:
     from src.config.settings import get_settings
@@ -46,12 +68,8 @@ def _get_indexing_webhook_url() -> str:
     from src.config.settings import get_settings
 
     settings = get_settings()
-    normalized = (settings.API_URL or "").rstrip("/")
-    if normalized.endswith("/api/v1"):
-        return f"{normalized}/indexing/webhook"
-    if normalized.endswith("/api"):
-        return f"{normalized}/v1/indexing/webhook"
-    return f"{normalized}/api/v1/indexing/webhook"
+    normalized = (settings.API_ADK_URL or "").rstrip("/")
+    return f"{normalized}/playbook/index/webhook"
 
 
 async def _generate_token() -> str:
@@ -114,26 +132,31 @@ def get_action_document_ids(
 
 
 def get_action_document_metadata(
+    task: Dict[str, Any],
     resolved_inputs: Dict[str, Any],
 ) -> List[Dict[str, str]]:
     """Extract full document metadata (filepath, workspace_id) from resolved inputs."""
     tool_scope = build_tool_scope(resolved_inputs)
-    all_files = tool_scope.get("all_files") or []
+    input_ports = task.get("input_ports") or []
     seen = set()
     result: List[Dict[str, str]] = []
-    for f in all_files:
-        if not isinstance(f, dict):
+    for port in input_ports:
+        if str(port.get("artifact_kind") or "") != "document":
             continue
-        doc_id = str(f.get("document_id") or "").strip()
-        if not doc_id or doc_id in seen:
-            continue
-        seen.add(doc_id)
-        result.append({
-            "document_id": doc_id,
-            "filepath": str(f.get("filepath") or "").strip(),
-            "workspace_id": str(f.get("workspace_id") or "").strip(),
-            "filename": str(f.get("filename") or "").strip(),
-        })
+        port_id = str(port.get("id") or "default")
+        for f in tool_scope.get("files_by_port", {}).get(port_id, []):
+            if not isinstance(f, dict):
+                continue
+            doc_id = str(f.get("document_id") or "").strip()
+            if not doc_id or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            result.append({
+                "document_id": doc_id,
+                "filepath": str(f.get("filepath") or "").strip(),
+                "workspace_id": str(f.get("workspace_id") or "").strip(),
+                "filename": str(f.get("filename") or "").strip(),
+            })
     return result
 
 
@@ -352,59 +375,39 @@ async def _action_index_trigger(
     return {"results": results, "errors": errors}
 
 
-async def _poll_indexing_via_redis(
+async def _await_indexing_completions(
     documents: List[Dict[str, str]],
+    futures: Dict[str, "asyncio.Future[Dict[str, Any]]"],
     timeout: int = 600,
-    poll_interval: int = 5,
 ) -> Dict[str, Any]:
-    """Poll document indexing status via Redis (direct, no backend hop)."""
-    from src.modules.redis_connection import get_redis_connection
-    from src.modules.document_status_redis import DocumentStatusRedis
-
-    redis_client = await get_redis_connection()
-    status_client = DocumentStatusRedis(redis_client)
-
-    pending = list(documents)
-    elapsed = 0
+    """Await webhook-resolved Futures for each triggered document."""
     completed: List[Dict[str, str]] = []
     failed: List[Dict[str, str]] = []
 
-    while elapsed < timeout and pending:
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
+    async def _await_one(doc: Dict[str, str]) -> None:
+        doc_id = doc["document_id"]
+        future = futures.get(doc_id)
+        if future is None:
+            failed.append({"document_id": doc_id, "status": "failed", "error": "No future registered"})
+            return
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=timeout)
+            webhook_status = result.get("status", "")
+            if webhook_status == "FINISH":
+                completed.append({"document_id": doc_id, "status": "ready"})
+            else:
+                payload = result.get("payload", {})
+                error = payload.get("error") or f"Indexing failed with status: {webhook_status}"
+                failed.append({"document_id": doc_id, "status": "failed", "error": error})
+        except asyncio.TimeoutError:
+            _pending_indexing.pop(doc_id, None)
+            failed.append({
+                "document_id": doc_id,
+                "status": "timeout",
+                "error": f"Indexing did not complete within {timeout}s",
+            })
 
-        still_pending: List[Dict[str, str]] = []
-        for doc in pending:
-            doc_id = doc["document_id"]
-            workspace_id = doc.get("workspace_id", "")
-            try:
-                status_data = await status_client.get_status_async(workspace_id, doc_id)
-                if status_data:
-                    status = status_data.get("status", "UNKNOWN")
-                    if status == "COMPLETED":
-                        completed.append({"document_id": doc_id, "status": "ready"})
-                    elif status == "FAILED":
-                        failed.append({
-                            "document_id": doc_id,
-                            "status": "failed",
-                            "error": status_data.get("error", "Unknown indexing failure"),
-                        })
-                    else:
-                        still_pending.append(doc)
-                else:
-                    still_pending.append(doc)
-            except Exception:
-                still_pending.append(doc)
-
-        pending = still_pending
-
-    for doc in pending:
-        failed.append({
-            "document_id": doc["document_id"],
-            "status": "timeout",
-            "error": f"Indexing did not complete within {timeout}s",
-        })
-
+    await asyncio.gather(*[_await_one(doc) for doc in documents])
     return {"completed": completed, "failed": failed}
 
 
@@ -419,6 +422,7 @@ async def execute_action_task(
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     on_progress: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """Execute a deterministic action task.
@@ -452,13 +456,14 @@ async def execute_action_task(
             "results": upstream_results_map,
             "task_outputs": {},
             "artifacts_by_port": artifacts_by_port or {},
+            "node_inputs_by_port": node_inputs_by_port or {},
             "workspace_context": workspace_context,
             "trigger_context": trigger_context,
         },
     )
 
     document_ids = get_action_document_ids(task, resolved_inputs)
-    documents = get_action_document_metadata(resolved_inputs)
+    documents = get_action_document_metadata(task, resolved_inputs)
     workspace_id = get_action_workspace_id(resolved_inputs)
     workspace_settings = get_workspace_indexing_settings(
         resolved_inputs, workspace_id
@@ -492,12 +497,23 @@ async def execute_action_task(
 
     try:
         if action == "index":
+            # Register futures before triggering to avoid missing the callback
+            futures = {doc["document_id"]: _register_indexing_future(doc["document_id"]) for doc in documents}
+
             trigger_result = await _action_index_trigger(
                 documents, vectorstores_url, task_id, workspace_settings
             )
             trigger_errors = trigger_result.get("errors", [])
+            triggered_ids = {item["document_id"] for item in trigger_result.get("results", [])}
 
-            if trigger_errors and not trigger_result.get("results"):
+            # Cancel futures for documents that failed to trigger
+            for doc in documents:
+                if doc["document_id"] not in triggered_ids:
+                    f = _pending_indexing.pop(doc["document_id"], None)
+                    if f and not f.done():
+                        f.cancel()
+
+            if trigger_errors and not triggered_ids:
                 error_lines = [f"{e['document_id']}: {e['error']}" for e in trigger_errors]
                 output = f"Indexing trigger failed:\n" + "\n".join(error_lines)
                 result = _build_step_result(
@@ -513,7 +529,8 @@ async def execute_action_task(
                     ),
                 )
             else:
-                poll_result = await _poll_indexing_via_redis(documents)
+                triggered_docs = [doc for doc in documents if doc["document_id"] in triggered_ids]
+                poll_result = await _await_indexing_completions(triggered_docs, futures)
                 poll_failed = poll_result.get("failed", [])
                 poll_completed = poll_result.get("completed", [])
 
@@ -598,6 +615,7 @@ async def execute_action_task(
                 "components": result.get("components", []),
                 "tool_trace": result.get("tool_trace", []),
                 "llm_prompt_trace": result.get("llm_prompt_trace", []),
+                "artifacts": result.get("artifacts", []),
             }
         },
         **({"error": error} if error else {}),

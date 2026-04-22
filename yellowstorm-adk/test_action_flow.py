@@ -70,10 +70,10 @@ def main():
 
     with open("src/langgraph_engine/action_executor.py", encoding="utf-8") as f:
         ae_source = f.read()
-    has_correct_import = "from src.routers.authentification import create_access_token" in ae_source
+    has_token_generation = "async def _generate_token()" in ae_source
     has_no_stdlib_logger_kwarg = "error=str(e)" not in ae_source
     has_no_action_kwarg = "action=action" not in ae_source
-    print(f"15. Action executor uses correct token import: {has_correct_import}")
+    print(f"15. Action executor has token generation helper: {has_token_generation}")
     print(f"16. Action executor has no stdlib logger kwargs: {has_no_stdlib_logger_kwarg}")
     print(f"17. Action executor has no action= kwarg: {has_no_action_kwarg}")
 
@@ -85,7 +85,7 @@ def main():
         adk_has_task_action, back_has_task_action,
         adk_has_ws_chunks, back_has_ws_chunks,
         has_pb2_exec, has_pb2_action,
-        has_correct_import, has_no_stdlib_logger_kwarg, has_no_action_kwarg,
+        has_token_generation, has_no_stdlib_logger_kwarg, has_no_action_kwarg,
     ]
 
     print()

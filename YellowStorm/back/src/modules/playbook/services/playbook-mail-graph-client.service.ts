@@ -4,6 +4,7 @@ import { ConnectedAppTokenService } from '../../connected-app/services/connected
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
 const MSG_SELECT = '$select=id,conversationId,receivedDateTime,subject,body,bodyPreview,from,toRecipients,ccRecipients,hasAttachments';
+const GRAPH_SUBSCRIPTION_MAX_WINDOW_MS = 45 * 60 * 1000;
 
 @Injectable()
 export class PlaybookMailGraphClientService {
@@ -14,9 +15,15 @@ export class PlaybookMailGraphClientService {
     this.logger.setContext(PlaybookMailGraphClientService.name);
   }
 
-  async createInboxSubscription(userId: string, mailboxAppKey: string, notificationUrl: string, clientState: string) {
+  async createInboxSubscription(
+    userId: string,
+    mailboxAppKey: string,
+    notificationUrl: string,
+    clientState: string,
+    autoRenewUntil?: string | Date | null,
+  ) {
     const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
-    const expires = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+    const expires = this.buildExpirationDateTime(autoRenewUntil);
     const payload = {
       changeType: 'created',
       notificationUrl,
@@ -50,9 +57,14 @@ export class PlaybookMailGraphClientService {
     return response.json() as Promise<Record<string, any>>;
   }
 
-  async renewSubscription(userId: string, mailboxAppKey: string, subscriptionId: string) {
+  async renewSubscription(
+    userId: string,
+    mailboxAppKey: string,
+    subscriptionId: string,
+    autoRenewUntil?: string | Date | null,
+  ) {
     const accessToken = await this.connectedAppTokenService.getValidToken(userId, mailboxAppKey);
-    const expires = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+    const expires = this.buildExpirationDateTime(autoRenewUntil);
 
     this.logger.log('Renewing Graph subscription', { userId, subscriptionId });
 
@@ -77,6 +89,16 @@ export class PlaybookMailGraphClientService {
     }
 
     return response.json() as Promise<Record<string, any>>;
+  }
+
+  private buildExpirationDateTime(autoRenewUntil?: string | Date | null): string {
+    const graphMaxExpiry = Date.now() + GRAPH_SUBSCRIPTION_MAX_WINDOW_MS;
+    const requestedCutoff = autoRenewUntil ? new Date(autoRenewUntil).getTime() : Number.NaN;
+    const effectiveExpiry = Number.isFinite(requestedCutoff)
+      ? Math.min(graphMaxExpiry, requestedCutoff)
+      : graphMaxExpiry;
+
+    return new Date(effectiveExpiry).toISOString();
   }
 
   async deleteSubscription(userId: string, mailboxAppKey: string, subscriptionId: string) {

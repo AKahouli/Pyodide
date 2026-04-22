@@ -26,6 +26,10 @@ import {
   PlaybookPromptTemplateSchema,
 } from './schemas/playbook-prompt-template.schema';
 import {
+  PlaybookNodeTemplate,
+  PlaybookNodeTemplateSchema,
+} from './schemas/playbook-node-template.schema';
+import {
   PlaybookMailEventLedger,
   PlaybookMailEventLedgerSchema,
 } from './schemas/playbook-mail-event-ledger.schema';
@@ -41,6 +45,8 @@ import { PlaybookStreamController } from './controllers/playbook-stream.controll
 import { PlaybookController } from './controllers/playbook.controller';
 import { PlaybookExecutionController } from './controllers/playbook-execution.controller';
 import { AdminPlaybookPromptsController } from './controllers/admin-playbook-prompts.controller';
+import { AdminPlaybookNodeTemplatesController } from './controllers/admin-playbook-node-templates.controller';
+import { PlaybookNodeTemplatesController } from './controllers/playbook-node-templates.controller';
 import { PlaybookMailWebhookController } from './controllers/playbook-mail-webhook.controller';
 
 // Services
@@ -52,6 +58,7 @@ import { PlaybookDesignService } from './services/playbook-design.service';
 import { PlaybookReplayService } from './services/playbook-replay.service';
 import { PlaybookOutputFormatService } from './services/playbook-output-format.service';
 import { PlaybookPromptService } from './services/playbook-prompt.service';
+import { PlaybookNodeTemplateService } from './services/playbook-node-template.service';
 import { PlaybookEvaluationService } from './services/playbook-evaluation.service';
 import { PlaybookSemanticEnrichmentService } from './services/playbook-semantic-enrichment.service';
 import { PlaybookJudgeEnrichmentService } from './services/playbook-judge-enrichment.service';
@@ -98,6 +105,7 @@ import playbookConfig from './config/playbook.config';
       { name: PlaybookValidatedReplay.name, schema: PlaybookValidatedReplaySchema },
       { name: PlaybookOutputFormatTemplate.name, schema: PlaybookOutputFormatTemplateSchema },
       { name: PlaybookPromptTemplate.name, schema: PlaybookPromptTemplateSchema },
+      { name: PlaybookNodeTemplate.name, schema: PlaybookNodeTemplateSchema },
       { name: PlaybookMailEventLedger.name, schema: PlaybookMailEventLedgerSchema },
       { name: Connector.name, schema: ConnectorSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
@@ -121,6 +129,8 @@ import playbookConfig from './config/playbook.config';
     PlaybookMailWebhookController,
     PlaybookExecutionController,
     AdminPlaybookPromptsController,
+    AdminPlaybookNodeTemplatesController,
+    PlaybookNodeTemplatesController,
   ],
   providers: [
     PlaybookService,
@@ -131,6 +141,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookReplayService,
     PlaybookOutputFormatService,
     PlaybookPromptService,
+    PlaybookNodeTemplateService,
     PlaybookEvaluationService,
     PlaybookSemanticEnrichmentService,
     PlaybookJudgeEnrichmentService,
@@ -159,6 +170,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookReplayService,
     PlaybookOutputFormatService,
     PlaybookPromptService,
+    PlaybookNodeTemplateService,
     PlaybookEvaluationService,
     PlaybookSemanticEnrichmentService,
     PlaybookJudgeEnrichmentService,

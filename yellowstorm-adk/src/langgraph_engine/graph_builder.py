@@ -730,6 +730,8 @@ class DynamicGraphBuilder:
                     title=task_config.get("title"),
                 )
 
+                await _push_step_update("in_progress")
+
                 action_result = await execute_action_task(
                     task_config,
                     task_id=task_id,
@@ -741,6 +743,7 @@ class DynamicGraphBuilder:
                     upstream_results=list(
                         (state.get("results") or {}).values()
                     ),
+                    artifacts_by_port=state.get("artifacts_by_port"),
                     on_progress=_push_step_update,
                 )
 
@@ -749,6 +752,18 @@ class DynamicGraphBuilder:
                     task_id, {}
                 )
                 await _push_step_update(action_status, result=step_result)
+
+                raw_artifacts = step_result.get("artifacts") or []
+                if raw_artifacts:
+                    port_artifacts: Dict[str, List[Dict[str, Any]]] = {}
+                    for art in raw_artifacts:
+                        port_id = _normalize_port_id(
+                            art.get("port_id", "default")
+                        )
+                        art_key = f"{task_id}:{port_id}"
+                        port_artifacts.setdefault(art_key, []).append(art)
+                    action_result["artifacts_by_port"] = port_artifacts
+
                 return action_result
 
             # === AGENT MODE: continue with normal agent execution ===

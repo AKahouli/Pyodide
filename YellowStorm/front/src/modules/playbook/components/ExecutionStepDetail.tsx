@@ -817,32 +817,6 @@ export function ExecutionStepDetail({
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
-            {replaySource && (
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                <div className="font-medium">{t('detail.provenance.title')}</div>
-                <div className="mt-2 space-y-1 text-muted-foreground">
-                  {replaySource && (
-                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
-                  )}
-                  {baselineReplay?.preserveOutputFormat && (
-                    <div>{t('detail.provenance.outputFormat')}</div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {selectedStepExecution?.error && (
-              <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
-                  <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
-                </div>
-                <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
-                  {selectedStepExecution.error}
-                </pre>
-              </div>
-            )}
-
             {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
@@ -860,16 +834,32 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
-              <div className="space-y-2">
-                <h3 className="text-sm font-medium">{t('artifacts.sectionTitle' as any)}</h3>
-                <div className="grid gap-2">
-                  {selectedStepExecution.artifacts.map((artifact, idx) => (
-                    <ArtifactListItem key={`${artifact.portId}-${idx}`} artifact={artifact} />
-                  ))}
+            {selectedStepExecution?.error && (
+              <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <AlertCircle className="h-4 w-4 shrink-0 text-destructive" />
+                  <span className="text-sm font-semibold text-destructive">{t('execution.error')}</span>
+                </div>
+                <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
+                  {selectedStepExecution.error}
+                </pre>
+              </div>
+            )}
+
+            {replaySource && (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="font-medium">{t('detail.provenance.title')}</div>
+                <div className="mt-2 space-y-1 text-muted-foreground">
+                  {replaySource && (
+                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
+                  )}
+                  {baselineReplay?.preserveOutputFormat && (
+                    <div>{t('detail.provenance.outputFormat')}</div>
+                  )}
                 </div>
               </div>
             )}
+
           </TabsContent>
 
           <TabsContent value="evaluation" className="space-y-4">
@@ -1307,7 +1297,7 @@ export function ExecutionStepDetail({
                   />
                 </div>
 
-                <Collapsible defaultOpen={true} className="rounded-lg border bg-background p-4">
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />

@@ -81,6 +81,7 @@
           "*": "deny",
           "general": "allow",
           "explore": "allow",
+          "frontend-developer": "allow",
           "plan": "allow",
           "reviewer": "allow",
           "diagnostics": "allow",

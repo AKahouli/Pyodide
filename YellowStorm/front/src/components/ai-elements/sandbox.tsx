@@ -54,7 +54,7 @@ function renderStatusBadge(state: SandboxState, translate: (key: SandboxStatusKe
 
 export type SandboxRootProps = ComponentProps<typeof Collapsible>;
 
-export const Sandbox = ({ className, ...props }: SandboxRootProps) => <Collapsible className={cn('not-prose group mb-4 w-full overflow-hidden rounded-md border', className)} defaultOpen {...props} />;
+export const Sandbox = ({ className, ...props }: SandboxRootProps) => <Collapsible className={cn('not-prose group mb-4 w-full overflow-hidden rounded-md border', className)} defaultOpen={false} {...props} />;
 
 export interface SandboxHeaderProps {
   title?: string;

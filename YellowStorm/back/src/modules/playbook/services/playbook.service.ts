@@ -404,6 +404,11 @@ export class PlaybookService {
               notificationUrl: dto.enabled
                 ? (dto.notificationUrl ?? existing.mailTrigger?.notificationUrl ?? null)
                 : null,
+              autoRenewUntil: dto.enabled
+                ? (dto.autoRenewUntil
+                  ? new Date(dto.autoRenewUntil)
+                  : null)
+                : null,
               attachmentImportEnabled: dto.enabled ? dto.attachmentImportEnabled === true : false,
               allowedAttachmentExtensions: dto.enabled
                 ? Array.from(new Set((dto.allowedAttachmentExtensions ?? [])
@@ -468,6 +473,7 @@ export class PlaybookService {
               enabled: false,
               mailboxAppKey: null,
               notificationUrl: null,
+              autoRenewUntil: null,
               attachmentImportEnabled: false,
               allowedAttachmentExtensions: [],
               runtimeEnabled: false,
@@ -501,6 +507,7 @@ export class PlaybookService {
     subscription: {
       mailboxAppKey: string;
       notificationUrl?: string | null;
+      autoRenewUntil?: string | null;
       subscriptionId: string | null;
       subscriptionClientState: string;
       subscriptionExpiresAt: string | null;
@@ -514,6 +521,9 @@ export class PlaybookService {
             'mailTrigger.enabled': true,
             'mailTrigger.mailboxAppKey': subscription.mailboxAppKey,
             'mailTrigger.notificationUrl': subscription.notificationUrl ?? null,
+            'mailTrigger.autoRenewUntil': subscription.autoRenewUntil
+              ? new Date(subscription.autoRenewUntil)
+              : null,
             'mailTrigger.runtimeEnabled': true,
             'mailTrigger.subscriptionId': subscription.subscriptionId,
             'mailTrigger.subscriptionClientState': subscription.subscriptionClientState,
@@ -1004,6 +1014,8 @@ export class PlaybookService {
       enabled: mailTrigger?.enabled === true,
       mailboxAppKey: mailTrigger?.mailboxAppKey ?? null,
       notificationUrl: mailTrigger?.notificationUrl ?? null,
+      autoRenewUntil:
+        mailTrigger?.autoRenewUntil?.toISOString?.() ?? mailTrigger?.autoRenewUntil ?? null,
       runtimeEnabled: mailTrigger?.runtimeEnabled === true,
       subscriptionId: mailTrigger?.subscriptionId ?? null,
       subscriptionClientState: mailTrigger?.subscriptionClientState ?? null,

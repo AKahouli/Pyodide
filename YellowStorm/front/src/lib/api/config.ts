@@ -190,6 +190,13 @@ export const API_ENDPOINTS = {
     list: '/admin/playbook-prompts',
     byKey: (key: string) => `/admin/playbook-prompts/${encodeURIComponent(key)}`,
   },
+  adminPlaybookNodeTemplates: {
+    list: '/admin/playbook-node-templates',
+    byId: (id: string) => `/admin/playbook-node-templates/${id}`,
+  },
+  playbookNodeTemplates: {
+    list: '/playbook-node-templates',
+  },
   adminAgentTypes: {
     list: '/admin/agent-types',
     byId: (id: string) => `/admin/agent-types/${id}`,

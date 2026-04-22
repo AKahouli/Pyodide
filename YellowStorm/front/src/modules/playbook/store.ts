@@ -38,6 +38,8 @@ import type {
   PlaybookPageMode,
   PlaybookUndoSnapshot,
   SyncPlaybookMailSubscriptionData,
+  TaskTemplate,
+  ArtifactKind,
   UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ToolBinding,
@@ -105,6 +107,7 @@ const initialState: PlaybookState = {
   currentExecutionLoading: false,
   executionCache: {},
   executionHistory: [],
+  executionHistoryByPlaybook: {},
   executionsLoading: false,
   executingPlaybookIds: [],
   isGenerating: false,
@@ -126,6 +129,9 @@ const initialState: PlaybookState = {
   canvasSyncVersion: 0,
   triggerSaving: false,
   triggerError: null,
+  nodeTemplates: [],
+  nodeTemplatesLoading: false,
+  nodeTemplatesLoadedAt: 0,
 };
 
 // ===== Stable empty references =====
@@ -2337,7 +2343,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
         try {
           const result = await api.getExecutions(playbookId);
           const executions = result.executions.slice(0, MAX_EXECUTION_HISTORY);
-          set({ executionHistory: executions, executionsLoading: false });
+          set((state) => ({
+            executionHistory: state.currentPlaybook?.id === playbookId ? executions : state.executionHistory,
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [playbookId]: executions,
+            },
+            executionsLoading: false,
+          }));
 
           // Pre-fetch the latest execution's full details into the cache
           // so the canvas can show step statuses from previous runs.
@@ -2358,11 +2371,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchExecution: async (playbookId, execId) => {
         // Use cached execution as optimistic value if available
         const cached = get().executionCache[execId];
-        set({
+        set((state) => ({
           currentExecutionLoading: !cached,
-          currentExecution: cached || null,
-          selectedStepId: cached ? get().selectedStepId : null,
-        });
+          currentExecution: state.currentPlaybook?.id === playbookId ? (cached || null) : state.currentExecution,
+          selectedStepId: state.currentPlaybook?.id === playbookId && cached ? state.selectedStepId : state.selectedStepId,
+        }));
         try {
           const apiExecution = await api.getExecution(playbookId, execId);
           // Smart merge: for each task result, keep the version with the more advanced status
@@ -2402,13 +2415,15 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const executingPlaybookIds = isActiveExecutionStatus(merged.status)
             ? get().executingPlaybookIds
             : get().executingPlaybookIds.filter((pid) => pid !== playbookId);
-          set({
-            currentExecution: merged,
+          set((state) => ({
+            currentExecution: state.currentPlaybook?.id === playbookId ? merged : state.currentExecution,
             currentExecutionLoading: false,
             executionCache,
-            selectedStepId: get().selectedStepId || firstStep?.taskId || null,
+            selectedStepId: state.currentPlaybook?.id === playbookId
+              ? (state.selectedStepId || firstStep?.taskId || null)
+              : state.selectedStepId,
             executingPlaybookIds,
-          });
+          }));
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Failed to fetch execution';
           set({ currentExecutionLoading: false, error: msg });
@@ -2671,6 +2686,60 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
 
+      // ===== Node Templates =====
+
+      fetchNodeTemplates: async () => {
+        const { nodeTemplatesLoadedAt } = get();
+        const now = Date.now();
+        if (now - nodeTemplatesLoadedAt < 30_000) return;
+
+        set({ nodeTemplatesLoading: true });
+        try {
+          const data = await api.getPlaybookNodeTemplates();
+          const items = Array.isArray(data.items) ? data.items : [];
+
+          set({
+            nodeTemplates: items.map((item) => ({
+              id: item.id,
+              type: item.type,
+              title: item.title,
+              description: item.description || '',
+              icon: item.icon || 'FileText',
+              color: item.color || 'blue',
+              category: item.category as TaskTemplate['category'],
+              inputPorts: (Array.isArray(item.inputPorts) ? item.inputPorts : []).map((p) => ({
+                id: p.id,
+                name: p.name,
+                artifactKind: p.artifactKind as ArtifactKind,
+                required: p.required ?? false,
+                description: p.description,
+              })),
+              outputPorts: (Array.isArray(item.outputPorts) ? item.outputPorts : []).map((p) => ({
+                id: p.id,
+                name: p.name,
+                artifactKind: p.artifactKind as ArtifactKind,
+                description: p.description,
+              })),
+              promptTemplate: item.promptTemplate || '',
+              recommendedAgentTypeSlug: item.recommendedAgentTypeSlug,
+              requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
+              executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
+              assignedAgentId: item.assignedAgentId,
+              selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | null,
+            })),
+            nodeTemplatesLoading: false,
+            nodeTemplatesLoadedAt: now,
+          });
+        } catch (err) {
+          set({ nodeTemplatesLoading: false });
+          handleApiError(err, { showToast: true });
+        }
+      },
+
+      invalidateNodeTemplates: () => {
+        set({ nodeTemplatesLoadedAt: 0 });
+      },
+
       // ===== Cleanup =====
 
       reset: () => set(initialState),
@@ -2710,6 +2779,15 @@ export const useCurrentExecutionLoading = () => usePlaybookStore((s) => s.curren
 
 export const useExecutionHistory = () =>
   usePlaybookStore(useShallow((s) => s.executionHistory.length > 0 ? s.executionHistory : EMPTY_EXECUTIONS));
+
+export const useExecutionHistoryForPlaybook = (playbookId: string | undefined) =>
+  usePlaybookStore(useShallow((s) => {
+    if (!playbookId) return EMPTY_EXECUTIONS;
+    const direct = s.executionHistoryByPlaybook[playbookId];
+    if (direct?.length) return direct;
+    const filtered = s.executionHistory.filter((execution) => execution.playbookId === playbookId);
+    return filtered.length > 0 ? filtered : EMPTY_EXECUTIONS;
+  }));
 
 export const useExecutionsLoading = () => usePlaybookStore((s) => s.executionsLoading);
 

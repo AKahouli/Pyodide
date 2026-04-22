@@ -182,6 +182,56 @@ describe('PlaybookExecutionGraphService', () => {
     });
   });
 
+  describe('resolveNodeInputs', () => {
+    it('maps persisted artifact provenance into canonical payloads', () => {
+      const execution = {
+        taskResults: [
+          {
+            taskId: 'source',
+            status: StepStatus.COMPLETED,
+            isStale: false,
+            artifacts: [
+              {
+                portId: 'out-1',
+                artifactKind: 'data',
+                data: { total: 3 },
+                metadata: { documentId: 'doc-1', workspace_id: 'ws-1' },
+                producedAt: '2026-04-20T00:00:00.000Z',
+              },
+            ],
+          },
+        ],
+      };
+      const snapshot = {
+        edges: [
+          {
+            sourceId: 'source',
+            targetId: 'target',
+            sourceOutputPortId: 'out-1',
+            targetInputPortId: 'in-1',
+          },
+        ],
+      };
+
+      const result = service.resolveNodeInputs(execution, snapshot, 'target');
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          port_id: 'in-1',
+          artifact_kind: 'data',
+          source_task_id: 'source',
+          source_port_id: 'out-1',
+          data: { total: 3 },
+          ref: expect.objectContaining({
+            document_id: 'doc-1',
+            workspace_id: 'ws-1',
+          }),
+          produced_at: '2026-04-20T00:00:00.000Z',
+        }),
+      ]);
+    });
+  });
+
   describe('sanitizeEdgesForTasks', () => {
     it('filters edges with missing task references', () => {
       const tasks = [{ id: 't1', outputPorts: [], inputPorts: [] }];

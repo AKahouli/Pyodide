@@ -7,6 +7,7 @@ import {
   useCurrentPlaybook,
   useCurrentExecution,
   useCurrentExecutionLoading,
+  useLatestExecutionForPlaybook,
   useSelectedStep,
 } from '../store';
 import { ExecutionHeader } from './ExecutionHeader';
@@ -19,7 +20,13 @@ export function PlaybookExecutionPage() {
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
-  const execution = useCurrentExecution();
+  const currentExecution = useCurrentExecution();
+  const latestExecution = useLatestExecutionForPlaybook(id);
+  const execution = currentExecution?.id === executionId && currentExecution?.playbookId === id
+    ? currentExecution
+    : latestExecution?.id === executionId
+      ? latestExecution
+      : null;
   const executionLoading = useCurrentExecutionLoading();
   const selectedStepId = useSelectedStep();
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);

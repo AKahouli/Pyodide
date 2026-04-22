@@ -40,6 +40,23 @@ describe('ExecutionPanel', () => {
     expect(usePlaybookStore.getState().currentExecution?.id).toBe('e1');
   });
 
+  it('does not render another playbook execution when scoped to a different playbook', () => {
+    const playbook = makePlaybook({ id: 'p2' });
+    const foreignExecution = makeExecution({ id: 'e-a', playbookId: 'p1', status: 'running' });
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentPlaybook: playbook,
+      currentExecution: foreignExecution,
+      executionHistory: [makeExecutionSummary({ id: 'e-a', playbookId: 'p1', status: 'running' })],
+      executionCache: { 'e-a': foreignExecution },
+    });
+
+    render(<ExecutionPanel playbookId="p2" />);
+
+    expect(screen.getByText('execution.noExecution')).toBeInTheDocument();
+    expect(screen.queryByText('execution.stop')).not.toBeInTheDocument();
+  });
+
   it('renders execution header with status and duration', () => {
     const execution = makeExecution({
       status: 'completed',

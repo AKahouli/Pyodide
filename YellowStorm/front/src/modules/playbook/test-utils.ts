@@ -61,6 +61,7 @@ export function makePlaybook(overrides: Partial<Playbook> = {}): Playbook {
           enabled: false,
           mailboxAppKey: null,
           notificationUrl: null,
+          autoRenewUntil: null,
           attachmentImportEnabled: false,
           allowedAttachmentExtensions: [],
           filters: {

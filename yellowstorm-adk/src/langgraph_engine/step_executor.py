@@ -44,6 +44,14 @@ def _get_output_ports(task: Dict[str, Any]) -> List[Dict[str, Any]]:
     return list(task.get("output_ports") or task.get("outputPorts") or [])
 
 
+def _get_declared_output_ports(task: Dict[str, Any]) -> List[str]:
+    return [
+        str(port_id).strip()
+        for port_id in (task.get("declared_output_ports") or [])
+        if str(port_id).strip()
+    ]
+
+
 def _output_port_kind(port: Dict[str, Any]) -> str:
     return str(port.get("artifact_kind") or port.get("artifactKind") or "").strip()
 
@@ -201,6 +209,30 @@ def _build_task_artifacts_from_structured_outputs(
     return artifacts
 
 
+def _validate_declared_output_ports(
+    task: Dict[str, Any], structured_outputs: List[Dict[str, Any]]
+) -> None:
+    declared_output_ports = {
+        _normalize_port_id(port_id) for port_id in _get_declared_output_ports(task)
+    }
+    if not declared_output_ports:
+        return
+
+    for output_spec in structured_outputs:
+        raw_output_port_id = output_spec.get("output_port_id") or output_spec.get(
+            "outputPortId"
+        )
+        if not str(raw_output_port_id or "").strip():
+            raise ValueError(
+                "Structured output must include output_port_id when declared_output_ports is present"
+            )
+        output_port_id = _normalize_port_id(raw_output_port_id)
+        if output_port_id not in declared_output_ports:
+            raise ValueError(
+                f"Structured output references undeclared output port '{output_port_id}'"
+            )
+
+
 async def _synthesize_structured_outputs(
     settings,
     model_name: str,
@@ -287,7 +319,34 @@ async def _synthesize_structured_outputs(
     outputs = payload.get("outputs") or []
     if not isinstance(outputs, list):
         raise ValueError("Structured output synthesis returned an invalid outputs list")
-    return [item for item in outputs if isinstance(item, dict)]
+    filtered_outputs = [item for item in outputs if isinstance(item, dict)]
+
+    try:
+        _validate_declared_output_ports(task, filtered_outputs)
+    except ValueError as first_error:
+        repair_prompt = (
+            user_prompt
+            + f"\n\nPrevious attempt failed validation with error:\n{first_error}\n"
+            "Please fix the JSON so every output uses a declared output_port_id."
+        )
+        synthesis_text, _usage = await _llm_call(
+            settings,
+            model_name,
+            system_prompt,
+            repair_prompt,
+            temperature=0.1,
+            prompt_trace=prompt_trace,
+            stage="playbook_output_routing_repair",
+            on_progress=None,
+        )
+        payload = _extract_json_object(synthesis_text)
+        outputs = payload.get("outputs") or []
+        if not isinstance(outputs, list):
+            raise ValueError("Structured output repair returned an invalid outputs list")
+        filtered_outputs = [item for item in outputs if isinstance(item, dict)]
+        _validate_declared_output_ports(task, filtered_outputs)
+
+    return filtered_outputs
 
 
 def _serialize_prompt_messages(messages: List[Dict[str, str]]) -> str:
@@ -476,6 +535,7 @@ async def execute_step(
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -509,6 +569,7 @@ async def execute_step(
             edges=edges,
             upstream_results=upstream_results,
             artifacts_by_port=artifacts_by_port,
+            node_inputs_by_port=node_inputs_by_port,
             execution_mode=execution_mode,
             validated_replay=validated_replay,
             evaluation_user_id=evaluation_user_id,
@@ -525,6 +586,7 @@ async def execute_step(
         edges=edges,
         upstream_results=upstream_results,
         artifacts_by_port=artifacts_by_port,
+        node_inputs_by_port=node_inputs_by_port,
         execution_mode=execution_mode,
         validated_replay=validated_replay,
         evaluation_user_id=evaluation_user_id,
@@ -542,6 +604,7 @@ async def _execute_step_direct(
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -593,6 +656,7 @@ async def _execute_step_direct(
             "results": upstream_results_map,
             "task_outputs": {},
             "artifacts_by_port": resolved_artifacts_by_port,
+            "node_inputs_by_port": node_inputs_by_port or {},
             "workspace_context": workspace_context,
             "trigger_context": trigger_context,
         },
@@ -801,7 +865,8 @@ async def _execute_step_direct(
             )
 
         artifacts: List[Dict[str, Any]] = []
-        if _task_requires_structured_output_synthesis(task):
+        run_synthesis = bool(_get_declared_output_ports(task)) or _task_requires_structured_output_synthesis(task)
+        if run_synthesis:
             structured_outputs = await _synthesize_structured_outputs(
                 settings,
                 model_name,
@@ -815,8 +880,7 @@ async def _execute_step_direct(
                 str(response or "").strip() or _collect_generated_artifacts(components)
             ):
                 logger.warning(
-                    f"[{task_id}] Structured output synthesis returned empty for semantically ambiguous output ports; "
-                    f"falling back to component-level artifact extraction",
+                    f"[{task_id}] Structured output synthesis returned empty; no artifacts will be emitted on declared ports",
                 )
                 structured_outputs = []
             artifacts = _build_task_artifacts_from_structured_outputs(

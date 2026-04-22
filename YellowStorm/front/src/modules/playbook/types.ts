@@ -254,6 +254,7 @@ export interface PlaybookMailTrigger {
     enabled: boolean;
     mailboxAppKey: string | null;
     notificationUrl: string | null;
+    autoRenewUntil: string | null;
     attachmentImportEnabled: boolean;
     allowedAttachmentExtensions: string[];
     filters: {
@@ -291,6 +292,7 @@ export interface UpsertPlaybookScheduleData {
 export interface UpsertPlaybookMailTriggerData {
   enabled: boolean;
   mailboxAppKey?: string;
+  autoRenewUntil?: string | null;
   attachmentImportEnabled?: boolean;
   allowedAttachmentExtensions?: string[];
   filters?: {
@@ -303,6 +305,7 @@ export interface UpsertPlaybookMailTriggerData {
 
 export interface SyncPlaybookMailSubscriptionData {
   notificationUrl?: string;
+  autoRenewUntil?: string | null;
 }
 
 export interface PlaybookSummary {
@@ -997,6 +1000,7 @@ export interface PlaybookState {
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;
   executionHistory: PlaybookExecutionSummary[];
+  executionHistoryByPlaybook: Record<string, PlaybookExecutionSummary[]>;
   executionsLoading: boolean;
   executingPlaybookIds: string[];
   isGenerating: boolean;
@@ -1019,6 +1023,10 @@ export interface PlaybookState {
   /** Saving automated trigger configuration */
   triggerSaving: boolean;
   triggerError: string | null;
+  /** Node templates for canvas toolbar */
+  nodeTemplates: TaskTemplate[];
+  nodeTemplatesLoading: boolean;
+  nodeTemplatesLoadedAt: number;
 }
 
 export interface PlaybookActions {
@@ -1136,6 +1144,10 @@ export interface PlaybookActions {
   setWorkspaceExplorerOpen: (open: boolean) => void;
   addInputFileToTask: (taskId: string, inputFile: InputFile) => void;
   removeInputFileFromTask: (taskId: string, inputFileId: string) => void;
+
+  // Node Templates
+  fetchNodeTemplates: () => Promise<void>;
+  invalidateNodeTemplates: () => void;
 
   // Connector Bindings
   connectorSidebarOpen: boolean;

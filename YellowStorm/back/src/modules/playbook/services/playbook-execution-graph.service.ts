@@ -178,6 +178,106 @@ export class PlaybookExecutionGraphService {
     };
   }
 
+  resolveNodeInputs(execution: any, snapshot: any, taskId: string): any[] {
+    const taskResultsById = new Map<string, any>();
+
+    for (const tr of execution.taskResults || []) {
+      taskResultsById.set(tr.taskId, tr);
+    }
+
+    const payloads: any[] = [];
+
+    for (const edge of snapshot?.edges || []) {
+      const targetId = this.normalizeEdgeId(edge.targetId ?? edge.target_id);
+      if (targetId !== taskId) {
+        continue;
+      }
+
+      const sourceId = this.normalizeEdgeId(edge.sourceId ?? edge.source_id);
+      if (!sourceId || sourceId === '__trigger__') {
+        continue;
+      }
+
+      const sourcePortId = this.normalizeEdgeId(
+        edge.sourceOutputPortId ?? edge.source_output_port_id,
+      ) || 'default';
+      const targetPortId = this.normalizeEdgeId(
+        edge.targetInputPortId ?? edge.target_input_port_id,
+      ) || 'default';
+      const taskResult = taskResultsById.get(sourceId);
+
+      if (!taskResult || taskResult.status !== StepStatus.COMPLETED || taskResult.isStale) {
+        continue;
+      }
+
+      // Prefer the keyed artifactsByPort index for O(1) lookup; fall back to scanning artifacts.
+      const portArtifacts: any[] =
+        taskResult.artifactsByPort?.[sourcePortId] ??
+        taskResult.artifactsByPort?.[`out-${sourcePortId}`] ??
+        (taskResult.artifacts || []).filter((a: any) => {
+          const id = this.normalizeEdgeId(a?.portId ?? a?.port_id) || 'default';
+          return id === sourcePortId;
+        });
+
+      for (const artifact of portArtifacts) {
+
+        const metadata = {
+          ...(artifact?.metadata && typeof artifact.metadata === 'object' ? artifact.metadata : {}),
+          target_input_port_id: targetPortId,
+        };
+
+        const payload: any = {
+          port_id: targetPortId,
+          artifact_kind: artifact?.artifactKind || artifact?.artifact_kind || 'text',
+          metadata,
+          source_task_id: sourceId,
+          source_port_id: sourcePortId,
+        };
+
+        const content = artifact?.content;
+        if (typeof content === 'string' && content.length > 0) {
+          payload.content = content;
+        }
+
+        if (artifact?.data && typeof artifact.data === 'object') {
+          payload.data = artifact.data;
+        }
+
+        if (
+          artifact?.url ||
+          artifact?.filename ||
+          artifact?.mimeType ||
+          artifact?.mime_type ||
+          metadata?.document_id ||
+          metadata?.documentId
+        ) {
+          payload.ref = {
+            ...(metadata?.document_id || metadata?.documentId
+              ? { document_id: metadata.document_id || metadata.documentId }
+              : {}),
+            ...(metadata?.workspaceId || metadata?.workspace_id
+              ? { workspace_id: metadata.workspaceId || metadata.workspace_id }
+              : {}),
+            ...(artifact?.url ? { url: artifact.url } : {}),
+            ...(artifact?.filename ? { filename: artifact.filename } : {}),
+            ...(artifact?.mimeType || artifact?.mime_type
+              ? { mime_type: artifact.mimeType || artifact.mime_type }
+              : {}),
+          };
+        }
+
+        // Routing provenance for reruns comes from the current graph edge.
+        if (artifact?.producedAt || artifact?.produced_at) {
+          payload.produced_at = artifact.producedAt || artifact.produced_at;
+        }
+
+        payloads.push(payload);
+      }
+    }
+
+    return payloads;
+  }
+
   mergeWorkspaceContexts(
     baseContexts: Array<{ workspace_id: string; workspace_documents: any[] }>,
     extraContexts: Array<{ workspace_id: string; workspace_documents: any[] }>,

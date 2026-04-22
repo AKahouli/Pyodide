@@ -383,6 +383,7 @@ describe('PlaybookService', () => {
           enabled: false,
           mailboxAppKey: null,
           notificationUrl: null,
+          autoRenewUntil: null,
           filters: {
             from: [],
             subjectContains: [],
@@ -421,6 +422,7 @@ describe('PlaybookService', () => {
           enabled: false,
           mailboxAppKey: null,
           notificationUrl: null,
+          autoRenewUntil: null,
           filters: {
             from: [],
             subjectContains: [],

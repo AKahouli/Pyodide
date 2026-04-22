@@ -13,7 +13,7 @@ import time
 import tempfile
 import shutil
 from datetime import timedelta
-from google.protobuf import json_format, struct_pb2
+from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
 import aiohttp
@@ -38,6 +38,7 @@ except ImportError:
 from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
+from src.langgraph_engine.types import PortPayload
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -1815,6 +1816,11 @@ class ChatbotServicer(
 
         try:
             task = _proto_task_to_dict(request.task)
+            task["declared_output_ports"] = [
+                str(p).strip()
+                for p in getattr(request, "declared_output_ports", [])
+                if str(p).strip()
+            ]
             agent = _proto_agent_to_dict(request.agent)
             validated_replay = (
                 _proto_validated_replay_to_dict(request.validated_replay)
@@ -1851,7 +1857,15 @@ class ChatbotServicer(
                 _proto_task_result_to_dict(item)
                 for item in request.upstream_results
             ] if request.upstream_results else []
-            artifacts_by_port = _build_artifacts_by_port_from_results(upstream_results)
+            node_inputs = [
+                _proto_port_payload_to_dict(item)
+                for item in getattr(request, "node_inputs", [])
+            ]
+            node_inputs_by_port = _build_node_inputs_by_port(node_inputs)
+            artifacts_by_port = _merge_artifacts_by_port(
+                _build_artifacts_by_port_from_results(upstream_results),
+                _build_artifacts_by_port_from_payloads(node_inputs),
+            )
 
             if str(task.get("execution_mode") or "agent").strip().lower() == "action":
                 result = await execute_action_task(
@@ -1864,6 +1878,7 @@ class ChatbotServicer(
                     edges=edges,
                     upstream_results=upstream_results,
                     artifacts_by_port=artifacts_by_port,
+                    node_inputs_by_port=node_inputs_by_port,
                 )
             else:
                 result = await execute_step(
@@ -1875,6 +1890,7 @@ class ChatbotServicer(
                     edges=edges,
                     upstream_results=upstream_results,
                     artifacts_by_port=artifacts_by_port,
+                    node_inputs_by_port=node_inputs_by_port,
                     execution_mode=request.execution_mode or "live",
                     validated_replay=validated_replay,
                     evaluation_user_id=request.user_context.username
@@ -1928,6 +1944,11 @@ class ChatbotServicer(
 
         try:
             task = _proto_task_to_dict(request.task)
+            task["declared_output_ports"] = [
+                str(p).strip()
+                for p in getattr(request, "declared_output_ports", [])
+                if str(p).strip()
+            ]
             agent = _proto_agent_to_dict(request.agent)
             validated_replay = (
                 _proto_validated_replay_to_dict(request.validated_replay)
@@ -1947,7 +1968,15 @@ class ChatbotServicer(
                 _proto_task_result_to_dict(item)
                 for item in request.upstream_results
             ] if request.upstream_results else []
-            artifacts_by_port = _build_artifacts_by_port_from_results(upstream_results)
+            node_inputs = [
+                _proto_port_payload_to_dict(item)
+                for item in getattr(request, "node_inputs", [])
+            ]
+            node_inputs_by_port = _build_node_inputs_by_port(node_inputs)
+            artifacts_by_port = _merge_artifacts_by_port(
+                _build_artifacts_by_port_from_results(upstream_results),
+                _build_artifacts_by_port_from_payloads(node_inputs),
+            )
 
             if str(task.get("execution_mode") or "agent").strip().lower() == "action":
                 bg_task = asyncio.create_task(
@@ -1961,6 +1990,7 @@ class ChatbotServicer(
                         edges=edges,
                         upstream_results=upstream_results,
                         artifacts_by_port=artifacts_by_port,
+                        node_inputs_by_port=node_inputs_by_port,
                         on_progress=on_progress,
                     )
                 )
@@ -1975,6 +2005,7 @@ class ChatbotServicer(
                         edges=edges,
                         upstream_results=upstream_results,
                         artifacts_by_port=artifacts_by_port,
+                        node_inputs_by_port=node_inputs_by_port,
                         execution_mode=request.execution_mode or "live",
                         validated_replay=validated_replay,
                         evaluation_user_id=request.user_context.username
@@ -2046,12 +2077,15 @@ class ChatbotServicer(
                     stream_name="RunStepStream",
                 )
             else:
+                step_result = result.get("result") or next(
+                    iter((result.get("results") or {}).values()), None
+                )
                 yield _safe_build_step_update_chunk(
                     {
                         "task_id": task_id,
                         "task_title": task.get("title", ""),
                         "status": result.get("status", "completed"),
-                        "result": result.get("result"),
+                        "result": step_result,
                     },
                     stream_name="RunStepStream",
                 )
@@ -2388,6 +2422,10 @@ def _proto_edge_to_dict(proto_edge) -> dict:
 
 
 def _proto_task_result_to_dict(proto_result) -> dict:
+    emitted_payloads = [
+        _proto_port_payload_to_dict(payload)
+        for payload in getattr(proto_result, "emitted_payloads", [])
+    ]
     return {
         "task_id": proto_result.task_id,
         "status": proto_result.status,
@@ -2407,7 +2445,109 @@ def _proto_task_result_to_dict(proto_result) -> dict:
         ]
         if proto_result.artifacts
         else [],
+        "emitted_payloads": emitted_payloads,
     }
+
+
+def _proto_port_payload_to_dict(proto_payload) -> dict:
+    raw: Dict[str, Any] = {
+        "port_id": proto_payload.port_id,
+        "artifact_kind": proto_payload.artifact_kind or "text",
+        "metadata": _struct_to_dict(proto_payload.metadata)
+        if _has_struct_payload(getattr(proto_payload, "metadata", None))
+        else {},
+        "source_task_id": getattr(proto_payload, "source_task_id", "") or None,
+        "source_port_id": getattr(proto_payload, "source_port_id", "") or None,
+    }
+
+    if proto_payload.HasField("ref"):
+        raw["ref"] = {
+            "document_id": proto_payload.ref.document_id or None,
+            "workspace_id": proto_payload.ref.workspace_id or None,
+            "url": proto_payload.ref.url or None,
+            "filename": proto_payload.ref.filename or None,
+            "mime_type": proto_payload.ref.mime_type or None,
+        }
+
+    if proto_payload.HasField("data"):
+        raw["data"] = _struct_to_dict(proto_payload.data)
+
+    body_field = proto_payload.WhichOneof("body")
+    if body_field == "content":
+        raw["content"] = proto_payload.content
+    elif raw["metadata"].get("content") not in (None, ""):
+        raw["content"] = raw["metadata"]["content"]
+
+    if getattr(proto_payload, "produced_at", None):
+        try:
+            raw["produced_at"] = proto_payload.produced_at.ToJsonString()
+        except Exception:
+            pass
+
+    # Validate through the pydantic model; falls back to raw dict on unknown artifact_kind
+    # so that new kinds introduced server-side don't break older ADK versions.
+    try:
+        return PortPayload.from_dict(raw).to_dict()
+    except Exception:
+        return raw
+
+
+def _dict_to_proto_port_payload(payload: Dict[str, Any]) -> chatbot_pb2.PortPayload:
+    message = chatbot_pb2.PortPayload(
+        port_id=str(payload.get("port_id") or payload.get("portId") or "default"),
+        artifact_kind=str(
+            payload.get("artifact_kind") or payload.get("artifactKind") or "text"
+        ),
+        source_task_id=str(payload.get("source_task_id") or payload.get("sourceTaskId") or ""),
+        source_port_id=str(payload.get("source_port_id") or payload.get("sourcePortId") or ""),
+    )
+
+    metadata = payload.get("metadata") or {}
+    if isinstance(metadata, dict) and metadata:
+        message.metadata.update(metadata)
+
+    data = payload.get("data")
+    ref = payload.get("ref") or {}
+    content = payload.get("content")
+
+    # PortPayload.body is a oneof, so choose a single canonical body variant.
+    if isinstance(data, dict):
+        if content not in (None, ""):
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata.setdefault("content", str(content or ""))
+            message.metadata.Clear()
+            if metadata:
+                message.metadata.update(metadata)
+        message.data.update(data)
+    elif isinstance(ref, dict) and ref:
+        message.ref.CopyFrom(
+            chatbot_pb2.ArtifactRef(
+                document_id=str(ref.get("document_id") or ref.get("documentId") or ""),
+                workspace_id=str(ref.get("workspace_id") or ref.get("workspaceId") or ""),
+                url=str(ref.get("url") or ""),
+                filename=str(ref.get("filename") or ""),
+                mime_type=str(ref.get("mime_type") or ref.get("mimeType") or ""),
+            )
+        )
+        if content not in (None, ""):
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata.setdefault("content", str(content or ""))
+            message.metadata.Clear()
+            if metadata:
+                message.metadata.update(metadata)
+    elif content is not None:
+        message.content = str(content or "")
+
+    produced_at = payload.get("produced_at") or payload.get("producedAt")
+    if produced_at:
+        try:
+            timestamp = timestamp_pb2.Timestamp()
+            timestamp.FromJsonString(str(produced_at))
+            message.produced_at.CopyFrom(timestamp)
+        except Exception:
+            pass
+
+    return message
 
 
 def _build_artifacts_by_port_from_results(
@@ -2425,6 +2565,107 @@ def _build_artifacts_by_port_from_results(
             key = f"{task_id}:{port_id}"
             artifacts_by_port.setdefault(key, []).append(artifact)
     return artifacts_by_port
+
+
+def _build_artifacts_by_port_from_payloads(
+    node_inputs: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for payload in node_inputs or []:
+        if not isinstance(payload, dict):
+            continue
+        source_task_id = str(payload.get("source_task_id") or "").strip()
+        source_port_id = str(payload.get("source_port_id") or "default").strip() or "default"
+        if not source_task_id:
+            continue
+        key = f"{source_task_id}:{source_port_id}"
+        ref = payload.get("ref") if isinstance(payload.get("ref"), dict) else {}
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        artifacts_by_port.setdefault(key, []).append(
+            {
+                "port_id": source_port_id,
+                "artifact_kind": payload.get("artifact_kind") or "text",
+                "content": payload.get("content", "") or "",
+                "data": payload.get("data") if isinstance(payload.get("data"), dict) else None,
+                "url": ref.get("url") or metadata.get("url") or "",
+                "filename": ref.get("filename") or metadata.get("filename") or "",
+                "mime_type": ref.get("mime_type") or metadata.get("mime_type") or "",
+                "metadata": {
+                    **metadata,
+                    **(
+                        {"document_id": ref.get("document_id")}
+                        if ref.get("document_id")
+                        else {}
+                    ),
+                    **(
+                        {"workspace_id": ref.get("workspace_id")}
+                        if ref.get("workspace_id")
+                        else {}
+                    ),
+                },
+            }
+        )
+    return artifacts_by_port
+
+
+def _build_node_inputs_by_port(
+    node_inputs: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    inputs_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for payload in node_inputs or []:
+        if not isinstance(payload, dict):
+            continue
+        port_id = str(payload.get("port_id") or "default").strip() or "default"
+        ref = payload.get("ref") if isinstance(payload.get("ref"), dict) else {}
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        artifact: Dict[str, Any] = {
+            "port_id": port_id,
+            "artifact_kind": payload.get("artifact_kind") or "text",
+            "metadata": metadata,
+            "source_task_id": payload.get("source_task_id") or "",
+            "source_output_port_id": payload.get("source_port_id") or "",
+        }
+        if payload.get("content") not in (None, ""):
+            artifact["content"] = payload.get("content")
+        if payload.get("data") is not None:
+            artifact["data"] = payload.get("data")
+        if ref:
+            if ref.get("document_id"):
+                artifact["document_id"] = ref.get("document_id")
+            if ref.get("workspace_id"):
+                artifact.setdefault("metadata", {})["workspace_id"] = ref.get("workspace_id")
+            if ref.get("url"):
+                artifact["url"] = ref.get("url")
+            if ref.get("filename"):
+                artifact["filename"] = ref.get("filename")
+            if ref.get("mime_type"):
+                artifact["mime_type"] = ref.get("mime_type")
+        inputs_by_port.setdefault(port_id, []).append(artifact)
+    return inputs_by_port
+
+
+def _merge_artifacts_by_port(
+    base: Dict[str, List[Dict[str, Any]]],
+    extra: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    merged: Dict[str, List[Dict[str, Any]]] = {
+        key: list(value)
+        for key, value in (base or {}).items()
+    }
+    for key, values in (extra or {}).items():
+        bucket = merged.setdefault(key, [])
+        seen = {
+            json.dumps(item, sort_keys=True, default=str)
+            for item in bucket
+            if isinstance(item, dict)
+        }
+        for value in values or []:
+            marker = json.dumps(value, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            bucket.append(value)
+            seen.add(marker)
+    return merged
 
 
 def _struct_to_dict(struct_msg) -> dict:
@@ -2741,6 +2982,69 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
                 size=int(artifact.get("size", 0) or 0),
             )
         )
+        task_result_proto.emitted_payloads.append(
+            _dict_to_proto_port_payload(
+                {
+                    "port_id": artifact.get("port_id") or artifact.get("portId") or "default",
+                    "artifact_kind": artifact.get("artifact_kind")
+                    or artifact.get("artifactKind")
+                    or "text",
+                    **(
+                        {"data": artifact.get("data")}
+                        if isinstance(artifact.get("data"), dict)
+                        else {}
+                    ),
+                    **(
+                        {"content": artifact.get("content")}
+                        if artifact.get("content") not in (None, "")
+                        else {}
+                    ),
+                    **(
+                        {
+                            "ref": {
+                                "url": artifact.get("url") or "",
+                                "filename": artifact.get("filename") or "",
+                                "mime_type": artifact.get("mime_type")
+                                or artifact.get("mimeType")
+                                or "",
+                                "document_id": (
+                                    (artifact.get("metadata") or {}).get("document_id")
+                                    if isinstance(artifact.get("metadata"), dict)
+                                    else ""
+                                ),
+                                "workspace_id": (
+                                    (artifact.get("metadata") or {}).get("workspace_id")
+                                    if isinstance(artifact.get("metadata"), dict)
+                                    else ""
+                                ),
+                            }
+                        }
+                        if artifact.get("url") or artifact.get("filename") or artifact.get("mime_type") or artifact.get("mimeType")
+                        else {}
+                    ),
+                    **(
+                        {"metadata": artifact.get("metadata")}
+                        if isinstance(artifact.get("metadata"), dict)
+                        else {}
+                    ),
+                    **(
+                        {"source_task_id": artifact.get("source_task_id") or artifact.get("sourceTaskId")}
+                        if artifact.get("source_task_id") or artifact.get("sourceTaskId")
+                        else {}
+                    ),
+                    **(
+                        {"source_port_id": artifact.get("source_port_id") or artifact.get("sourcePortId")}
+                        if artifact.get("source_port_id") or artifact.get("sourcePortId")
+                        else {}
+                    ),
+                    **(
+                        {"produced_at": artifact.get("produced_at") or artifact.get("producedAt")}
+                        if artifact.get("produced_at") or artifact.get("producedAt")
+                        else {}
+                    ),
+                }
+            )
+        )
 
     return task_result_proto
 
@@ -2879,6 +3183,8 @@ def _build_step_response(result: Dict[str, Any]) -> chatbot_pb2.StepResponse:
     )
 
     task_result = result.get("result")
+    if task_result is None and result.get("results"):
+        task_result = next(iter(result["results"].values()), None)
     if task_result:
         response.result.CopyFrom(_build_task_result_proto(task_result))
 

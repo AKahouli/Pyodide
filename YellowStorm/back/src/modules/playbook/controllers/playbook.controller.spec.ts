@@ -58,7 +58,7 @@ describe('PlaybookController', () => {
       findById: jest.fn().mockResolvedValue({
         id: playbookId,
         triggers: [
-          { type: 'mail', enabled: true, available: true, config: { mailboxAppKey: 'microsoft' } },
+          { type: 'mail', enabled: true, available: true, config: { mailboxAppKey: 'microsoft', autoRenewUntil: null } },
         ],
       }),
       update: jest.fn().mockResolvedValue({ id: playbookId }),
@@ -284,13 +284,17 @@ describe('PlaybookController', () => {
 
   describe('syncMailSubscription', () => {
     it('should create a Graph inbox subscription using the playbook mail trigger config', async () => {
-      await controller.syncMailSubscription(user, playbookId, { notificationUrl: 'https://example.test/webhook' } as any);
+      await controller.syncMailSubscription(user, playbookId, {
+        notificationUrl: 'https://example.test/webhook',
+        autoRenewUntil: '2026-05-01T23:59:59.999Z',
+      } as any);
 
       expect(mailGraphClientService.createInboxSubscription).toHaveBeenCalledWith(
         'user-123',
         'microsoft',
         'https://example.test/webhook',
         `ys_${playbookId}`,
+        '2026-05-01T23:59:59.999Z',
       );
     });
   });

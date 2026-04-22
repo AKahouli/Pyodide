@@ -1,7 +1,10 @@
 from src.langgraph_engine.step_executor import (
     _build_task_artifacts_from_structured_outputs,
     _task_requires_structured_output_synthesis,
+    _validate_declared_output_ports,
 )
+
+import pytest
 
 
 def test_task_requires_structured_output_synthesis_for_duplicate_kinds() -> None:
@@ -75,3 +78,61 @@ def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_fi
             "mime_type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         },
     ]
+
+
+def test_build_task_artifacts_from_structured_outputs_accepts_prefixed_declared_ports() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "out-summary", "artifact_kind": "text"},
+            ]
+        },
+        [
+            {"output_port_id": "summary", "artifact_kind": "text", "content": "Executive summary"},
+        ],
+        [],
+    )
+
+    assert artifacts == [
+        {"port_id": "out-summary", "artifact_kind": "text", "content": "Executive summary"},
+    ]
+
+
+def test_validate_declared_output_ports_accepts_declared_ids() -> None:
+    _validate_declared_output_ports(
+        {"declared_output_ports": ["summary", "context"]},
+        [
+            {"output_port_id": "summary", "artifact_kind": "text", "content": "ok"},
+            {"output_port_id": "context", "artifact_kind": "text", "content": "ok"},
+        ],
+    )
+
+
+def test_validate_declared_output_ports_rejects_undeclared_id() -> None:
+    with pytest.raises(ValueError, match="undeclared output port"):
+        _validate_declared_output_ports(
+            {"declared_output_ports": ["summary"]},
+            [{"output_port_id": "other", "artifact_kind": "text", "content": "bad"}],
+        )
+
+
+def test_validate_declared_output_ports_rejects_missing_id() -> None:
+    with pytest.raises(ValueError, match="must include output_port_id"):
+        _validate_declared_output_ports(
+            {"declared_output_ports": ["summary"]},
+            [{"artifact_kind": "text", "content": "bad"}],
+        )
+
+
+def test_validate_declared_output_ports_accepts_prefixed_and_unprefixed_ids() -> None:
+    _validate_declared_output_ports(
+        {"declared_output_ports": ["out-summary"]},
+        [{"output_port_id": "summary", "artifact_kind": "text", "content": "ok"}],
+    )
+
+
+def test_validate_declared_output_ports_accepts_uuid_style_prefixed_ids() -> None:
+    _validate_declared_output_ports(
+        {"declared_output_ports": ["out-5eb055fa"]},
+        [{"output_port_id": "5eb055fa", "artifact_kind": "text", "content": "ok"}],
+    )

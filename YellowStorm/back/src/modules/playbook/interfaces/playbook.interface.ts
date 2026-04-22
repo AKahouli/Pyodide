@@ -271,6 +271,7 @@ export interface ExecutionTriggerContextData {
 export interface PlaybookMailTriggerConfigData {
   enabled: boolean;
   mailboxAppKey: string | null;
+  autoRenewUntil: string | null;
   filters: PlaybookMailTriggerFiltersData;
   runtimeEnabled: boolean;
   subscriptionId: string | null;

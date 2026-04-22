@@ -88,4 +88,27 @@ describe('AIMessageContent charts', () => {
       layout: 'horizontal',
     });
   });
+
+  it('drops non-array chart series payloads instead of crashing the renderer', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        id: 'chart-2',
+        type: 'chart',
+        data: {
+          title: 'Invalid series payload',
+          chartData: [{ month: 'Jan', revenue: 42 }],
+          config: {},
+          xAxisKey: 'month',
+          yAxisKey: 'revenue',
+          series: { dataKey: 'revenue' },
+          kind: 'line',
+        },
+      },
+    ] as any);
+
+    expect(parts[0]).toMatchObject({
+      type: 'chart',
+      series: [],
+    });
+  });
 });

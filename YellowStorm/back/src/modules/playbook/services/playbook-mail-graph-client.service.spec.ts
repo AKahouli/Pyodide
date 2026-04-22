@@ -39,6 +39,22 @@ describe('PlaybookMailGraphClientService', () => {
     fetchMock.mockRestore();
   });
 
+  it('clamps subscription expiry to the user-selected auto-renew cutoff', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'sub-1' }),
+    } as any);
+
+    const autoRenewUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    await service.createInboxSubscription('u1', 'microsoft', 'https://example.test/webhook', 'ys_p1', autoRenewUntil);
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string);
+    expect(body.expirationDateTime).toBe(autoRenewUntil);
+
+    fetchMock.mockRestore();
+  });
+
   it('fetches a Graph message by message id', async () => {
     const fetchMock = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
       ok: true,
@@ -71,6 +87,22 @@ describe('PlaybookMailGraphClientService', () => {
     const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(requestInit.body as string);
     expect(body.expirationDateTime).toBeDefined();
+
+    fetchMock.mockRestore();
+  });
+
+  it('clamps renewal expiry to the user-selected auto-renew cutoff', async () => {
+    const fetchMock = jest.spyOn(global, 'fetch' as any).mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'sub-1', expirationDateTime: '2026-04-18T07:00:00Z' }),
+    } as any);
+
+    const autoRenewUntil = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    await service.renewSubscription('u1', 'microsoft', 'sub-1', autoRenewUntil);
+
+    const [, requestInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string);
+    expect(body.expirationDateTime).toBe(autoRenewUntil);
 
     fetchMock.mockRestore();
   });

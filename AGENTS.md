@@ -60,7 +60,7 @@ User task
 └─────────────┘
 ```
 
-`diagnostics` and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+`diagnostics`, `frontend-developer`, and `frontend-qa` are called **on demand** by `build` when the situation requires them.
 
 `contract` and `integration` are workflow roles described here, but they are not currently implemented as project-local OpenCode subagents in `.opencode/agents/`.
 
@@ -94,7 +94,7 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 
 **Before writing code:**
 1. Check if `plan` is required (see criteria above). If yes, delegate and wait.
-2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs.
+2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs. >> Must say to the user (I'm reading the existing doc ...)
 3. Read the top 15 lines of `/docs/CHANGELOG.md`.
 4. For each related slug, read its `Latest Doc Path`. Note architecture decisions, API contracts, and recent changes.
 5. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
@@ -106,6 +106,7 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 
 **Delegation triggers during implementation:**
 - Unclear failure or vague bug → `diagnostics` before editing
+- Frontend-only implementation slice in `YellowStorm/front` → `frontend-developer` for scoped UI work
 - Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
 - Proto/API change or cross-service modification → perform explicit contract validation after editing; if a dedicated `contract` agent is added later, use it
 - Cross-service change needing end-to-end verification → perform explicit integration verification after contract validation; if a dedicated `integration` agent is added later, use it
@@ -170,6 +171,20 @@ Single-pass review across three lenses:
 - Visual regression, responsive behavior, interaction quality (focus, keyboard, a11y basics)
 
 **Output:** Pass/fail with evidence. Findings go back to `build`.
+
+---
+
+#### `frontend-developer` — Frontend Implementation
+
+**Invoke when:** A task is mostly contained within `YellowStorm/front` and `build` wants a specialist to implement a frontend slice while retaining overall task ownership.
+
+**Does:**
+- Implements React, TypeScript, Radix UI, and Tailwind changes in `YellowStorm/front`
+- Preserves repo frontend patterns and the project's `i18` localization rule for visible text
+- Adds or updates frontend tests when the surrounding area already uses them and behavior changes materially
+- Hands implementation details back to `build` for review, QA delegation, and task closure
+
+**Output:** Changed files, verification run, and any follow-up risks for `build`.
 
 ---
 
@@ -279,6 +294,7 @@ See the `maintainer` agent file for the full documentation procedure.
 |--------|--------|
 | Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
 | Vague bug or unclear failure | `diagnostics` first |
+| Frontend-only implementation slice | `frontend-developer` during implementation |
 | Any code change | `reviewer` after (mandatory, blocking) |
 | Frontend UI/interaction change | `frontend-qa` after |
 | Proto/API change or cross-service edit | Run explicit contract validation after implementation |

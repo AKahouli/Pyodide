@@ -26,6 +26,8 @@ import {
   useCurrentPlaybook,
   useSelectedStep,
   useExecutionHistory,
+  useExecutionHistoryForPlaybook,
+  useLatestExecutionForPlaybook,
   useIsStopping,
   useIsExecuting,
 } from '../store';
@@ -69,12 +71,13 @@ function ExecutionHistoryPicker({
   currentExecutionId,
   label,
   baselineExecutionId,
+  history,
 }: {
   currentExecutionId?: string;
   label: string;
   baselineExecutionId?: string | null;
+  history: ReturnType<typeof useExecutionHistory>;
 }) {
-  const history = useExecutionHistory();
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
 
   if (history.length === 0) return null;
@@ -126,6 +129,7 @@ function PanelHeaderActions({
   historyPickerLabel,
   currentExecutionId,
   baselineExecutionId,
+  history,
   onDeleteCurrentExecution,
   canDeleteCurrentExecution,
   onDeleteAll,
@@ -136,6 +140,7 @@ function PanelHeaderActions({
   historyPickerLabel: string;
   currentExecutionId?: string;
   baselineExecutionId?: string | null;
+  history: ReturnType<typeof useExecutionHistory>;
   onDeleteCurrentExecution?: () => void;
   canDeleteCurrentExecution?: boolean;
   onDeleteAll?: () => void;
@@ -144,7 +149,6 @@ function PanelHeaderActions({
 }) {
   const navigate = useNavigate();
   const { t } = useModuleTranslation('playbook');
-  const history = useExecutionHistory();
   const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
 
   return (
@@ -189,6 +193,7 @@ function PanelHeaderActions({
         currentExecutionId={currentExecutionId}
         label={historyPickerLabel}
         baselineExecutionId={baselineExecutionId}
+        history={history}
       />
       <Button
         variant="ghost"
@@ -208,17 +213,22 @@ function PanelHeaderActions({
 }
 
 interface ExecutionPanelProps {
+  playbookId?: string;
   pageMode?: PlaybookPageMode;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onCollapse?: () => void;
 }
 
-export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onCollapse }: ExecutionPanelProps) {
+export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputFormatEditor, onCollapse }: ExecutionPanelProps) {
   const { t } = useModuleTranslation('playbook');
-  const execution = useCurrentExecution();
+  const currentExecution = useCurrentExecution();
+  const latestExecution = useLatestExecutionForPlaybook(playbookId);
+  const execution = playbookId && currentExecution?.playbookId !== playbookId
+    ? latestExecution
+    : currentExecution;
   const playbook = useCurrentPlaybook();
   const selectedStepId = useSelectedStep();
-  const history = useExecutionHistory();
+  const history = playbookId ? useExecutionHistoryForPlaybook(playbookId) : useExecutionHistory();
   const isStopping = useIsStopping();
   const isExecuting = useIsExecuting(execution?.playbookId);
   const selectStep = usePlaybookStore((s) => s.selectStep);
@@ -498,6 +508,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
           compareUrl={compareUrl}
           historyPickerLabel={t('execution.workflowExecutions')}
           baselineExecutionId={baselineExecutionId}
+          history={history}
           onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
           canDeleteCurrentExecution={canDeleteCurrentExecution}
           onDeleteAll={() => setDeleteAllDialogOpen(true)}
@@ -566,6 +577,7 @@ export function ExecutionPanel({ pageMode = 'run', onOpenOutputFormatEditor, onC
           historyPickerLabel={`#${execution.executionNumber}`}
           currentExecutionId={execution.id}
           baselineExecutionId={baselineExecutionId}
+          history={history}
           onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
           canDeleteCurrentExecution={canDeleteCurrentExecution}
           onDeleteAll={() => setDeleteAllDialogOpen(true)}

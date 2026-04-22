@@ -655,8 +655,8 @@ function PlaybookCanvasInner() {
         || execution
         || null;
       try {
-        if (targetExecution) {
-        await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
+        if (targetExecution && canReuseExecutionForTask(targetExecution, task)) {
+          await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
           return;
         }
         await executePlaybook(id, {
@@ -1278,6 +1278,7 @@ function PlaybookCanvasInner() {
 
           {isExecutionPanelVisible && (
             <ExecutionPanel
+              playbookId={id}
               pageMode={pageMode}
               onCollapse={() => setExecutionPanelCollapsed(true)}
               onOpenOutputFormatEditor={(taskId) => {

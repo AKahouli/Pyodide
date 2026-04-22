@@ -33,6 +33,9 @@ export class PlaybookMailTrigger {
   @Prop({ type: String, default: null })
   notificationUrl!: string | null;
 
+  @Prop({ type: Date, default: null })
+  autoRenewUntil!: Date | null;
+
   @Prop({ type: Boolean, default: false })
   attachmentImportEnabled!: boolean;
 

@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -257,16 +258,23 @@ export class PlaybookController {
     const mailTrigger = playbook.triggers.find((trigger) => trigger.type === 'mail');
     const mailboxAppKey = mailTrigger?.config?.mailboxAppKey || 'microsoft';
 
+    const effectiveCutoff = dto.autoRenewUntil ?? mailTrigger?.config?.autoRenewUntil ?? null;
+    if (effectiveCutoff && new Date(effectiveCutoff).getTime() <= Date.now()) {
+      throw new BadRequestException('autoRenewUntil must be in the future');
+    }
+
     const subscription = await this.mailGraphClientService.createInboxSubscription(
       user._id.toString(),
       mailboxAppKey,
       dto.notificationUrl || 'http://localhost:3000/api/v1/playbooks/mail/webhook',
       `ys_${id}`,
+      effectiveCutoff,
     );
 
     await this.playbookService.syncMailTriggerSubscription(id, {
       mailboxAppKey,
       notificationUrl: dto.notificationUrl || 'http://localhost:3000/api/v1/playbooks/mail/webhook',
+      autoRenewUntil: dto.autoRenewUntil ?? mailTrigger?.config?.autoRenewUntil ?? null,
       subscriptionId: subscription.id || null,
       subscriptionClientState: `ys_${id}`,
       subscriptionExpiresAt: subscription.expirationDateTime || null,

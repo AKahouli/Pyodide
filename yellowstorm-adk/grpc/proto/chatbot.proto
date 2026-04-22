@@ -3,6 +3,7 @@ syntax = "proto3";
 package chatbot;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 // ===== COMMON MESSAGES =====
 
@@ -47,6 +48,8 @@ message Tool {
     string prompt = 2;
     string description = 3;
     int32 top_k = 4;
+    string accessToken = 5;
+    string guidelines = 6;
 }
 
 message AgentParams {
@@ -455,6 +458,28 @@ message TaskArtifact {
     int64 size = 7;
 }
 
+message ArtifactRef {
+    string document_id = 1;
+    string workspace_id = 2;
+    string url = 3;
+    string filename = 4;
+    string mime_type = 5;
+}
+
+message PortPayload {
+    string port_id = 1;
+    string artifact_kind = 2;
+    oneof body {
+        string content = 3;
+        ArtifactRef ref = 4;
+        google.protobuf.Struct data = 5;
+    }
+    google.protobuf.Struct metadata = 6;
+    string source_task_id = 7;
+    string source_port_id = 8;
+    google.protobuf.Timestamp produced_at = 9;
+}
+
 message PlaybookEdgeConfig {
     string source_id = 1;
     string target_id = 2;
@@ -541,6 +566,8 @@ message RunStepRequest {
     repeated PlaybookTaskResult upstream_results = 11;
     map<string, string> prompt_overrides = 12;
     google.protobuf.Struct trigger_context = 13;
+    repeated PortPayload node_inputs = 14;
+    repeated string declared_output_ports = 15;
 }
 
 message ResumeStepRequest {
@@ -621,6 +648,7 @@ message PlaybookTaskResult {
     SemanticMatch semantic_match = 9;
     repeated LLMPromptTraceItem llm_prompt_trace = 10;
     repeated TaskArtifact artifacts = 11;
+    repeated PortPayload emitted_payloads = 20;
 }
 
 message InterruptPayload {

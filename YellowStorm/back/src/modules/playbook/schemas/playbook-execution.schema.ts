@@ -165,11 +165,15 @@ export class TaskStepExecutionEntry {
     portId: string;
     artifactKind: string;
     content?: string;
+    data?: Record<string, unknown>;
     url?: string;
     filename?: string;
     mimeType?: string;
     size?: number;
     metadata?: Record<string, unknown>;
+    sourceTaskId?: string;
+    sourcePortId?: string;
+    producedAt?: string;
   }>;
 }
 
@@ -338,12 +342,31 @@ export class TaskResult {
     portId: string;
     artifactKind: string;
     content?: string;
+    data?: Record<string, unknown>;
     url?: string;
     filename?: string;
     mimeType?: string;
     size?: number;
     metadata?: Record<string, unknown>;
+    sourceTaskId?: string;
+    sourcePortId?: string;
+    producedAt?: string;
   }>;
+
+  @Prop({ type: Object, default: {} })
+  artifactsByPort!: Record<string, Array<{
+    portId: string;
+    artifactKind: string;
+    content?: string;
+    data?: Record<string, unknown>;
+    url?: string;
+    filename?: string;
+    mimeType?: string;
+    metadata?: Record<string, unknown>;
+    sourceTaskId?: string;
+    sourcePortId?: string;
+    producedAt?: string;
+  }>>;
 }
 
 export const TaskResultSchema = SchemaFactory.createForClass(TaskResult);
@@ -462,6 +485,9 @@ export class PlaybookExecution extends Document {
 
   @Prop({ type: String, default: 'live' })
   executionMode!: string;
+
+  @Prop({ type: Number, default: 2 })
+  engineVersion!: number;
 
   @Prop({ type: String, enum: ['manual', 'scheduled', 'mail'], default: 'manual' })
   executionTrigger!: 'manual' | 'scheduled' | 'mail';

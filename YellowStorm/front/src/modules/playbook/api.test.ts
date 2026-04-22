@@ -180,12 +180,14 @@ describe('playbook api', () => {
 
     await syncPlaybookTriggerMailSubscription('p1', {
       notificationUrl: 'https://example.com/api/v1/playbooks/mail/webhook',
+      autoRenewUntil: '2026-05-01T23:59:59.999Z',
     });
 
     expect(apiClientMock.post).toHaveBeenCalledWith(
       `${API_ENDPOINTS.playbooks.triggerMail('p1')}/sync-subscription`,
       {
         notificationUrl: 'https://example.com/api/v1/playbooks/mail/webhook',
+        autoRenewUntil: '2026-05-01T23:59:59.999Z',
       },
     );
   });

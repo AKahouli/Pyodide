@@ -170,6 +170,7 @@ describe('PlaybookScheduleSheet', () => {
             enabled: true,
             mailboxAppKey: 'microsoft',
             notificationUrl: null,
+            autoRenewUntil: null,
             attachmentImportEnabled: false,
             allowedAttachmentExtensions: [],
             filters: {
@@ -191,12 +192,14 @@ describe('PlaybookScheduleSheet', () => {
     await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.from' }), 'alerts@example.com');
     await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.subjectContains' }), 'invoice');
     await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.bodyContains' }), 'urgent');
+    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.autoRenewUntil' }), '2026-05-01');
     await userEvent.click(screen.getByRole('checkbox', { name: 'triggers.mailConfig.hasAttachments' }));
     await userEvent.click(screen.getByRole('button', { name: 'schedule.save' }));
 
     expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
       enabled: true,
       mailboxAppKey: 'microsoft',
+      autoRenewUntil: '2026-05-01T23:59:59.999Z',
       attachmentImportEnabled: false,
       allowedAttachmentExtensions: [],
       filters: {
@@ -223,6 +226,7 @@ describe('PlaybookScheduleSheet', () => {
             enabled: true,
             mailboxAppKey: 'microsoft',
             notificationUrl: null,
+            autoRenewUntil: null,
             attachmentImportEnabled: true,
             allowedAttachmentExtensions: ['pptx'],
             filters: {
@@ -246,6 +250,7 @@ describe('PlaybookScheduleSheet', () => {
     expect(storeMock.upsertPlaybookTriggerMail).toHaveBeenCalledWith('p1', {
       enabled: true,
       mailboxAppKey: 'microsoft',
+      autoRenewUntil: null,
       attachmentImportEnabled: true,
       allowedAttachmentExtensions: ['pptx'],
       filters: {
@@ -279,6 +284,7 @@ describe('PlaybookScheduleSheet', () => {
             enabled: true,
             mailboxAppKey: 'microsoft',
             notificationUrl: null,
+            autoRenewUntil: null,
             attachmentImportEnabled: false,
             allowedAttachmentExtensions: [],
             filters: {
@@ -301,10 +307,12 @@ describe('PlaybookScheduleSheet', () => {
       screen.getByRole('textbox', { name: 'triggers.mailConfig.notificationUrl' }),
       'https://example.test/webhook',
     );
+    await userEvent.type(screen.getByRole('textbox', { name: 'triggers.mailConfig.autoRenewUntil' }), '2026-05-01');
     await userEvent.click(screen.getByRole('button', { name: 'triggers.mailConfig.syncSubscription' }));
 
     expect(storeMock.syncPlaybookTriggerMailSubscription).toHaveBeenCalledWith('p1', {
       notificationUrl: 'https://example.test/webhook',
+      autoRenewUntil: '2026-05-01T23:59:59.999Z',
     });
   });
 });
