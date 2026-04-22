@@ -118,6 +118,17 @@ export class AgentTypeService {
     return this.toResponse(agentType, promptCount);
   }
 
+  async findBySlug(slug: string): Promise<IAgentTypeResponse | null> {
+    const agentType = await this.agentTypeModel.findOne({ slug, isActive: true }).lean().exec();
+    if (!agentType) return null;
+
+    const promptCount = await this.agentTypePromptModel
+      .countDocuments({ agentType: agentType._id })
+      .exec();
+
+    return this.toResponse(agentType, promptCount);
+  }
+
   async findAllActive(): Promise<IAgentTypeResponse[]> {
     const agentTypes = await this.agentTypeModel
       .find({ isActive: true })

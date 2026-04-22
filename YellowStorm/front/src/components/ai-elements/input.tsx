@@ -4,7 +4,7 @@ import { InputContextMenu } from '@/components/ai-elements/input-context-menu';
 import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
 
 import { Pencil } from 'lucide-react';
-import { useRef, useState, useEffect, useCallback, useMemo, memo } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo, memo, type ReactNode } from 'react';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { SketchBoardDialog } from '@/modules/conversation/components/SketchBoard';
 import { useProviderAttachments } from '@/components/ai-elements/prompt-input';
@@ -59,9 +59,13 @@ interface InputProps {
   members?: Array<{ id: string; name: string }>;
   autoMention?: { id: string; name: string; isMember?: boolean; _msgId?: string };
   showWorkspaceSelect?: boolean;
+  /** Rendered inside PromptInputProvider between the textarea and the footer (e.g. suggestion chips). */
+  belowTextarea?: ReactNode;
+  /** Fires on each textarea input event with the current value. */
+  onTextChange?: (text: string) => void;
 }
 
-const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true }: InputProps = {}) {
+const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: externalStatus, disabled, submitDisabled, placeholder, onFilesAdded, onFileRemoved, uploadingFiles, accept, maxFiles, members, autoMention, showWorkspaceSelect = true, belowTextarea, onTextChange }: InputProps = {}) {
   const models = useModels();
   const chefs = useChefs();
   const defaultModel = useDefaultModel();
@@ -145,6 +149,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
     if (!textarea) return;
 
     const value = textarea.value;
+    onTextChange?.(value);
     const cursorPos = textarea.selectionStart;
 
     if (mentionStartIndex !== null) {
@@ -181,7 +186,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
         setMentionPopupOpen(true);
       }
     }
-  }, [mentionStartIndex, computeAnchorPosition]);
+  }, [mentionStartIndex, computeAnchorPosition, onTextChange]);
 
   // Internal helper to insert a mention
   const insertMention = useCallback(
@@ -436,6 +441,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
               <PromptInputTextarea ref={textareaRef} disabled={disabled} placeholder={placeholder} onInput={handleTextareaInput} />
             </InputContextMenu>
           </PromptInputBody>
+          {belowTextarea}
           <PromptInputFooter>
             <PromptInputTools>
               <PromptInputActionMenu>
