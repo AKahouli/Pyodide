@@ -69,7 +69,6 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
     if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
     if (colorTheme === 'orange') root.classList.add('theme-claude');
     if (colorTheme === 'blue') root.classList.add('theme-kpmg');
-    localStorage.setItem('ui-color-theme', colorTheme);
   }, [colorTheme]);
 
   return (

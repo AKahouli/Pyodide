@@ -31,6 +31,14 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
   function ProviderComponent({ children: providerChildren }: { children: ReactNode }) {
     const [defaultColorTheme, setDefaultColorTheme] = useState<'default' | 'yellow' | 'orange' | 'blue'>('default');
 
+    const applyAppearanceClass = (colorTheme: 'default' | 'yellow' | 'orange' | 'blue') => {
+      const root = document.documentElement;
+      root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
+      if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
+      if (colorTheme === 'orange') root.classList.add('theme-claude');
+      if (colorTheme === 'blue') root.classList.add('theme-kpmg');
+    };
+
     useEffect(() => {
       let isMounted = true;
 
@@ -38,7 +46,7 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
         .then((appearance) => {
           if (isMounted) {
             setDefaultColorTheme(appearance.defaultColorTheme);
-            localStorage.setItem('ui-color-theme', appearance.defaultColorTheme);
+            applyAppearanceClass(appearance.defaultColorTheme);
           }
         })
         .catch(() => {
@@ -49,6 +57,26 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
 
       return () => {
         isMounted = false;
+      };
+    }, []);
+
+    useEffect(() => {
+    const handleThemeSync = () => {
+        getGlobalAppearanceSettings()
+          .then((appearance) => {
+            setDefaultColorTheme(appearance.defaultColorTheme);
+            applyAppearanceClass(appearance.defaultColorTheme);
+          })
+          .catch(() => {
+            // Keep the current theme if sync fails.
+          });
+      };
+
+      window.addEventListener('storage', handleThemeSync);
+      window.addEventListener('focus', handleThemeSync);
+      return () => {
+        window.removeEventListener('storage', handleThemeSync);
+        window.removeEventListener('focus', handleThemeSync);
       };
     }, []);
 

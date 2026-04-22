@@ -8,20 +8,6 @@
   <title>POC</title>
   <meta name="application-name" content="">
   <meta name="description" content="Project to try and explore shadcn components.">
-  <script>
-    (function () {
-      try {
-        var colorTheme = localStorage.getItem('ui-color-theme') || 'default';
-        var root = document.documentElement;
-        root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
-        if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
-        if (colorTheme === 'orange') root.classList.add('theme-claude');
-        if (colorTheme === 'blue') root.classList.add('theme-kpmg');
-      } catch (error) {
-        // Keep the default theme if storage is unavailable.
-      }
-    })();
-  </script>
 </head>
 
 <body class="h-screen">

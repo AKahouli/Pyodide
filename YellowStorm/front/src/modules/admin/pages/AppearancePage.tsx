@@ -55,7 +55,6 @@ export function AppearancePage() {
   const selectedLogo = themeLogoMap[selectedTheme];
 
   const applyThemeImmediately = (colorTheme: ColorTheme) => {
-    localStorage.setItem('ui-color-theme', colorTheme);
     const root = document.documentElement;
     root.classList.remove('theme-default', 'theme-yellow', 'theme-orange', 'theme-blue', 'theme-yellowsys', 'theme-claude', 'theme-kpmg');
     if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
