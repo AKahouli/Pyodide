@@ -1,5 +1,13 @@
 # Changelog
 
+## [2026-04-22 13:35 UTC] — Log playbook connector citation emission
+
+- **Feature:** `connectors`, `playbook`
+- **Type:** `fix`
+- **Changed:** Added targeted logging in the playbook ADK connector component collection path so normalized connector citation sources, assigned references, reused references, emitted citation components, and emitted source-link components are visible in runtime logs.
+- **Why:** Playbook connector citations had just been wired through, and the runtime still needed explicit logs to confirm which citations were returned and emitted per step.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/playbook_tool_factory.py` and `docs/CHANGELOG.md`.
+
 ## [2026-04-21 00:30 UTC] — Add connector citation tracing for MCP tools
 
 - **Feature:** `connectors`, `conversation`

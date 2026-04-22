@@ -31,6 +31,7 @@ from src.langgraph_engine.step_executor import (
     normalize_interrupt_action,
     extract_interrupt_message,
     extract_follow_up_question,
+    _attach_result_text_for_citations,
     _task_requires_structured_output_synthesis,
     _synthesize_structured_outputs,
     _build_task_artifacts_from_structured_outputs,
@@ -1357,7 +1358,8 @@ class DynamicGraphBuilder:
                             system_prompt,
                             current_user_prompt,
                             lc_tools,
-                            collector,
+                            task_id=task_id,
+                            collector=collector,
                             temperature=temperature,
                             on_progress=_on_execution_progress,
                         )
@@ -1380,6 +1382,11 @@ class DynamicGraphBuilder:
                         or agent["name"] == "Visualizer Agent"
                         or "visualizer_agent" in agent["name"].lower()
                     )
+                    if not is_visualizer:
+                        components = _attach_result_text_for_citations(
+                            response,
+                            components,
+                        )
                     if is_visualizer and response:
                         components.insert(
                             0,

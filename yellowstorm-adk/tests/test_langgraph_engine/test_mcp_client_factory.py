@@ -129,3 +129,36 @@ def test_normalize_mcp_response_extracts_citations_from_searchv2_result_blocks()
     assert normalized["citation_sources"][0]["external_id"] == "69e643d725a48c9410bff182"
     assert normalized["citation_sources"][0]["page"] == "1"
     assert normalized["citation_sources"][0]["workspace_id"] == "69e643ae25a48c9410bff159"
+
+
+def test_normalize_mcp_response_extracts_citations_from_top_level_list_payload():
+    payload = [
+        {
+            "brain_id": "69e7a3d5f884ead008992093",
+            "external_id": "69e7a3d9f884ead0089920a8",
+            "source": "https://example.com/Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx",
+            "block_id": "p1_b0",
+            "block_type": "text",
+            "content": "Garantie constructeur standard de 2 ans.",
+        },
+        {
+            "brain_id": "69e7a3d5f884ead008992093",
+            "external_id": "69e7a3d9f884ead0089920a8",
+            "source": "https://example.com/Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx",
+            "block_id": "p1_b1",
+            "block_type": "text",
+            "content": "Penalites de 0,5 % par jour de retard.",
+        },
+    ]
+
+    normalized = _normalize_mcp_response(
+        payload,
+        fallback_text=str(payload),
+        action_key="get_page_blocks",
+    )
+
+    assert normalized["result"] == payload
+    assert len(normalized["citation_sources"]) == 2
+    assert normalized["citation_sources"][0]["source"] == "Contrat_Fourniture_Chantier_Caterpillar_Demonstration_(2).docx"
+    assert normalized["citation_sources"][0]["external_id"] == "69e7a3d9f884ead0089920a8"
+    assert normalized["citation_sources"][0]["workspace_id"] == "69e7a3d5f884ead008992093"

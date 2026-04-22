@@ -150,6 +150,29 @@ def _normalize_mcp_response(
     action_key: str = "",
 ) -> Any:
     """Attach optional source metadata to MCP responses when present."""
+    if isinstance(parsed_payload, list):
+        response = {
+            "text": fallback_text,
+            "result": parsed_payload,
+        }
+        block_citation_sources = _normalize_search_result_blocks(
+            parsed_payload,
+            source_label=action_key or "Connector Search Result",
+        )
+        if block_citation_sources:
+            response["citation_sources"] = block_citation_sources
+
+        logger.info(
+            "mcp_tool_normalized_response keys=%s source_count=%s citation_source_count=%s text_length=%s",
+            sorted(response.keys()),
+            0,
+            len(response.get("citation_sources", []))
+            if isinstance(response.get("citation_sources"), list)
+            else 0,
+            len(response.get("text", "")) if isinstance(response.get("text"), str) else 0,
+        )
+        return response
+
     if not isinstance(parsed_payload, dict):
         return fallback_text
 
@@ -330,12 +353,12 @@ async def call_mcp_tool(
                 texts.append(text_value)
                 if parsed_payload is None:
                     coerced = _coerce_json(text_value)
-                    if isinstance(coerced, dict):
+                    if isinstance(coerced, (dict, list)):
                         parsed_payload = coerced
             elif isinstance(part, dict):
                 part_text = part.get("text", str(part))
                 texts.append(part_text)
-                if parsed_payload is None and isinstance(part.get("json"), dict):
+                if parsed_payload is None and isinstance(part.get("json"), (dict, list)):
                     parsed_payload = part["json"]
             else:
                 texts.append(str(part))
