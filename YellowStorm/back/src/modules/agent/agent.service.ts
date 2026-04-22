@@ -393,6 +393,21 @@ export class AgentService {
     return this.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
   }
 
+  async findDefaultAgentByName(name: string): Promise<IAgentResponse | null> {
+    const agent = await this.agentModel
+      .findOne({
+        name: { $regex: `^${name}$`, $options: 'i' },
+        isDefault: true,
+        isActive: true,
+      })
+      .populate('agentType', 'name skills')
+      .lean()
+      .exec();
+    if (!agent) return null;
+    const populatedType = agent.agentType as unknown as { _id: { toString(): string }; name: string };
+    return this.toResponse(agent, { id: populatedType._id.toString(), name: populatedType.name });
+  }
+
   async updateDefault(agentId: string, dto: UpdateAgentDto): Promise<IAgentResponse> {
     const agent = await this.agentModel.findOne({ _id: agentId, isDefault: true }).lean().exec();
     if (!agent) {

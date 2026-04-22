@@ -93,25 +93,52 @@ export class ComposerSuggestionsService {
 
   /**
    * Get the agent to use for composer suggestions.
-   * Priority: 1) specific agentId, 2) composer-suggestions default agent, 3) any default agent
+   * Priority: 1) specific agentId, 2) agent named "Suggestions", 3) composer-suggestions default agent, 4) any default agent
    */
   private async getAgentForComposer(agentId?: string): Promise<IAgentResponse> {
     // If agentId provided, fetch specific agent
     if (agentId) {
+      this.logger.warn('Using provided agentId for composer suggestions', { agentId });
       return this.agentService.findDefaultAgentById(agentId);
     }
 
-    // Try to find default composer-suggestions agent
+    // Try to find agent named "Suggestions" (case-insensitive)
+    this.logger.warn('Looking for agent named "Suggestions"');
+    const suggestionsAgent = await this.agentService.findDefaultAgentByName('Suggestions');
+    if (suggestionsAgent) {
+      this.logger.warn('Found agent named "Suggestions"', {
+        agentId: suggestionsAgent.id,
+        agentName: suggestionsAgent.name,
+        agentTypeName: suggestionsAgent.agentType.name,
+      });
+      return suggestionsAgent;
+    }
+
+    // Try to find default composer-suggestions agent (by type slug)
+    this.logger.warn('Looking for default composer-suggestions agent type');
     const composerAgentType = await this.agentTypeService.findBySlug('composer-suggestions');
     if (composerAgentType) {
       const composerAgent = await this.agentService.findDefaultByAgentType(composerAgentType.id);
-      if (composerAgent) return composerAgent;
+      if (composerAgent) {
+        this.logger.warn('Found default composer-suggestions agent by type', {
+          agentId: composerAgent.id,
+          agentName: composerAgent.name,
+          agentTypeId: composerAgentType.id,
+        });
+        return composerAgent;
+      }
     }
 
+    this.logger.warn('No specific agent found, using fallback to any default agent');
     // Fallback: any active default agent
     const defaultAgents = await this.agentService.findDefaultAgents({ isActive: true, limit: 1 });
     if (defaultAgents.data && defaultAgents.data.length > 0) {
-      return defaultAgents.data[0];
+      const fallbackAgent = defaultAgents.data[0];
+      this.logger.warn('Using fallback agent', {
+        agentId: fallbackAgent.id,
+        agentName: fallbackAgent.name,
+      });
+      return fallbackAgent;
     }
 
     throw new BadGatewayException('No agent available for composer suggestions');
@@ -170,6 +197,13 @@ export class ComposerSuggestionsService {
   }
 
   async fetchSuggestions(partialText: string, agentId?: string): Promise<ComposerSuggestionsAdkResult> {
+    this.logger.warn('fetchSuggestions called', {
+      partialTextLength: partialText.length,
+      partialTextPreview: partialText.substring(0, 50),
+      agentId,
+      hasAgentId: !!agentId,
+    });
+
     const adkUrl = (this.configService.get<string>('indexing.apiAdk') || 'http://localhost:8001').replace(
       /\/$/,
       '',
@@ -187,7 +221,7 @@ export class ComposerSuggestionsService {
     const bearer = `Bearer ${await this.getAdkAccessToken(adkUrl)}`;
 
     // Log the agent metadata being used
-    this.logger.debug('Composer suggestions using agent', {
+    this.logger.warn('Composer suggestions using agent', {
       agentId: agent.id,
       agentName: agent.name,
       agentTypeName: agent.agentType.name,
@@ -200,16 +234,9 @@ export class ComposerSuggestionsService {
       promptCached: this.agentPromptCache?.agentId === agent.id,
     });
 
-    // Build the final message with the agent's prompt
-    const message = `${agentPrompt}
-
-Analysez le message ci-dessous et proposez une seule version améliorée et corrigée.
-Conservez le sens original, mais améliorez la clarté, la grammaire et l'orthographe.
-
-Message de l'utilisateur :
-${partialText}
-
-Répondez UNIQUEMENT avec la suggestion corrigée, sans aucun texte supplémentaire ni formatage.`;
+    // this.logger.warn("Agent prompt: " + agentPrompt);
+    // Build the final message using only the agent's prompt + user text
+    const message = `${agentPrompt}\n\n${partialText}`;
 
     try {
       const { data } = await axios.post<{ status: string; content: string }>(

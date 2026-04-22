@@ -130,11 +130,21 @@ export async function fetchComposerSuggestions(
   signal?: AbortSignal,
   agentId?: string,
 ): Promise<{ content: string }> {
+  console.log('[ComposerSuggestions API] Fetching suggestions:', {
+    endpoint: API_ENDPOINTS.conversations.composerSuggestions,
+    partialTextLength: partialText.length,
+    partialTextPreview: partialText.substring(0, 50),
+    agentId,
+  });
   const response = await apiClient.post<ApiResponse<{ content: string }>>(
     API_ENDPOINTS.conversations.composerSuggestions,
     { partialText, agentId },
     { signal },
   );
+  console.log('[ComposerSuggestions API] Response received:', {
+    contentLength: response.data.data.content?.length,
+    contentPreview: response.data.data.content?.substring(0, 100),
+  });
   return response.data.data;
 }
 
