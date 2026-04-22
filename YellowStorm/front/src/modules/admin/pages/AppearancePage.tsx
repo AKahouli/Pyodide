@@ -28,7 +28,7 @@ const LOGOS: { value: ThemeLogo; label: string }[] = [
 
 export function AppearancePage() {
   const { t } = useModuleTranslation('admin');
-  const { theme, setColorTheme, setLogo } = useContext(ThemeProviderContext);
+  const { theme, setColorTheme } = useContext(ThemeProviderContext);
   const [selectedTheme, setSelectedTheme] = useState<ColorTheme>('default');
   const [themeLogoMap, setThemeLogoMap] = useState<Record<ColorTheme, ThemeLogo>>({
     default: 'yellowmind',
