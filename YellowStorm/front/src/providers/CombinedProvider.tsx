@@ -30,6 +30,7 @@ type CombinedProviderProps = Readonly<{
 export function CombinedProvider({ children }: CombinedProviderProps) {
   function ProviderComponent({ children: providerChildren }: { children: ReactNode }) {
     const [defaultColorTheme, setDefaultColorTheme] = useState<'default' | 'yellow' | 'orange' | 'blue'>('default');
+    const [appearanceSettings, setAppearanceSettings] = useState<{ defaultColorTheme: 'default' | 'yellow' | 'orange' | 'blue'; themes: Record<'default' | 'yellow' | 'orange' | 'blue', { logo: 'yellowmind' | 'kpmg' }> } | null>(null);
 
     const applyAppearanceClass = (colorTheme: 'default' | 'yellow' | 'orange' | 'blue') => {
       const root = document.documentElement;
@@ -42,10 +43,11 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
     useEffect(() => {
       let isMounted = true;
 
-      getGlobalAppearanceSettings()
+        getGlobalAppearanceSettings()
         .then((appearance) => {
           if (isMounted) {
             setDefaultColorTheme(appearance.defaultColorTheme);
+            setAppearanceSettings(appearance);
             applyAppearanceClass(appearance.defaultColorTheme);
           }
         })
@@ -62,9 +64,10 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
 
     useEffect(() => {
     const handleThemeSync = () => {
-        getGlobalAppearanceSettings()
+          getGlobalAppearanceSettings()
           .then((appearance) => {
             setDefaultColorTheme(appearance.defaultColorTheme);
+            setAppearanceSettings(appearance);
             applyAppearanceClass(appearance.defaultColorTheme);
           })
           .catch(() => {
@@ -85,7 +88,10 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
         <AuthProvider>
           <NotificationsProvider>
             <UsageProvider>
-              <ThemeProvider defaultColorTheme={defaultColorTheme} initialColorTheme={defaultColorTheme}>
+              <ThemeProvider
+                defaultColorTheme={defaultColorTheme}
+                initialColorTheme={defaultColorTheme}
+                resolveLogoForTheme={(colorTheme) => appearanceSettings?.themes[colorTheme]?.logo ?? 'yellowmind'}>
                 <SettingsModalProvider>{providerChildren}</SettingsModalProvider>
               </ThemeProvider>
             </UsageProvider>

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { ThemeProviderContext } from '@/contexts/ThemeContext';
 import { Icons } from '@/components/icons';
 import { getAppearanceSettings, setAppearanceSettings } from '../api';
+import { getGlobalAppearanceSettings } from '@/modules/auth/api';
 
 type ColorTheme = 'default' | 'yellow' | 'orange' | 'blue';
 type ThemeLogo = 'yellowmind' | 'kpmg';
@@ -27,7 +28,7 @@ const LOGOS: { value: ThemeLogo; label: string }[] = [
 
 export function AppearancePage() {
   const { t } = useModuleTranslation('admin');
-  const { theme } = useContext(ThemeProviderContext);
+  const { theme, setColorTheme, setLogo } = useContext(ThemeProviderContext);
   const [selectedTheme, setSelectedTheme] = useState<ColorTheme>('default');
   const [themeLogoMap, setThemeLogoMap] = useState<Record<ColorTheme, ThemeLogo>>({
     default: 'yellowmind',
@@ -53,6 +54,7 @@ export function AppearancePage() {
   }, []);
 
   const selectedLogo = themeLogoMap[selectedTheme];
+  const selectedThemePreviewLogo = selectedTheme === 'orange' || selectedTheme === 'blue' ? 'kpmg' : 'yellowmind';
 
   const applyThemeImmediately = (colorTheme: ColorTheme) => {
     const root = document.documentElement;
@@ -60,6 +62,36 @@ export function AppearancePage() {
     if (colorTheme === 'yellow') root.classList.add('theme-yellowsys');
     if (colorTheme === 'orange') root.classList.add('theme-claude');
     if (colorTheme === 'blue') root.classList.add('theme-kpmg');
+  };
+
+  const saveLogoMapping = async () => {
+    setSavingTheme(true);
+    try {
+      const nextSettings = {
+        defaultColorTheme: selectedTheme,
+        themes: {
+          default: { labelKey: 'appearance.colorTheme.default', logo: themeLogoMap.default },
+          yellow: { labelKey: 'appearance.colorTheme.yellow', logo: themeLogoMap.yellow },
+          orange: { labelKey: 'appearance.colorTheme.orange', logo: themeLogoMap.orange },
+          blue: { labelKey: 'appearance.colorTheme.blue', logo: themeLogoMap.blue },
+        },
+      };
+
+      await setAppearanceSettings(nextSettings);
+      const refreshedSettings = await getGlobalAppearanceSettings();
+      setSelectedTheme(refreshedSettings.defaultColorTheme);
+      setThemeLogoMap(
+        Object.fromEntries(
+          Object.entries(refreshedSettings.themes).map(([key, value]) => [key, value.logo]),
+        ) as Record<ColorTheme, ThemeLogo>,
+      );
+      setLogo(nextSettings.themes[nextSettings.defaultColorTheme].logo);
+      toast.success(t('appearance.actions.applied'));
+    } catch {
+      toast.error(t('appearance.actions.applyFailed'));
+    } finally {
+      setSavingTheme(false);
+    }
   };
 
   return (
@@ -94,7 +126,7 @@ export function AppearancePage() {
                 )}>
                 <div className='flex items-center gap-3'>
                   <div className={cn('flex h-12 w-28 items-center justify-center rounded-md border bg-background', theme === 'dark' ? 'border-white/10' : 'border-black/10')}>
-                    {themeOption.value === 'blue' ? (
+                    {themeLogoMap[themeOption.value] === 'kpmg' ? (
                       <Icons.Kpmg className='max-h-8 w-auto' style={{ color: theme === 'light' ? '#2563eb' : '#ffffff' }} />
                     ) : (
                       <Icons.YellowMind className='max-h-8 w-auto' />
@@ -122,7 +154,16 @@ export function AppearancePage() {
                   };
 
                   await setAppearanceSettings(nextSettings);
+                  const refreshedSettings = await getGlobalAppearanceSettings();
+                  setSelectedTheme(refreshedSettings.defaultColorTheme);
+                  setThemeLogoMap(
+                    Object.fromEntries(
+                      Object.entries(refreshedSettings.themes).map(([key, value]) => [key, value.logo]),
+                    ) as Record<ColorTheme, ThemeLogo>,
+                  );
                   applyThemeImmediately(nextSettings.defaultColorTheme);
+                  setColorTheme(nextSettings.defaultColorTheme);
+                  setLogo(nextSettings.themes[nextSettings.defaultColorTheme].logo);
                   toast.success(t('appearance.actions.applied'));
                 } catch {
                   toast.error(t('appearance.actions.applyFailed'));
@@ -171,19 +212,19 @@ export function AppearancePage() {
                       <Icons.Kpmg className='max-h-7 w-auto' style={{ color: theme === 'light' ? '#2563eb' : '#ffffff' }} />
                     )}
                   </div>
-                </div>
-                <p className='mt-2 text-xs text-muted-foreground'>
-                  {selectedTheme} → {logo.label}
-                </p>
-              </button>
+                  </div>
+                  <p className='mt-2 text-xs text-muted-foreground'>
+                    {selectedTheme} → {logo.label}
+                  </p>
+                </button>
             ))}
           </div>
 
           <div className='flex gap-3'>
-            <Button variant='outline'>
-              <Save className='mr-2 h-4 w-4' />
-              {t('appearance.actions.saveLogo')}
-            </Button>
+              <Button variant='outline' onClick={saveLogoMapping} disabled={savingTheme}>
+                <Save className='mr-2 h-4 w-4' />
+                {t('appearance.actions.saveLogo')}
+              </Button>
           </div>
         </CardContent>
       </Card>
