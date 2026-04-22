@@ -85,7 +85,6 @@ export function AppearancePage() {
           Object.entries(refreshedSettings.themes).map(([key, value]) => [key, value.logo]),
         ) as Record<ColorTheme, ThemeLogo>,
       );
-      setLogo(nextSettings.themes[nextSettings.defaultColorTheme].logo);
       toast.success(t('appearance.actions.applied'));
     } catch {
       toast.error(t('appearance.actions.applyFailed'));
@@ -163,7 +162,6 @@ export function AppearancePage() {
                   );
                   applyThemeImmediately(nextSettings.defaultColorTheme);
                   setColorTheme(nextSettings.defaultColorTheme);
-                  setLogo(nextSettings.themes[nextSettings.defaultColorTheme].logo);
                   toast.success(t('appearance.actions.applied'));
                 } catch {
                   toast.error(t('appearance.actions.applyFailed'));
