@@ -7,6 +7,7 @@ const storeFns = vi.hoisted(() => ({
   updateTasks: vi.fn(),
   updateEdges: vi.fn(),
   captureSnapshot: vi.fn(),
+  selectStep: vi.fn(),
   canvasSyncVersion: 0,
 }));
 
@@ -23,7 +24,12 @@ vi.mock('@xyflow/react', () => ({
   addEdge: (edge: any, edges: any[]) => [...edges, edge],
   applyNodeChanges: (changes: any[], nodes: any[]) => {
     const removeIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
-    return nodes.filter((n) => !removeIds.has(n.id));
+    return nodes
+      .filter((n) => !removeIds.has(n.id))
+      .map((node) => {
+        const selectChange = changes.find((c) => c.type === 'select' && c.id === node.id);
+        return selectChange ? { ...node, selected: selectChange.selected } : node;
+      });
   },
   applyEdgeChanges: (changes: any[], edges: any[]) => {
     const removeIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
@@ -39,8 +45,41 @@ describe('usePlaybookCanvas', () => {
   });
 
   it('maps tasks to react-flow nodes', () => {
-    const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })]);
-    expect(nodes[0]).toMatchObject({ id: 't1', type: 'playbookStep', position: { x: 11, y: 22 } });
+    const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })], true);
+    expect(nodes[0]).toMatchObject({ id: '__trigger__', type: 'playbookTrigger', draggable: true });
+    expect(nodes[1]).toMatchObject({ id: 't1', type: 'playbookStep', position: { x: 11, y: 22 } });
+  });
+
+  it('does not inject a trigger node when mail trigger is not active', () => {
+    const nodes = tasksToNodes([makeTask({ id: 't1', positionX: 11, positionY: 22 })], false);
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toMatchObject({ id: 't1', type: 'playbookStep' });
+  });
+
+  it('persists edges from the synthetic trigger source', () => {
+    currentPlaybookState.value = makePlaybook({ edges: [] });
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: '__trigger__',
+        target: 'task-1',
+        sourceHandle: 'mail_data',
+        targetHandle: 'default',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-__trigger__-mail_data-task-1-default',
+        sourceId: '__trigger__',
+        targetId: 'task-1',
+        sourceOutputPortId: 'mail_data',
+        targetInputPortId: 'default',
+      },
+    ]);
   });
 
   it('adds edge on connect and updates store asynchronously', () => {
@@ -70,6 +109,16 @@ describe('usePlaybookCanvas', () => {
     });
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
+  });
+
+  it('syncs react-flow selection changes back to the store', () => {
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onNodesChange([{ id: 'task-1', type: 'select', selected: true }] as any);
+    });
+
+    expect(storeFns.selectStep).toHaveBeenCalledWith('task-1');
   });
 
   it('allows multiple port-to-port edges between the same two nodes', () => {

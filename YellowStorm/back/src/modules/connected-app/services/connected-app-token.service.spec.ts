@@ -213,6 +213,63 @@ describe('ConnectedAppTokenService', () => {
     });
   });
 
+  describe('getMailboxCapability', () => {
+    it('returns mailboxReady true when an active Microsoft connection includes mail.read', async () => {
+      connectionModel.findOne
+        .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) })
+        .mockReturnValueOnce({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({
+              ...mockConnection,
+              appKey: 'microsoft',
+              scopes: ['Mail.Read', 'offline_access'],
+              providerEmail: 'user@example.com',
+            }),
+          }),
+        });
+
+      const result = await service.getMailboxCapability(userId);
+
+      expect(result.connected).toBe(true);
+      expect(result.mailboxReady).toBe(true);
+      expect(result.providerEmail).toBe('user@example.com');
+      expect(result.missingScopes).toEqual([]);
+    });
+
+    it('returns missing scopes when connected Microsoft account lacks mail.read', async () => {
+      connectionModel.findOne
+        .mockReturnValueOnce({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) })
+        .mockReturnValueOnce({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({
+              ...mockConnection,
+              appKey: 'microsoft',
+              scopes: ['Files.Read'],
+            }),
+          }),
+        });
+
+      const result = await service.getMailboxCapability(userId);
+
+      expect(result.connected).toBe(true);
+      expect(result.mailboxReady).toBe(false);
+      expect(result.missingScopes).toEqual(['mail.read']);
+    });
+
+    it('returns disconnected status when no Microsoft 365 connection exists', async () => {
+      connectionModel.findOne.mockReturnValue({
+        lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }),
+      });
+
+      const result = await service.getMailboxCapability(userId);
+
+      expect(result.connected).toBe(false);
+      expect(result.mailboxReady).toBe(false);
+      expect(result.grantedScopes).toEqual([]);
+      expect(result.missingScopes).toEqual(['mail.read']);
+    });
+  });
+
   describe('disconnect', () => {
     it('should delete connection and attempt provider revocation', async () => {
       connectionModel.findOne.mockReturnValue({

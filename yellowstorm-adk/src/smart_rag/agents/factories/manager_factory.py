@@ -8,8 +8,7 @@ from src.smart_rag.agents.core import DocumentHelpers
 from src.smart_rag.infrastructure.processing import add_additional_context, add_timestamp_to_agent
 
 logger = get_logger("api.routers.agentic_rag.ManagerAgentFactory")
-
-
+ 
 class ManagerAgentFactory:
     """Creates and configures manager agents.
 
@@ -149,7 +148,7 @@ class ManagerAgentFactory:
             str: Enhanced manager instruction with all necessary context and capabilities.
         """
         cleaned_manager_prompt, _ = self.prompt_processor.extract_chatbot_name_and_clean_prompt(manager_prompt)
-        manager_instruction = cleaned_manager_prompt + self.prompt_processor.get_web_search_prompt(1)
+        manager_instruction = cleaned_manager_prompt + self.prompt_processor.get_web_search_prompt(1) 
 
         if self.agent_repository.has_search_agents() or self.agent_repository.has_code_interpreter():
             # Add document tree info from all agents (without IDs) for manager context

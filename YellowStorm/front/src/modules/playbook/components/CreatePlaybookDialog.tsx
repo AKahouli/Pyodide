@@ -346,7 +346,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       placeholder={t('create.descriptionPlaceholder')}
-                      maxLength={2000}
+                      maxLength={20000}
                       rows={4}
                     />
                   </div>
@@ -403,7 +403,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                           onScroll={updateRewriteShortcut}
                           onFocus={updateRewriteShortcut}
                           placeholder={t('create.promptPlaceholder')}
-                          maxLength={5000}
+                          maxLength={20000}
                           rows={3}
                           className="min-h-[83px] resize-y border-0 bg-transparent px-0 py-0 text-base leading-7 text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 sm:text-[18px]"
                           onKeyDown={(e) => {

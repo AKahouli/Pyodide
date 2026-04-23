@@ -1,5 +1,329 @@
 # Changelog
 
+## [2026-04-23 00:00 UTC] — Add webapp backend guidelines documentation
+
+- **Feature:** `webapp-backend`
+- **Type:** `docs`
+- **Changed:** Added a new backend-guidelines feature README derived from `YellowStorm/back/BACKEND_GUIDELINES.md`, and registered the new slug in the documentation index.
+- **Why:** The repository needed a dedicated maintainer-owned documentation entry for the backend coding guidelines so the backend contract and conventions are easy to find.
+- **Impact:** `docs/webapp-backend/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/webapp-backend/README.md`
+
+## [2026-04-22 00:00 UTC] — Add backend developer OpenCode agent
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Replaced the placeholder backend guidelines file with a proper project-local `backend-developer` subagent, allowed `build` to delegate to it in `opencode.json`, and updated repository workflow documentation to describe the new backend implementation role.
+- **Why:** Backend-heavy tasks in `YellowStorm/back` needed a dedicated implementation specialist that stays distinct from diagnostics, review, and cross-service coordination handled by `build`.
+- **Impact:** `.opencode/agents/backend-developer.md`, `opencode.json`, `AGENTS.md`, `docs/opencode-agents/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/opencode-agents/README.md`
+
+## [2026-04-22 00:00 UTC] — Add node template library
+
+- **Feature:** `node-template-library`
+- **Type:** `feat`
+- **Changed:** Added a DB-backed playbook node template library with lazy-seeded built-in templates, admin CRUD endpoints, a public enabled-only runtime endpoint, frontend runtime template loading, and admin UI management.
+- **Why:** Replace the hardcoded static template registry with a configurable data source that can be managed in Admin > Playbook and consumed by the canvas at runtime.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook-node-template.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook-node-template.interface.ts`, `YellowStorm/back/src/modules/playbook/dto/create-playbook-node-template.dto.ts`, `YellowStorm/back/src/modules/playbook/dto/update-playbook-node-template.dto.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-node-template.service.ts`, `YellowStorm/back/src/modules/playbook/controllers/admin-playbook-node-templates.controller.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook-node-templates.controller.ts`, `YellowStorm/back/src/modules/playbook/playbook.module.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/api.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasFloatingToolbar.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/admin/pages/PlaybookPromptsPage.tsx`, `YellowStorm/front/src/modules/admin/types.ts`, `YellowStorm/front/src/modules/admin/api.ts`, `YellowStorm/front/src/lib/api/config.ts`, `YellowStorm/front/src/modules/admin/locales/en.json`, `YellowStorm/front/src/modules/admin/locales/fr.json`
+- **Readme:** `/docs/node-template-library/README.md`
+
+## [2026-04-22 00:00 UTC] — Harden backend CORS origin parsing
+
+- **Feature:** `connectors`
+- **Type:** `fix`
+- **Changed:** Normalized backend `CORS_ORIGIN` parsing in `YellowStorm/back/src/main.ts` to trim comma-separated origins and discard empty values before passing them to NestJS CORS configuration.
+- **Why:** Prevent malformed runtime CORS origin lists from producing inconsistent credentialed cross-origin responses during frontend auth requests.
+- **Impact:** `YellowStorm/back/src/main.ts`
+- **Readme:** `/docs/connectors/README_2026-04-14_23-00-00.md`
+
+## [2026-04-22 00:00 UTC] — Harden chart payload parsing
+
+- **Feature:** `conversation`
+- **Type:** `fix`
+- **Changed:** Hardened chart payload parsing in `YellowStorm/front/src/modules/conversation/utils.ts` so malformed chart `series` payloads are normalized safely instead of calling `.map` on non-arrays; added a regression test in `YellowStorm/front/src/components/ai-elements/ai-message-content.chart.test.tsx`.
+- **Why:** Malformed chart payloads could crash the frontend with `s.map is not a function` during AI message rendering.
+- **Impact:** `YellowStorm/front/src/modules/conversation/utils.ts`, `YellowStorm/front/src/components/ai-elements/ai-message-content.chart.test.tsx`
+- **Readme:** `/docs/conversation/README.md`
+
+## [2026-04-22 00:00 UTC] — Harden playbook node template normalization
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Hardened playbook node template normalization in `YellowStorm/front/src/modules/playbook/store.ts` so malformed node-template payload arrays are normalized safely instead of calling `.map` on non-arrays.
+- **Why:** Malformed node-template payloads could crash the frontend with `s.map is not a function` during playbook store processing.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-22 00:00 UTC] — Add frontend developer OpenCode agent
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Added a new project-local `frontend-developer` subagent, allowed `build` to delegate to it in `opencode.json`, and updated repository workflow documentation to describe the new frontend implementation role.
+- **Why:** Frontend-heavy tasks in `YellowStorm/front` needed a dedicated implementation specialist that stays distinct from read-only browser QA.
+- **Impact:** `.opencode/agents/frontend-developer.md`, `opencode.json`, `AGENTS.md`, `docs/opencode-agents/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/opencode-agents/README.md`
+
+## [2026-04-22 00:00 UTC] — Document mail-trigger auto-renew cutoff
+
+- **Feature:** `playbook`
+- **Type:** `docs`
+- **Changed:** Updated the playbook README with a factual note about the `autoRenewUntil` mail-trigger cutoff and refreshed the documentation index entry for the playbook slug.
+- **Why:** The feature was implemented in the backend and frontend and needed matching maintainer documentation for the existing playbook feature area.
+- **Impact:** `docs/playbook/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-22 00:00 UTC] — Scope playbook execution UI to the active route
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Scoped execution history and current-execution rendering to the active playbook route in the frontend. The store now keeps per-playbook execution history alongside the global cache, and the execution panel, history dropdown, playbook canvas, execution page, designer panel, and interrupt dialog now ignore foreign executions when their route playbook id does not match.
+- **Why:** A streaming execution from playbook A could surface in playbook B's results UI after navigation, which made the active panel show the wrong execution state.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookExecutionPage.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionHistoryDropdown.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookDesignerPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/InterruptDialog.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.test.tsx`.
+
+## [2026-04-21 21:05 UTC] — Condition mail-trigger auto-renewal on user-selected expiration date
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added `autoRenewUntil` to the mail trigger config across frontend and backend. Users can now select a date in the trigger panel after which Microsoft 365 subscription auto-renewal stops. The Graph client clamps `expirationDateTime` to the earlier of the 45-minute Graph window and the user cutoff. The renewal cron skips playbooks whose cutoff has passed. The sync-subscription endpoint rejects past cutoffs with a 400 error. Frontend date handling uses local calendar semantics to avoid timezone off-by-one issues.
+- **Why:** Previously, mail-trigger subscriptions renewed indefinitely, which could lead to unwanted ongoing webhook costs and execution noise. Users need control over how long the automation remains active.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/dto/upsert-playbook-mail-trigger.dto.ts`, `YellowStorm/back/src/modules/playbook/dto/sync-playbook-mail-subscription.dto.ts`, `YellowStorm/back/src/modules/playbook/services/playbook.service.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook.controller.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-mail-graph-client.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-mail-subscription-renewal.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/schedule/PlaybookScheduleSheet.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`, and corresponding test files.
+
+## [2026-04-18 20:57 UTC] — Forward mail trigger context into single-step runs
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Extended the playbook gRPC step contract to carry `trigger_context`, converted backend trigger payloads into protobuf `Struct` form for both full-workflow and single-step requests, and wired ADK single-step execution to pass trigger context through to port resolution.
+- **Why:** Steps rerun or executed individually from a mail-triggered execution were losing the trigger payload before reaching the ADK, so input ports linked to the Mail Trigger node resolved as empty even though the graph mapping was correct.
+- **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `yellowstorm-adk/grpc/proto/chatbot.proto`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2.py`, `yellowstorm-adk/src/grpc_generated/chatbot_pb2_grpc.py`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/langgraph_engine/step_executor.py`, and `yellowstorm-adk/src/langgraph_engine/workflow_service.py`.
+
+## [2026-04-18 19:53 UTC] — Align playbook tool scope with resolved port documents
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated the ADK playbook runtime so `build_tool_scope()` now includes document ids resolved from upstream document artifacts and trigger-provided document inputs, not only explicit `input_files_by_port` bindings.
+- **Why:** Tool access needed to match the prompt contract and actual resolved port inputs, especially for filtered search and mail attachment flows.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/port_resolution.py` and focused LangGraph runtime tests.
+
+## [2026-04-18 19:37 UTC] — Tighten playbook prompt input context
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Made resolved input ports the canonical task-prompt input contract in the ADK runtime, introduced a derived prompt-ready input context structure, and stopped adding duplicate legacy dependency or trigger narration when a task already has bound port inputs.
+- **Why:** Downstream task prompts were mixing raw execution state with prompt formatting, which made structured inputs harder for the LLM to parse and could duplicate the same upstream context in multiple forms.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/port_resolution.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, and focused LangGraph runtime tests.
+
+## [2026-04-18 06:00 UTC] — Mail trigger v1 complete: runtime, attachments, renewal, UI activation
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Completed the end-to-end mail trigger pipeline: Graph webhook notification → message fetch → dedupe → filter match → attachment import → handoff → playbook execution. Added subscription renewal automation (cron every 10 min), subscription deletion on trigger disable, user-controlled attachment import toggle with allowed-extensions filter, inbox-only subscription scope to prevent duplicate notifications, human-readable mail trigger context in ADK LLM prompts, formalized `trigger_context` proto field with regenerated gRPC stubs, activated the frontend trigger UI (removed "coming soon" messaging, added live subscription status indicators), and comprehensive regression tests (38 tests across 9 suites).
+- **Why:** The mail trigger feature needed a production-ready runtime path from inbox to execution, with proper lifecycle management, user controls, and full test coverage before moving to the next phase.
+- **Impact:** Graph client (subscription CRUD, attachment list/download, renewal, delete), webhook service (post-dedupe attachment import, extension filtering, per-notification error isolation), subscription renewal cron service, playbook schema (attachmentImportEnabled, allowedAttachmentExtensions), proto files (trigger_context field), Python gRPC servicer (_struct_to_dict), ADK prompt builder (mail-specific trigger formatting), frontend UI (live status, attachment toggle, extension input), backend tests (19 new/updated tests), i18n (en/fr).
+
+## [2026-04-17 15:35 UTC] — Wire Graph webhook ingress basics
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added a Microsoft Graph mail client, owner-triggered subscription sync route, public webhook controller/service, persisted mail-trigger subscription metadata, and client-state verification before normalizing real mailbox notifications into the existing trigger pipeline.
+- **Why:** The playbook mail-trigger feature needed a real simple-message Microsoft 365 delivery path beyond the synthetic test-event ingress.
+- **Impact:** New Graph client/webhook services/controllers, playbook mail trigger runtime metadata, and backend tests for Graph fetch and webhook processing.
+
+## [2026-04-17 15:00 UTC] — Add synthetic mail trigger test ingress
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added an owner-only `POST /playbooks/:id/triggers/mail/test-event` route plus a small facade service that normalizes a synthetic email payload, runs the mail trigger orchestration pipeline, and hands matched events off into execution creation.
+- **Why:** The inbox-trigger feature needed an immediate end-to-end validation path for simple emails before Microsoft Graph webhook delivery is implemented.
+- **Impact:** New playbook mail test-event DTO/service/controller wiring and backend tests covering the synthetic trigger route.
+
+## [2026-04-17 14:25 UTC] — Forward trigger context into executions
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added persisted execution `triggerContext`, propagated mail-trigger context into execution creation and handoff, and forwarded `trigger_context` into the full-workflow gRPC request contract.
+- **Why:** Mail-triggered playbook runs need a structured runtime payload channel before trigger nodes and attachment staging can consume inbound email context safely.
+- **Impact:** Playbook execution schema/service contracts, mail trigger handoff, ADK playbook request schema, and execution trigger tests.
+
+## [2026-04-17 14:05 UTC] — Add mail trigger execution handoff
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added idempotent handoff from matched mail-trigger ledger rows into standard playbook execution creation, introduced `executionTrigger: 'mail'`, and persisted `executionId` back onto handed-off ledger rows.
+- **Why:** The inbox-trigger pipeline needs a safe bridge from matched inbound events into the existing playbook execution engine without creating duplicate executions under concurrent delivery.
+- **Impact:** Playbook execution trigger contracts, mail trigger handoff service, dedicated ledger schema/status transitions, and backend execution/trigger tests.
+
+## [2026-04-17 13:35 UTC] — Harden mail ledger storage
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Moved playbook mail-event ledger storage from embedded playbook documents to a dedicated collection with a unique `(playbookId, dedupeKey)` index, and updated mail-trigger ingestion/orchestration to use collection-backed dedupe and status updates.
+- **Why:** The inbox-trigger feature must tolerate concurrent inbound mail bursts across many users without unbounded playbook document growth or duplicate-trigger races.
+- **Impact:** New playbook mail-event ledger schema/model, refactored ingestion/orchestration services, and backend tests for collection-backed dedupe.
+
+## [2026-04-17 13:10 UTC] — Add mail event ledger foundation
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added normalized inbound mail event and mail-event ledger contracts plus a dedicated ledger service with stable dedupe-key generation for future playbook mail-trigger ingestion, without enabling webhook handling or execution.
+- **Why:** The inbox-trigger runtime needs a stable persistence and deduplication boundary before mailbox events can safely create playbook runs.
+- **Impact:** Playbook mail trigger shared interfaces, playbook schema, playbook module services, and new ledger service tests.
+
+## [2026-04-17 12:50 UTC] — Persist playbook mail trigger config
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added a persisted mail-trigger configuration model and owner routes for playbooks, wired the trigger panel to edit/save basic mailbox filters, and kept runtime execution explicitly disabled through a `runtimeEnabled: false` contract.
+- **Why:** The trigger UI and API need a real mail configuration surface before inbound mailbox events and trigger-node execution can be implemented safely.
+- **Impact:** Playbook schema/interfaces/controllers/services, frontend trigger panel/types/api/store, and playbook trigger tests/locales.
+
+## [2026-04-17 10:05 UTC] — Add mailbox capability foundation
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** Added a reusable Microsoft 365 mailbox capability check on top of existing connected-app user connections, exposed it through `GET /connected-apps/mailbox-capability`, and wired playbook mail-trigger availability to that readiness signal instead of a hardcoded placeholder.
+- **Why:** Future conversation mail tools and playbook mail triggers need a shared, scope-aware mailbox foundation without introducing a second OAuth connection model.
+- **Impact:** Connected-app token/controller/interfaces, playbook trigger availability derivation, and mailbox readiness tests.
+
+## [2026-04-17 09:00 UTC] — Add playbook trigger abstraction
+
+- **Feature:** `playbook`
+- **Type:** `feat`
+- **Changed:** Added trigger-oriented playbook contracts and endpoints that expose `manual` as the default trigger plus `schedule` as the current automated trigger, while updating the frontend schedule entry points to a `Triggers` panel and trigger-specific routes without changing the underlying schedule runner/storage.
+- **Why:** The playbook feature needs an extensible trigger model for future automation sources such as inbound mail, while keeping the existing schedule implementation stable during the first rollout.
+- **Impact:** Backend playbook controller/service/interfaces, frontend playbook API/types/toolbar/card/canvas trigger entry points, and playbook locale strings.
+
+## [2026-04-17 00:15 UTC] — Connector editor UX improvements
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** Replaced manual key entry with a connected-app selector; runtime auth config now uses structured `authStrategy`, `authHeader`, and `authEnv` fields instead of raw JSON entry; auth type is derived from `authSource` in the submit path instead of manual modal editing; MCP inspection now auto-loads discovered tools into the `actions` JSON field while previewing them.
+- **Why:** Reduce user error and onboarding friction by guiding credential input through selectable connected apps, structured auth fields, and auto-populated action discovery rather than manual JSON editing.
+- **Impact:** Frontend connector editor modal and binding configuration UI.
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Hardened backend playbook execution terminal-state transitions and added regression coverage for cancel vs transport-abort handling plus interrupt-resume-abort stream lifecycles; updated ADK playbook streaming to surface workflow failures as explicit gRPC aborts, bound workflow/step stream queues via env-backed settings, and refined queue pressure handling so the latest interrupt and terminal control events win over stale progress updates.
+- **Why:** Production readiness required deterministic workflow finalization, explicit cross-service failure signaling, and bounded stream buffering so backend and ADK execution state stay consistent under cancellation, resume, and error conditions.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.spec.ts`, `yellowstorm-adk/src/grpc_server/chatbot_servicer.py`, `yellowstorm-adk/src/config/settings.py`, `yellowstorm-adk/tests/test_chatbot_servicer_playbook_streaming.py`, `yellowstorm-adk/.env`
+
+## [2026-04-16 12:00 UTC] — Fix duplicate playbook step persistence and judge summary execution
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Removed duplicate full-workflow playbook step persistence writes so stream-completed tasks persist once at buffer flush time before enrichment scheduling; added deterministic judge summary claim/evaluate flow to avoid duplicate or missed execution summaries; added regression coverage in backend playbook execution and judge enrichment specs.
+- **Why:** Duplicate writes caused inconsistent task state and enrichment scheduling conflicts; non-deterministic judge summary flow caused missed or repeated execution summaries under concurrent load.
+- **Impact:** Backend playbook execution and judge enrichment modules (spec files for regression coverage).
+
+## [2026-04-16 11:45 UTC] — Fix LiteLLM proxy model alias propagation
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Updated backend model sync to persist the real provider-side model from LiteLLM `litellm_params.model`, while switching proxy-facing agent and playbook request paths to send the public model alias (`id` / `modelId`) to LiteLLM proxy clients.
+- **Why:** LiteLLM proxy resolves `/chat/completions` requests by public `model_name` alias, so passing provider-side strings like `azure/...` caused invalid model errors for aliased models such as `gpt-5.4-low`.
+- **Impact:** `YellowStorm/back/src/modules/models/models.service.ts`, `YellowStorm/back/src/modules/agent/agent.service.ts`, and LiteLLM-backed playbook service call sites.
+
+## [2026-04-16 00:25 UTC] — Polish Advisor KPI cards and section order
+
+- **Feature:** `playbook-advisor`
+- **Type:** `fix`
+- **Changed:** Renamed the Advisor overall KPI label from `Recommendation Pane` to `Overall`, converted confidence into a color-coded KPI card in both step-level and summary-level Advisor states, and moved the `Tool usage recommendation` panel to the end of the step-level Advisor content.
+- **Why:** Makes Advisor scoring easier to scan, aligns confidence with the other KPI treatments, and places the supporting recommendation text after the primary remediation and issue-analysis sections.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+
+## [2026-04-15 23:10:00 UTC] — Remove workflow-level execution mode from the UI
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Removed the workflow-level execution mode selector and execution-mode badges from the frontend, and made full playbook runs always launch with `executionMode: 'inherit'` plus per-step `stepExecutionModes` derived from each task's `stepReplayMode`.
+- **Why:** Simplifies replay behavior so execution mode is configured only at the step level while ensuring whole-workflow runs always respect step-specific replay modes.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookToolbar.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionHeader.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionPanel.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookToolbar.test.tsx`
+
+## [2026-04-15 21:55:00 UTC] — Consolidate execution trace tabs and scope live autoscroll
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Scoped live autoscroll to the `Step Results` tab only, renamed execution tabs to `Replay Evaluation` and `Advisor`, merged `Tool Trace`, `Replay Args Diff`, and `LLM Prompts` into a single `Traces` tab with collapsed panes by default, and colorized replay-evaluation KPI cards by score range.
+- **Why:** Reduce disruptive scrolling outside the result view, simplify the execution detail navigation, and make replay evaluation health easier to scan visually.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+
+## [2026-04-15 19:05:00 UTC] — Show execution snapshot task data in node editor during step runs
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** The playbook canvas node editor now prefers the active execution's `playbookSnapshot` task when a step is selected during execution, so sidebar task fields like description reflect Advisor Autopilot rewrites for that execution instead of stale canvas task data.
+- **Why:** Clicking a node after an autopilot optimization still showed the original step description in the right sidebar because the editor sheet was bound to the pre-run canvas task object.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`
+
+## [2026-04-15 16:05:00 UTC] — Show applied Advisor Autopilot step rewrites
+
+- **Feature:** `playbook-advisor`
+- **Type:** `feat`
+- **Changed:** Persisted per-turn advisor optimization history for safe `optimize_step` rewrites, including compact before/after task snapshots and changed field names, and surfaced that history in the Playbook Advisor step detail pane.
+- **Why:** Users could see that autopilot optimization turns happened, but not what was actually changed on each rewrite.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook.interface.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-judge-enrichment.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.test.tsx`, `YellowStorm/front/src/modules/playbook/locales/en.json`, `YellowStorm/front/src/modules/playbook/locales/fr.json`
+
+## [2026-04-15 08:48:01 UTC] — Reorganize playbook canvas toolbar
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Split playbook toolbar responsibilities by keeping run and document actions in the header, moving canvas editing actions into a new movable floating toolbar on the left side of the canvas, moving both connectors and workspace explorer toggles into that floating toolbar, and grouping execution configuration into a compact run-settings popover.
+- **Why:** Reduce header crowding, place canvas actions closer to the workspace, and improve playbook editing ergonomics without changing playbook contracts.
+- **Impact:** `YellowStorm/front/src/modules/playbook/components/` and playbook locale files.
+
+## [2026-04-14 23:35:00 UTC] — Connector editor skill selector and form shape update
+
+- **Feature:** `connectors`
+- **Type:** `refactor`
+- **Changed:** Connector editor now selects referenced skills via a searchable multi-select component instead of a comma-separated text field. The submit/edit form shape now uses string arrays directly for skill IDs.
+- **Why:** Improve UX for multi-skill selection with searchability and align form data structure with the backend API contract.
+- **Impact:** `YellowStorm/front/src/modules/admin/pages/connectors/` (editor component)
+
+## [2026-04-14 23:25:00 UTC] — Skills selector UI consistency and i18n cleanup
+
+- **Feature:** `skills`
+- **Type:** `refactor`
+- **Changed:** Ensured agent and agent-type skills selection uses the existing searchable multi-select component consistently. Moved remaining hardcoded user-facing skill selector strings into i18n locale files for admin and agent modules.
+- **Why:** Maintain UI consistency and follow project i18n standards; hardcoded strings violate localization requirements.
+- **Impact:** Frontend locale files (admin and agent modules).
+
+## [2026-04-14 23:20:00 UTC] — Add dedicated import-to-workspace documentation
+
+- **Feature:** `import-to-workspace`
+- **Type:** `docs`
+- **Changed:** Added a dedicated feature doc for the agent-facing `<connector>_import_to_workspace` tool covering playbook/conversation runtime locations, accepted input forms, JWT auth model, workspace selection, backend endpoint contract, response rendering, common failure modes, and phase-1 limitations.
+- **Why:** The connectors doc covered the import flow broadly, but the runtime tool itself needed a focused reference for future debugging, onboarding, and follow-up work.
+- **Impact:** `docs/import-to-workspace/README.md`, `docs/DOC_INDEX.md`, `docs/CHANGELOG.md`
+
+## [2026-04-14 23:00:00 UTC] — Agent-driven workspace import for SharePoint/M365 files
+
+- **Feature:** `connectors`, `mcp-m365`
+- **Type:** `feat`
+- **Changed:** Agents can now search SharePoint via M365 MCP tools and import discovered files into workspace documents using an auto-generated `<connector>_import_to_workspace` tool. The ADK shared helper `import_connector_items_to_workspace_request()` calls the backend `POST /api/v1/connectors/transfer/import` endpoint with platform JWT auth. Supports single file, multiple files, and recursive folder import with flattened persistence. Workspace selection prefers real workspace IDs from `brain_documents` over transient `conversation_brain_id`. Import tool accepts multiple input forms (direct args, item ref, full MCP result object, path-based).
+- **Why:** Replace complex `workspacebridge_import_connector_item_to_workspace` MCP callback with a simple REST-based import that persists files as standard workspace documents consumable by code interpreter.
+- **Impact:** `yellowstorm-adk/src/smart_rag/tools/utilities/connector_tools.py`, `yellowstorm-adk/src/langgraph_engine/playbook_tool_factory.py`, `yellowstorm-adk/src/smart_rag/agents/factories/base_factory.py`, `yellowstorm-adk/src/smart_rag/agents/factories/delegation_factory_helper.py`, `yellowstorm-adk/src/config/settings.py`, `yellowstorm-adk/.env`
+
+## [2026-04-14 23:00:00 UTC] — M365 MCP richer item references and tool guidance
+
+- **Feature:** `mcp-m365`
+- **Type:** `feat`
+- **Changed:** M365 MCP search/browse tools now return richer item references including `siteId`, `webUrl`, `listItemUniqueId`, `listId`, and `siteUrl` to prevent LLM ID-mixing errors. `get_item_metadata` now requests `@microsoft.graph.downloadUrl` and includes `downloadUrl` in response for binary files. Tool docstrings guide agents to prefer `get_document_content` as the primary content access tool and to use full item objects as-is when passing to downstream import tools.
+- **Why:** Agents were mixing `driveId` from one search result with `itemId` from another, causing 404 errors on import.
+- **Impact:** `mcp-m365/graph_helpers.py`, `mcp-m365/document_tools.py`
+
+## [2026-04-14 23:00:00 UTC] — Platform JWT auth for connector import and adapter registry expansion
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** ADK import tool now signs JWTs using `NESTJS_JWT_SECRET` with required NestJS claims (`type: access`, `iss: yellostorm`, `aud: yellostorm-api`). Backend adapter registry expanded with `mcp-spo`, `mcp-m365`, `sharepoint` aliases so MCP-style connector slugs resolve to `M365TransferAdapter`. URL normalization ensures correct `/api/v1/` prefix regardless of `API_URL` trailing slash.
+- **Why:** ADK and NestJS used different JWT secrets; connector slug `mcp-spo` did not match registered adapter keys.
+- **Impact:** `yellowstorm-adk/src/smart_rag/tools/utilities/connector_tools.py`, `yellowstorm-adk/src/config/settings.py`, `YellowStorm/back/src/modules/connector/connector-transfer.service.ts`
+
+- **Feature:** `connectors`
+- **Type:** `feat`
+- **Changed:** Connector transfer import now supports `mode: 'file' | 'files' | 'folder'`. Folder mode recursively enumerates SharePoint/M365 files via `resolveImportCandidates`. Phase 1 flattens all imports into workspace documents. Filename collisions resolved using path-derived suffix.
+- **Why:** Enable users to import single files, batches, or entire SharePoint folders into workspace for consumption by workspace context/code interpreter flow.
+- **Impact:** `YellowStorm/back/src/modules/connector/interfaces/connector-transfer.interface.ts`, `YellowStorm/back/src/modules/connector/dto/connector-transfer.dto.ts`, `YellowStorm/back/src/modules/connector/connector-transfer.service.ts`, `YellowStorm/back/src/modules/connector/adapters/m365-transfer.adapter.ts`, `YellowStorm/back/src/modules/connector/connector.controller.ts`
+
 ## [2026-04-13 12:00:00 UTC] — Connected-app access token on gRPC tools (web app only)
 
 - **Feature:** `tool` / `conversation`
@@ -8,7 +332,7 @@
 - **Why:** Parity with main YellowStorm for tools that need a user’s connected-app OAuth token when calling the AI runtime over gRPC.
 - **Impact:** `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`, `YellowStorm/back/src/modules/tool/`, `YellowStorm/back/src/modules/agent/`, `YellowStorm/back/src/modules/logger/logger.service.ts`, `YellowStorm/front/src/modules/admin/` (types, tools pages, locales)
 
-## [2026-04-13 09:30:00] — Allow admin slug editing in connector edit dialog
+## [2026-04-13 09:30:00 UTC] — Allow admin slug editing in connector edit dialog
 
 - **Feature:** `connectors`
 - **Type:** `fix`
@@ -824,3 +1148,13 @@
 - **Why:** Users can now see at a glance what artifacts a completed step produced (on the node badge) and inspect/download them in the step detail panel, completing the visual artifact lifecycle.
 - **Impact:** `types.ts`, `store.ts`, `ArtifactBadge.tsx` (new), `PlaybookNode.tsx`, `ExecutionStepDetail.tsx`, `index.ts`, `en.json`, `fr.json`
 - **Doc:** created `/docs/task-toolbar/README_2026-04-01_16-45-00.md`
+# Changelog
+
+## [2026-04-23 00:00 UTC] — Add webapp frontend guidelines documentation
+
+- **Feature:** `webapp-frontend`
+- **Type:** `docs`
+- **Changed:** Added a new frontend-guidelines feature README derived from `YellowStorm/front/FRONTEND_GUIDELINES.md`, and registered the new slug in the documentation index.
+- **Why:** The repository needed a dedicated maintainer-owned documentation entry for the frontend coding guidelines so the frontend stack, conventions, and review rules are easy to find.
+- **Impact:** `docs/webapp-frontend/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/webapp-frontend/README.md`

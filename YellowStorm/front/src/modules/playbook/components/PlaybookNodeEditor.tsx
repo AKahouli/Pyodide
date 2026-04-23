@@ -24,7 +24,7 @@ import { Loader2, X, Plus, Trash2 } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
-import type { PlaybookTask, ValidatedTaskReplay, TaskInputPort, TaskOutputPort, ArtifactKind } from '../types';
+import type { PlaybookTask, ValidatedTaskReplay, TaskInputPort, TaskOutputPort, ArtifactKind, TaskExecutionMode, SelectedAction } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
 import { getPortColor } from '../utils/port-colors';
@@ -60,6 +60,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [assignedAgentId, setAssignedAgentId] = useState<string | null>(null);
+  const [executionMode, setExecutionMode] = useState<TaskExecutionMode>('agent');
+  const [selectedAction, setSelectedAction] = useState<SelectedAction>('index');
   const [interruptBefore, setInterruptBefore] = useState(false);
   const [interruptAfter, setInterruptAfter] = useState(false);
   const [allowClarification, setAllowClarification] = useState(false);
@@ -79,11 +81,49 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [inputPorts, setInputPorts] = useState<TaskInputPort[]>([]);
   const [outputPorts, setOutputPorts] = useState<TaskOutputPort[]>([]);
 
+  const persistDraft = useCallback((overrides?: Partial<PlaybookTask>) => {
+    if (!task) return;
+    onSave(task.id, {
+      title,
+      description,
+      assignedAgentId: executionMode === 'agent' ? assignedAgentId : null,
+      executionMode,
+      selectedAction: executionMode === 'action' ? selectedAction : undefined,
+      interruptBefore,
+      interruptAfter,
+      allowClarification,
+      enabled,
+      notifyOnComplete,
+      notifyEmails: notifyOnComplete ? notifyEmails : [],
+      inputPorts: [...inputPorts],
+      outputPorts: [...outputPorts],
+      ...overrides,
+    });
+  }, [
+    allowClarification,
+    assignedAgentId,
+    description,
+    enabled,
+    executionMode,
+    inputPorts,
+    interruptAfter,
+    interruptBefore,
+    notifyEmails,
+    notifyOnComplete,
+    onSave,
+    outputPorts,
+    selectedAction,
+    task,
+    title,
+  ]);
+
   useEffect(() => {
     if (task) {
       setTitle(task.title);
       setDescription(task.description);
       setAssignedAgentId(task.assignedAgentId);
+      setExecutionMode(task.executionMode || 'agent');
+      setSelectedAction(task.selectedAction || 'index');
       setInterruptBefore(task.interruptBefore);
       setInterruptAfter(task.interruptAfter);
       setAllowClarification(task.allowClarification);
@@ -101,19 +141,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   useEffect(() => {
     if (!open || !task || !hasInitializedDraft) return;
     const timeoutId = window.setTimeout(() => {
-      onSave(task.id, {
-        title,
-        description,
-        assignedAgentId,
-        interruptBefore,
-        interruptAfter,
-        allowClarification,
-        enabled,
-        notifyOnComplete,
-        notifyEmails: notifyOnComplete ? notifyEmails : [],
-        inputPorts: [...inputPorts],
-        outputPorts: [...outputPorts],
-      });
+      persistDraft();
     }, 350);
 
     return () => window.clearTimeout(timeoutId);
@@ -122,17 +150,17 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     assignedAgentId,
     description,
     enabled,
+    executionMode,
     hasInitializedDraft,
     inputPorts,
     interruptAfter,
     interruptBefore,
     notifyEmails,
     notifyOnComplete,
-    onSave,
-    open,
     outputPorts,
+    persistDraft,
+    open,
     task,
-    title,
   ]);
 
   useEffect(() => {
@@ -166,20 +194,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       cancelled = true;
     };
   }, [open, task, playbookId, fetchTaskReplays]);
-
-  useEffect(() => {
-    if (!open || !task || !playbookId || !task.activeReplayId) return;
-    void fetchTaskReplays(playbookId, task.id).then(setReplays).catch(() => undefined);
-  }, [
-    open,
-    playbookId,
-    task,
-    fetchTaskReplays,
-    task?.activeReplayId,
-    task?.activeReplayVersion,
-    task?.activeReplayFormatGuideStatus,
-    task?.activeReplayFormatGuideError,
-  ]);
 
   useEffect(() => {
     if (!open || !task || !playbookId) return;
@@ -297,7 +311,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               onChange={(e) => setDescription(e.target.value)}
               placeholder={t('nodeEditor.descriptionPlaceholder')}
               rows={10}
-              maxLength={2000}
+              maxLength={20000}
             />
           </div>
 
@@ -446,19 +460,69 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           </div>
 
           <div className="space-y-2">
-            <Label>{t('nodeEditor.agent')}</Label>
-            <SearchableSelect
-              options={agentOptions}
-              value={assignedAgentId || ''}
-              onValueChange={(v) => setAssignedAgentId(v)}
-              placeholder={t('nodeEditor.selectAgent')}
-              searchPlaceholder={t('nodeEditor.searchAgent')}
-              emptyText={t('nodeEditor.noAgentFound')}
-            />
-            {!assignedAgentId && (
-              <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
-            )}
+            <Label>{t('nodeEditor.executionMode') || 'Execution mode'}</Label>
+            <select
+              value={executionMode}
+              onChange={(e) => {
+                const nextMode = e.target.value as TaskExecutionMode;
+                setExecutionMode(nextMode);
+                const nextAssignedAgentId = nextMode === 'agent' ? assignedAgentId : null;
+                const nextSelectedAction = nextMode === 'action' ? selectedAction : undefined;
+                onSave(task.id, {
+                  executionMode: nextMode,
+                  assignedAgentId: nextAssignedAgentId,
+                  selectedAction: nextSelectedAction,
+                });
+              }}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="agent">Agent</option>
+              <option value="action">Action</option>
+            </select>
           </div>
+
+          {executionMode === 'action' ? (
+            <div className="space-y-2">
+              <Label>{t('nodeEditor.action') || 'Action'}</Label>
+              <select
+                value={selectedAction}
+                onChange={(e) => {
+                  const nextAction = e.target.value as SelectedAction;
+                  setSelectedAction(nextAction);
+                  onSave(task.id, {
+                    executionMode: 'action',
+                    assignedAgentId: null,
+                    selectedAction: nextAction,
+                  });
+                }}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="index">Index</option>
+                <option value="delete">Delete</option>
+                <option value="read">Read</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {selectedAction === 'index' && 'Index documents from input ports into the vector store.'}
+                {selectedAction === 'delete' && 'Delete documents from the workspace.'}
+                {selectedAction === 'read' && 'Read document content for downstream processing.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>{t('nodeEditor.agent')}</Label>
+              <SearchableSelect
+                options={agentOptions}
+                value={assignedAgentId || ''}
+                onValueChange={(v) => setAssignedAgentId(v)}
+                placeholder={t('nodeEditor.selectAgent')}
+                searchPlaceholder={t('nodeEditor.searchAgent')}
+                emptyText={t('nodeEditor.noAgentFound')}
+              />
+              {!assignedAgentId && (
+                <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
+              )}
+            </div>
+          )}
 
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
+import { ConfigModule } from '@nestjs/config';
 import { AgentController } from './controllers/agent.controller';
 import { AdminAgentController } from './controllers/admin-agent.controller';
 import { AgentService } from './agent.service';
@@ -14,6 +15,7 @@ import { ConnectedAppModule } from '../connected-app/connected-app.module';
 
 @Module({
   imports: [
+    ConfigModule,
     MongooseModule.forFeature([
       { name: Agent.name, schema: AgentSchema },
     ]),

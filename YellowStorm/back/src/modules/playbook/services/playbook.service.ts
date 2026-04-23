@@ -11,6 +11,7 @@ import {
 import { CreatePlaybookDto } from '../dto/create-playbook.dto';
 import { UpdatePlaybookDto } from '../dto/update-playbook.dto';
 import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
+import { UpsertPlaybookMailTriggerDto } from '../dto/upsert-playbook-mail-trigger.dto';
 import { PlaybookQueryDto } from '../dto/playbook-query.dto';
 import { ExecutionQueryDto } from '../dto/execution-query.dto';
 import {
@@ -22,6 +23,7 @@ import {
   PaginatedExecutions,
   PlaybookDesignMessageResponse,
   ExecutionScheduleData,
+  PlaybookTriggersResponse,
 } from '../interfaces/playbook.interface';
 import { mapExecutionScheduleToData } from '../utils/execution-schedule.mapper';
 import { buildExecutionScheduleDocument } from '../utils/execution-schedule-upsert.builder';
@@ -35,6 +37,8 @@ import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { escapeRegex } from '../../../common/utils';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
+import { PlaybookMailGraphClientService } from './playbook-mail-graph-client.service';
 
 @Injectable()
 export class PlaybookService {
@@ -48,6 +52,8 @@ export class PlaybookService {
     private readonly logger: LoggerService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly connectedAppTokenService: ConnectedAppTokenService,
+    private readonly mailGraphClient: PlaybookMailGraphClientService,
   ) {
     this.logger.setContext('PlaybookService');
   }
@@ -58,6 +64,10 @@ export class PlaybookService {
       description: dto.description || '',
       tasks: [],
       edges: [],
+      reflectionEnabled: true,
+      advisorAutopilotEnabled: false,
+      advisorAutopilotTargetScore: 90,
+      advisorAutopilotMaxTurns: 4,
       workspaces: (dto.workspaces || []).map((id) => new Types.ObjectId(id)),
       createdBy: new Types.ObjectId(userId),
       isActive: true,
@@ -111,6 +121,10 @@ export class PlaybookService {
       description: source.description || '',
       tasks: source.tasks || [],
       edges: source.edges || [],
+      reflectionEnabled: source.reflectionEnabled !== false,
+      advisorAutopilotEnabled: source.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: source.advisorAutopilotTargetScore ?? 90,
+      advisorAutopilotMaxTurns: source.advisorAutopilotMaxTurns ?? 4,
       workspaces: source.workspaces || [],
       createdBy: new Types.ObjectId(targetUserId),
       isActive: true,
@@ -283,6 +297,10 @@ export class PlaybookService {
     if (dto.tasks !== undefined) updateData.tasks = dto.tasks;
     if (dto.edges !== undefined) updateData.edges = dto.edges;
     if (dto.workspaces !== undefined) updateData.workspaces = dto.workspaces.map((id) => new Types.ObjectId(id));
+    if (dto.reflectionEnabled !== undefined) updateData.reflectionEnabled = dto.reflectionEnabled;
+    if (dto.advisorAutopilotEnabled !== undefined) updateData.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
+    if (dto.advisorAutopilotTargetScore !== undefined) updateData.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
+    if (dto.advisorAutopilotMaxTurns !== undefined) updateData.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
 
     const playbook = await this.playbookModel
       .findByIdAndUpdate(playbookId, { $set: updateData }, { new: true })
@@ -305,6 +323,23 @@ export class PlaybookService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
     }
     return mapExecutionScheduleToData(playbook.executionSchedule);
+  }
+
+  async getTriggers(playbookId: string): Promise<PlaybookTriggersResponse> {
+    const playbook = await this.playbookModel
+      .findById(playbookId)
+      .select('executionSchedule mailTrigger createdBy')
+      .lean()
+      .exec();
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    return await this.buildTriggersResponse(
+      playbook.executionSchedule,
+      playbook.mailTrigger,
+      playbook.createdBy?.toString?.(),
+    );
   }
 
   /** Persists the single embedded schedule for this playbook (replaces any previous configuration). */
@@ -344,6 +379,168 @@ export class PlaybookService {
     }
 
     this.logger.log('Playbook schedule cleared', { playbookId });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async upsertMailTrigger(playbookId: string, dto: UpsertPlaybookMailTriggerDto): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel
+      .findById(playbookId)
+      .select('mailTrigger')
+      .lean()
+      .exec();
+
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(
+        playbookId,
+        {
+          $set: {
+            mailTrigger: {
+              enabled: dto.enabled,
+              mailboxAppKey: dto.enabled ? (dto.mailboxAppKey ?? null) : null,
+              notificationUrl: dto.enabled
+                ? (dto.notificationUrl ?? existing.mailTrigger?.notificationUrl ?? null)
+                : null,
+              autoRenewUntil: dto.enabled
+                ? (dto.autoRenewUntil
+                  ? new Date(dto.autoRenewUntil)
+                  : null)
+                : null,
+              attachmentImportEnabled: dto.enabled ? dto.attachmentImportEnabled === true : false,
+              allowedAttachmentExtensions: dto.enabled
+                ? Array.from(new Set((dto.allowedAttachmentExtensions ?? [])
+                  .map((value) => value.trim().replace(/^\./, '').toLowerCase())
+                  .filter(Boolean)))
+                : [],
+              runtimeEnabled: dto.enabled ? existing.mailTrigger?.runtimeEnabled === true : false,
+              subscriptionId: dto.enabled ? (existing.mailTrigger?.subscriptionId ?? null) : null,
+              subscriptionClientState: dto.enabled ? (existing.mailTrigger?.subscriptionClientState ?? null) : null,
+              subscriptionExpiresAt: dto.enabled ? (existing.mailTrigger?.subscriptionExpiresAt ?? null) : null,
+              filters: {
+                from: dto.enabled ? (dto.filters?.from ?? []) : [],
+                subjectContains: dto.enabled ? (dto.filters?.subjectContains ?? []) : [],
+                bodyContains: dto.enabled ? (dto.filters?.bodyContains ?? []) : [],
+                hasAttachments: dto.enabled ? (dto.filters?.hasAttachments ?? null) : null,
+              },
+            },
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook mail trigger upserted', { playbookId, enabled: dto.enabled });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async clearMailTrigger(playbookId: string): Promise<PlaybookResponse> {
+    const existing = await this.playbookModel
+      .findById(playbookId)
+      .select('createdBy mailTrigger')
+      .lean()
+      .exec();
+
+    if (existing?.mailTrigger?.subscriptionId && existing?.mailTrigger?.mailboxAppKey) {
+      try {
+        await this.mailGraphClient.deleteSubscription(
+          (existing.createdBy as any).toString(),
+          existing.mailTrigger.mailboxAppKey,
+          existing.mailTrigger.subscriptionId,
+        );
+      } catch (err) {
+        this.logger.warn('Failed to delete remote Graph subscription during trigger clear', {
+          playbookId,
+          subscriptionId: existing.mailTrigger.subscriptionId,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(
+        playbookId,
+        {
+          $set: {
+            mailTrigger: {
+              enabled: false,
+              mailboxAppKey: null,
+              notificationUrl: null,
+              autoRenewUntil: null,
+              attachmentImportEnabled: false,
+              allowedAttachmentExtensions: [],
+              runtimeEnabled: false,
+              subscriptionId: null,
+              subscriptionClientState: null,
+              subscriptionExpiresAt: null,
+              filters: {
+                from: [],
+                subjectContains: [],
+                bodyContains: [],
+                hasAttachments: null,
+              },
+            },
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
+    this.logger.log('Playbook mail trigger cleared', { playbookId });
+    return await this.mapToResponse(playbook as any);
+  }
+
+  async syncMailTriggerSubscription(
+    playbookId: string,
+    subscription: {
+      mailboxAppKey: string;
+      notificationUrl?: string | null;
+      autoRenewUntil?: string | null;
+      subscriptionId: string | null;
+      subscriptionClientState: string;
+      subscriptionExpiresAt: string | null;
+    },
+  ): Promise<PlaybookResponse> {
+    const playbook = await this.playbookModel
+      .findByIdAndUpdate(
+        playbookId,
+        {
+          $set: {
+            'mailTrigger.enabled': true,
+            'mailTrigger.mailboxAppKey': subscription.mailboxAppKey,
+            'mailTrigger.notificationUrl': subscription.notificationUrl ?? null,
+            'mailTrigger.autoRenewUntil': subscription.autoRenewUntil
+              ? new Date(subscription.autoRenewUntil)
+              : null,
+            'mailTrigger.runtimeEnabled': true,
+            'mailTrigger.subscriptionId': subscription.subscriptionId,
+            'mailTrigger.subscriptionClientState': subscription.subscriptionClientState,
+            'mailTrigger.subscriptionExpiresAt': subscription.subscriptionExpiresAt
+              ? new Date(subscription.subscriptionExpiresAt)
+              : null,
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .exec();
+
+    if (!playbook) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+    }
+
     return await this.mapToResponse(playbook as any);
   }
 
@@ -700,6 +897,8 @@ export class PlaybookService {
   }
 
   private mapToSummaryResponse(playbook: any): PlaybookSummaryResponse {
+    const automatedTriggerType = Boolean(playbook.scheduleEnabled) ? 'schedule' : null;
+
     return {
       id: (playbook._id || playbook.id).toString(),
       name: playbook.name,
@@ -707,6 +906,7 @@ export class PlaybookService {
       taskCount: playbook.taskCount ?? 0,
       isFavorite: playbook.isFavorite || false,
       scheduleEnabled: Boolean(playbook.scheduleEnabled),
+      automatedTriggerType,
       executionStatus: playbook.executionStatus ?? null,
       integrationToken: playbook.integrationToken || null,
       lastExecutionAt: playbook.lastExecutionAt?.toISOString?.() || playbook.lastExecutionAt || null,
@@ -726,6 +926,13 @@ export class PlaybookService {
       taskIds,
     );
 
+    const executionSchedule = mapExecutionScheduleToData(playbook.executionSchedule);
+    const triggersResponse = await this.buildTriggersResponse(
+      playbook.executionSchedule,
+      playbook.mailTrigger,
+      playbook.createdBy.toString(),
+    );
+
     return {
       id: (playbook._id || playbook.id).toString(),
       name: playbook.name,
@@ -735,6 +942,8 @@ export class PlaybookService {
         title: t.title,
         description: t.description || '',
         assignedAgentId: t.assignedAgentId?.toString() || null,
+        executionMode: t.executionMode || 'agent',
+        selectedAction: t.selectedAction || undefined,
         executionOrder: t.executionOrder || 0,
         positionX: t.positionX || 0,
         positionY: t.positionY || 0,
@@ -775,13 +984,76 @@ export class PlaybookService {
         sourceOutputPortId: e.sourceOutputPortId || 'default',
         targetInputPortId: e.targetInputPortId || 'default',
       })),
+      reflectionEnabled: playbook.reflectionEnabled !== false,
+      advisorAutopilotEnabled: playbook.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? 90,
+      advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? 4,
       workspaces: (playbook.workspaces || []).map((w: any) => w.toString()),
       createdBy: playbook.createdBy.toString(),
       isFavorite: playbook.isFavorite || false,
       isActive: playbook.isActive,
-      executionSchedule: mapExecutionScheduleToData(playbook.executionSchedule),
+      executionSchedule,
+      triggers: triggersResponse.triggers,
+      automatedTriggerType: triggersResponse.automatedTriggerType,
       createdAt: playbook.createdAt?.toISOString?.() || playbook.createdAt,
       updatedAt: playbook.updatedAt?.toISOString?.() || playbook.updatedAt,
+    };
+  }
+
+  private async buildTriggersResponse(
+    executionSchedule: any,
+    mailTrigger: any,
+    createdBy?: string,
+  ): Promise<PlaybookTriggersResponse> {
+    const schedule = mapExecutionScheduleToData(executionSchedule);
+    const scheduleEnabled = schedule?.enabled === true;
+    const mailboxCapability = createdBy
+      ? await this.connectedAppTokenService.getMailboxCapability(createdBy)
+      : null;
+    const normalizedMailTrigger = {
+      enabled: mailTrigger?.enabled === true,
+      mailboxAppKey: mailTrigger?.mailboxAppKey ?? null,
+      notificationUrl: mailTrigger?.notificationUrl ?? null,
+      autoRenewUntil:
+        mailTrigger?.autoRenewUntil?.toISOString?.() ?? mailTrigger?.autoRenewUntil ?? null,
+      runtimeEnabled: mailTrigger?.runtimeEnabled === true,
+      subscriptionId: mailTrigger?.subscriptionId ?? null,
+      subscriptionClientState: mailTrigger?.subscriptionClientState ?? null,
+      subscriptionExpiresAt:
+        mailTrigger?.subscriptionExpiresAt?.toISOString?.() ?? mailTrigger?.subscriptionExpiresAt ?? null,
+      filters: {
+        from: Array.isArray(mailTrigger?.filters?.from) ? mailTrigger.filters.from : [],
+        subjectContains: Array.isArray(mailTrigger?.filters?.subjectContains)
+          ? mailTrigger.filters.subjectContains
+          : [],
+        bodyContains: Array.isArray(mailTrigger?.filters?.bodyContains)
+          ? mailTrigger.filters.bodyContains
+          : [],
+        hasAttachments:
+          typeof mailTrigger?.filters?.hasAttachments === 'boolean'
+            ? mailTrigger.filters.hasAttachments
+            : null,
+      },
+      attachmentImportEnabled: mailTrigger?.attachmentImportEnabled === true,
+      allowedAttachmentExtensions: Array.isArray(mailTrigger?.allowedAttachmentExtensions)
+        ? mailTrigger.allowedAttachmentExtensions
+        : [],
+      runtimePayloadSchema: null,
+    };
+    const mailEnabled = normalizedMailTrigger.enabled;
+
+    return {
+      automatedTriggerType: scheduleEnabled ? 'schedule' : mailEnabled ? 'mail' : null,
+      triggers: [
+        { type: 'manual', enabled: true },
+        { type: 'schedule', enabled: scheduleEnabled, schedule },
+        {
+          type: 'mail',
+          enabled: mailEnabled,
+          available: mailboxCapability?.mailboxReady === true,
+          config: normalizedMailTrigger,
+        },
+      ],
     };
   }
 
@@ -793,7 +1065,12 @@ export class PlaybookService {
       executionNumber: execution.executionNumber,
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
-      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      executionTrigger:
+        execution.executionTrigger === 'scheduled'
+          ? 'scheduled'
+          : execution.executionTrigger === 'mail'
+            ? 'mail'
+            : 'manual',
       error: execution.error,
       durationMs: execution.durationMs,
       startedAt: execution.startedAt?.toISOString?.() || execution.startedAt,
@@ -813,11 +1090,16 @@ export class PlaybookService {
       currentAttemptNumber: execution.currentAttemptNumber ?? 1,
       status: execution.status,
       executionMode: execution.executionMode || 'live',
-      executionTrigger: execution.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+      executionTrigger:
+        execution.executionTrigger === 'scheduled'
+          ? 'scheduled'
+          : execution.executionTrigger === 'mail'
+            ? 'mail'
+            : 'manual',
       reflectionEnabled: execution.reflectionEnabled !== false,
       advisorAutopilotEnabled: execution.advisorAutopilotEnabled === true,
-      advisorAutopilotTargetScore: execution.advisorAutopilotTargetScore ?? 80,
-      advisorAutopilotMaxTurns: execution.advisorAutopilotMaxTurns ?? 2,
+      advisorAutopilotTargetScore: execution.advisorAutopilotTargetScore ?? 90,
+      advisorAutopilotMaxTurns: execution.advisorAutopilotMaxTurns ?? 4,
       advisorAutopilotStatus: execution.advisorAutopilotStatus || 'idle',
       advisorAutopilotTaskId: execution.advisorAutopilotTaskId ?? null,
       advisorAutopilotAttemptCount: execution.advisorAutopilotAttemptCount ?? 0,
@@ -860,6 +1142,13 @@ export class PlaybookService {
           safeAutoFixType: entry.safeAutoFixType ?? null,
           actionType: entry.actionType,
           stopReason: entry.stopReason ?? null,
+        })),
+        advisorOptimizationHistory: (tr.advisorOptimizationHistory || []).map((entry: any) => ({
+          turn: entry.turn,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+          changedFields: entry.changedFields || [],
+          beforeTask: entry.beforeTask || {},
+          afterTask: entry.afterTask || {},
         })),
         lastAdvisorAction: tr.lastAdvisorAction ?? null,
         lastAdvisorScoreDelta: tr.lastAdvisorScoreDelta ?? null,

@@ -9,6 +9,7 @@ creates its own mini StateGraph.
 import json
 import re
 import time
+import uuid
 from collections import Counter
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, Any, Optional, List
@@ -44,6 +45,14 @@ def _get_output_ports(task: Dict[str, Any]) -> List[Dict[str, Any]]:
     return list(task.get("output_ports") or task.get("outputPorts") or [])
 
 
+def _get_declared_output_ports(task: Dict[str, Any]) -> List[str]:
+    return [
+        str(port_id).strip()
+        for port_id in (task.get("declared_output_ports") or [])
+        if str(port_id).strip()
+    ]
+
+
 def _output_port_kind(port: Dict[str, Any]) -> str:
     return str(port.get("artifact_kind") or port.get("artifactKind") or "").strip()
 
@@ -56,22 +65,89 @@ def _task_requires_structured_output_synthesis(task: Dict[str, Any]) -> bool:
     kind_counts = Counter(
         kind for kind in (_output_port_kind(port) for port in output_ports) if kind
     )
-    return any(kind in {"text", "code"} and count > 1 for kind, count in kind_counts.items())
+    return any(
+        kind in {"text", "code"} and count > 1 for kind, count in kind_counts.items()
+    )
 
 
-def _collect_generated_artifacts(components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _collect_generated_artifacts(
+    components: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
     generated: List[Dict[str, Any]] = []
     for comp in components or []:
         if not isinstance(comp, dict) or comp.get("type") != "artifact":
             continue
         data = comp.get("data") or {}
-        generated.append({
-            "file_path": str(data.get("file_path") or data.get("filePath") or "").strip(),
-            "filename": str(data.get("filename") or "").strip(),
-            "artifact_kind": str(data.get("artifact_kind") or data.get("artifactKind") or "").strip(),
-            "mime_type": str(data.get("mime_type") or data.get("mimeType") or "").strip(),
-        })
+        generated.append(
+            {
+                "file_path": str(
+                    data.get("file_path") or data.get("filePath") or ""
+                ).strip(),
+                "filename": str(data.get("filename") or "").strip(),
+                "artifact_kind": str(
+                    data.get("artifact_kind") or data.get("artifactKind") or ""
+                ).strip(),
+                "mime_type": str(
+                    data.get("mime_type") or data.get("mimeType") or ""
+                ).strip(),
+            }
+        )
     return generated
+
+
+def _attach_result_text_for_citations(
+    response_text: str,
+    components: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    normalized_response = str(response_text or "").strip()
+    if not normalized_response or not components:
+        return components
+
+    citation_components = [
+        dict(component)
+        for component in components
+        if isinstance(component, dict) and component.get("type") == "citation"
+    ]
+    if not citation_components:
+        return components
+
+    regular_components: List[Dict[str, Any]] = [
+        dict(component)
+        for component in components
+        if isinstance(component, dict) and component.get("type") != "citation"
+    ]
+
+    target_text_component: Optional[Dict[str, Any]] = None
+    for component in reversed(regular_components):
+        if component.get("type") != "text":
+            continue
+        data = component.get("data") or {}
+        if str(data.get("content") or "").strip() != normalized_response:
+            continue
+        target_text_component = component
+        break
+
+    if target_text_component is None:
+        target_text_component = {
+            "id": f"playbook-final-text-{uuid.uuid4().hex}",
+            "type": "text",
+            "data": {"content": response_text},
+        }
+        regular_components.append(target_text_component)
+    elif not target_text_component.get("id"):
+        target_text_component["id"] = f"playbook-final-text-{uuid.uuid4().hex}"
+
+    target_text_id = str(target_text_component.get("id") or "").strip()
+    updated_citations: List[Dict[str, Any]] = []
+    for component in citation_components:
+        data = dict(component.get("data") or {})
+        if not str(data.get("parent_id") or "").strip() and target_text_id:
+            data["parent_id"] = target_text_id
+        updated_component = dict(component)
+        updated_component["data"] = data
+        updated_citations.append(updated_component)
+
+    return regular_components + updated_citations
 
 
 def _find_generated_artifact_match(
@@ -80,7 +156,11 @@ def _find_generated_artifact_match(
     used_indexes: set[int],
 ) -> Optional[Dict[str, Any]]:
     requested_filename = str(output_spec.get("filename") or "").strip().lower()
-    requested_file_path = str(output_spec.get("file_path") or output_spec.get("filePath") or "").strip().lower()
+    requested_file_path = (
+        str(output_spec.get("file_path") or output_spec.get("filePath") or "")
+        .strip()
+        .lower()
+    )
 
     for index, artifact in enumerate(generated_artifacts):
         if index in used_indexes:
@@ -113,10 +193,7 @@ def _build_task_artifacts_from_structured_outputs(
     generated_artifacts: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     output_ports = _get_output_ports(task)
-    port_by_id = {
-        _normalize_port_id(port.get("id")): port
-        for port in output_ports
-    }
+    port_by_id = {_normalize_port_id(port.get("id")): port for port in output_ports}
     used_generated_indexes: set[int] = set()
     artifacts: List[Dict[str, Any]] = []
 
@@ -124,13 +201,24 @@ def _build_task_artifacts_from_structured_outputs(
         if not isinstance(output_spec, dict):
             continue
 
-        output_port_id = _normalize_port_id(output_spec.get("output_port_id") or output_spec.get("outputPortId"))
+        output_port_id = _normalize_port_id(
+            output_spec.get("output_port_id") or output_spec.get("outputPortId")
+        )
         port = port_by_id.get(output_port_id)
         if port is None:
-            raise ValueError(f"Structured output references unknown output port '{output_port_id}'")
+            raise ValueError(
+                f"Structured output references unknown output port '{output_port_id}'"
+            )
 
         port_kind = _output_port_kind(port)
-        output_kind = str(output_spec.get("artifact_kind") or output_spec.get("artifactKind") or port_kind).strip() or port_kind
+        output_kind = (
+            str(
+                output_spec.get("artifact_kind")
+                or output_spec.get("artifactKind")
+                or port_kind
+            ).strip()
+            or port_kind
+        )
         if port_kind and output_kind and port_kind != output_kind:
             raise ValueError(
                 f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
@@ -140,27 +228,65 @@ def _build_task_artifacts_from_structured_outputs(
             content = str(output_spec.get("content") or "").strip()
             if not content:
                 continue
-            artifacts.append({
-                "port_id": str(port.get("id") or output_port_id),
-                "artifact_kind": output_kind,
-                "content": content,
-            })
+            artifacts.append(
+                {
+                    "port_id": str(port.get("id") or output_port_id),
+                    "artifact_kind": output_kind,
+                    "content": content,
+                }
+            )
             continue
 
-        matched_artifact = _find_generated_artifact_match(output_spec, generated_artifacts, used_generated_indexes)
+        matched_artifact = _find_generated_artifact_match(
+            output_spec, generated_artifacts, used_generated_indexes
+        )
         if matched_artifact is None:
-            requested_name = output_spec.get("filename") or output_spec.get("file_path") or output_spec.get("filePath") or output_port_id
-            raise ValueError(f"Structured output for port '{output_port_id}' references unknown artifact '{requested_name}'")
+            requested_name = (
+                output_spec.get("filename")
+                or output_spec.get("file_path")
+                or output_spec.get("filePath")
+                or output_port_id
+            )
+            raise ValueError(
+                f"Structured output for port '{output_port_id}' references unknown artifact '{requested_name}'"
+            )
 
-        artifacts.append({
-            "port_id": str(port.get("id") or output_port_id),
-            "artifact_kind": output_kind or str(matched_artifact.get("artifact_kind") or "document"),
-            "url": str(matched_artifact.get("file_path") or ""),
-            "filename": str(matched_artifact.get("filename") or ""),
-            "mime_type": str(matched_artifact.get("mime_type") or ""),
-        })
+        artifacts.append(
+            {
+                "port_id": str(port.get("id") or output_port_id),
+                "artifact_kind": output_kind
+                or str(matched_artifact.get("artifact_kind") or "document"),
+                "url": str(matched_artifact.get("file_path") or ""),
+                "filename": str(matched_artifact.get("filename") or ""),
+                "mime_type": str(matched_artifact.get("mime_type") or ""),
+            }
+        )
 
     return artifacts
+
+
+def _validate_declared_output_ports(
+    task: Dict[str, Any], structured_outputs: List[Dict[str, Any]]
+) -> None:
+    declared_output_ports = {
+        _normalize_port_id(port_id) for port_id in _get_declared_output_ports(task)
+    }
+    if not declared_output_ports:
+        return
+
+    for output_spec in structured_outputs:
+        raw_output_port_id = output_spec.get("output_port_id") or output_spec.get(
+            "outputPortId"
+        )
+        if not str(raw_output_port_id or "").strip():
+            raise ValueError(
+                "Structured output must include output_port_id when declared_output_ports is present"
+            )
+        output_port_id = _normalize_port_id(raw_output_port_id)
+        if output_port_id not in declared_output_ports:
+            raise ValueError(
+                f"Structured output references undeclared output port '{output_port_id}'"
+            )
 
 
 async def _synthesize_structured_outputs(
@@ -199,35 +325,40 @@ async def _synthesize_structured_outputs(
 
     system_prompt = resolve_prompt_template(
         prompt_registry,
-        'output_routing.synthesis',
-        field='systemTemplate',
+        "output_routing.synthesis",
+        field="systemTemplate",
         fallback=(
-            'You map a completed playbook task result into declared output ports. '
-            'The user already saw the live streamed draft, so this pass is only for final downstream routing. '
-            'Use output port names and descriptions semantically, especially when multiple ports share the same artifact kind. '
-            'Return JSON only.'
+            "You map a completed playbook task result into declared output ports. "
+            "The user already saw the live streamed draft, so this pass is only for final downstream routing. "
+            "Use output port names and descriptions semantically, especially when multiple ports share the same artifact kind. "
+            "Return JSON only."
         ),
     )
     user_prompt_template = resolve_prompt_template(
         prompt_registry,
-        'output_routing.synthesis',
-        field='userTemplate',
+        "output_routing.synthesis",
+        field="userTemplate",
         fallback=(
-            'Task title: {{taskTitle}}\nTask description: {{taskDescription}}\n\n'
-            'Declared output ports JSON:\n{{outputPortsJson}}\n\n'
-            'Final freeform response text:\n{{responseText}}\n\n'
-            'Generated artifact candidates JSON:\n{{artifactsJson}}\n\n'
+            "Task title: {{taskTitle}}\nTask description: {{taskDescription}}\n\n"
+            "Declared output ports JSON:\n{{outputPortsJson}}\n\n"
+            "Final freeform response text:\n{{responseText}}\n\n"
+            "Generated artifact candidates JSON:\n{{artifactsJson}}\n\n"
             'Return JSON with this exact shape:\n{\n  "outputs": [\n    {\n      "output_port_id": "declared-port-id",\n      "artifact_kind": "text|code|document|image|data|dashboard",\n      "content": "required for text/code outputs",\n      "filename": "required for generated file outputs",\n      "file_path": "optional exact file path when needed"\n    }\n  ]\n}\n\n'
-            'Rules:\n- Use only declared output_port_id values.\n- Use the semantic meaning of each port name and description to decide the target.\n- For text/code outputs, include only final downstream content, not the whole streamed draft unless that is the intended port output.\n- For file outputs, assign generated artifacts by filename or file_path.\n- Do not invent files that are not in the generated artifact candidates list.\n- If no structured downstream output should be produced for a port, omit it.\n- Return JSON only.'
+            "Rules:\n- Use only declared output_port_id values.\n- Use the semantic meaning of each port name and description to decide the target.\n- For text/code outputs, include only final downstream content, not the whole streamed draft unless that is the intended port output.\n- For file outputs, assign generated artifacts by filename or file_path.\n- Do not invent files that are not in the generated artifact candidates list.\n- If no structured downstream output should be produced for a port, omit it.\n- Return JSON only."
         ),
     )
     user_prompt = (
-        user_prompt_template
-        .replace('{{taskTitle}}', str(task.get('title', '')))
-        .replace('{{taskDescription}}', str(task.get('description', '')))
-        .replace('{{outputPortsJson}}', json.dumps(ports_payload, ensure_ascii=True, indent=2))
-        .replace('{{responseText}}', str(response_text or ''))
-        .replace('{{artifactsJson}}', json.dumps(artifacts_payload, ensure_ascii=True, indent=2))
+        user_prompt_template.replace("{{taskTitle}}", str(task.get("title", "")))
+        .replace("{{taskDescription}}", str(task.get("description", "")))
+        .replace(
+            "{{outputPortsJson}}",
+            json.dumps(ports_payload, ensure_ascii=True, indent=2),
+        )
+        .replace("{{responseText}}", str(response_text or ""))
+        .replace(
+            "{{artifactsJson}}",
+            json.dumps(artifacts_payload, ensure_ascii=True, indent=2),
+        )
     )
 
     synthesis_text, _usage = await _llm_call(
@@ -244,7 +375,34 @@ async def _synthesize_structured_outputs(
     outputs = payload.get("outputs") or []
     if not isinstance(outputs, list):
         raise ValueError("Structured output synthesis returned an invalid outputs list")
-    return [item for item in outputs if isinstance(item, dict)]
+    filtered_outputs = [item for item in outputs if isinstance(item, dict)]
+
+    try:
+        _validate_declared_output_ports(task, filtered_outputs)
+    except ValueError as first_error:
+        repair_prompt = (
+            user_prompt
+            + f"\n\nPrevious attempt failed validation with error:\n{first_error}\n"
+            "Please fix the JSON so every output uses a declared output_port_id."
+        )
+        synthesis_text, _usage = await _llm_call(
+            settings,
+            model_name,
+            system_prompt,
+            repair_prompt,
+            temperature=0.1,
+            prompt_trace=prompt_trace,
+            stage="playbook_output_routing_repair",
+            on_progress=None,
+        )
+        payload = _extract_json_object(synthesis_text)
+        outputs = payload.get("outputs") or []
+        if not isinstance(outputs, list):
+            raise ValueError("Structured output repair returned an invalid outputs list")
+        filtered_outputs = [item for item in outputs if isinstance(item, dict)]
+        _validate_declared_output_ports(task, filtered_outputs)
+
+    return filtered_outputs
 
 
 def _serialize_prompt_messages(messages: List[Dict[str, str]]) -> str:
@@ -265,11 +423,13 @@ def _append_prompt_trace(
 ) -> None:
     if prompt_trace is None:
         return
-    prompt_trace.append({
-        "stage": stage,
-        "model": model,
-        "prompt": _serialize_prompt_messages(messages),
-    })
+    prompt_trace.append(
+        {
+            "stage": stage,
+            "model": model,
+            "prompt": _serialize_prompt_messages(messages),
+        }
+    )
 
 
 def _summarize_tool_args(args: Any, max_length: int = 500) -> str:
@@ -324,7 +484,9 @@ async def _stream_chat_response(
     return aggregated
 
 
-def _extract_interrupt_from_snapshot(state_snapshot, task_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
+def _extract_interrupt_from_snapshot(
+    state_snapshot, task_id: str, thread_id: str
+) -> Optional[Dict[str, Any]]:
     for pregel_task in state_snapshot.tasks:
         if hasattr(pregel_task, "interrupts") and pregel_task.interrupts:
             iv = pregel_task.interrupts[0].value
@@ -383,7 +545,9 @@ def normalize_interrupt_action(response: Any, interrupt_type: str) -> str:
         if response.get("approved") is True:
             return "approve"
         if response.get("approved") is False:
-            if interrupt_type == "review_request" and (response.get("feedback") or response.get("message")):
+            if interrupt_type == "review_request" and (
+                response.get("feedback") or response.get("message")
+            ):
                 return "reply"
             return "reject"
     return "reply" if interrupt_type == "clarification" else "approve"
@@ -423,8 +587,11 @@ async def execute_step(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
+    artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -448,13 +615,17 @@ async def execute_step(
 
     if needs_hitl:
         from src.langgraph_engine.workflow_service import run_single_step_graph
+
         return await run_single_step_graph(
             task=task,
             agent=agent,
             context_from_dependencies=context_from_dependencies,
             workspace_context=workspace_context,
+            trigger_context=trigger_context,
             edges=edges,
             upstream_results=upstream_results,
+            artifacts_by_port=artifacts_by_port,
+            node_inputs_by_port=node_inputs_by_port,
             execution_mode=execution_mode,
             validated_replay=validated_replay,
             evaluation_user_id=evaluation_user_id,
@@ -467,8 +638,11 @@ async def execute_step(
         agent=agent,
         context_from_dependencies=context_from_dependencies,
         workspace_context=workspace_context,
+        trigger_context=trigger_context,
         edges=edges,
         upstream_results=upstream_results,
+        artifacts_by_port=artifacts_by_port,
+        node_inputs_by_port=node_inputs_by_port,
         execution_mode=execution_mode,
         validated_replay=validated_replay,
         evaluation_user_id=evaluation_user_id,
@@ -482,8 +656,11 @@ async def _execute_step_direct(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
+    artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -511,41 +688,64 @@ async def _execute_step_direct(
         for item in (upstream_results or [])
         if isinstance(item, dict) and str(item.get("task_id") or "").strip()
     }
-    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
-    for upstream_task_id, upstream_result in upstream_results_map.items():
-        for artifact in upstream_result.get("artifacts") or []:
-            if not isinstance(artifact, dict):
-                continue
-            port_id = str(artifact.get("port_id") or artifact.get("portId") or "default").strip() or "default"
-            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(artifact)
+    resolved_artifacts_by_port: Dict[str, List[Dict[str, Any]]] = dict(
+        artifacts_by_port or {}
+    )
+    if not resolved_artifacts_by_port:
+        for upstream_task_id, upstream_result in upstream_results_map.items():
+            for artifact in upstream_result.get("artifacts") or []:
+                if not isinstance(artifact, dict):
+                    continue
+                port_id = (
+                    str(
+                        artifact.get("port_id") or artifact.get("portId") or "default"
+                    ).strip()
+                    or "default"
+                )
+                resolved_artifacts_by_port.setdefault(
+                    f"{upstream_task_id}:{port_id}", []
+                ).append(artifact)
 
-    resolved_inputs = resolve_task_inputs(task_id, task, {
-        "edges": edges or [],
-        "results": upstream_results_map,
-        "task_outputs": {},
-        "artifacts_by_port": artifacts_by_port,
-        "workspace_context": workspace_context,
-    })
-    prompt_registry = load_prompt_registry(prompt_overrides or (task or {}).get("prompt_overrides") or {})
-    workspace_file_hint = format_workspace_file_hint(workspace_context if not resolved_inputs.get("has_port_sources") else None)
+    resolved_inputs = resolve_task_inputs(
+        task_id,
+        task,
+        {
+            "edges": edges or [],
+            "results": upstream_results_map,
+            "task_outputs": {},
+            "artifacts_by_port": resolved_artifacts_by_port,
+            "node_inputs_by_port": node_inputs_by_port or {},
+            "workspace_context": workspace_context,
+            "trigger_context": trigger_context,
+        },
+    )
+    prompt_registry = load_prompt_registry(
+        prompt_overrides or (task or {}).get("prompt_overrides") or {}
+    )
+    workspace_file_hint = format_workspace_file_hint(
+        workspace_context if not resolved_inputs.get("has_port_sources") else None
+    )
 
     system_prompt = resolve_prompt_template(
         prompt_registry,
-        'task.system',
-        field='systemTemplate',
+        "task.system",
+        field="systemTemplate",
         fallback=(
             f"You are {agent['name']}.\n\n"
             f"Your instructions:\n{agent_instructions}\n\n"
             f"You are working on a task as part of a playbook execution."
         ),
     )
-    system_prompt = system_prompt.replace('{{agentName}}', agent['name']).replace('{{agentInstructions}}', agent_instructions)
+    system_prompt = system_prompt.replace("{{agentName}}", agent["name"]).replace(
+        "{{agentInstructions}}", agent_instructions
+    )
 
     user_prompt = build_task_prompt(
         task,
         resolved_inputs,
         context_from_dependencies=context_from_dependencies,
         workspace_file_hint=workspace_file_hint,
+        trigger_context=trigger_context,
         prompt_overrides=prompt_overrides or (task or {}).get("prompt_overrides") or {},
     )
     llm_prompt_trace: List[Dict[str, Any]] = []
@@ -580,7 +780,10 @@ async def _execute_step_direct(
             step_connector_bindings=task.get("tool_bindings"),
         )
 
-        if execution_mode in ("replay_strict", "replay_flex", "replay_adaptive") and validated_replay:
+        if (
+            execution_mode in ("replay_strict", "replay_flex", "replay_adaptive")
+            and validated_replay
+        ):
             logger.info(
                 "[%s] REPLAY_PATH_SELECTED",
                 task_id,
@@ -591,8 +794,15 @@ async def _execute_step_direct(
                 available_tools=[tool.name for tool in lc_tools],
             )
             if not lc_tools:
-                raise ValueError(f"Validated replay for task {task_id} cannot run because no tools are configured")
-            strict_response, components, tool_trace, synthesis_context = await _execute_replay_tool_calls(
+                raise ValueError(
+                    f"Validated replay for task {task_id} cannot run because no tools are configured"
+                )
+            (
+                strict_response,
+                components,
+                tool_trace,
+                synthesis_context,
+            ) = await _execute_replay_tool_calls(
                 lc_tools,
                 collector,
                 validated_replay,
@@ -605,7 +815,9 @@ async def _execute_step_direct(
                     "current_query": "",
                     "dependency_context": context_from_dependencies,
                     "reference_task_title": validated_replay.get("task_title", ""),
-                    "reference_task_description": validated_replay.get("reference_task_description", ""),
+                    "reference_task_description": validated_replay.get(
+                        "reference_task_description", ""
+                    ),
                 },
                 settings=settings,
                 model_name=model_name,
@@ -614,20 +826,24 @@ async def _execute_step_direct(
             )
             if execution_mode in ("replay_flex", "replay_adaptive"):
                 logger.info("[%s] REPLAY_FLEX_FINAL_SYNTHESIS", task_id)
-                format_guide = (validated_replay.get("output_format_guide") or "").strip()
+                format_guide = (
+                    validated_replay.get("output_format_guide") or ""
+                ).strip()
                 replay_system_prompt = resolve_prompt_template(
                     prompt_registry,
-                    'replay.final_synthesis',
-                    field='systemTemplate',
+                    "replay.final_synthesis",
+                    field="systemTemplate",
                     fallback=system_prompt,
                 )
                 replay_user_prefix = resolve_prompt_template(
                     prompt_registry,
-                    'replay.final_synthesis',
-                    field='userTemplate',
-                    fallback='Use the following replayed tool execution results to produce the final answer.',
+                    "replay.final_synthesis",
+                    field="userTemplate",
+                    fallback="Use the following replayed tool execution results to produce the final answer.",
                 )
-                replay_user_prefix = replay_user_prefix.replace('{{synthesisContext}}', synthesis_context)
+                replay_user_prefix = replay_user_prefix.replace(
+                    "{{synthesisContext}}", synthesis_context
+                )
                 format_instruction = ""
                 if validated_replay.get("preserve_output_format") and format_guide:
                     format_instruction = (
@@ -636,27 +852,59 @@ async def _execute_step_direct(
                         "Keep the structure and presentation style, but refresh the content from the current replay evidence only."
                     )
                 replay_user_prompt = (
-                    f"{user_prompt}\n\n"
-                    f"{replay_user_prefix}"
-                    f"{format_instruction}"
+                    f"{user_prompt}\n\n{replay_user_prefix}{format_instruction}"
                 )
                 response, usage = await _llm_call(
-                    settings, model_name, replay_system_prompt, replay_user_prompt,
-                    temperature=temperature, prompt_trace=llm_prompt_trace, stage="replay_final_synthesis", on_progress=on_progress
+                    settings,
+                    model_name,
+                    replay_system_prompt,
+                    replay_user_prompt,
+                    temperature=temperature,
+                    prompt_trace=llm_prompt_trace,
+                    stage="replay_final_synthesis",
+                    on_progress=on_progress,
                 )
             else:
                 response = strict_response
-                usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": ""}
+                usage = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "model": "",
+                }
         elif lc_tools:
-            logger.info(f"[{task_id}] Executing with real tools", count=len(lc_tools),
-                        tools=[t.name for t in lc_tools])
-            response, components, usage, tool_trace, llm_prompt_trace = await _execute_with_tools(
-                settings, model_name, system_prompt, user_prompt, lc_tools, collector, temperature=temperature, on_progress=on_progress
+            logger.info(
+                f"[{task_id}] Executing with real tools",
+                count=len(lc_tools),
+                tools=[t.name for t in lc_tools],
+            )
+            (
+                response,
+                components,
+                usage,
+                tool_trace,
+                llm_prompt_trace,
+            ) = await _execute_with_tools(
+                settings,
+                model_name,
+                system_prompt,
+                user_prompt,
+                lc_tools,
+                task_id=task_id,
+                collector=collector,
+                temperature=temperature,
+                on_progress=on_progress,
             )
         else:
             response, usage = await _llm_call(
-                settings, model_name, system_prompt, user_prompt,
-                temperature=temperature, prompt_trace=llm_prompt_trace, stage="task_direct_completion", on_progress=on_progress
+                settings,
+                model_name,
+                system_prompt,
+                user_prompt,
+                temperature=temperature,
+                prompt_trace=llm_prompt_trace,
+                stage="task_direct_completion",
+                on_progress=on_progress,
             )
             components = []
             tool_trace = []
@@ -666,14 +914,20 @@ async def _execute_step_direct(
             or agent.get("name") == "Visualizer Agent"
             or "visualizer_agent" in (agent.get("name") or "").lower()
         )
+        if not is_visualizer:
+            components = _attach_result_text_for_citations(response, components)
         if is_visualizer and response:
-            components.insert(0, {
-                "type": "web_preview",
-                "data": {"content": response},
-            })
+            components.insert(
+                0,
+                {
+                    "type": "web_preview",
+                    "data": {"content": response},
+                },
+            )
 
         artifacts: List[Dict[str, Any]] = []
-        if _task_requires_structured_output_synthesis(task):
+        run_synthesis = bool(_get_declared_output_ports(task)) or _task_requires_structured_output_synthesis(task)
+        if run_synthesis:
             structured_outputs = await _synthesize_structured_outputs(
                 settings,
                 model_name,
@@ -683,10 +937,11 @@ async def _execute_step_direct(
                 prompt_trace=llm_prompt_trace,
                 prompt_overrides=prompt_overrides or task.get("prompt_overrides") or {},
             )
-            if not structured_outputs and (str(response or "").strip() or _collect_generated_artifacts(components)):
+            if not structured_outputs and (
+                str(response or "").strip() or _collect_generated_artifacts(components)
+            ):
                 logger.warning(
-                    f"[{task_id}] Structured output synthesis returned empty for semantically ambiguous output ports; "
-                    f"falling back to component-level artifact extraction",
+                    f"[{task_id}] Structured output synthesis returned empty; no artifacts will be emitted on declared ports",
                 )
                 structured_outputs = []
             artifacts = _build_task_artifacts_from_structured_outputs(
@@ -762,6 +1017,7 @@ async def _execute_with_tools(
     system_prompt: str,
     user_prompt: str,
     tools: List,
+    task_id: str = "",
     collector=None,
     temperature: float = 0.7,
     on_progress: Optional[StepProgressCallback] = None,
@@ -784,7 +1040,12 @@ async def _execute_with_tools(
 
     tool_map = {t.name: t for t in tools}
     all_components = []
-    total_usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": ""}
+    total_usage = {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "model": "",
+    }
     tool_trace = []
     prompt_trace: List[Dict[str, Any]] = []
 
@@ -802,7 +1063,9 @@ async def _execute_with_tools(
             ],
         )
         if on_progress is not None:
-            response = await _stream_chat_response(llm_with_tools, messages, on_progress)
+            response = await _stream_chat_response(
+                llm_with_tools, messages, on_progress
+            )
             if response is None:
                 response = await llm_with_tools.ainvoke(messages)
         else:
@@ -816,7 +1079,13 @@ async def _execute_with_tools(
         total_usage["model"] = iter_usage["model"] or total_usage["model"]
 
         if not response.tool_calls:
-            return response.content or "", all_components, total_usage, tool_trace, prompt_trace
+            return (
+                response.content or "",
+                all_components,
+                total_usage,
+                tool_trace,
+                prompt_trace,
+            )
 
         logger.info(
             "Tool calls in iteration",
@@ -826,50 +1095,83 @@ async def _execute_with_tools(
 
         for tool_call in response.tool_calls:
             tool = tool_map.get(tool_call["name"])
-            pending_tool_trace = tool_trace + [{
-                "call_index": len(tool_trace) + 1,
-                "tool_name": tool_call["name"],
-                "args": tool_call.get("args", {}),
-                "output_summary": "Running...",
-            }]
+            pending_tool_trace = tool_trace + [
+                {
+                    "call_index": len(tool_trace) + 1,
+                    "tool_name": tool_call["name"],
+                    "args": tool_call.get("args", {}),
+                    "output_summary": "Running...",
+                }
+            ]
             if on_progress is not None:
-                await on_progress({
-                    "tool_trace": pending_tool_trace,
-                    "components": list(all_components),
-                })
+                await on_progress(
+                    {
+                        "tool_trace": pending_tool_trace,
+                        "components": list(all_components),
+                    }
+                )
             if tool:
                 try:
                     result = await tool.ainvoke(tool_call["args"])
                 except Exception as e:
                     result = f"Error executing tool '{tool_call['name']}': {e}"
-                    logger.error("Tool execution error", tool=tool_call["name"], error=str(e))
+                    logger.error(
+                        "Tool execution error", tool=tool_call["name"], error=str(e)
+                    )
             else:
                 result = f"Unknown tool: {tool_call['name']}"
                 logger.warning("Unknown tool called", tool=tool_call["name"])
 
-            messages.append(ToolMessage(
-                content=str(result),
-                tool_call_id=tool_call["id"],
-            ))
+            messages.append(
+                ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_call["id"],
+                )
+            )
 
-            tool_trace.append({
-                "call_index": len(tool_trace) + 1,
-                "tool_name": tool_call["name"],
-                "args": tool_call.get("args", {}),
-                "output_summary": _summarize_tool_result(result),
-            })
+            tool_trace.append(
+                {
+                    "call_index": len(tool_trace) + 1,
+                    "tool_name": tool_call["name"],
+                    "args": tool_call.get("args", {}),
+                    "output_summary": _summarize_tool_result(result),
+                }
+            )
 
             if collector:
-                all_components.extend(collector.get_and_clear())
+                new_components = collector.get_and_clear()
+                all_components.extend(new_components)
+                citation_components = [
+                    component
+                    for component in new_components
+                    if isinstance(component, dict)
+                    and component.get("type") == "citation"
+                ]
+                if citation_components:
+                    logger.warning(
+                        "[%s] PLAYBOOK_MCP_CITATION_DRAINED tool=%s citation_count=%s citations=%s",
+                        task_id or "unknown_task",
+                        tool_call["name"],
+                        len(citation_components),
+                        citation_components,
+                    )
             if on_progress is not None:
-                await on_progress({
-                    "tool_trace": list(tool_trace),
-                    "components": list(all_components),
-                })
+                await on_progress(
+                    {
+                        "tool_trace": list(tool_trace),
+                        "components": list(all_components),
+                    }
+                )
 
     logger.warning("Max tool iterations reached", max=MAX_TOOL_ITERATIONS)
     last_content = messages[-1].content if hasattr(messages[-1], "content") else ""
-    return last_content or "Max tool iterations reached without a final response.", all_components, total_usage, tool_trace, prompt_trace
+    return (
+        last_content or "Max tool iterations reached without a final response.",
+        all_components,
+        total_usage,
+        tool_trace,
+        prompt_trace,
+    )
 
 
 async def _execute_replay_tool_calls(
@@ -935,22 +1237,29 @@ async def _execute_replay_tool_calls(
             tool_args_preview=_summarize_tool_args(tool_args),
         )
         if on_progress is not None:
-            await on_progress({
-                "tool_trace": tool_trace + [{
-                    "call_index": call_index,
-                    "tool_name": tool_name,
-                    "args": tool_args,
-                    "output_summary": "Running...",
-                }],
-                "components": list(all_components),
-            })
+            await on_progress(
+                {
+                    "tool_trace": tool_trace
+                    + [
+                        {
+                            "call_index": call_index,
+                            "tool_name": tool_name,
+                            "args": tool_args,
+                            "output_summary": "Running...",
+                        }
+                    ],
+                    "components": list(all_components),
+                }
+            )
         result = await tool.ainvoke(tool_args)
-        tool_trace.append({
-            "call_index": call_index,
-            "tool_name": tool_name,
-            "args": tool_args,
-            "output_summary": _summarize_tool_result(result),
-        })
+        tool_trace.append(
+            {
+                "call_index": call_index,
+                "tool_name": tool_name,
+                "args": tool_args,
+                "output_summary": _summarize_tool_result(result),
+            }
+        )
         logger.info(
             "[replay_executor] EXECUTE_REPLAY_TOOL_CALL_DONE",
             replay_id=replay_id,
@@ -968,10 +1277,12 @@ async def _execute_replay_tool_calls(
         if collector:
             all_components.extend(collector.get_and_clear())
         if on_progress is not None:
-            await on_progress({
-                "tool_trace": list(tool_trace),
-                "components": list(all_components),
-            })
+            await on_progress(
+                {
+                    "tool_trace": list(tool_trace),
+                    "components": list(all_components),
+                }
+            )
 
     return (
         validated_replay.get("reference_output", "") or "",
@@ -986,13 +1297,15 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
     if not text:
         return {}
     if text.startswith("```"):
-        lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
+        lines = [
+            line for line in text.splitlines() if not line.strip().startswith("```")
+        ]
         text = "\n".join(lines).strip()
     start = text.find("{")
     end = text.rfind("}")
     if start == -1 or end == -1 or end < start:
         raise ValueError("Adaptive replay did not return a JSON object")
-    return json.loads(text[start:end + 1])
+    return json.loads(text[start : end + 1])
 
 
 async def _adapt_replay_tool_args(
@@ -1012,38 +1325,54 @@ async def _adapt_replay_tool_args(
     prompt_registry = load_prompt_registry(prompt_overrides)
     system_prompt = resolve_prompt_template(
         prompt_registry,
-        'replay.adaptive_tool_args',
-        field='systemTemplate',
+        "replay.adaptive_tool_args",
+        field="systemTemplate",
         fallback=(
-            'You rewrite tool arguments for adaptive replay.\n'
-            'Keep the same tool intent and the same JSON shape.\n'
-            'Only change values that are necessary to align with the current task context.\n'
-            'Return JSON only.'
+            "You rewrite tool arguments for adaptive replay.\n"
+            "Keep the same tool intent and the same JSON shape.\n"
+            "Only change values that are necessary to align with the current task context.\n"
+            "Return JSON only."
         ),
     )
     user_prompt_template = resolve_prompt_template(
         prompt_registry,
-        'replay.adaptive_tool_args',
-        field='userTemplate',
+        "replay.adaptive_tool_args",
+        field="userTemplate",
         fallback=(
-            'Tool name: {{toolName}}\nOriginal args JSON:\n{{originalArgsJson}}\n\n'
-            'Reference task title: {{referenceTaskTitle}}\nReference task description: {{referenceTaskDescription}}\n\n'
-            'Current task title: {{taskTitle}}\nCurrent task description: {{taskDescription}}\nCurrent user query: {{currentQuery}}\nDependency context: {{dependencyContext}}\n\n'
-            'Previous replay tool outputs:\n{{previousOutputs}}\n\n'
-            'Return the adapted args as JSON with the same top-level keys as the original args.'
+            "Tool name: {{toolName}}\nOriginal args JSON:\n{{originalArgsJson}}\n\n"
+            "Reference task title: {{referenceTaskTitle}}\nReference task description: {{referenceTaskDescription}}\n\n"
+            "Current task title: {{taskTitle}}\nCurrent task description: {{taskDescription}}\nCurrent user query: {{currentQuery}}\nDependency context: {{dependencyContext}}\n\n"
+            "Previous replay tool outputs:\n{{previousOutputs}}\n\n"
+            "Return the adapted args as JSON with the same top-level keys as the original args."
         ),
     )
     user_prompt = (
-        user_prompt_template
-        .replace('{{toolName}}', str(tool_name))
-        .replace('{{originalArgsJson}}', json.dumps(original_args, ensure_ascii=True, indent=2))
-        .replace('{{referenceTaskTitle}}', str(adaptation_context.get('reference_task_title', '')))
-        .replace('{{referenceTaskDescription}}', str(adaptation_context.get('reference_task_description', '')))
-        .replace('{{taskTitle}}', str(adaptation_context.get('task_title', '')))
-        .replace('{{taskDescription}}', str(adaptation_context.get('task_description', '')))
-        .replace('{{currentQuery}}', str(adaptation_context.get('current_query', '')))
-        .replace('{{dependencyContext}}', str(adaptation_context.get('dependency_context', '')))
-        .replace('{{previousOutputs}}', chr(10).join(previous_outputs[-2:]) if previous_outputs else 'None')
+        user_prompt_template.replace("{{toolName}}", str(tool_name))
+        .replace(
+            "{{originalArgsJson}}",
+            json.dumps(original_args, ensure_ascii=True, indent=2),
+        )
+        .replace(
+            "{{referenceTaskTitle}}",
+            str(adaptation_context.get("reference_task_title", "")),
+        )
+        .replace(
+            "{{referenceTaskDescription}}",
+            str(adaptation_context.get("reference_task_description", "")),
+        )
+        .replace("{{taskTitle}}", str(adaptation_context.get("task_title", "")))
+        .replace(
+            "{{taskDescription}}", str(adaptation_context.get("task_description", ""))
+        )
+        .replace("{{currentQuery}}", str(adaptation_context.get("current_query", "")))
+        .replace(
+            "{{dependencyContext}}",
+            str(adaptation_context.get("dependency_context", "")),
+        )
+        .replace(
+            "{{previousOutputs}}",
+            chr(10).join(previous_outputs[-2:]) if previous_outputs else "None",
+        )
     )
     response_text, _usage = await _llm_call(
         settings,

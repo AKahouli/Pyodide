@@ -1,6 +1,8 @@
 
 # Playbook Architecture
 
+> **Slug:** `playbook` | **Status:** 🚧 draft | **Last Updated:** 2026-04-22 00:00 UTC
+
 This folder documents the current playbook system and the integration points an AI coding agent needs to extend it safely.
 
 ## Overview
@@ -127,6 +129,16 @@ Do not collapse edge identity to node ids only. Multiple edges between the same 
 - `POST /playbooks/:id/executions/:executionId/resume-from-step`
 - `GET /playbooks/:id/executions`
 - `GET /playbooks/:id/executions/:executionId`
+
+## Mail Trigger Auto-Renew Cutoff
+
+Mail trigger subscriptions support an optional `autoRenewUntil` cutoff.
+
+- The backend stores the cutoff on the playbook mail trigger config and serializes it back to the frontend as an ISO string.
+- The sync-subscription path rejects past cutoffs with a `400 Bad Request`.
+- The renewal service skips playbooks whose cutoff has already passed.
+- The Microsoft Graph client caps subscription expiration at the earlier of the Graph renewal window and the configured cutoff.
+- The frontend date picker sends a local calendar date as an end-of-day UTC cutoff.
 
 ### Replay / Validation
 

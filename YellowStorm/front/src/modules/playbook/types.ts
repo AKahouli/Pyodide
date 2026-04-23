@@ -50,6 +50,9 @@ export interface TaskTemplate {
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
+  executionMode?: TaskExecutionMode;
+  assignedAgentId?: string | null;
+  selectedAction?: SelectedAction;
 }
 
 // ===== Domain Entities =====
@@ -71,11 +74,16 @@ export interface InputFile {
   };
 }
 
+export type TaskExecutionMode = 'agent' | 'action';
+export type SelectedAction = 'index' | 'delete' | 'read';
+
 export interface PlaybookTask {
   id: string;
   title: string;
   description: string;
   assignedAgentId: string | null;
+  executionMode?: TaskExecutionMode;
+  selectedAction?: SelectedAction;
   executionOrder: number;
   positionX: number;
   positionY: number;
@@ -186,6 +194,93 @@ export interface ExecutionScheduleData {
   advanced: AdvancedSchedulePayloadData | null;
 }
 
+export interface PlaybookManualTrigger {
+  type: 'manual';
+  enabled: true;
+}
+
+export interface PlaybookScheduleTrigger {
+  type: 'schedule';
+  enabled: boolean;
+  schedule: ExecutionScheduleData | null;
+}
+
+export interface MailAttachmentWorkspaceImport {
+  workspaceDocumentId: string | null;
+  filename: string;
+  finalFilename: string | null;
+  mimeType: string | null;
+  size: number | null;
+  sourcePath: string | null;
+  collisionResolved: boolean;
+  error: string | null;
+}
+
+export interface MailMessageAttachment {
+  providerAttachmentId: string;
+  filename: string;
+  mimeType: string | null;
+  size: number | null;
+  isInline: boolean;
+  workspaceImport: MailAttachmentWorkspaceImport | null;
+}
+
+export interface MailTriggerRuntimePayload {
+  provider: 'm365';
+  mailboxAppKey: string;
+  providerMessageId: string;
+  providerThreadId: string | null;
+  receivedAt: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  from: { name: string | null; address: string };
+  to: Array<{ name: string | null; address: string }>;
+  cc: Array<{ name: string | null; address: string }>;
+  hasAttachments: boolean;
+  attachments: MailMessageAttachment[];
+}
+
+export interface PlaybookMailTriggerNodeInput {
+  trigger: {
+    type: 'mail';
+    occurredAt: string;
+  };
+  message: MailTriggerRuntimePayload;
+}
+
+export interface PlaybookMailTrigger {
+  type: 'mail';
+  enabled: boolean;
+  available: boolean;
+  config: {
+    enabled: boolean;
+    mailboxAppKey: string | null;
+    notificationUrl: string | null;
+    autoRenewUntil: string | null;
+    attachmentImportEnabled: boolean;
+    allowedAttachmentExtensions: string[];
+    filters: {
+      from: string[];
+      subjectContains: string[];
+      bodyContains: string[];
+      hasAttachments: boolean | null;
+    };
+    runtimeEnabled: boolean;
+    subscriptionId: string | null;
+    subscriptionClientState: string | null;
+    subscriptionExpiresAt: string | null;
+    runtimePayloadSchema: PlaybookMailTriggerNodeInput | null;
+  } | null;
+}
+
+export type PlaybookTrigger = PlaybookManualTrigger | PlaybookScheduleTrigger | PlaybookMailTrigger;
+
+export interface PlaybookTriggersData {
+  automatedTriggerType: 'schedule' | 'mail' | null;
+  triggers: PlaybookTrigger[];
+}
+
 /** Body for PUT /playbooks/:id/schedule (aligns with backend UpsertPlaybookScheduleDto). */
 export interface UpsertPlaybookScheduleData {
   enabled: boolean;
@@ -197,6 +292,25 @@ export interface UpsertPlaybookScheduleData {
   advanced?: AdvancedSchedulePayloadData;
 }
 
+export interface UpsertPlaybookMailTriggerData {
+  enabled: boolean;
+  mailboxAppKey?: string;
+  autoRenewUntil?: string | null;
+  attachmentImportEnabled?: boolean;
+  allowedAttachmentExtensions?: string[];
+  filters?: {
+    from?: string[];
+    subjectContains?: string[];
+    bodyContains?: string[];
+    hasAttachments?: boolean | null;
+  };
+}
+
+export interface SyncPlaybookMailSubscriptionData {
+  notificationUrl?: string;
+  autoRenewUntil?: string | null;
+}
+
 export interface PlaybookSummary {
   id: string;
   name: string;
@@ -205,6 +319,7 @@ export interface PlaybookSummary {
   isFavorite: boolean;
   /** True when the playbook has an enabled execution schedule (list API). */
   scheduleEnabled: boolean;
+  automatedTriggerType?: 'schedule' | 'mail' | null;
   /** Latest known execution state for the list badge. */
   executionStatus?: ExecutionStatus | null;
   integrationToken?: string | null;
@@ -234,11 +349,14 @@ export interface Playbook {
   description: string;
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
+  reflectionEnabled: boolean;
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;
   isActive: boolean;
   executionSchedule: ExecutionScheduleData | null;
+  triggers: PlaybookTrigger[];
+  automatedTriggerType: 'schedule' | 'mail' | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -384,6 +502,13 @@ export interface TaskResult {
     safeAutoFixType: string | null;
     actionType: 'evaluate' | 'optimize_step' | 'stop';
     stopReason?: string | null;
+  }>;
+  advisorOptimizationHistory?: Array<{
+    turn: number;
+    createdAt: string;
+    changedFields: string[];
+    beforeTask: Record<string, unknown>;
+    afterTask: Record<string, unknown>;
   }>;
   lastAdvisorAction?: string | null;
   lastAdvisorScoreDelta?: number | null;
@@ -766,6 +891,10 @@ export interface UpdatePlaybookData {
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
   workspaces?: string[];
+  reflectionEnabled?: boolean;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
 }
 
 export interface ExecutePlaybookData {
@@ -874,6 +1003,7 @@ export interface PlaybookState {
   currentExecutionLoading: boolean;
   executionCache: Record<string, PlaybookExecution>;
   executionHistory: PlaybookExecutionSummary[];
+  executionHistoryByPlaybook: Record<string, PlaybookExecutionSummary[]>;
   executionsLoading: boolean;
   executingPlaybookIds: string[];
   isGenerating: boolean;
@@ -893,9 +1023,13 @@ export interface PlaybookState {
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
   canvasSyncVersion: number;
-  /** Saving schedule (PUT/DELETE /playbooks/:id/schedule) */
-  scheduleSaving: boolean;
-  scheduleError: string | null;
+  /** Saving automated trigger configuration */
+  triggerSaving: boolean;
+  triggerError: string | null;
+  /** Node templates for canvas toolbar */
+  nodeTemplates: TaskTemplate[];
+  nodeTemplatesLoading: boolean;
+  nodeTemplatesLoadedAt: number;
 }
 
 export interface PlaybookActions {
@@ -911,8 +1045,11 @@ export interface PlaybookActions {
   clonePlaybook: (id: string) => Promise<Playbook>;
   toggleFavorite: (id: string) => Promise<void>;
   bulkDeletePlaybooks: (ids: string[]) => Promise<void>;
-  upsertPlaybookSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
-  clearPlaybookSchedule: (playbookId: string) => Promise<void>;
+  upsertPlaybookTriggerSchedule: (playbookId: string, data: UpsertPlaybookScheduleData) => Promise<void>;
+  clearPlaybookTriggerSchedule: (playbookId: string) => Promise<void>;
+  upsertPlaybookTriggerMail: (playbookId: string, data: UpsertPlaybookMailTriggerData) => Promise<void>;
+  clearPlaybookTriggerMail: (playbookId: string) => Promise<void>;
+  syncPlaybookTriggerMailSubscription: (playbookId: string, data: SyncPlaybookMailSubscriptionData) => Promise<void>;
 
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;
@@ -967,6 +1104,7 @@ export interface PlaybookActions {
     taskId: string,
     data: UpdateOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
+  deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
   updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
@@ -1010,6 +1148,10 @@ export interface PlaybookActions {
   setWorkspaceExplorerOpen: (open: boolean) => void;
   addInputFileToTask: (taskId: string, inputFile: InputFile) => void;
   removeInputFileFromTask: (taskId: string, inputFileId: string) => void;
+
+  // Node Templates
+  fetchNodeTemplates: () => Promise<void>;
+  invalidateNodeTemplates: () => void;
 
   // Connector Bindings
   connectorSidebarOpen: boolean;

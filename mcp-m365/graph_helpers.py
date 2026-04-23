@@ -166,6 +166,7 @@ def normalize_drive_item(
 ) -> dict[str, Any]:
     parent_ref = raw.get("parentReference") or {}
     site_id = parent_ref.get("siteId") or (raw.get("sharepointIds") or {}).get("siteId")
+    sharepoint_ids = raw.get("sharepointIds") or {}
     file_info = raw.get("file") or {}
     return {
         "siteId": site_id,
@@ -173,6 +174,9 @@ def normalize_drive_item(
         "itemId": raw.get("id", ""),
         "name": raw.get("name", ""),
         "webUrl": raw.get("webUrl", ""),
+        "listItemUniqueId": sharepoint_ids.get("listItemUniqueId", ""),
+        "listId": sharepoint_ids.get("listId", ""),
+        "siteUrl": parent_ref.get("siteUrl", ""),
         "mimeType": file_info.get("mimeType", ""),
         "size": raw.get("size", 0),
         "isFolder": "folder" in raw,

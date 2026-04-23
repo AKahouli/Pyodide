@@ -10,6 +10,8 @@ import { NotFoundException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
+import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
+import { PlaybookMailGraphClientService } from './playbook-mail-graph-client.service';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -157,6 +159,8 @@ describe('PlaybookService', () => {
   let loggerService: Record<string, jest.Mock>;
   let replayService: Record<string, jest.Mock>;
   let outputFormatService: Record<string, jest.Mock>;
+  let connectedAppTokenService: Record<string, jest.Mock>;
+  let playbookMailGraphClientService: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     playbookModel = {
@@ -198,6 +202,22 @@ describe('PlaybookService', () => {
       getActiveTemplates: jest.fn().mockResolvedValue(new Map()),
     };
 
+    connectedAppTokenService = {
+      getMailboxCapability: jest.fn().mockResolvedValue({
+        connected: false,
+        mailboxReady: false,
+        missingScopes: ['mail.read'],
+        grantedScopes: [],
+      }),
+    };
+
+    playbookMailGraphClientService = {
+      deleteSubscription: jest.fn(),
+      renewSubscription: jest.fn(),
+      createSubscription: jest.fn(),
+      fetchMailMessages: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlaybookService,
@@ -207,6 +227,8 @@ describe('PlaybookService', () => {
         { provide: LoggerService, useValue: loggerService },
         { provide: PlaybookReplayService, useValue: replayService },
         { provide: PlaybookOutputFormatService, useValue: outputFormatService },
+        { provide: ConnectedAppTokenService, useValue: connectedAppTokenService },
+        { provide: PlaybookMailGraphClientService, useValue: playbookMailGraphClientService },
       ],
     }).compile();
 
@@ -351,6 +373,69 @@ describe('PlaybookService', () => {
       expect(result.edges).toHaveLength(1);
       expect(result.workspaces).toEqual([MOCK_WORKSPACE_ID]);
       expect(result.createdBy).toBe(MOCK_USER_ID);
+      expect(result.triggers.find((trigger) => trigger.type === 'mail')).toEqual({
+        type: 'mail',
+        enabled: false,
+        available: false,
+        config: {
+          attachmentImportEnabled: false,
+          allowedAttachmentExtensions: [],
+          enabled: false,
+          mailboxAppKey: null,
+          notificationUrl: null,
+          autoRenewUntil: null,
+          filters: {
+            from: [],
+            subjectContains: [],
+            bodyContains: [],
+            hasAttachments: null,
+          },
+          runtimeEnabled: false,
+          subscriptionId: null,
+          subscriptionClientState: null,
+          subscriptionExpiresAt: null,
+          runtimePayloadSchema: null,
+        },
+      });
+    });
+
+    it('should expose mail trigger availability when mailbox capability is ready', async () => {
+      connectedAppTokenService.getMailboxCapability.mockResolvedValueOnce({
+        connected: true,
+        mailboxReady: true,
+        providerEmail: 'owner@example.com',
+        missingScopes: [],
+        grantedScopes: ['Mail.Read'],
+      });
+      const chain = createQueryChain(makeMockPlaybook());
+      playbookModel.findById.mockReturnValue(chain);
+
+      const result = await service.findById(MOCK_PLAYBOOK_ID);
+
+      expect(result.triggers.find((trigger) => trigger.type === 'mail')).toEqual({
+        type: 'mail',
+        enabled: false,
+        available: true,
+        config: {
+          attachmentImportEnabled: false,
+          allowedAttachmentExtensions: [],
+          enabled: false,
+          mailboxAppKey: null,
+          notificationUrl: null,
+          autoRenewUntil: null,
+          filters: {
+            from: [],
+            subjectContains: [],
+            bodyContains: [],
+            hasAttachments: null,
+          },
+          runtimeEnabled: false,
+          subscriptionId: null,
+          subscriptionClientState: null,
+          subscriptionExpiresAt: null,
+          runtimePayloadSchema: null,
+        },
+      });
     });
 
     it('should throw NotFoundException for non-existent playbook', async () => {
@@ -527,14 +612,15 @@ describe('PlaybookService', () => {
       expect(lastExecMatch).toBeDefined();
     });
 
-    it('should not add execution lookup for default sort', async () => {
+    it('should still project schedule-enabled summaries for default sort', async () => {
       playbookModel.aggregate.mockResolvedValue([{ metadata: [], data: [] }]);
 
       await service.findAllByUser(MOCK_USER_ID, {});
 
       const pipeline = playbookModel.aggregate.mock.calls[0][0];
-      const lookupStage = pipeline.find((s: any) => s.$lookup);
-      expect(lookupStage).toBeUndefined();
+      const projectStage = pipeline.find((s: any) => s.$facet?.data?.some?.((entry: any) => entry.$project));
+      const dataProject = projectStage.$facet.data.find((entry: any) => entry.$project)?.$project;
+      expect(dataProject.scheduleEnabled).toBeDefined();
     });
 
     it('should respect custom page and limit', async () => {
@@ -623,6 +709,38 @@ describe('PlaybookService', () => {
       expect(setArg).toEqual({ name: 'Only Name' });
       expect(setArg.description).toBeUndefined();
       expect(setArg.tasks).toBeUndefined();
+    });
+
+    it('should persist advisor autopilot settings when provided', async () => {
+      const chain = createQueryChain(
+        makeMockPlaybook({
+          advisorAutopilotEnabled: true,
+          advisorAutopilotTargetScore: 95,
+          advisorAutopilotMaxTurns: 3,
+        }),
+      );
+      playbookModel.findByIdAndUpdate.mockReturnValue(chain);
+
+      await service.update(MOCK_PLAYBOOK_ID, {
+        advisorAutopilotEnabled: true,
+        advisorAutopilotTargetScore: 95,
+        advisorAutopilotMaxTurns: 3,
+      });
+
+      const setArg = playbookModel.findByIdAndUpdate.mock.calls[0][1].$set;
+      expect(setArg.advisorAutopilotEnabled).toBe(true);
+      expect(setArg.advisorAutopilotTargetScore).toBe(95);
+      expect(setArg.advisorAutopilotMaxTurns).toBe(3);
+    });
+
+    it('should persist reflection setting when provided', async () => {
+      const chain = createQueryChain(makeMockPlaybook({ reflectionEnabled: false }));
+      playbookModel.findByIdAndUpdate.mockReturnValue(chain);
+
+      await service.update(MOCK_PLAYBOOK_ID, { reflectionEnabled: false });
+
+      const setArg = playbookModel.findByIdAndUpdate.mock.calls[0][1].$set;
+      expect(setArg.reflectionEnabled).toBe(false);
     });
 
     it('should map workspace strings to ObjectIds', async () => {

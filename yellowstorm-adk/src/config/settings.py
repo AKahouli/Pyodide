@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     lINKUP_API_KEY: str
     WEB_SEARCH_PROMPT: str
     API_URL: str
+    API_ADK_URL: str
     LITELLM_API_BASE_URL: str
     LITELLM_API_SECRET_KEY: str
     ATTRIBUT_EXTRACT_MODEL: str = "gpt-5.4-mini"
@@ -45,16 +46,16 @@ class Settings(BaseSettings):
     MICROSANDBOX_MCP_URL: Optional[str] = None
     MICROSANDBOX_DOCUMENT_SERVER_URL: Optional[str] = None
     MICROSANDBOX_DOCKER_IMAGE: Optional[str] = None
-    MAX_CONCURRENCY :int= 50
-    MAX_QUEUE_LENGTH : int = 500
-    APPLICATION_INSIGHTS_LOG : bool = False
-    DD_TRACE_ENABLED : bool = False
+    MAX_CONCURRENCY: int = 50
+    MAX_QUEUE_LENGTH: int = 500
+    APPLICATION_INSIGHTS_LOG: bool = False
+    DD_TRACE_ENABLED: bool = False
     APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = None
     APPLICATION_INSIGHTS_LOG_CONFIG_PATH: str = "./src/logger/app_insight_logging.json"
 
-    LANGFUSE_HOST : str
-    LANGFUSE_SECRET_KEY : str
-    LANGFUSE_PUBLIC_KEY :str
+    LANGFUSE_HOST: str
+    LANGFUSE_SECRET_KEY: str
+    LANGFUSE_PUBLIC_KEY: str
     # Authentication to get token
     AUTH_USERNAME: str
     AUTH_PASSWORD: str
@@ -71,7 +72,8 @@ class Settings(BaseSettings):
     CELERY_WORKER_CONCURRENCY: int = 4
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30 
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    NESTJS_JWT_SECRET: Optional[str] = None
     # Ollama
     OLLAMA_API_BASE_URL: Optional[str] = None
     OLLAMA_API_KEY: Optional[str] = None
@@ -90,19 +92,21 @@ class Settings(BaseSettings):
 
     # Embedding Configuration
     FAKE_EMBEDDINGS: bool = False
-    ENABLE_POSTGRESQL_LOGGING: bool=True
-    POSTGRESQL_LOG_BATCH_SIZE: int =50
-    POSTGRESQL_LOG_FLUSH_INTERVAL: float=10.0
-    POSTGRESQL_LOG_POOL_SIZE: int=5
-    POSTGRESQL_LOG_MAX_OVERFLOW: int=10
+    ENABLE_POSTGRESQL_LOGGING: bool = True
+    POSTGRESQL_LOG_BATCH_SIZE: int = 50
+    POSTGRESQL_LOG_FLUSH_INTERVAL: float = 10.0
+    POSTGRESQL_LOG_POOL_SIZE: int = 5
+    POSTGRESQL_LOG_MAX_OVERFLOW: int = 10
 
     # Database Connection Pool Settings
-    DB_MAX_CONNECTIONS: int = 3000      # PostgreSQL max_connections setting
-    DB_POOL_SIZE: int = 100             # Base number of connections in pool
-    DB_POOL_MAX_OVERFLOW: int = 50      # Additional connections beyond pool_size
-    DB_POOL_TIMEOUT: int = 5            # Seconds to wait for connection from pool
-    DB_POOL_RECYCLE: int = 1800         # Seconds to recycle connections (30 minutes)
-    DB_POOL_AUTO_SCALE: bool = True     # Auto-scale pool sizes based on workers and max_connections
+    DB_MAX_CONNECTIONS: int = 3000  # PostgreSQL max_connections setting
+    DB_POOL_SIZE: int = 100  # Base number of connections in pool
+    DB_POOL_MAX_OVERFLOW: int = 50  # Additional connections beyond pool_size
+    DB_POOL_TIMEOUT: int = 5  # Seconds to wait for connection from pool
+    DB_POOL_RECYCLE: int = 1800  # Seconds to recycle connections (30 minutes)
+    DB_POOL_AUTO_SCALE: bool = (
+        True  # Auto-scale pool sizes based on workers and max_connections
+    )
 
     # Neo4j
     NEO4J_HOST: Optional[str] = None
@@ -130,306 +134,364 @@ class Settings(BaseSettings):
     # gRPC Configuration
     GRPC_ENABLED: bool = True
     GRPC_PORT: int = 50051
+    PLAYBOOK_STREAM_QUEUE_MAXSIZE: int = 128
+    STEP_STREAM_QUEUE_MAXSIZE: int = 64
 
     # External API Configuration for specific brain_ids
     EXTERNAL_API_BRAIN_IDS: List[str] = []  # Brain IDs requiring external routing
     EXTERNAL_API_URL: str  # URL of external API endpoint
-    EXTERNAL_API_AGENT_NAME: str = "DPP_MOA"  # Default agent name for responses (fallback)
-    EXTERNAL_API_BRAIN_AGENT_MAPPING: Dict[str, str] = {}  # Mapping of brain_id to agent_name
+    EXTERNAL_API_AGENT_NAME: str = (
+        "DPP_MOA"  # Default agent name for responses (fallback)
+    )
+    EXTERNAL_API_BRAIN_AGENT_MAPPING: Dict[
+        str, str
+    ] = {}  # Mapping of brain_id to agent_name
 
     # Dynamic Authentication Configuration
-    EXTERNAL_API_AUTH_URL: Optional[str] = None  # Authentication endpoint URL for dynamic token generation
-    EXTERNAL_API_USERNAME: Optional[str] = None  # Username for external API authentication
-    EXTERNAL_API_PASSWORD: Optional[str] = None  # Password for external API authentication
-    BASE64_LIST_ENABLED_BRAIN_IDS: List[str] = ["67c99ad236081d40c152c23d"]  # Brain IDs that enable base64 list processing
+    EXTERNAL_API_AUTH_URL: Optional[str] = (
+        None  # Authentication endpoint URL for dynamic token generation
+    )
+    EXTERNAL_API_USERNAME: Optional[str] = (
+        None  # Username for external API authentication
+    )
+    EXTERNAL_API_PASSWORD: Optional[str] = (
+        None  # Password for external API authentication
+    )
+    BASE64_LIST_ENABLED_BRAIN_IDS: List[str] = [
+        "67c99ad236081d40c152c23d"
+    ]  # Brain IDs that enable base64 list processing
     ADK_ENABLE_PROGRESSIVE_SSE_STREAMING: bool = False
 
-    @field_validator('AZURE_STORAGE_ACCOUNT', mode='before')
+    @field_validator("AZURE_STORAGE_ACCOUNT", mode="before")
     @classmethod
     def validate_azure_storage_account(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("AZURE_STORAGE_ACCOUNT is required and cannot be empty")
         return v
 
-    @field_validator('AZURE_STORAGE_ACCOUNT_KEY', mode='before')
+    @field_validator("AZURE_STORAGE_ACCOUNT_KEY", mode="before")
     @classmethod
     def validate_azure_storage_account_key(cls, v):
-        if not v or v.strip() == '':
-            raise ValueError("AZURE_STORAGE_ACCOUNT_KEY is required and cannot be empty")
+        if not v or v.strip() == "":
+            raise ValueError(
+                "AZURE_STORAGE_ACCOUNT_KEY is required and cannot be empty"
+            )
         return v
 
-    @field_validator('AZURE_DATALAKE_CONNECTION_STRING', mode='before')
+    @field_validator("AZURE_DATALAKE_CONNECTION_STRING", mode="before")
     @classmethod
     def validate_azure_datalake_connection_string(cls, v):
-        if not v or v.strip() == '':
-            raise ValueError("AZURE_DATALAKE_CONNECTION_STRING is required and cannot be empty")
+        if not v or v.strip() == "":
+            raise ValueError(
+                "AZURE_DATALAKE_CONNECTION_STRING is required and cannot be empty"
+            )
         return v
 
-    @field_validator('AZURE_DATALAKE_FILE_SYSTEM_NAME', mode='before')
+    @field_validator("AZURE_DATALAKE_FILE_SYSTEM_NAME", mode="before")
     @classmethod
     def validate_azure_datalake_file_system_name(cls, v):
-        if not v or v.strip() == '':
-            raise ValueError("AZURE_DATALAKE_FILE_SYSTEM_NAME is required and cannot be empty")
+        if not v or v.strip() == "":
+            raise ValueError(
+                "AZURE_DATALAKE_FILE_SYSTEM_NAME is required and cannot be empty"
+            )
         return v
 
-    @field_validator('DATABASE_URL', mode='before')
+    @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def validate_database_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("DATABASE_URL is required and cannot be empty")
 
-        valid_prefixes = ('postgresql://', 'mysql://', 'sqlite://', 'mssql://', 'oracle://','postgresql+asyncpg://')
+        valid_prefixes = (
+            "postgresql://",
+            "mysql://",
+            "sqlite://",
+            "mssql://",
+            "oracle://",
+            "postgresql+asyncpg://",
+        )
         if not v.startswith(valid_prefixes):
-            raise ValueError("DATABASE_URL must be a valid database URL with supported protocol")
+            raise ValueError(
+                "DATABASE_URL must be a valid database URL with supported protocol"
+            )
 
         return v
 
-    @field_validator('lINKUP_API_KEY', mode='before')
+    @field_validator("lINKUP_API_KEY", mode="before")
     @classmethod
     def validate_tavily_api_key(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("TAVILY_API_KEY is required and cannot be empty")
         return v
 
-    @field_validator('WEB_SEARCH_PROMPT', mode='before')
+    @field_validator("WEB_SEARCH_PROMPT", mode="before")
     @classmethod
     def validate_web_search_prompt(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("WEB_SEARCH_PROMPT is required and cannot be empty")
         return v
 
-    @field_validator('API_URL', mode='before')
+    @field_validator("API_URL", mode="before")
     @classmethod
     def validate_api_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("API_URL is required and cannot be empty")
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
                 raise ValueError("API_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("API_URL must use http or https scheme")
         except Exception:
             raise ValueError("API_URL must be a valid URL")
 
         return v
 
-    @field_validator('LITELLM_API_BASE_URL', mode='before')
+    @field_validator("LITELLM_API_BASE_URL", mode="before")
     @classmethod
     def validate_litellm_api_base_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("LITELLM_API_BASE_URL is required and cannot be empty")
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("LITELLM_API_BASE_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "LITELLM_API_BASE_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("LITELLM_API_BASE_URL must use http or https scheme")
         except Exception:
             raise ValueError("LITELLM_API_BASE_URL must be a valid URL")
 
         return v
 
-    @field_validator('LITELLM_API_SECRET_KEY', mode='before')
+    @field_validator("LITELLM_API_SECRET_KEY", mode="before")
     @classmethod
     def validate_litellm_api_secret_key(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("LITELLM_API_SECRET_KEY is required and cannot be empty")
         return v
 
-    @field_validator('EXCEL_MCP_URL', mode='before')
+    @field_validator("EXCEL_MCP_URL", mode="before")
     @classmethod
     def validate_excel_mcp_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("EXCEL_MCP_URL is required and cannot be empty")
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("EXCEL_MCP_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "EXCEL_MCP_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("EXCEL_MCP_URL must use http or https scheme")
         except Exception:
             raise ValueError("EXCEL_MCP_URL must be a valid URL")
 
         return v
 
-    @field_validator('MICROSANDBOX_MCP_URL', mode='before')
+    @field_validator("MICROSANDBOX_MCP_URL", mode="before")
     @classmethod
     def validate_microsandbox_mcp_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             return None
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("MICROSANDBOX_MCP_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "MICROSANDBOX_MCP_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("MICROSANDBOX_MCP_URL must use http or https scheme")
         except Exception:
             raise ValueError("MICROSANDBOX_MCP_URL must be a valid URL")
 
         return v
 
-    @field_validator('MICROSANDBOX_DOCUMENT_SERVER_URL', mode='before')
+    @field_validator("MICROSANDBOX_DOCUMENT_SERVER_URL", mode="before")
     @classmethod
     def validate_microsandbox_document_server_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             return None
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("MICROSANDBOX_DOCUMENT_SERVER_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
-                raise ValueError("MICROSANDBOX_DOCUMENT_SERVER_URL must use http or https scheme")
+                raise ValueError(
+                    "MICROSANDBOX_DOCUMENT_SERVER_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError(
+                    "MICROSANDBOX_DOCUMENT_SERVER_URL must use http or https scheme"
+                )
         except Exception:
             raise ValueError("MICROSANDBOX_DOCUMENT_SERVER_URL must be a valid URL")
 
         return v
 
-    @field_validator('MICROSANDBOX_DOCKER_IMAGE', mode='before')
+    @field_validator("MICROSANDBOX_DOCKER_IMAGE", mode="before")
     @classmethod
     def validate_microsandbox_docker_image(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             return None
 
         return v
 
-    @field_validator('SNOWFLAKE_MCP_URL', mode='before')
+    @field_validator("SNOWFLAKE_MCP_URL", mode="before")
     @classmethod
     def validate_snowflake_mcp_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             return None
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("SNOWFLAKE_MCP_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "SNOWFLAKE_MCP_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("SNOWFLAKE_MCP_URL must use http or https scheme")
         except Exception:
             raise ValueError("SNOWFLAKE_MCP_URL must be a valid URL")
 
         return v
 
-    @field_validator('DATAVIZ_MCP_URL', mode='before')
+    @field_validator("DATAVIZ_MCP_URL", mode="before")
     @classmethod
     def validate_dataviz_mcp_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             return None
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("DATAVIZ_MCP_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "DATAVIZ_MCP_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("DATAVIZ_MCP_URL must use http or https scheme")
         except Exception:
             raise ValueError("DATAVIZ_MCP_URL must be a valid URL")
 
         return v
 
-    @field_validator('CODE_INTERPRETER_BACKEND_URL', mode='before')
+    @field_validator("CODE_INTERPRETER_BACKEND_URL", mode="before")
     @classmethod
     def validate_code_interpreter_backend_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             return None
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("CODE_INTERPRETER_BACKEND_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
-                raise ValueError("CODE_INTERPRETER_BACKEND_URL must use http or https scheme")
+                raise ValueError(
+                    "CODE_INTERPRETER_BACKEND_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
+                raise ValueError(
+                    "CODE_INTERPRETER_BACKEND_URL must use http or https scheme"
+                )
         except Exception:
             raise ValueError("CODE_INTERPRETER_BACKEND_URL must be a valid URL")
 
         return v
 
-    @field_validator('LANGFUSE_HOST', mode='before')
+    @field_validator("LANGFUSE_HOST", mode="before")
     @classmethod
     def validate_langfuse_host(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("LANGFUSE_HOST is required and cannot be empty")
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("LANGFUSE_HOST must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "LANGFUSE_HOST must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("LANGFUSE_HOST must use http or https scheme")
         except Exception:
             raise ValueError("LANGFUSE_HOST must be a valid URL")
 
         return v
 
-    @field_validator('LANGFUSE_SECRET_KEY', mode='before')
+    @field_validator("LANGFUSE_SECRET_KEY", mode="before")
     @classmethod
     def validate_langfuse_secret_key(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("LANGFUSE_SECRET_KEY is required and cannot be empty")
         return v
 
-    @field_validator('LANGFUSE_PUBLIC_KEY', mode='before')
+    @field_validator("LANGFUSE_PUBLIC_KEY", mode="before")
     @classmethod
     def validate_langfuse_public_key(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("LANGFUSE_PUBLIC_KEY is required and cannot be empty")
         return v
 
-    @field_validator('EXTERNAL_API_URL', mode='before')
+    @field_validator("EXTERNAL_API_URL", mode="before")
     @classmethod
     def validate_external_api_url(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("EXTERNAL_API_URL is required and cannot be empty")
 
         try:
             parsed = urlparse(v)
             if not parsed.scheme or not parsed.netloc:
-                raise ValueError("EXTERNAL_API_URL must be a valid URL with scheme and domain")
-            if parsed.scheme not in ('http', 'https'):
+                raise ValueError(
+                    "EXTERNAL_API_URL must be a valid URL with scheme and domain"
+                )
+            if parsed.scheme not in ("http", "https"):
                 raise ValueError("EXTERNAL_API_URL must use http or https scheme")
         except Exception:
             raise ValueError("EXTERNAL_API_URL must be a valid URL")
 
         return v
 
-    @field_validator('EXTERNAL_API_AUTH_URL', mode='before')
+    @field_validator("EXTERNAL_API_AUTH_URL", mode="before")
     @classmethod
     def validate_external_api_auth_url(cls, v):
         if v and v.strip():
             try:
                 parsed = urlparse(v)
                 if not parsed.scheme or not parsed.netloc:
-                    raise ValueError("EXTERNAL_API_AUTH_URL must be a valid URL with scheme and domain")
-                if parsed.scheme not in ('http', 'https'):
-                    raise ValueError("EXTERNAL_API_AUTH_URL must use http or https scheme")
+                    raise ValueError(
+                        "EXTERNAL_API_AUTH_URL must be a valid URL with scheme and domain"
+                    )
+                if parsed.scheme not in ("http", "https"):
+                    raise ValueError(
+                        "EXTERNAL_API_AUTH_URL must use http or https scheme"
+                    )
             except Exception:
                 raise ValueError("EXTERNAL_API_AUTH_URL must be a valid URL")
         return v
 
-    @field_validator('AUTH_USERNAME', mode='before')
+    @field_validator("AUTH_USERNAME", mode="before")
     @classmethod
     def validate_auth_username(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("AUTH_USERNAME is required and cannot be empty")
         return v
-    @field_validator('AUTH_PASSWORD', mode='before')
+
+    @field_validator("AUTH_PASSWORD", mode="before")
     @classmethod
     def validate_auth_password(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("AUTH_PASSWORD is required and cannot be empty")
         return v
-    @field_validator('REDIS_HOST', mode='before')
+
+    @field_validator("REDIS_HOST", mode="before")
     @classmethod
     def validate_redis_host(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("REDIS_HOST is required and cannot be empty")
         return v
-    @field_validator('REDIS_PORT', mode='before')
+
+    @field_validator("REDIS_PORT", mode="before")
     @classmethod
     def validate_redis_port(cls, v):
         if not v:
@@ -442,16 +504,17 @@ class Settings(BaseSettings):
         except (ValueError, TypeError):
             raise ValueError("REDIS_PORT must be a valid 4-digit integer")
 
-    @field_validator('SECRET_KEY', mode='before')
+    @field_validator("SECRET_KEY", mode="before")
     @classmethod
     def validate_secret_key(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("SECRET_KEY is required and cannot be empty")
         return v
-    @field_validator('ALGORITHM', mode='before')
+
+    @field_validator("ALGORITHM", mode="before")
     @classmethod
     def validate_algorithm(cls, v):
-        if not v or v.strip() == '':
+        if not v or v.strip() == "":
             raise ValueError("ALGORITHM is required and cannot be empty")
         return v
 
@@ -469,9 +532,13 @@ class Settings(BaseSettings):
         # Each log handler can use up to pool_size + max_overflow connections
         total_log_connections = 0
         if self.ENABLE_POSTGRESQL_LOGGING:
-            log_connections_per_worker = self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
+            log_connections_per_worker = (
+                self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
+            )
             total_log_connections = self.UVICORN_WORKERS * log_connections_per_worker
-        total_connections = (self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)) + total_log_connections
+        total_connections = (
+            self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)
+        ) + total_log_connections
         safe_limit = int(self.DB_MAX_CONNECTIONS * 0.8)
 
         if total_connections > safe_limit:
@@ -544,9 +611,13 @@ class Settings(BaseSettings):
         # Each log handler can use up to pool_size + max_overflow connections
         total_log_connections = 0
         if self.ENABLE_POSTGRESQL_LOGGING:
-            log_connections_per_worker = self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
+            log_connections_per_worker = (
+                self.POSTGRESQL_LOG_POOL_SIZE + self.POSTGRESQL_LOG_MAX_OVERFLOW
+            )
             total_log_connections = self.UVICORN_WORKERS * log_connections_per_worker
-        total_connections = (self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)) + total_log_connections
+        total_connections = (
+            self.UVICORN_WORKERS * (self.DB_POOL_SIZE + self.DB_POOL_MAX_OVERFLOW)
+        ) + total_log_connections
         safe_limit = int(self.DB_MAX_CONNECTIONS * 0.8)
 
         if total_connections > safe_limit:
@@ -605,7 +676,6 @@ class Settings(BaseSettings):
             return max(0, overflow)
 
         return self.DB_POOL_MAX_OVERFLOW
-
 
 
 ENV_FILES = {

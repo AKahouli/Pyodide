@@ -31,6 +31,7 @@ from src.langgraph_engine.step_executor import (
     normalize_interrupt_action,
     extract_interrupt_message,
     extract_follow_up_question,
+    _attach_result_text_for_citations,
     _task_requires_structured_output_synthesis,
     _synthesize_structured_outputs,
     _build_task_artifacts_from_structured_outputs,
@@ -64,14 +65,18 @@ def _get_clarification_context(
     task_id: str,
 ) -> tuple[List[Dict[str, str]], str]:
     transcripts_by_task = state.get("clarification_transcripts_by_task") or {}
-    description_overrides_by_task = state.get("task_description_overrides_by_task") or {}
+    description_overrides_by_task = (
+        state.get("task_description_overrides_by_task") or {}
+    )
 
     transcript = [
         _normalize_clarification_turn(turn)
         for turn in transcripts_by_task.get(task_id, [])
         if isinstance(turn, dict)
     ]
-    task_description_override = str(description_overrides_by_task.get(task_id) or "").strip()
+    task_description_override = str(
+        description_overrides_by_task.get(task_id) or ""
+    ).strip()
     return transcript, task_description_override
 
 
@@ -84,7 +89,9 @@ def _store_clarification_context(
     # Persist the conversation through LangGraph checkpoints so resumed runs
     # can rebuild the exact clarification context instead of starting over.
     transcripts_by_task = dict(state.get("clarification_transcripts_by_task") or {})
-    description_overrides_by_task = dict(state.get("task_description_overrides_by_task") or {})
+    description_overrides_by_task = dict(
+        state.get("task_description_overrides_by_task") or {}
+    )
     artifacts_by_port = dict(state.get("artifacts_by_port") or {})
     task_outputs = dict(state.get("task_outputs") or {})
     transcripts_by_task[task_id] = list(transcript)
@@ -94,15 +101,18 @@ def _store_clarification_context(
 
     normalized_description = str(task_description or "").strip()
     if normalized_description:
-        artifacts_by_port[f"{task_id}:default"] = [{
-            "port_id": "default",
-            "artifact_kind": "text",
-            "content": normalized_description,
-        }]
+        artifacts_by_port[f"{task_id}:default"] = [
+            {
+                "port_id": "default",
+                "artifact_kind": "text",
+                "content": normalized_description,
+            }
+        ]
         task_outputs[f"{task_id}_output"] = normalized_description
 
     state["artifacts_by_port"] = artifacts_by_port
     state["task_outputs"] = task_outputs
+
 
 _ARTIFACT_KIND_BY_EXTENSION = {
     ".pdf": "document",
@@ -183,7 +193,7 @@ def _normalize_port_id(value: Any) -> str:
 def _infer_artifact_kind(filename: str = "", mime_type: str = "") -> str | None:
     lower_filename = str(filename or "").strip().lower()
     if "." in lower_filename:
-        extension = lower_filename[lower_filename.rfind("."):]
+        extension = lower_filename[lower_filename.rfind(".") :]
         inferred = _ARTIFACT_KIND_BY_EXTENSION.get(extension)
         if inferred:
             return inferred
@@ -222,7 +232,9 @@ def _fuzzy_score(query: str, text: str) -> float:
     return SequenceMatcher(None, normalized_query, normalized_text).ratio()
 
 
-def _infer_output_port_id_from_filename(filename: str, output_ports: List[Dict[str, Any]]) -> str:
+def _infer_output_port_id_from_filename(
+    filename: str, output_ports: List[Dict[str, Any]]
+) -> str:
     for candidate in _filename_tokens(filename):
         for port in output_ports:
             port_id = _normalize_port_id(port.get("id"))
@@ -255,13 +267,19 @@ def _filename_tokens(filename: str) -> List[str]:
 
     tokens = []
     stem = Path(normalized_filename).stem
-    for candidate in [stem, stem.split("-", 1)[1] if stem.startswith(("out-", "in-")) else ""]:
+    for candidate in [
+        stem,
+        stem.split("-", 1)[1] if stem.startswith(("out-", "in-")) else "",
+    ]:
         token = _normalize_port_text(candidate)
         if token and token not in tokens:
             tokens.append(token)
 
     suffix = Path(normalized_filename).suffix.lower()
-    for candidate in [suffix[1:] if suffix else "", *(_FILENAME_PORT_HINTS.get(suffix, []))]:
+    for candidate in [
+        suffix[1:] if suffix else "",
+        *(_FILENAME_PORT_HINTS.get(suffix, [])),
+    ]:
         token = _normalize_port_text(candidate)
         if token and token not in tokens:
             tokens.append(token)
@@ -276,12 +294,17 @@ def _port_matches_filename_token(port: Dict[str, Any], token: str) -> bool:
 
     for candidate in [port.get("id"), port.get("name")]:
         normalized_candidate = _normalize_port_text(candidate)
-        if normalized_candidate and (normalized_candidate == normalized_token or normalized_token in normalized_candidate):
+        if normalized_candidate and (
+            normalized_candidate == normalized_token
+            or normalized_token in normalized_candidate
+        ):
             return True
     return False
 
 
-def _infer_output_port_id_from_filename(filename: str, output_ports: List[Dict[str, Any]]) -> str:
+def _infer_output_port_id_from_filename(
+    filename: str, output_ports: List[Dict[str, Any]]
+) -> str:
     for candidate in _filename_tokens(filename):
         for port in output_ports:
             port_id = _normalize_port_id(port.get("id"))
@@ -305,12 +328,18 @@ def _resolve_output_port(
         return None
 
     task_id = str(task_config.get("id") or "unknown").strip() or "unknown"
-    normalized_port_id = _normalize_port_id(explicit_port_id) if explicit_port_id else ""
+    normalized_port_id = (
+        _normalize_port_id(explicit_port_id) if explicit_port_id else ""
+    )
     normalized_kind = str(preferred_kind or "").strip()
 
     if normalized_port_id:
         selected_port = next(
-            (port for port in output_ports if _normalize_port_id(port.get("id")) == normalized_port_id),
+            (
+                port
+                for port in output_ports
+                if _normalize_port_id(port.get("id")) == normalized_port_id
+            ),
             None,
         )
         if selected_port is None:
@@ -325,8 +354,10 @@ def _resolve_output_port(
         return selected_port
 
     candidates = [
-        port for port in output_ports
-        if not normalized_kind or str(port.get("artifact_kind") or "").strip() == normalized_kind
+        port
+        for port in output_ports
+        if not normalized_kind
+        or str(port.get("artifact_kind") or "").strip() == normalized_kind
     ]
     if len(candidates) == 1:
         return candidates[0]
@@ -334,20 +365,34 @@ def _resolve_output_port(
         inferred_port_id = _infer_output_port_id_from_filename(filename, candidates)
         if inferred_port_id:
             selected_port = next(
-                (port for port in candidates if _normalize_port_id(port.get("id")) == inferred_port_id),
+                (
+                    port
+                    for port in candidates
+                    if _normalize_port_id(port.get("id")) == inferred_port_id
+                ),
                 None,
             )
             if selected_port is not None:
                 return selected_port
     if len(candidates) > 1:
-        query = _normalize_port_text(filename) if filename else _normalize_port_text(component_label)
+        query = (
+            _normalize_port_text(filename)
+            if filename
+            else _normalize_port_text(component_label)
+        )
         if query:
             ranked = sorted(
                 candidates,
-                key=lambda p: max(_fuzzy_score(query, str(p.get(f) or "")) for f in ("id", "name", "description")),
+                key=lambda p: max(
+                    _fuzzy_score(query, str(p.get(f) or ""))
+                    for f in ("id", "name", "description")
+                ),
                 reverse=True,
             )
-            top_score = max(_fuzzy_score(query, str(ranked[0].get(f) or "")) for f in ("id", "name", "description"))
+            top_score = max(
+                _fuzzy_score(query, str(ranked[0].get(f) or ""))
+                for f in ("id", "name", "description")
+            )
             if top_score >= _FUZZY_MATCH_THRESHOLD:
                 return ranked[0]
     if not candidates and skip_if_no_compatible:
@@ -358,7 +403,11 @@ def _resolve_output_port(
         )
 
     default_port = next(
-        (port for port in candidates if _normalize_port_id(port.get("id")) == "default"),
+        (
+            port
+            for port in candidates
+            if _normalize_port_id(port.get("id")) == "default"
+        ),
         None,
     )
     if default_port is not None:
@@ -400,37 +449,55 @@ def _extract_artifacts_from_components(
             mime_type = str(data.get("mime_type") or data.get("mimeType") or "").strip()
             if not file_path or not filename:
                 continue
-            preferred_kind = str(
-                data.get("artifact_kind")
-                or data.get("artifactKind")
-                or _infer_artifact_kind(filename, mime_type)
+            preferred_kind = (
+                str(
+                    data.get("artifact_kind")
+                    or data.get("artifactKind")
+                    or _infer_artifact_kind(filename, mime_type)
+                    or "document"
+                ).strip()
                 or "document"
-            ).strip() or "document"
+            )
             selected_port = _resolve_output_port(
                 task_config,
                 output_ports,
                 preferred_kind=preferred_kind,
-                explicit_port_id=str(data.get("output_port_id") or data.get("outputPortId") or "").strip(),
+                explicit_port_id=str(
+                    data.get("output_port_id") or data.get("outputPortId") or ""
+                ).strip(),
                 filename=filename,
                 component_label=f"artifact '{filename or file_path or 'unnamed'}'",
             )
             port_id = selected_port.get("id", "default") if selected_port else "default"
-            artifact_kind = str(selected_port.get("artifact_kind") if selected_port else preferred_kind) or preferred_kind
-            artifacts.append({
-                "port_id": port_id,
-                "artifact_kind": artifact_kind,
-                "url": file_path,
-                "filename": filename,
-                "mime_type": mime_type,
-            })
+            artifact_kind = (
+                str(
+                    selected_port.get("artifact_kind")
+                    if selected_port
+                    else preferred_kind
+                )
+                or preferred_kind
+            )
+            artifacts.append(
+                {
+                    "port_id": port_id,
+                    "artifact_kind": artifact_kind,
+                    "url": file_path,
+                    "filename": filename,
+                    "mime_type": mime_type,
+                }
+            )
 
         elif comp_type == "text":
             text_content = str(data.get("content", "")).strip()
             if not text_content:
                 continue
-            explicit_text_port_id = str(data.get("output_port_id") or data.get("outputPortId") or "").strip()
+            explicit_text_port_id = str(
+                data.get("output_port_id") or data.get("outputPortId") or ""
+            ).strip()
             if not explicit_text_port_id:
-                text_ports = [p for p in output_ports if p.get("artifact_kind") == "text"]
+                text_ports = [
+                    p for p in output_ports if p.get("artifact_kind") == "text"
+                ]
                 if len(text_ports) > 1:
                     continue
             text_port = _resolve_output_port(
@@ -444,11 +511,13 @@ def _extract_artifacts_from_components(
             if text_port is None:
                 continue
             port_id = text_port.get("id", "default")
-            artifacts.append({
-                "port_id": port_id,
-                "artifact_kind": "text",
-                "content": text_content,
-            })
+            artifacts.append(
+                {
+                    "port_id": port_id,
+                    "artifact_kind": "text",
+                    "content": text_content,
+                }
+            )
 
         elif comp_type == "code":
             code_content = str(data.get("code") or data.get("content") or "").strip()
@@ -458,17 +527,21 @@ def _extract_artifacts_from_components(
                 task_config,
                 output_ports,
                 preferred_kind="code",
-                explicit_port_id=str(data.get("output_port_id") or data.get("outputPortId") or "").strip(),
+                explicit_port_id=str(
+                    data.get("output_port_id") or data.get("outputPortId") or ""
+                ).strip(),
                 component_label="code component",
             )
             if code_port is None:
                 code_port = {"id": "default"}
             port_id = code_port.get("id", "default")
-            artifacts.append({
-                "port_id": port_id,
-                "artifact_kind": "code",
-                "content": code_content,
-            })
+            artifacts.append(
+                {
+                    "port_id": port_id,
+                    "artifact_kind": "code",
+                    "content": code_content,
+                }
+            )
 
     text_output = ""
     for comp in components:
@@ -482,13 +555,19 @@ def _extract_artifacts_from_components(
     has_text_artifact = any(a.get("artifact_kind") == "text" for a in artifacts)
     text_ports = [p for p in output_ports if p.get("artifact_kind") == "text"]
     text_port = text_ports[0] if len(text_ports) == 1 else None
-    if text_output and not has_text_artifact and (text_port is not None or not output_ports):
+    if (
+        text_output
+        and not has_text_artifact
+        and (text_port is not None or not output_ports)
+    ):
         port_id = text_port.get("id", "default") if text_port else "default"
-        artifacts.append({
-            "port_id": port_id,
-            "artifact_kind": "text",
-            "content": text_output,
-        })
+        artifacts.append(
+            {
+                "port_id": port_id,
+                "artifact_kind": "text",
+                "content": text_output,
+            }
+        )
 
     return artifacts
 
@@ -512,14 +591,19 @@ def _build_default_text_artifact(
     else:
         selected_port = next(
             (
-                port for port in output_ports
+                port
+                for port in output_ports
                 if _normalize_port_id(port.get("id")) == "default"
             ),
             None,
         )
 
-    port_id = _normalize_port_id(selected_port.get("id")) if selected_port else "default"
-    artifact_kind = str((selected_port or {}).get("artifact_kind") or "text").strip() or "text"
+    port_id = (
+        _normalize_port_id(selected_port.get("id")) if selected_port else "default"
+    )
+    artifact_kind = (
+        str((selected_port or {}).get("artifact_kind") or "text").strip() or "text"
+    )
     if artifact_kind not in {"text", "code"}:
         return None
 
@@ -546,6 +630,12 @@ class DynamicGraphBuilder:
 
         resolved_inputs = resolve_task_inputs(task_id, task_config, state)
         prompt_parts: List[str] = []
+
+        if resolved_inputs.get("has_port_sources"):
+            workspace_artifacts: list = []
+            for port_state in (resolved_inputs.get("ports") or {}).values():
+                workspace_artifacts.extend(port_state.get("workspace_artifacts") or [])
+            return "", resolved_inputs, workspace_artifacts
 
         # Legacy fallback — keep raw upstream outputs available for playbooks that
         # still rely on input_keys or edge-walk context.
@@ -575,7 +665,9 @@ class DynamicGraphBuilder:
 
             output = state["results"][source_id].get("output", "")
             if output:
-                prompt_parts.append(f"\n\nPrevious task '{source_task['title']}' result:\n{output}")
+                prompt_parts.append(
+                    f"\n\nPrevious task '{source_task['title']}' result:\n{output}"
+                )
                 seen_source_ids.add(source_id)
 
         workspace_artifacts: list = []
@@ -592,7 +684,9 @@ class DynamicGraphBuilder:
     ) -> Callable:
         """Create a node function for a specific task."""
 
-        async def task_node(state: ExecutionState, config: RunnableConfig) -> Dict[str, Any]:
+        async def task_node(
+            state: ExecutionState, config: RunnableConfig
+        ) -> Dict[str, Any]:
             from langchain_openai import ChatOpenAI
             from langgraph.types import interrupt
             from src.config.settings import get_settings
@@ -605,6 +699,10 @@ class DynamicGraphBuilder:
             agent_id = task_config.get("assigned_agent_id")
             start_time = time.time()
             started_at = datetime.utcnow().isoformat() + "Z"
+
+            execution_mode_value = str(
+                task_config.get("execution_mode") or "agent"
+            ).strip().lower()
 
             async def _push_step_update(status, result=None, interrupt_data=None):
                 update: StepUpdate = {
@@ -619,24 +717,82 @@ class DynamicGraphBuilder:
                 try:
                     await on_step_update(update)
                 except Exception:
-                    logger.warning(f"[{task_id}] step_update callback failed", exc_info=True)
+                    logger.warning(
+                        f"[{task_id}] step_update callback failed", exc_info=True
+                    )
 
+            # === ACTION MODE: bypass agent execution ===
+            if execution_mode_value == "action":
+                from src.langgraph_engine.action_executor import execute_action_task
+
+                logger.info(
+                    f"[{task_id}] Action mode detected",
+                    selected_action=task_config.get("selected_action"),
+                    title=task_config.get("title"),
+                )
+
+                await _push_step_update("in_progress")
+
+                action_result = await execute_action_task(
+                    task_config,
+                    task_id=task_id,
+                    start_time=start_time,
+                    started_at=started_at,
+                    workspace_context=state.get("workspace_context"),
+                    trigger_context=state.get("trigger_context"),
+                    edges=state.get("edges"),
+                    upstream_results=list(
+                        (state.get("results") or {}).values()
+                    ),
+                    artifacts_by_port=state.get("artifacts_by_port"),
+                    on_progress=_push_step_update,
+                )
+
+                action_status = action_result.get("status", "failed")
+                step_result = (action_result.get("results") or {}).get(
+                    task_id, {}
+                )
+                await _push_step_update(action_status, result=step_result)
+
+                raw_artifacts = step_result.get("artifacts") or []
+                if raw_artifacts:
+                    port_artifacts: Dict[str, List[Dict[str, Any]]] = {}
+                    for art in raw_artifacts:
+                        port_id = _normalize_port_id(
+                            art.get("port_id", "default")
+                        )
+                        art_key = f"{task_id}:{port_id}"
+                        port_artifacts.setdefault(art_key, []).append(art)
+                    action_result["artifacts_by_port"] = port_artifacts
+
+                return action_result
+
+            # === AGENT MODE: continue with normal agent execution ===
             if not agent_id or agent_id not in state["agents"]:
                 error_msg = f"No agent assigned to task {task_id}"
                 logger.error(f"[{task_id}] {error_msg}")
-                await _push_step_update("failed", result={
-                    "task_id": task_id,
-                    "status": "failed",
-                    "output": "",
-                    "error": error_msg,
-                    "duration_ms": int((time.time() - start_time) * 1000),
-                    "components": [],
-                    "tool_trace": [],
-                    "llm_prompt_trace": [],
-                })
+                await _push_step_update(
+                    "failed",
+                    result={
+                        "task_id": task_id,
+                        "status": "failed",
+                        "output": "",
+                        "error": error_msg,
+                        "duration_ms": int((time.time() - start_time) * 1000),
+                        "components": [],
+                        "tool_trace": [],
+                        "llm_prompt_trace": [],
+                    },
+                )
                 return {
                     "completed_task_ids": [task_id],
-                    "results": {task_id: {"task_id": task_id, "status": "failed", "error": error_msg}},
+                    "results": {
+                        task_id: {
+                            "task_id": task_id,
+                            "status": "failed",
+                            "error": error_msg,
+                        }
+                    },
                     "error": error_msg,
                     "status": "failed",
                 }
@@ -652,7 +808,9 @@ class DynamicGraphBuilder:
             try:
                 await _push_step_update("in_progress")
                 task_for_execution = task_config
-                clarification_transcript, task_description_override = _get_clarification_context(state, task_id)
+                clarification_transcript, task_description_override = (
+                    _get_clarification_context(state, task_id)
+                )
                 if task_description_override:
                     task_for_execution = {
                         **task_for_execution,
@@ -696,17 +854,22 @@ class DynamicGraphBuilder:
                     )
 
                     from langchain_core.messages import HumanMessage
-                    clarification_limit = max(int(task_config.get("max_clarifications") or 0), 0)
+
+                    clarification_limit = max(
+                        int(task_config.get("max_clarifications") or 0), 0
+                    )
                     clarification_resolved = False
                     for round_number in range(1, clarification_limit + 1):
                         prior_turns = "\n".join(
                             f"{turn.get('role', 'user')}: {turn.get('content', '')}"
                             for turn in clarification_transcript
                         )
-                        clarification_prompt = task_config.get("clarification_prompt") or resolve_prompt_template(
+                        clarification_prompt = task_config.get(
+                            "clarification_prompt"
+                        ) or resolve_prompt_template(
                             prompt_registry,
-                            'task.clarification',
-                            field='systemTemplate',
+                            "task.clarification",
+                            field="systemTemplate",
                             fallback=(
                                 "Review the task below and determine if you have enough information to complete it.\n"
                                 f"Task: {task_config['title']}\n"
@@ -716,7 +879,9 @@ class DynamicGraphBuilder:
                             ),
                         )
                         if prior_turns:
-                            clarification_prompt += f"\n\nPrior clarification turns:\n{prior_turns}"
+                            clarification_prompt += (
+                                f"\n\nPrior clarification turns:\n{prior_turns}"
+                            )
 
                         _store_clarification_context(
                             state,
@@ -724,14 +889,18 @@ class DynamicGraphBuilder:
                             clarification_transcript,
                             task_for_execution["description"],
                         )
-                        check_result = await llm.ainvoke([HumanMessage(content=clarification_prompt)])
+                        check_result = await llm.ainvoke(
+                            [HumanMessage(content=clarification_prompt)]
+                        )
                         check_text = check_result.content.strip()
 
                         if check_text.upper() == "CLEAR":
                             clarification_resolved = True
                             break
 
-                        clarification_transcript.append({"role": "assistant", "content": check_text})
+                        clarification_transcript.append(
+                            {"role": "assistant", "content": check_text}
+                        )
                         clarification_payload = _build_interrupt_payload(
                             "clarification",
                             check_text,
@@ -740,7 +909,9 @@ class DynamicGraphBuilder:
                             transcript=clarification_transcript,
                             resumable_actions=["reply", "skip"],
                         )
-                        await _push_step_update("suspended", interrupt_data=clarification_payload)
+                        await _push_step_update(
+                            "suspended", interrupt_data=clarification_payload
+                        )
                         response = interrupt(clarification_payload)
                         action = normalize_interrupt_action(response, "clarification")
 
@@ -762,7 +933,9 @@ class DynamicGraphBuilder:
                             await _push_step_update("skipped", result=skipped_result)
                             return {
                                 "completed_task_ids": [task_id],
-                                "results": {task_id: {"status": "skipped", "output": ""}},
+                                "results": {
+                                    task_id: {"status": "skipped", "output": ""}
+                                },
                                 "node_timings": {
                                     task_id: {
                                         "started_at": started_at,
@@ -776,20 +949,26 @@ class DynamicGraphBuilder:
                         if not user_reply:
                             return {
                                 "completed_task_ids": [task_id],
-                                "results": {task_id: {"error": "Clarification response was empty"}},
+                                "results": {
+                                    task_id: {
+                                        "error": "Clarification response was empty"
+                                    }
+                                },
                                 "error": "Clarification response was empty",
                                 "status": "failed",
                             }
 
-                        clarification_transcript.append({"role": "user", "content": user_reply})
-                        task_description = (
-                            f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                        clarification_transcript.append(
+                            {"role": "user", "content": user_reply}
                         )
+                        task_description = f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
                         task_for_execution = {
                             **task_for_execution,
                             "description": task_description,
                         }
-                        _store_clarification_context(state, task_id, clarification_transcript, task_description)
+                        _store_clarification_context(
+                            state, task_id, clarification_transcript, task_description
+                        )
                         clarification_resolved = True
                         break
 
@@ -798,7 +977,9 @@ class DynamicGraphBuilder:
                     if not clarification_resolved:
                         return {
                             "completed_task_ids": [task_id],
-                            "results": {task_id: {"error": "Clarification limit exceeded"}},
+                            "results": {
+                                task_id: {"error": "Clarification limit exceeded"}
+                            },
                             "error": "Clarification limit exceeded",
                             "status": "failed",
                         }
@@ -815,10 +996,15 @@ class DynamicGraphBuilder:
                         transcript=[],
                         resumable_actions=["approve", "reject", "skip"],
                     )
-                    await _push_step_update("suspended", interrupt_data=approval_payload)
+                    await _push_step_update(
+                        "suspended", interrupt_data=approval_payload
+                    )
                     approval_response = interrupt(approval_payload)
 
-                    logger.info(f"[{task_id}] Approval response received", response=approval_response)
+                    logger.info(
+                        f"[{task_id}] Approval response received",
+                        response=approval_response,
+                    )
 
                     if is_skip_step_response(approval_response):
                         completed_at = datetime.utcnow().isoformat() + "Z"
@@ -848,10 +1034,15 @@ class DynamicGraphBuilder:
                             },
                         }
 
-                    approval_action = normalize_interrupt_action(approval_response, "approval_request")
+                    approval_action = normalize_interrupt_action(
+                        approval_response, "approval_request"
+                    )
 
                     if approval_action == "reject":
-                        error_msg = extract_interrupt_message(approval_response) or "Task rejected by human"
+                        error_msg = (
+                            extract_interrupt_message(approval_response)
+                            or "Task rejected by human"
+                        )
                         return {
                             "completed_task_ids": [task_id],
                             "results": {task_id: {"error": error_msg}},
@@ -867,19 +1058,32 @@ class DynamicGraphBuilder:
                         }
 
                 # === STEP 3: Build prompt context from resolved inputs ===
-                context, resolved_inputs, workspace_artifacts = self._build_structured_context(task_id, task_config, state)
-                prompt_registry = load_prompt_registry(state.get("prompt_overrides") or {})
+                context, resolved_inputs, workspace_artifacts = (
+                    self._build_structured_context(task_id, task_config, state)
+                )
+                prompt_registry = load_prompt_registry(
+                    state.get("prompt_overrides") or {}
+                )
 
-                workspace_context_for_hint = state.get("workspace_context") if not resolved_inputs.get("has_port_sources") else None
-                workspace_file_hint = format_workspace_file_hint(workspace_context_for_hint)
+                workspace_context_for_hint = (
+                    state.get("workspace_context")
+                    if not resolved_inputs.get("has_port_sources")
+                    else None
+                )
+                workspace_file_hint = format_workspace_file_hint(
+                    workspace_context_for_hint
+                )
 
-                def _build_user_prompt(current_task_for_execution: Dict[str, Any]) -> str:
+                def _build_user_prompt(
+                    current_task_for_execution: Dict[str, Any],
+                ) -> str:
                     return build_task_prompt(
                         current_task_for_execution,
                         resolved_inputs,
                         context_from_dependencies=context,
                         user_query=state.get("query", ""),
                         workspace_file_hint=workspace_file_hint,
+                        trigger_context=state.get("trigger_context"),
                         prompt_overrides=state.get("prompt_overrides") or {},
                     )
 
@@ -889,15 +1093,17 @@ class DynamicGraphBuilder:
                 )
                 system_prompt = resolve_prompt_template(
                     prompt_registry,
-                    'task.system',
-                    field='systemTemplate',
+                    "task.system",
+                    field="systemTemplate",
                     fallback=(
                         f"You are {agent['name']}.\n\n"
                         f"Your instructions:\n{agent_instructions}\n\n"
                         f"You are working on a task as part of a larger playbook execution."
                     ),
                 )
-                system_prompt = system_prompt.replace('{{agentName}}', agent['name']).replace('{{agentInstructions}}', agent_instructions)
+                system_prompt = system_prompt.replace(
+                    "{{agentName}}", agent["name"]
+                ).replace("{{agentInstructions}}", agent_instructions)
 
                 effective_workspace_context = list(state.get("workspace_context") or [])
                 if workspace_artifacts:
@@ -936,12 +1142,19 @@ class DynamicGraphBuilder:
                     tool_trace = []
                     llm_prompt_trace = []
 
-                    from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
-                    from src.langgraph_engine.step_executor import _execute_with_tools, _execute_replay_tool_calls
+                    from src.langgraph_engine.playbook_tool_factory import (
+                        create_langchain_tools,
+                    )
+                    from src.langgraph_engine.step_executor import (
+                        _execute_with_tools,
+                        _execute_replay_tool_calls,
+                    )
 
                     tool_scope = build_tool_scope(resolved_inputs)
                     output_workspace_id = select_output_workspace_id(resolved_inputs)
-                    code_interpreter_files = tool_scope["all_files"] or tool_scope["fallback_files"]
+                    code_interpreter_files = (
+                        tool_scope["all_files"] or tool_scope["fallback_files"]
+                    )
                     input_files = list(task_config.get("input_files") or [])
                     for doc_id in tool_scope["all_document_ids"]:
                         if doc_id not in input_files:
@@ -966,14 +1179,20 @@ class DynamicGraphBuilder:
                         step_connector_bindings=task.get("tool_bindings"),
                     )
                     step_execution_modes = state.get("step_execution_modes") or {}
-                    execution_mode = step_execution_modes.get(task_id) or state.get("execution_mode", "live")
-                    validated_replay = (state.get("validated_replays_by_task") or {}).get(task_id)
+                    execution_mode = step_execution_modes.get(task_id) or state.get(
+                        "execution_mode", "live"
+                    )
+                    validated_replay = (
+                        state.get("validated_replays_by_task") or {}
+                    ).get(task_id)
                     logger.info(
                         f"[{task_id}] EXECUTION_MODE_DECISION",
                         execution_mode=execution_mode,
                         has_validated_replay=bool(validated_replay),
                         replay_id=(validated_replay or {}).get("replay_id"),
-                        replay_tool_calls=len((validated_replay or {}).get("tool_calls", []) or []),
+                        replay_tool_calls=len(
+                            (validated_replay or {}).get("tool_calls", []) or []
+                        ),
                         available_tools=[tool.name for tool in lc_tools],
                     )
 
@@ -991,16 +1210,24 @@ class DynamicGraphBuilder:
                         if progress.get("output") is not None:
                             progress_state["output"] = progress.get("output") or ""
                         if "components" in progress:
-                            progress_state["components"] = list(progress.get("components") or [])
+                            progress_state["components"] = list(
+                                progress.get("components") or []
+                            )
                             components = list(progress_state["components"])
                         if "tool_trace" in progress:
-                            progress_state["tool_trace"] = list(progress.get("tool_trace") or [])
+                            progress_state["tool_trace"] = list(
+                                progress.get("tool_trace") or []
+                            )
                             tool_trace = list(progress_state["tool_trace"])
                         if "llm_prompt_trace" in progress:
-                            progress_state["llm_prompt_trace"] = list(progress.get("llm_prompt_trace") or [])
+                            progress_state["llm_prompt_trace"] = list(
+                                progress.get("llm_prompt_trace") or []
+                            )
                             llm_prompt_trace = list(progress_state["llm_prompt_trace"])
                         if "artifacts" in progress:
-                            progress_state["artifacts"] = list(progress.get("artifacts") or [])
+                            progress_state["artifacts"] = list(
+                                progress.get("artifacts") or []
+                            )
 
                         has_progress = (
                             bool(progress_state["output"])
@@ -1012,28 +1239,44 @@ class DynamicGraphBuilder:
                         if not has_progress:
                             return
 
-                        await _push_step_update("in_progress", result={
-                            "task_id": task_id,
-                            "status": "in_progress",
-                            "output": progress_state["output"],
-                            "error": "",
-                            "duration_ms": int((time.time() - start_time) * 1000),
-                            "components": progress_state["components"],
-                            "tool_trace": progress_state["tool_trace"],
-                            "llm_prompt_trace": progress_state["llm_prompt_trace"],
-                            "artifacts": progress_state["artifacts"],
-                        })
+                        await _push_step_update(
+                            "in_progress",
+                            result={
+                                "task_id": task_id,
+                                "status": "in_progress",
+                                "output": progress_state["output"],
+                                "error": "",
+                                "duration_ms": int((time.time() - start_time) * 1000),
+                                "components": progress_state["components"],
+                                "tool_trace": progress_state["tool_trace"],
+                                "llm_prompt_trace": progress_state["llm_prompt_trace"],
+                                "artifacts": progress_state["artifacts"],
+                            },
+                        )
 
-                    if execution_mode in ("replay_strict", "replay_flex", "replay_adaptive") and validated_replay:
+                    if (
+                        execution_mode
+                        in ("replay_strict", "replay_flex", "replay_adaptive")
+                        and validated_replay
+                    ):
                         if not lc_tools:
-                            raise ValueError(f"Validated replay for task {task_id} cannot run because no tools are configured")
+                            raise ValueError(
+                                f"Validated replay for task {task_id} cannot run because no tools are configured"
+                            )
                         logger.info(
                             f"[{task_id}] Executing replay mode",
                             mode=execution_mode,
                             replay_id=validated_replay.get("replay_id"),
-                            tool_calls=len(validated_replay.get("tool_calls", []) or []),
+                            tool_calls=len(
+                                validated_replay.get("tool_calls", []) or []
+                            ),
                         )
-                        strict_response, components, tool_trace, synthesis_context = await _execute_replay_tool_calls(
+                        (
+                            strict_response,
+                            components,
+                            tool_trace,
+                            synthesis_context,
+                        ) = await _execute_replay_tool_calls(
                             lc_tools,
                             collector,
                             validated_replay,
@@ -1041,12 +1284,20 @@ class DynamicGraphBuilder:
                             adaptive=execution_mode == "replay_adaptive",
                             adaptation_context={
                                 "task_id": task_id,
-                                "task_title": current_task_for_execution.get("title", ""),
-                                "task_description": current_task_for_execution.get("description", ""),
+                                "task_title": current_task_for_execution.get(
+                                    "title", ""
+                                ),
+                                "task_description": current_task_for_execution.get(
+                                    "description", ""
+                                ),
                                 "current_query": state.get("query", ""),
                                 "dependency_context": context,
-                                "reference_task_title": validated_replay.get("task_title", ""),
-                                "reference_task_description": validated_replay.get("reference_task_description", ""),
+                                "reference_task_title": validated_replay.get(
+                                    "task_title", ""
+                                ),
+                                "reference_task_description": validated_replay.get(
+                                    "reference_task_description", ""
+                                ),
                             },
                             settings=settings,
                             model_name=model_name,
@@ -1054,28 +1305,33 @@ class DynamicGraphBuilder:
                             prompt_overrides=state.get("prompt_overrides") or {},
                         )
                         if execution_mode in ("replay_flex", "replay_adaptive"):
-                            format_guide = (validated_replay.get("output_format_guide") or "").strip()
+                            format_guide = (
+                                validated_replay.get("output_format_guide") or ""
+                            ).strip()
                             replay_system_prompt = resolve_prompt_template(
                                 prompt_registry,
-                                'replay.final_synthesis',
-                                field='systemTemplate',
+                                "replay.final_synthesis",
+                                field="systemTemplate",
                                 fallback=system_prompt,
                             )
                             replay_user_prefix = resolve_prompt_template(
                                 prompt_registry,
-                                'replay.final_synthesis',
-                                field='userTemplate',
-                                fallback='Use the following replayed tool execution results to produce the final answer.',
+                                "replay.final_synthesis",
+                                field="userTemplate",
+                                fallback="Use the following replayed tool execution results to produce the final answer.",
                             )
-                            replay_user_prefix = replay_user_prefix.replace('{{synthesisContext}}', synthesis_context)
+                            replay_user_prefix = replay_user_prefix.replace(
+                                "{{synthesisContext}}", synthesis_context
+                            )
                             format_instruction = ""
-                            if validated_replay.get("preserve_output_format") and format_guide:
-                                format_instruction = (
-                                    f"""\n\n#Output Furmat guidelines
+                            if (
+                                validated_replay.get("preserve_output_format")
+                                and format_guide
+                            ):
+                                format_instruction = f"""\n\n#Output Furmat guidelines
                                     Preserve the validated output format.\n
                                     {format_guide}\n\n
                                     Keep the structure and presentation style, but refresh the content from the current replay evidence only."""
-                                )
                             replay_user_prompt = (
                                 f"{current_user_prompt}\n\n"
                                 f"{replay_user_prefix}"
@@ -1093,16 +1349,32 @@ class DynamicGraphBuilder:
                             )
                         else:
                             response = strict_response
-                            usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "model": ""}
+                            usage = {
+                                "input_tokens": 0,
+                                "output_tokens": 0,
+                                "total_tokens": 0,
+                                "model": "",
+                            }
                     elif lc_tools:
-                        logger.info(f"[{task_id}] Executing with real tools", count=len(lc_tools), tools=[t.name for t in lc_tools])
-                        response, components, usage, tool_trace, llm_prompt_trace = await _execute_with_tools(
+                        logger.info(
+                            f"[{task_id}] Executing with real tools",
+                            count=len(lc_tools),
+                            tools=[t.name for t in lc_tools],
+                        )
+                        (
+                            response,
+                            components,
+                            usage,
+                            tool_trace,
+                            llm_prompt_trace,
+                        ) = await _execute_with_tools(
                             settings,
                             model_name,
                             system_prompt,
                             current_user_prompt,
                             lc_tools,
-                            collector,
+                            task_id=task_id,
+                            collector=collector,
                             temperature=temperature,
                             on_progress=_on_execution_progress,
                         )
@@ -1125,14 +1397,24 @@ class DynamicGraphBuilder:
                         or agent["name"] == "Visualizer Agent"
                         or "visualizer_agent" in agent["name"].lower()
                     )
+                    if not is_visualizer:
+                        components = _attach_result_text_for_citations(
+                            response,
+                            components,
+                        )
                     if is_visualizer and response:
-                        components.insert(0, {
-                            "type": "web_preview",
-                            "data": {"content": response},
-                        })
+                        components.insert(
+                            0,
+                            {
+                                "type": "web_preview",
+                                "data": {"content": response},
+                            },
+                        )
 
                     artifacts: List[Dict[str, Any]] = []
-                    if _task_requires_structured_output_synthesis(current_task_for_execution):
+                    if _task_requires_structured_output_synthesis(
+                        current_task_for_execution
+                    ):
                         structured_outputs = await _synthesize_structured_outputs(
                             settings,
                             model_name,
@@ -1143,7 +1425,9 @@ class DynamicGraphBuilder:
                             prompt_overrides=state.get("prompt_overrides") or {},
                         )
                         generated_artifacts = _collect_generated_artifacts(components)
-                        if not structured_outputs and (str(response or "").strip() or generated_artifacts):
+                        if not structured_outputs and (
+                            str(response or "").strip() or generated_artifacts
+                        ):
                             raise ValueError(
                                 f"Task '{task_id}' completed without structured output mappings for semantically ambiguous output ports"
                             )
@@ -1153,38 +1437,54 @@ class DynamicGraphBuilder:
                             generated_artifacts,
                         )
 
-                    return ({
-                        "output": "" if is_visualizer else response,
-                        "task_id": task_id,
-                        "task_title": task_config["title"],
-                        "agent_name": agent["name"],
-                        "components": components,
-                        "usage": usage,
-                        "tool_trace": tool_trace,
-                        "llm_prompt_trace": llm_prompt_trace,
-                        "artifacts": artifacts,
-                    }, response)
+                    return (
+                        {
+                            "output": "" if is_visualizer else response,
+                            "task_id": task_id,
+                            "task_title": task_config["title"],
+                            "agent_name": agent["name"],
+                            "components": components,
+                            "usage": usage,
+                            "tool_trace": tool_trace,
+                            "llm_prompt_trace": llm_prompt_trace,
+                            "artifacts": artifacts,
+                        },
+                        response,
+                    )
 
                 review_round = 0
                 while True:
-                    task_result, response = await _execute_task_once(task_for_execution, user_prompt)
+                    task_result, response = await _execute_task_once(
+                        task_for_execution, user_prompt
+                    )
 
                     if task_config.get("allow_clarification", False):
-                        clarification_limit = max(int(task_config.get("max_clarifications") or 0), 0)
-                        clarification_round = sum(
-                            1 for turn in clarification_transcript if turn.get("role") == "assistant"
-                        ) + 1
-                        follow_up_question = extract_follow_up_question(task_result.get("output", ""))
+                        clarification_limit = max(
+                            int(task_config.get("max_clarifications") or 0), 0
+                        )
+                        clarification_round = (
+                            sum(
+                                1
+                                for turn in clarification_transcript
+                                if turn.get("role") == "assistant"
+                            )
+                            + 1
+                        )
+                        follow_up_question = extract_follow_up_question(
+                            task_result.get("output", "")
+                        )
 
                         if (
                             follow_up_question
                             and clarification_limit > 0
                             and clarification_round <= clarification_limit
                         ):
-                            clarification_transcript.append({
-                                "role": "assistant",
-                                "content": task_result.get("output", ""),
-                            })
+                            clarification_transcript.append(
+                                {
+                                    "role": "assistant",
+                                    "content": task_result.get("output", ""),
+                                }
+                            )
                             _store_clarification_context(
                                 state,
                                 task_id,
@@ -1194,15 +1494,21 @@ class DynamicGraphBuilder:
                             clarification_payload = _build_interrupt_payload(
                                 "clarification",
                                 follow_up_question,
-                                task_description=task_for_execution.get("description", ""),
+                                task_description=task_for_execution.get(
+                                    "description", ""
+                                ),
                                 result_text=task_result.get("output", ""),
                                 round_number=clarification_round,
                                 transcript=clarification_transcript,
                                 resumable_actions=["reply", "skip"],
                             )
-                            await _push_step_update("suspended", interrupt_data=clarification_payload)
+                            await _push_step_update(
+                                "suspended", interrupt_data=clarification_payload
+                            )
                             response = interrupt(clarification_payload)
-                            action = normalize_interrupt_action(response, "clarification")
+                            action = normalize_interrupt_action(
+                                response, "clarification"
+                            )
 
                             if action == "skip":
                                 completed_at = datetime.utcnow().isoformat() + "Z"
@@ -1216,10 +1522,14 @@ class DynamicGraphBuilder:
                                     "components": task_result.get("components", []),
                                     "usage": task_result.get("usage", {}),
                                     "tool_trace": task_result.get("tool_trace", []),
-                                    "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
+                                    "llm_prompt_trace": task_result.get(
+                                        "llm_prompt_trace", []
+                                    ),
                                     "semantic_match": task_result.get("semantic_match"),
                                 }
-                                await _push_step_update("skipped", result=skipped_result)
+                                await _push_step_update(
+                                    "skipped", result=skipped_result
+                                )
                                 return {
                                     "completed_task_ids": [task_id],
                                     "results": {task_id: skipped_result},
@@ -1236,20 +1546,29 @@ class DynamicGraphBuilder:
                             if not user_reply:
                                 return {
                                     "completed_task_ids": [task_id],
-                                    "results": {task_id: {"error": "Clarification response was empty"}},
+                                    "results": {
+                                        task_id: {
+                                            "error": "Clarification response was empty"
+                                        }
+                                    },
                                     "error": "Clarification response was empty",
                                     "status": "failed",
                                 }
 
-                            clarification_transcript.append({"role": "user", "content": user_reply})
-                            task_description = (
-                                f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
+                            clarification_transcript.append(
+                                {"role": "user", "content": user_reply}
                             )
+                            task_description = f"{task_for_execution['description']}\n\nClarification from user: {user_reply}"
                             task_for_execution = {
                                 **task_for_execution,
                                 "description": task_description,
                             }
-                            _store_clarification_context(state, task_id, clarification_transcript, task_description)
+                            _store_clarification_context(
+                                state,
+                                task_id,
+                                clarification_transcript,
+                                task_description,
+                            )
                             user_prompt = _build_user_prompt(task_for_execution)
                             continue
 
@@ -1272,7 +1591,9 @@ class DynamicGraphBuilder:
                     )
                     await _push_step_update("suspended", interrupt_data=review_payload)
                     review_response = interrupt(review_payload)
-                    review_action = normalize_interrupt_action(review_response, "review_request")
+                    review_action = normalize_interrupt_action(
+                        review_response, "review_request"
+                    )
 
                     if is_skip_step_response(review_response):
                         completed_at = datetime.utcnow().isoformat() + "Z"
@@ -1303,7 +1624,10 @@ class DynamicGraphBuilder:
                         }
 
                     if review_action == "reject":
-                        error_msg = extract_interrupt_message(review_response) or "Task result rejected by human"
+                        error_msg = (
+                            extract_interrupt_message(review_response)
+                            or "Task result rejected by human"
+                        )
                         failed_result = {
                             "task_id": task_id,
                             "status": "failed",
@@ -1332,7 +1656,9 @@ class DynamicGraphBuilder:
                         break
 
                     review_transcript.append({"role": "assistant", "content": response})
-                    review_transcript.append({"role": "user", "content": feedback_message})
+                    review_transcript.append(
+                        {"role": "user", "content": feedback_message}
+                    )
                     task_for_execution = {
                         **task_for_execution,
                         "description": f"{task_for_execution['description']}\n\nHuman Review Feedback: {feedback_message}",
@@ -1370,19 +1696,22 @@ class DynamicGraphBuilder:
                 if task_artifacts:
                     task_result["artifacts"] = task_artifacts
 
-                await _push_step_update("completed", result={
-                    "task_id": task_id,
-                    "status": "completed",
-                    "output": task_result.get("output", ""),
-                    "error": "",
-                    "duration_ms": duration_ms,
-                    "components": task_result.get("components", []),
-                    "usage": task_result.get("usage", {}),
-                    "tool_trace": task_result.get("tool_trace", []),
-                    "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
-                    "semantic_match": task_result.get("semantic_match"),
-                    "artifacts": task_result.get("artifacts", []),
-                })
+                await _push_step_update(
+                    "completed",
+                    result={
+                        "task_id": task_id,
+                        "status": "completed",
+                        "output": task_result.get("output", ""),
+                        "error": "",
+                        "duration_ms": duration_ms,
+                        "components": task_result.get("components", []),
+                        "usage": task_result.get("usage", {}),
+                        "tool_trace": task_result.get("tool_trace", []),
+                        "llm_prompt_trace": task_result.get("llm_prompt_trace", []),
+                        "semantic_match": task_result.get("semantic_match"),
+                        "artifacts": task_result.get("artifacts", []),
+                    },
+                )
 
                 output_key = task_config.get("output_key")
 
@@ -1413,18 +1742,23 @@ class DynamicGraphBuilder:
                 duration_ms = int((time.time() - start_time) * 1000)
                 error_msg = str(e)
 
-                logger.error(f"[{task_id}] Failed", error=error_msg, duration_ms=duration_ms)
+                logger.error(
+                    f"[{task_id}] Failed", error=error_msg, duration_ms=duration_ms
+                )
 
-                await _push_step_update("failed", result={
-                    "task_id": task_id,
-                    "status": "failed",
-                    "output": "",
-                    "error": error_msg,
-                    "duration_ms": duration_ms,
-                    "components": components,
-                    "tool_trace": tool_trace,
-                    "llm_prompt_trace": llm_prompt_trace,
-                })
+                await _push_step_update(
+                    "failed",
+                    result={
+                        "task_id": task_id,
+                        "status": "failed",
+                        "output": "",
+                        "error": error_msg,
+                        "duration_ms": duration_ms,
+                        "components": components,
+                        "tool_trace": tool_trace,
+                        "llm_prompt_trace": llm_prompt_trace,
+                    },
+                )
 
                 return {
                     "completed_task_ids": [task_id],
@@ -1468,7 +1802,12 @@ class DynamicGraphBuilder:
     ) -> tuple:
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
-        from src.langgraph_engine.step_executor import _extract_usage, _append_prompt_trace, _content_to_text, _stream_chat_response
+        from src.langgraph_engine.step_executor import (
+            _extract_usage,
+            _append_prompt_trace,
+            _content_to_text,
+            _stream_chat_response,
+        )
 
         llm = ChatOpenAI(
             base_url=settings.LITELLM_API_BASE_URL,
@@ -1497,9 +1836,13 @@ class DynamicGraphBuilder:
             result = await llm.ainvoke(messages)
         return _content_to_text(result.content), _extract_usage(result)
 
-    def _find_entry_tasks(self, tasks: List[TaskConfig], edges: List[EdgeConfig]) -> List[str]:
+    def _find_entry_tasks(
+        self, tasks: List[TaskConfig], edges: List[EdgeConfig]
+    ) -> List[str]:
         all_task_ids = {t["id"] for t in tasks if t.get("id")}
-        target_ids = {e["target_id"] for e in edges}
+        target_ids = {
+            e["target_id"] for e in edges if e.get("source_id") != "__trigger__"
+        }
         entry_ids = list(all_task_ids - target_ids)
 
         if not entry_ids and all_task_ids:
@@ -1507,7 +1850,11 @@ class DynamicGraphBuilder:
                 min(
                     all_task_ids,
                     key=lambda tid: next(
-                        (t.get("execution_order", 999) for t in tasks if t.get("id") == tid),
+                        (
+                            t.get("execution_order", 999)
+                            for t in tasks
+                            if t.get("id") == tid
+                        ),
                         999,
                     ),
                 )
@@ -1515,9 +1862,13 @@ class DynamicGraphBuilder:
 
         return entry_ids
 
-    def _find_exit_tasks(self, tasks: List[TaskConfig], edges: List[EdgeConfig]) -> List[str]:
+    def _find_exit_tasks(
+        self, tasks: List[TaskConfig], edges: List[EdgeConfig]
+    ) -> List[str]:
         all_task_ids = {t["id"] for t in tasks if t.get("id")}
-        source_ids = {e["source_id"] for e in edges}
+        source_ids = {
+            e["source_id"] for e in edges if e.get("source_id") != "__trigger__"
+        }
         exit_ids = list(all_task_ids - source_ids)
 
         if not exit_ids and all_task_ids:
@@ -1549,7 +1900,11 @@ class DynamicGraphBuilder:
             node_func = self._create_task_node(task_id, task, on_step_update)
             node_name = f"task_{task_id}"
             workflow.add_node(node_name, node_func)
-            logger.info("[DynamicGraphBuilder] Added node", node=node_name, title=task.get("title"))
+            logger.info(
+                "[DynamicGraphBuilder] Added node",
+                node=node_name,
+                title=task.get("title"),
+            )
 
         entry_task_ids = self._find_entry_tasks(tasks, edges)
         logger.info("[DynamicGraphBuilder] Entry tasks", entry_ids=entry_task_ids)
@@ -1557,6 +1912,7 @@ class DynamicGraphBuilder:
         if len(entry_task_ids) == 1:
             workflow.set_entry_point(f"task_{entry_task_ids[0]}")
         else:
+
             async def start_node(state: ExecutionState) -> Dict[str, Any]:
                 return {}
 
@@ -1572,6 +1928,8 @@ class DynamicGraphBuilder:
             target_id = edge["target_id"]
             if not source_id or not target_id:
                 continue
+            if source_id == "__trigger__":
+                continue
             incoming_by_target.setdefault(target_id, []).append(source_id)
 
         for target_id, source_ids in incoming_by_target.items():
@@ -1580,11 +1938,19 @@ class DynamicGraphBuilder:
 
             if len(source_nodes) == 1:
                 workflow.add_edge(source_nodes[0], target_node)
-                logger.info("[DynamicGraphBuilder] Added edge", source=source_nodes[0], target=target_node)
+                logger.info(
+                    "[DynamicGraphBuilder] Added edge",
+                    source=source_nodes[0],
+                    target=target_node,
+                )
                 continue
 
             workflow.add_edge(source_nodes, target_node)
-            logger.info("[DynamicGraphBuilder] Added barrier edge", sources=source_nodes, target=target_node)
+            logger.info(
+                "[DynamicGraphBuilder] Added barrier edge",
+                sources=source_nodes,
+                target=target_node,
+            )
 
         exit_task_ids = self._find_exit_tasks(tasks, edges)
         logger.info("[DynamicGraphBuilder] Exit tasks", exit_ids=exit_task_ids)

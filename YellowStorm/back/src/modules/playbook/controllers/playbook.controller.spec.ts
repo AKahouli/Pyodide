@@ -23,8 +23,11 @@ describe('PlaybookController', () => {
       | 'revertToSnapshot'
       | 'cloneForUser'
       | 'getSchedule'
+      | 'getTriggers'
       | 'upsertSchedule'
       | 'clearSchedule'
+      | 'clearMailTrigger'
+      | 'syncMailTriggerSubscription'
       | 'getOrCreateIntegrationToken'
     >
   >;
@@ -37,6 +40,8 @@ describe('PlaybookController', () => {
   let designService: jest.Mocked<
     Pick<PlaybookDesignService, 'generatePlaybook' | 'designPlaybook'>
   >;
+  let mailTriggerTestEventService: jest.Mocked<Pick<any, 'processTestEvent'>>;
+  let mailGraphClientService: jest.Mocked<Pick<any, 'createInboxSubscription'>>;
   let streamGateway: jest.Mocked<Pick<PlaybookStreamGatewayService, 'sendToUser'>>;
   let userService: jest.Mocked<Pick<UserService, 'findById' | 'findByEmail'>>;
   let notificationsService: jest.Mocked<Pick<NotificationsService, 'sendToUser'>>;
@@ -50,7 +55,12 @@ describe('PlaybookController', () => {
     playbookService = {
       create: jest.fn().mockResolvedValue({ id: playbookId }),
       findAllByUser: jest.fn().mockResolvedValue([]),
-      findById: jest.fn().mockResolvedValue({ id: playbookId }),
+      findById: jest.fn().mockResolvedValue({
+        id: playbookId,
+        triggers: [
+          { type: 'mail', enabled: true, available: true, config: { mailboxAppKey: 'microsoft', autoRenewUntil: null } },
+        ],
+      }),
       update: jest.fn().mockResolvedValue({ id: playbookId }),
       delete: jest.fn().mockResolvedValue(undefined),
       bulkDelete: jest.fn().mockResolvedValue({ deletedCount: 2 }),
@@ -59,8 +69,11 @@ describe('PlaybookController', () => {
       revertToSnapshot: jest.fn().mockResolvedValue({ id: playbookId }),
       cloneForUser: jest.fn().mockResolvedValue({ id: 'cloned-789' }),
       getSchedule: jest.fn().mockResolvedValue(null),
+      getTriggers: jest.fn().mockResolvedValue({ automatedTriggerType: null, triggers: [] }),
       upsertSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
       clearSchedule: jest.fn().mockResolvedValue({ id: playbookId }),
+      clearMailTrigger: jest.fn().mockResolvedValue({ id: playbookId }),
+      syncMailTriggerSubscription: jest.fn().mockResolvedValue({ id: playbookId }),
       getOrCreateIntegrationToken: jest.fn().mockResolvedValue({ token: 'integration-token' }),
     };
 
@@ -81,6 +94,14 @@ describe('PlaybookController', () => {
       sendToUser: jest.fn(),
     };
 
+    mailTriggerTestEventService = {
+      processTestEvent: jest.fn().mockResolvedValue({ handoff: { executionId: 'exec-1' } }),
+    };
+
+    mailGraphClientService = {
+      createInboxSubscription: jest.fn().mockResolvedValue({ id: 'sub-1' }),
+    };
+
     userService = {
       findById: jest.fn().mockResolvedValue({
         email: 'test@example.com',
@@ -99,6 +120,9 @@ describe('PlaybookController', () => {
       designService as unknown as PlaybookDesignService,
       {} as any,
       {} as any,
+      {} as any,
+      mailTriggerTestEventService as any,
+      mailGraphClientService as any,
       streamGateway as unknown as PlaybookStreamGatewayService,
       userService as unknown as UserService,
       notificationsService as unknown as NotificationsService,
@@ -233,6 +257,44 @@ describe('PlaybookController', () => {
         dto,
         'test@example.com',
         { executionTrigger: 'manual' },
+      );
+    });
+  });
+
+  describe('testMailTriggerEvent', () => {
+    it('should delegate synthetic mail events to the test-event service', async () => {
+      const dto = {
+        mailboxAppKey: 'microsoft',
+        providerMessageId: 'msg-123',
+        receivedAt: '2026-04-17T12:00:00Z',
+        occurredAt: '2026-04-17T12:00:00Z',
+        from: { address: 'ops@example.com' },
+      } as any;
+
+      await controller.testMailTriggerEvent(user, playbookId, dto);
+
+      expect(mailTriggerTestEventService.processTestEvent).toHaveBeenCalledWith(
+        playbookId,
+        'user-123',
+        'test@example.com',
+        dto,
+      );
+    });
+  });
+
+  describe('syncMailSubscription', () => {
+    it('should create a Graph inbox subscription using the playbook mail trigger config', async () => {
+      await controller.syncMailSubscription(user, playbookId, {
+        notificationUrl: 'https://example.test/webhook',
+        autoRenewUntil: '2026-05-01T23:59:59.999Z',
+      } as any);
+
+      expect(mailGraphClientService.createInboxSubscription).toHaveBeenCalledWith(
+        'user-123',
+        'microsoft',
+        'https://example.test/webhook',
+        `ys_${playbookId}`,
+        '2026-05-01T23:59:59.999Z',
       );
     });
   });

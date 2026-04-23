@@ -30,7 +30,6 @@ export class AgentType extends Document {
 export const AgentTypeSchema = SchemaFactory.createForClass(AgentType);
 
 // Indexes
-AgentTypeSchema.index({ name: 1 });
 AgentTypeSchema.index({ isActive: 1 });
 
 // JSON transform

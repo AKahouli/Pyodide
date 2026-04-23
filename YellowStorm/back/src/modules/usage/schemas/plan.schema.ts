@@ -131,7 +131,6 @@ export class Plan extends Document {
 export const PlanSchema = SchemaFactory.createForClass(Plan);
 
 // Indexes for efficient queries
-PlanSchema.index({ slug: 1 }, { unique: true });
 PlanSchema.index({ isActive: 1, displayOrder: 1 });
 PlanSchema.index({ isDefault: 1 });
 PlanSchema.index({ priority: 1 });

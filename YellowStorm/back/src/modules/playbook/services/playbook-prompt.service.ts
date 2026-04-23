@@ -25,6 +25,16 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     isBuiltIn: true,
   },
   {
+    key: 'design.max_description_length',
+    title: 'Max description length',
+    category: 'design',
+    description: 'Maximum allowed length for playbook and task descriptions. Set the value in systemTemplate (numeric string).',
+    systemTemplate: '20000',
+    userTemplate: '',
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
     key: 'task.system',
     title: 'Task system prompt',
     category: 'task',

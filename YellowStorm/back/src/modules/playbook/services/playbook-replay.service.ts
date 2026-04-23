@@ -133,7 +133,7 @@ export class PlaybookReplayService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       this.logger.warn('Skipping LLM output format guide generation: no default model configured');
       return { guide: this.getOutputFormatGuideFallback(text), promptTrace: [] };

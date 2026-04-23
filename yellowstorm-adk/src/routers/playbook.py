@@ -2,8 +2,8 @@
 
 import asyncio
 import json
-from typing import Annotated, AsyncGenerator
-from fastapi import APIRouter, status, HTTPException, Depends
+from typing import Annotated, Any, AsyncGenerator, Dict
+from fastapi import APIRouter, Body, status, HTTPException, Depends
 from starlette.responses import StreamingResponse
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
@@ -36,6 +36,30 @@ async def _event_stream(q: asyncio.Queue[dict], bg_task: asyncio.Task, endpoint_
         logger.warning("Client disconnected, cancelling background task")
         bg_task.cancel()
         raise
+
+
+@playbook_router.post("/index/webhook", include_in_schema=False)
+async def index_webhook(payload: Dict[str, Any] = Body(...)) -> Dict[str, Any]:
+    """Receives indexing completion callbacks from the vectorstores service.
+
+    No authentication — this endpoint is called by the external vectorstores API.
+    The payload is resolved into a waiting asyncio.Future inside action_executor.
+    """
+    from src.langgraph_engine.action_executor import resolve_indexing_webhook
+
+    metadata = payload.get("metadata") or {}
+    doc_id = str(metadata.get("external_id") or payload.get("external_id") or "").strip()
+    raw_status = str(payload.get("status") or "").strip()
+
+    if not doc_id:
+        logger.warning("[index/webhook] Received payload with no external_id", payload=payload)
+        return {"ok": False, "error": "missing external_id"}
+
+    resolved = resolve_indexing_webhook(doc_id, raw_status, payload)
+    logger.info(
+        f"[index/webhook] doc_id={doc_id} status={raw_status} resolved={resolved}"
+    )
+    return {"ok": True, "resolved": resolved}
 
 
 @playbook_router.post(

@@ -20,17 +20,41 @@ import { usePlaybookStore, useCurrentPlaybook } from '../store';
 import { migrateEdge } from '../utils/migrate-ports';
 import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
-export function tasksToNodes(tasks: PlaybookTask[]): Node[] {
-  return tasks.map((task) => ({
+const TRIGGER_NODE_ID = '__trigger__';
+
+const MAIL_TRIGGER_PORTS = [
+  { id: 'mail_data', name: 'Mail data', artifactKind: 'data' as ArtifactKind },
+  { id: 'mail_attachments', name: 'Mail attachments', artifactKind: 'document' as ArtifactKind },
+];
+
+function buildTriggerNode(): Node {
+  return {
+    id: TRIGGER_NODE_ID,
+    type: 'playbookTrigger',
+    position: { x: 40, y: 160 },
+    draggable: true,
+    selectable: true,
+    data: {
+      title: 'Mail Trigger',
+      outputPorts: MAIL_TRIGGER_PORTS,
+      triggerType: 'mail',
+    },
+  };
+}
+
+export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
+  const taskNodes = tasks.map((task) => ({
     id: task.id,
     type: 'playbookStep',
     position: { x: task.positionX, y: task.positionY },
     data: { ...task } as PlaybookNodeData,
   }));
+
+  return includeTriggerNode ? [buildTriggerNode(), ...taskNodes] : taskNodes;
 }
 
 function nodesToTasks(nodes: Node[]): PlaybookTask[] {
-  return nodes.map((node) => {
+  return nodes.filter((node) => node.type === 'playbookStep').map((node) => {
     const data = node.data as PlaybookNodeData;
     return {
       ...data,
@@ -110,6 +134,7 @@ export function usePlaybookCanvas() {
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
+  const selectStep = usePlaybookStore((s) => s.selectStep);
   const canvasSyncVersion = usePlaybookStore((s) => s.canvasSyncVersion);
 
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -122,6 +147,15 @@ export function usePlaybookCanvas() {
   // Track which playbook snapshot we've synced to avoid re-syncing on every store update
   const syncedKeyRef = useRef<string | null>(null);
 
+  // Remember trigger node position across rebuilds (not persisted to backend)
+  const triggerPositionRef = useRef({ x: 40, y: 160 });
+
+  function buildNodesWithTrigger(tasks: PlaybookTask[], includeTrigger: boolean): Node[] {
+    return tasksToNodes(tasks, includeTrigger).map((n) =>
+      n.id === TRIGGER_NODE_ID ? { ...n, position: triggerPositionRef.current } : n,
+    );
+  }
+
   // Sync ReactFlow state when playbook is loaded/changed from the API
   useEffect(() => {
     if (!playbook) {
@@ -133,7 +167,7 @@ export function usePlaybookCanvas() {
     const syncKey = `${playbook.id}::${playbook.updatedAt}`;
     if (syncedKeyRef.current !== syncKey) {
       syncedKeyRef.current = syncKey;
-      setNodes(tasksToNodes(playbook.tasks));
+      setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
       setEdges(playbookEdgesToFlowEdges(playbook.edges));
     }
   }, [playbook]);
@@ -142,7 +176,7 @@ export function usePlaybookCanvas() {
   useEffect(() => {
     if (!playbook || canvasSyncVersion === 0) return;
     syncedKeyRef.current = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
-    setNodes(tasksToNodes(playbook.tasks));
+    setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
     setEdges(playbookEdgesToFlowEdges(playbook.edges));
   }, [canvasSyncVersion, playbook]);
 
@@ -177,15 +211,24 @@ export function usePlaybookCanvas() {
   // Store sync happens in onNodeDragStop.
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
+      const selectedNodeChange = changes.find((change) => change.type === 'select' && 'selected' in change);
+      if (selectedNodeChange && selectedNodeChange.id !== TRIGGER_NODE_ID) {
+        selectStep(selectedNodeChange.selected ? selectedNodeChange.id : null);
+      }
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [],
+    [selectStep],
   );
 
   // Sync positions to store only when drag ends.
   // Reads from nodesRef instead of setState updater to avoid nested updates.
+  // Trigger node position is kept in a ref only (not persisted to backend).
   const onNodeDragStop: OnNodeDrag = useCallback(
-    () => {
+    (_event, node) => {
+      if (node.id === TRIGGER_NODE_ID) {
+        triggerPositionRef.current = { ...node.position };
+        return;
+      }
       captureSnapshot();
       updateTasks(nodesToTasks(nodesRef.current));
     },
@@ -270,6 +313,7 @@ export function usePlaybookCanvas() {
 
   const removeNode = useCallback(
     (nodeId: string) => {
+      if (nodeId === TRIGGER_NODE_ID) return;
       captureSnapshot();
       setNodes((nds) => {
         const updated = nds.filter((n) => n.id !== nodeId);
@@ -294,7 +338,7 @@ export function usePlaybookCanvas() {
           n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n,
         );
         captureSnapshot();
-        deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+        updateTasks(nodesToTasks(updated));
         return updated;
       });
     },

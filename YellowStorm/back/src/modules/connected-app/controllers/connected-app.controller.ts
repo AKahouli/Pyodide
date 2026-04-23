@@ -31,6 +31,13 @@ export class ConnectedAppController {
     return this.userService.getUserConnections(user._id.toString());
   }
 
+  @Get('mailbox-capability')
+  @ApiOperation({ summary: 'Get Microsoft 365 mailbox capability status for the current user' })
+  @ApiResponse({ status: 200, description: 'Mailbox capability status' })
+  async getMailboxCapability(@CurrentUser() user: UserDocument) {
+    return this.tokenService.getMailboxCapability(user._id.toString());
+  }
+
   @Get(':appKey/authorize')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'connected-app:authorize' })
   @ApiOperation({ summary: 'Get OAuth authorization URL for a connected app' })

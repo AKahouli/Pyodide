@@ -12,6 +12,8 @@ const storeState = vi.hoisted(() => ({
   updatePlaybookFromJudge: vi.fn(),
   generatePlaybookFromJudge: vi.fn(),
   optimizeStepFromJudge: vi.fn(),
+  fetchAdvisorRemediations: vi.fn().mockResolvedValue([]),
+  applyAdvisorRemediations: vi.fn().mockResolvedValue(null),
   validateTaskReplay: vi.fn(),
   fetchTaskReplays: vi.fn().mockResolvedValue([]),
 }));
@@ -248,6 +250,53 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('detail.results.stepExecutionLabel')).toBeInTheDocument();
   });
 
+  it('renders applied optimization diffs for advisor autopilot turns', async () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          advisorOptimizationHistory: [
+            {
+              turn: 1,
+              createdAt: '2025-01-01T00:00:02.000Z',
+              changedFields: ['description', 'allowClarification'],
+              beforeTask: { description: 'Old prompt', allowClarification: false },
+              afterTask: { description: 'New prompt', allowClarification: true },
+            },
+          ],
+        }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          advisorAutopilotEnabled: true,
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('detail.autopilot.appliedOptimizations')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('detail.autopilot.appliedOptimizations'));
+    expect(screen.getByText('detail.autopilot.field.description')).toBeInTheDocument();
+    expect(screen.getByText('Old prompt')).toBeInTheDocument();
+    expect(screen.getByText('New prompt')).toBeInTheDocument();
+  });
+
   it('prefers the live current attempt over persisted history for the same attempt number', () => {
     render(
       <ExecutionStepDetail
@@ -359,56 +408,6 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('execution.running')).toBeInTheDocument();
   });
 
-  it('auto-scrolls while streaming and exposes a jump-to-bottom button when scrolled up', () => {
-    const scrollTo = vi.fn();
-    const originalScrollTo = HTMLElement.prototype.scrollTo;
-    HTMLElement.prototype.scrollTo = scrollTo as any;
-
-    try {
-      const { rerender } = render(
-        <ExecutionStepDetail
-          step={{
-            ...baseStep,
-            status: 'running',
-            output: 'First streaming chunk',
-            components: [],
-            toolTrace: [],
-            llmPromptTrace: [],
-            artifacts: [],
-            stepExecutions: [],
-          }}
-        />,
-      );
-
-      const scrollContainer = screen.getByTestId('execution-step-scroll');
-      Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
-      Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1200, configurable: true });
-      Object.defineProperty(scrollContainer, 'scrollTop', { value: 120, writable: true, configurable: true });
-      fireEvent.scroll(scrollContainer);
-
-      expect(screen.getByRole('button', { name: 'Jump to bottom' })).toBeInTheDocument();
-
-      rerender(
-        <ExecutionStepDetail
-          step={{
-            ...baseStep,
-            status: 'running',
-            output: 'Second streaming chunk',
-            components: [],
-            toolTrace: [],
-            llmPromptTrace: [],
-            artifacts: [],
-            stepExecutions: [],
-          }}
-        />,
-      );
-
-      expect(scrollTo).toHaveBeenCalled();
-    } finally {
-      HTMLElement.prototype.scrollTo = originalScrollTo;
-    }
-  });
-
   it('renders plain text output when no components', () => {
     render(<ExecutionStepDetail step={baseStep} />);
     expect(screen.getByText('Result text here')).toBeInTheDocument();
@@ -436,7 +435,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByTestId('ai-content')).toBeInTheDocument();
   });
 
-  it('renders tool trace when present', () => {
+  it('renders tool trace when present', async () => {
     const withTrace: TaskResult = {
       ...baseStep,
       toolTrace: [
@@ -449,7 +448,8 @@ describe('ExecutionStepDetail', () => {
       ],
     };
     render(<ExecutionStepDetail step={withTrace} />);
-    expect(screen.getByText('detail.tabs.toolTrace')).toBeInTheDocument();
+    await userEvent.click(screen.getByText('detail.tabs.traces'));
+    await userEvent.click(screen.getByText('detail.tabs.toolTrace'));
     expect(screen.getByText('perform_document_search')).toBeInTheDocument();
     expect(screen.getByText('top hits')).toBeInTheDocument();
   });

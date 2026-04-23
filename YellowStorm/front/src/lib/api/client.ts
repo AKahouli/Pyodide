@@ -36,15 +36,24 @@ const MAINTENANCE_STORAGE_KEY = 'maintenance_info';
 
 // Token refresh state to prevent multiple simultaneous refresh calls
 let isRefreshing = false;
-let refreshSubscribers: Array<(token: string) => void> = [];
+type RefreshSubscriber = {
+  onToken: (token: string) => void;
+  onError: (error: unknown) => void;
+};
+let refreshSubscribers: RefreshSubscriber[] = [];
 
 function onRefreshed(token: string) {
-  refreshSubscribers.forEach((callback) => callback(token));
+  refreshSubscribers.forEach(({ onToken }) => onToken(token));
   refreshSubscribers = [];
 }
 
-function addRefreshSubscriber(callback: (token: string) => void) {
-  refreshSubscribers.push(callback);
+function onRefreshFailed(error: unknown) {
+  refreshSubscribers.forEach(({ onError }) => onError(error));
+  refreshSubscribers = [];
+}
+
+function addRefreshSubscriber(subscriber: RefreshSubscriber) {
+  refreshSubscribers.push(subscriber);
 }
 
 // Create axios instance
@@ -109,13 +118,15 @@ apiClient.interceptors.response.use(
       }
 
       if (isRefreshing) {
-        // Wait for the refresh to complete
-        return new Promise((resolve) => {
-          addRefreshSubscriber((token: string) => {
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-            }
-            resolve(apiClient(originalRequest));
+        return new Promise((resolve, reject) => {
+          addRefreshSubscriber({
+            onToken: (token: string) => {
+              if (originalRequest.headers) {
+                originalRequest.headers.Authorization = `Bearer ${token}`;
+              }
+              resolve(apiClient(originalRequest));
+            },
+            onError: (err: unknown) => reject(err),
           });
         });
       }
@@ -144,6 +155,7 @@ apiClient.interceptors.response.use(
         return apiClient(originalRequest);
       } catch (refreshError) {
         isRefreshing = false;
+        onRefreshFailed(refreshError);
         clearAuthData();
         window.location.href = '/#/';
         return Promise.reject(refreshError);

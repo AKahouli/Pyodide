@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import sys
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
 
@@ -30,7 +31,9 @@ from src.langgraph_engine.port_resolution import validate_port_routing
 logger = get_logger(__name__)
 
 
-def _extract_interrupt_from_snapshot(state_snapshot, thread_id: str) -> Optional[Dict[str, Any]]:
+def _extract_interrupt_from_snapshot(
+    state_snapshot, thread_id: str
+) -> Optional[Dict[str, Any]]:
     for pregel_task in state_snapshot.tasks:
         if hasattr(pregel_task, "interrupts") and pregel_task.interrupts:
             iv = pregel_task.interrupts[0].value
@@ -51,7 +54,9 @@ def _extract_interrupt_from_snapshot(state_snapshot, thread_id: str) -> Optional
     return None
 
 
-def _normalize_interrupt_value(interrupt_value: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+def _normalize_interrupt_value(
+    interrupt_value: Any, thread_id: str
+) -> Optional[Dict[str, Any]]:
     if not isinstance(interrupt_value, dict):
         return None
 
@@ -70,7 +75,9 @@ def _normalize_interrupt_value(interrupt_value: Any, thread_id: str) -> Optional
     }
 
 
-def _extract_interrupt_from_stream_chunk(chunk: Any, thread_id: str) -> Optional[Dict[str, Any]]:
+def _extract_interrupt_from_stream_chunk(
+    chunk: Any, thread_id: str
+) -> Optional[Dict[str, Any]]:
     if not isinstance(chunk, dict):
         return None
 
@@ -92,7 +99,9 @@ def _extract_interrupt_from_stream_chunk(chunk: Any, thread_id: str) -> Optional
     return _normalize_interrupt_value(interrupt_value, thread_id)
 
 
-def _build_resume_state_update(interrupt_data: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _build_resume_state_update(
+    interrupt_data: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     if not interrupt_data or interrupt_data.get("type") != "clarification":
         return None
 
@@ -135,6 +144,7 @@ async def _consume_graph_stream(
     )
 
     interrupt_data: Optional[Dict[str, Any]] = None
+    should_close_stream = True
 
     try:
         async for chunk in stream:
@@ -149,9 +159,12 @@ async def _consume_graph_stream(
                     round=interrupt_data.get("round"),
                 )
                 break
+    except (asyncio.CancelledError, GeneratorExit):
+        should_close_stream = False
+        raise
     finally:
         aclose = getattr(stream, "aclose", None)
-        if aclose is not None:
+        if should_close_stream and aclose is not None:
             with contextlib.suppress(Exception):
                 await aclose()
 
@@ -166,6 +179,7 @@ async def _consume_graph_stream(
 
 def _make_step_callback_for_thread(thread_id: str) -> StepCallback:
     """Resolve the active stream queue lazily for the given thread."""
+
     async def _callback(update: StepUpdate):
         queue = get_queue(thread_id)
         if queue is not None:
@@ -187,6 +201,7 @@ async def run_playbook(
     edges: List[EdgeConfig],
     query: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     queue: Optional[asyncio.Queue] = None,
     thread_id: Optional[str] = None,
     execution_mode: str = "live",
@@ -232,6 +247,7 @@ async def run_playbook(
         "node_timings": {},
         "query": query,
         "workspace_context": workspace_context,
+        "trigger_context": trigger_context,
         "evaluation_user_id": evaluation_user_id,
         "execution_mode": execution_mode,
         "validated_replays_by_task": validated_replays_by_task or {},
@@ -282,7 +298,11 @@ async def run_playbook(
 
         result = result or {}
         final_status = result.get("status", "completed")
-        logger.info("[run_playbook] Execution completed", status=final_status, thread_id=thread_id)
+        logger.info(
+            "[run_playbook] Execution completed",
+            status=final_status,
+            thread_id=thread_id,
+        )
 
         task_results = _build_task_results(result, tasks)
 
@@ -301,7 +321,11 @@ async def run_playbook(
         return response
     except Exception as e:
         error_str = str(e)
-        logger.error("[run_playbook] Exception during execution", error=error_str, exc_type=type(e).__name__)
+        logger.error(
+            "[run_playbook] Exception during execution",
+            error=error_str,
+            exc_type=type(e).__name__,
+        )
 
         cleanup_thread_graph(thread_id)
 
@@ -331,7 +355,10 @@ async def resume_playbook(
 
     graph = get_thread_graph(thread_id)
     if graph is None:
-        logger.warning("[resume_playbook] Graph not found for thread, attempting recovery", thread_id=thread_id)
+        logger.warning(
+            "[resume_playbook] Graph not found for thread, attempting recovery",
+            thread_id=thread_id,
+        )
         response = {
             "status": "failed",
             "task_results": [],
@@ -346,11 +373,15 @@ async def resume_playbook(
     if queue is not None:
         register_queue(thread_id, queue)
 
-    logger.info("[resume_playbook] Resuming", thread_id=thread_id, playbook_id=playbook_id)
+    logger.info(
+        "[resume_playbook] Resuming", thread_id=thread_id, playbook_id=playbook_id
+    )
 
     try:
         state_snapshot = await graph.aget_state(config)
-        resume_interrupt_data = _extract_interrupt_from_snapshot(state_snapshot, thread_id)
+        resume_interrupt_data = _extract_interrupt_from_snapshot(
+            state_snapshot, thread_id
+        )
         resume_state_update = _build_resume_state_update(resume_interrupt_data)
         interrupt_data, result = await _consume_graph_stream(
             graph=graph,
@@ -360,7 +391,9 @@ async def resume_playbook(
         )
 
         if interrupt_data:
-            logger.info("[resume_playbook] Graph suspended again (HITL)", thread_id=thread_id)
+            logger.info(
+                "[resume_playbook] Graph suspended again (HITL)", thread_id=thread_id
+            )
 
             response = {
                 "status": "suspended",
@@ -375,7 +408,9 @@ async def resume_playbook(
 
         result = result or {}
         final_status = result.get("status", "completed")
-        logger.info("[resume_playbook] Resumed execution completed", status=final_status)
+        logger.info(
+            "[resume_playbook] Resumed execution completed", status=final_status
+        )
 
         tasks = result.get("tasks", [])
         task_results = _build_task_results(result, tasks)
@@ -418,6 +453,7 @@ async def run_single_step_graph(
     agent: Dict[str, Any],
     context_from_dependencies: str = "",
     workspace_context: Optional[list] = None,
+    trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
     execution_mode: str = "live",
@@ -432,8 +468,13 @@ async def run_single_step_graph(
     interrupt/resume logic is identical to the full-workflow path.
     """
     from src.langgraph_engine.graph_builder import DynamicGraphBuilder
-    from src.langgraph_engine.graph_cache import store_thread_graph, cleanup_thread_graph
-    from src.langgraph_engine.step_executor import _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot
+    from src.langgraph_engine.graph_cache import (
+        store_thread_graph,
+        cleanup_thread_graph,
+    )
+    from src.langgraph_engine.step_executor import (
+        _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot,
+    )
 
     def _normalize_port_id(value: Any) -> str:
         raw = str(value or "default").strip() or "default"
@@ -457,8 +498,12 @@ async def run_single_step_graph(
         for artifact in upstream_result.get("artifacts") or []:
             if not isinstance(artifact, dict):
                 continue
-            port_id = _normalize_port_id(artifact.get("port_id") or artifact.get("portId") or "default")
-            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(artifact)
+            port_id = _normalize_port_id(
+                artifact.get("port_id") or artifact.get("portId") or "default"
+            )
+            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(
+                artifact
+            )
 
     initial_state: ExecutionState = {
         "playbook_id": task_id,
@@ -475,9 +520,12 @@ async def run_single_step_graph(
         "node_timings": {},
         "query": "",
         "workspace_context": workspace_context,
+        "trigger_context": trigger_context,
         "evaluation_user_id": evaluation_user_id,
         "execution_mode": execution_mode,
-        "validated_replays_by_task": {task_id: validated_replay} if validated_replay else {},
+        "validated_replays_by_task": {task_id: validated_replay}
+        if validated_replay
+        else {},
         "step_execution_modes": {},
         "task_outputs": {},
         "artifacts_by_port": artifacts_by_port,
@@ -501,8 +549,13 @@ async def run_single_step_graph(
 
         state_snapshot = await compiled.aget_state(config)
         if state_snapshot.next:
-            interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
-            logger.info(f"[{task_id}] Graph suspended (HITL)", interrupt_type=interrupt_data.get("type") if interrupt_data else None)
+            interrupt_data = extract_step_interrupt_from_snapshot(
+                state_snapshot, task_id, thread_id
+            )
+            logger.info(
+                f"[{task_id}] Graph suspended (HITL)",
+                interrupt_type=interrupt_data.get("type") if interrupt_data else None,
+            )
             return {
                 "status": "suspended",
                 "result": {
@@ -567,11 +620,15 @@ async def resume_single_step(
     """Resume an interrupted single-step execution."""
     from langgraph.types import Command
     from src.langgraph_engine.graph_cache import get_thread_graph, cleanup_thread_graph
-    from src.langgraph_engine.step_executor import _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot
+    from src.langgraph_engine.step_executor import (
+        _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot,
+    )
 
     graph = get_thread_graph(thread_id)
     if graph is None:
-        logger.warning("[resume_single_step] Graph not found for thread", thread_id=thread_id)
+        logger.warning(
+            "[resume_single_step] Graph not found for thread", thread_id=thread_id
+        )
         return {
             "status": "failed",
             "result": {
@@ -591,14 +648,23 @@ async def resume_single_step(
 
     try:
         state_snapshot = await graph.aget_state(config)
-        resume_interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
+        resume_interrupt_data = extract_step_interrupt_from_snapshot(
+            state_snapshot, task_id, thread_id
+        )
         resume_state_update = _build_resume_state_update(resume_interrupt_data)
-        final_state = await graph.ainvoke(Command(update=resume_state_update, resume=human_response), config)
+        final_state = await graph.ainvoke(
+            Command(update=resume_state_update, resume=human_response), config
+        )
 
         state_snapshot = await graph.aget_state(config)
         if state_snapshot.next:
-            interrupt_data = extract_step_interrupt_from_snapshot(state_snapshot, task_id, thread_id)
-            logger.info("[resume_single_step] Graph suspended again (HITL)", interrupt_type=interrupt_data.get("type") if interrupt_data else None)
+            interrupt_data = extract_step_interrupt_from_snapshot(
+                state_snapshot, task_id, thread_id
+            )
+            logger.info(
+                "[resume_single_step] Graph suspended again (HITL)",
+                interrupt_type=interrupt_data.get("type") if interrupt_data else None,
+            )
             return {
                 "status": "suspended",
                 "result": {
@@ -613,7 +679,9 @@ async def resume_single_step(
             }
 
         final_status = final_state.get("status", "completed")
-        logger.info("[resume_single_step] Resumed execution completed", status=final_status)
+        logger.info(
+            "[resume_single_step] Resumed execution completed", status=final_status
+        )
 
         if final_status in ("completed", "failed", "skipped"):
             cleanup_thread_graph(thread_id)
@@ -629,10 +697,16 @@ async def resume_single_step(
                 "output": final_state.get("output", task_result.get("output", "")),
                 "error": final_state.get("error", task_result.get("error", "")),
                 "duration_ms": 0,
-                "components": final_state.get("components", task_result.get("components", [])),
+                "components": final_state.get(
+                    "components", task_result.get("components", [])
+                ),
                 "usage": final_state.get("usage", task_result.get("usage", {})),
-                "tool_trace": final_state.get("tool_trace", task_result.get("tool_trace", [])),
-                "semantic_match": final_state.get("semantic_match", task_result.get("semantic_match")),
+                "tool_trace": final_state.get(
+                    "tool_trace", task_result.get("tool_trace", [])
+                ),
+                "semantic_match": final_state.get(
+                    "semantic_match", task_result.get("semantic_match")
+                ),
             },
             "interrupt": None,
             "thread_id": thread_id,
@@ -656,7 +730,9 @@ async def resume_single_step(
         }
 
 
-def _build_task_results(state: Dict[str, Any], tasks: List[TaskConfig]) -> List[Dict[str, Any]]:
+def _build_task_results(
+    state: Dict[str, Any], tasks: List[TaskConfig]
+) -> List[Dict[str, Any]]:
     results = state.get("results", {})
     timings = state.get("node_timings", {})
     task_results = []
@@ -669,44 +745,62 @@ def _build_task_results(state: Dict[str, Any], tasks: List[TaskConfig]) -> List[
         if tid in results:
             r = results[tid]
             if isinstance(r, dict) and r.get("status") == "skipped":
-                task_results.append({
-                    "task_id": tid,
-                    "status": "skipped",
-                    "output": "",
-                    "error": "",
-                    "duration_ms": timings.get(tid, {}).get("duration_ms", 0),
-                    "components": r.get("components", []),
-                    "usage": r.get("usage", {}),
-                    "tool_trace": r.get("tool_trace", []),
-                    "llm_prompt_trace": r.get("llm_prompt_trace", []),
-                    "semantic_match": r.get("semantic_match"),
-                })
+                task_results.append(
+                    {
+                        "task_id": tid,
+                        "status": "skipped",
+                        "output": "",
+                        "error": "",
+                        "duration_ms": timings.get(tid, {}).get("duration_ms", 0),
+                        "components": r.get("components", []),
+                        "usage": r.get("usage", {}),
+                        "tool_trace": r.get("tool_trace", []),
+                        "llm_prompt_trace": r.get("llm_prompt_trace", []),
+                        "semantic_match": r.get("semantic_match"),
+                    }
+                )
             elif isinstance(r, dict) and "error" in r and r.get("error"):
-                task_results.append({
-                    "task_id": tid,
-                    "status": "failed",
-                    "output": "",
-                    "error": r["error"],
-                    "duration_ms": timings.get(tid, {}).get("duration_ms", 0),
-                    "tool_trace": r.get("tool_trace", []) if isinstance(r, dict) else [],
-                    "llm_prompt_trace": r.get("llm_prompt_trace", []) if isinstance(r, dict) else [],
-                    "semantic_match": r.get("semantic_match") if isinstance(r, dict) else None,
-                })
+                task_results.append(
+                    {
+                        "task_id": tid,
+                        "status": "failed",
+                        "output": "",
+                        "error": r["error"],
+                        "duration_ms": timings.get(tid, {}).get("duration_ms", 0),
+                        "tool_trace": r.get("tool_trace", [])
+                        if isinstance(r, dict)
+                        else [],
+                        "llm_prompt_trace": r.get("llm_prompt_trace", [])
+                        if isinstance(r, dict)
+                        else [],
+                        "semantic_match": r.get("semantic_match")
+                        if isinstance(r, dict)
+                        else None,
+                    }
+                )
             else:
                 output = r.get("output", str(r)) if isinstance(r, dict) else str(r)
                 components = r.get("components", []) if isinstance(r, dict) else []
                 usage = r.get("usage", {}) if isinstance(r, dict) else {}
-                task_results.append({
-                    "task_id": tid,
-                    "status": "completed",
-                    "output": output,
-                    "error": "",
-                    "duration_ms": timings.get(tid, {}).get("duration_ms", 0),
-                    "components": components,
-                    "usage": usage,
-                    "tool_trace": r.get("tool_trace", []) if isinstance(r, dict) else [],
-                    "llm_prompt_trace": r.get("llm_prompt_trace", []) if isinstance(r, dict) else [],
-                    "semantic_match": r.get("semantic_match") if isinstance(r, dict) else None,
-                })
+                task_results.append(
+                    {
+                        "task_id": tid,
+                        "status": "completed",
+                        "output": output,
+                        "error": "",
+                        "duration_ms": timings.get(tid, {}).get("duration_ms", 0),
+                        "components": components,
+                        "usage": usage,
+                        "tool_trace": r.get("tool_trace", [])
+                        if isinstance(r, dict)
+                        else [],
+                        "llm_prompt_trace": r.get("llm_prompt_trace", [])
+                        if isinstance(r, dict)
+                        else [],
+                        "semantic_match": r.get("semantic_match")
+                        if isinstance(r, dict)
+                        else None,
+                    }
+                )
 
     return task_results

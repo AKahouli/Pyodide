@@ -109,7 +109,7 @@ export class PlaybookDesignService {
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
-    const modelId = defaultModel?.litellmModel || defaultModel?.id || '';
+    const modelId = defaultModel?.id || defaultModel?.litellmModel || '';
 
     const grpcRequest = {
       query: dto.prompt,
@@ -191,7 +191,7 @@ export class PlaybookDesignService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
@@ -253,7 +253,7 @@ export class PlaybookDesignService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
@@ -368,7 +368,7 @@ export class PlaybookDesignService {
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(playbook.workspaces || []);
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
-    const modelId = defaultModel?.litellmModel || defaultModel?.id || '';
+    const modelId = defaultModel?.id || defaultModel?.litellmModel || '';
 
     const grpcRequest = {
       query: dto.query,
@@ -488,6 +488,8 @@ export class PlaybookDesignService {
       title: node.title || `Step ${idx + 1}`,
       description: node.description || '',
       assignedAgentId: this.toOptionalObjectId(node.assigned_agent_id),
+      executionMode: node.execution_mode || 'agent',
+      selectedAction: node.selected_action || undefined,
       executionOrder: node.execution_order ?? idx,
       positionX: node.x ?? 0,
       positionY: node.y ?? 0,

@@ -53,7 +53,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     category: 'generation',
     inputPorts: [
       { id: 'content', name: 'Content', artifactKind: 'text', required: true },
-      { id: 'data', name: 'Supporting Data', artifactKind: 'data', required: false },
+      { id: 'template', name: 'Template', artifactKind: 'document', required: false },
     ],
     outputPorts: [
       { id: 'slides', name: 'Slide Deck', artifactKind: 'document' },

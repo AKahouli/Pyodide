@@ -21,7 +21,8 @@ interface Props {
 
 export function InterruptDialog({ open, onOpenChange }: Props) {
   const { id } = useParams<{ id: string }>();
-  const execution = useCurrentExecution();
+  const rawExecution = useCurrentExecution();
+  const execution = rawExecution?.playbookId === id ? rawExecution : null;
   const resumeExecution = usePlaybookStore((s) => s.resumeExecution);
   const { t } = useModuleTranslation('playbook');
 

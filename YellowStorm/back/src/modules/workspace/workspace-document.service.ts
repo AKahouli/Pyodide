@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
@@ -168,7 +170,7 @@ export class WorkspaceDocumentService {
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
-    this.logger.log('Upload URL generated (custom path)', {
+    this.logger.debug('Upload URL generated (custom path)', {
       documentId: document._id,
       workspaceId,
       pathPrefix,
@@ -241,7 +243,7 @@ export class WorkspaceDocumentService {
 
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
-    this.logger.log('Small file uploaded (custom path)', {
+    this.logger.debug('Small file uploaded (custom path)', {
       documentId: document._id,
       workspaceId,
       pathPrefix,
@@ -324,7 +326,7 @@ export class WorkspaceDocumentService {
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
-    this.logger.log('Upload URL generated', {
+    this.logger.debug('Upload URL generated', {
       documentId: document._id,
       workspaceId,
       filename: data.filename,
@@ -390,7 +392,7 @@ export class WorkspaceDocumentService {
       document: this.mapToResponse(document),
     });
 
-    this.logger.log('Upload confirmed', {
+    this.logger.debug('Upload confirmed', {
       documentId: document._id,
       workspaceId,
     });
@@ -480,7 +482,7 @@ export class WorkspaceDocumentService {
     // Update workspace storage
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
-    this.logger.log('Small file uploaded', {
+    this.logger.debug('Small file uploaded', {
       documentId: document._id,
       workspaceId,
       size,
@@ -488,6 +490,78 @@ export class WorkspaceDocumentService {
     });
 
     return this.mapToResponse(document);
+  }
+
+  /**
+   * Ingest a file from an external download URL into a workspace.
+   * Downloads the file, then delegates to uploadSmallFile for storage.
+   * Used by the brain/agent to save MCP-sourced files (e.g., SharePoint download URLs).
+   */
+  async ingestFromUrl(
+    workspaceId: string,
+    dto: IngestUrlDto,
+  ): Promise<DocumentResponse> {
+    this.logger.log('Ingesting file from URL', {
+      workspaceId,
+      userId: dto.userId,
+      filename: dto.filename,
+      hasAuthHeaders: !!dto.authHeaders,
+    });
+
+    let buffer: Buffer;
+    let resolvedMimeType = dto.mimeType || 'application/octet-stream';
+
+    try {
+      const response = await axios.get(dto.downloadUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30_000,
+        maxContentLength: this.maxFileSizeMb * 1024 * 1024,
+        headers: dto.authHeaders || {},
+      });
+
+      buffer = Buffer.from(response.data);
+
+      if (!dto.mimeType && response.headers['content-type']) {
+        resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
+      }
+    } catch (error) {
+      const err = error as any;
+      const status = err.response?.status;
+      const message = status
+        ? `Failed to download file: HTTP ${status}`
+        : `Failed to download file: ${err.message}`;
+
+      this.logger.error('File download failed during ingest', {
+        workspaceId,
+        downloadUrl: dto.downloadUrl,
+        error: message,
+      });
+
+      throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);
+    }
+
+    const doc = await this.uploadSmallFile(
+      workspaceId,
+      dto.userId,
+      buffer,
+      dto.filename,
+      resolvedMimeType,
+    );
+
+    if (dto.sourceMeta) {
+      await this.documentModel.findByIdAndUpdate(doc.id, {
+        $set: { metadata: dto.sourceMeta },
+      });
+    }
+
+    this.logger.debug('File ingested from URL', {
+      documentId: doc.id,
+      workspaceId,
+      filename: doc.originalName,
+      size: doc.size,
+    });
+
+    return doc;
   }
 
   /**
@@ -600,7 +674,7 @@ export class WorkspaceDocumentService {
       expiresAt,
     });
 
-    this.logger.log('Bulk upload session created', {
+    this.logger.debug('Bulk upload session created', {
       sessionId: session._id,
       workspaceId,
       fileCount: files.length,
@@ -794,7 +868,7 @@ export class WorkspaceDocumentService {
       },
     });
 
-    this.logger.log('Bulk upload completed', {
+    this.logger.debug('Bulk upload completed', {
       sessionId,
       workspaceId,
       status,
@@ -1069,7 +1143,7 @@ export class WorkspaceDocumentService {
       await this.workspaceService.updateStorageUsage(workspaceId, -document.size, -1);
     }
 
-    this.logger.log('Document deleted', {
+    this.logger.debug('Document deleted', {
       documentId,
       workspaceId,
     });
@@ -1165,7 +1239,7 @@ export class WorkspaceDocumentService {
       );
     }
 
-    this.logger.log('All documents deleted from workspace', {
+    this.logger.debug('All documents deleted from workspace', {
       workspaceId,
       count: documents.length,
       indexedCount: indexedDocuments.length,
@@ -1200,7 +1274,7 @@ export class WorkspaceDocumentService {
         return;
       }
 
-      this.logger.log('Starting cleanup of expired upload sessions', {
+      this.logger.debug('Starting cleanup of expired upload sessions', {
         count: expiredSessions.length,
       });
 
@@ -1257,7 +1331,7 @@ export class WorkspaceDocumentService {
 
       const duration = Date.now() - startTime;
 
-      this.logger.log('Expired upload sessions cleanup completed', {
+      this.logger.debug('Expired upload sessions cleanup completed', {
         sessionsExpired: totalSessionsExpired,
         documentsDeleted: totalDocumentsDeleted,
         blobsDeleted: totalBlobsDeleted,

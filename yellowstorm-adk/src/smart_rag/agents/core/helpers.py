@@ -23,6 +23,8 @@ from src.smart_rag.tools import build_tree
 logger = get_logger("api.routers.agentic_rag.AgentHelper")
 settings = get_settings()
 
+
+
 class AgentHelper:
     """Utility class for sanitizing agent names and preparing prompts and agent data.
     
@@ -421,6 +423,8 @@ class AgentHelper:
         prompt = f"""{manager_prompt}
 
 You have access to delegate functions for each agent. Use the appropriate delegate_to_[agent_name] function to call the agent that can best handle the user's request. Do not just mention agents - actually call their delegate functions with the user's task.
+
+
 
 <available_agents>
 {agents_json}

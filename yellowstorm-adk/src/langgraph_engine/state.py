@@ -38,6 +38,8 @@ class TaskConfig(TypedDict):
     title: str
     description: str
     assigned_agent_id: Optional[str]
+    execution_mode: Optional[str]
+    selected_action: Optional[str]
     execution_order: int
     interrupt_before: bool
     interrupt_after: bool
@@ -86,7 +88,9 @@ def merge_results(left: Dict[str, Any], right: Dict[str, Any]) -> Dict[str, Any]
     return {**left, **right}
 
 
-def merge_timings(left: Dict[str, NodeTiming], right: Dict[str, NodeTiming]) -> Dict[str, NodeTiming]:
+def merge_timings(
+    left: Dict[str, NodeTiming], right: Dict[str, NodeTiming]
+) -> Dict[str, NodeTiming]:
     if not left:
         return right
     if not right:
@@ -125,7 +129,9 @@ def merge_clarification_transcripts(
     if not right:
         return left
 
-    merged: Dict[str, List[Dict[str, str]]] = {key: list(value or []) for key, value in left.items()}
+    merged: Dict[str, List[Dict[str, str]]] = {
+        key: list(value or []) for key, value in left.items()
+    }
     for key, value in right.items():
         incoming = value if isinstance(value, list) else [value]
         valid_turns = [item for item in incoming if isinstance(item, dict)]
@@ -136,7 +142,9 @@ def merge_clarification_transcripts(
     return merged
 
 
-def merge_task_description_overrides(left: Dict[str, str], right: Dict[str, str]) -> Dict[str, str]:
+def merge_task_description_overrides(
+    left: Dict[str, str], right: Dict[str, str]
+) -> Dict[str, str]:
     if not left:
         return right
     if not right:
@@ -152,7 +160,9 @@ def merge_artifacts(
     if not right:
         return left
 
-    merged: Dict[str, List[Dict[str, Any]]] = {key: list(value or []) for key, value in left.items()}
+    merged: Dict[str, List[Dict[str, Any]]] = {
+        key: list(value or []) for key, value in left.items()
+    }
     for key, value in right.items():
         incoming = value if isinstance(value, list) else [value]
         if key in merged:
@@ -163,8 +173,9 @@ def merge_artifacts(
 
 
 def merge_status(left: str, right: str) -> str:
-    higher_severity_wins = (_STATUS_SEVERITY.get(left, 99)
-                            <= _STATUS_SEVERITY.get(right, 99))
+    higher_severity_wins = _STATUS_SEVERITY.get(left, 99) <= _STATUS_SEVERITY.get(
+        right, 99
+    )
     return left if higher_severity_wins else right
 
 
@@ -189,6 +200,7 @@ class ExecutionState(TypedDict):
     node_timings: Annotated[Dict[str, NodeTiming], merge_timings]
     query: Optional[str]
     workspace_context: Optional[List[Dict[str, Any]]]
+    trigger_context: Optional[Dict[str, Any]]
     evaluation_user_id: Optional[str]
     execution_mode: Optional[str]
     validated_replays_by_task: Optional[Dict[str, Any]]
@@ -196,5 +208,9 @@ class ExecutionState(TypedDict):
     prompt_overrides: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
     artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
-    clarification_transcripts_by_task: Annotated[Dict[str, List[Dict[str, str]]], merge_clarification_transcripts]
-    task_description_overrides_by_task: Annotated[Dict[str, str], merge_task_description_overrides]
+    clarification_transcripts_by_task: Annotated[
+        Dict[str, List[Dict[str, str]]], merge_clarification_transcripts
+    ]
+    task_description_overrides_by_task: Annotated[
+        Dict[str, str], merge_task_description_overrides
+    ]

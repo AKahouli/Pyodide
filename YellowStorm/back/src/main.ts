@@ -7,6 +7,7 @@ import * as compression from 'compression';
 import * as cookieParser from 'cookie-parser';
 import { json, urlencoded } from 'express';
 import { inspect } from 'node:util';
+import { URL } from 'node:url';
 import { AppModule } from './app.module';
 import { LoggerService } from './modules/logger';
 
@@ -43,8 +44,21 @@ async function bootstrap() {
   const logger = await app.resolve(LoggerService);
   logger.setContext('Bootstrap');
   app.useLogger(logger);
+  const mongoUri = configService.get<string>('MONGODB_URI', 'mongodb://localhost:27017/yellostorm');
+  try {
+    const parsedMongoUri = new URL(mongoUri);
+    logger.log('Resolved runtime database configuration', {
+      mongoHost: parsedMongoUri.host,
+      mongoDatabase: parsedMongoUri.pathname.replace(/^\//, '') || 'unknown',
+    });
+  } catch {
+    logger.warn('Failed to parse runtime database configuration', { mongoUri });
+  }
   const corsOrigins = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
-  const allowedOrigins = corsOrigins.split(',').map((origin) => origin.trim());
+  const allowedOrigins = corsOrigins
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   const corsOrigin = allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins;
 
   // CORS - use NestJS built-in for proper integration

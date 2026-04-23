@@ -45,6 +45,10 @@ export interface IAgentForStream {
 
 export interface IGrpcWorkspaceContext {
   workspace_id: string;
+  chunks?: number;
+  hybrid_search?: boolean;
+  instruction?: string;
+  tag?: string;
   workspace_documents: Array<{
     _id: string;
     filename: string;

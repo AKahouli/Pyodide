@@ -112,12 +112,22 @@ export class UpdatePlaybookTaskDto {
 
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(20000)
   description?: string;
 
   @IsOptional()
   @IsString()
   assignedAgentId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['agent', 'action'])
+  executionMode?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['index', 'delete', 'read'])
+  selectedAction?: string;
 
   @IsOptional()
   @IsNumber()
@@ -217,6 +227,7 @@ export class UpdatePlaybookTaskDto {
     disableAutoSkills?: boolean;
     isEnabled?: boolean;
   }>;
+
 }
 
 export class UpdatePlaybookEdgeDto {
@@ -246,10 +257,10 @@ export class UpdatePlaybookDto {
   @MaxLength(100)
   name?: string;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
+  @ApiPropertyOptional({ maxLength: 20000 })
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(20000)
   description?: string;
 
   @ApiPropertyOptional({ type: [UpdatePlaybookTaskDto] })
@@ -273,4 +284,24 @@ export class UpdatePlaybookDto {
   @IsArray()
   @IsMongoId({ each: true })
   workspaces?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  reflectionEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  advisorAutopilotEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotTargetScore?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotMaxTurns?: number;
 }

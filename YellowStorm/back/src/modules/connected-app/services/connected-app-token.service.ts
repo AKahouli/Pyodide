@@ -11,8 +11,11 @@ import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { MailboxCapabilityResponse } from '../interfaces/connected-app.interface';
 
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const M365_MAIL_APP_KEYS = ['microsoft365', 'microsoft', 'm365'];
+const REQUIRED_MAILBOX_SCOPES = ['mail.read'];
 
 @Injectable()
 export class ConnectedAppTokenService {
@@ -65,6 +68,43 @@ export class ConnectedAppTokenService {
 
   async requireConnection(userId: string, appKey: string): Promise<string> {
     return this.getValidToken(userId, appKey);
+  }
+
+  async getMailboxCapability(userId: string): Promise<MailboxCapabilityResponse> {
+    for (const appKey of M365_MAIL_APP_KEYS) {
+      const connection = await this.connectionModel
+        .findOne({ userId: new Types.ObjectId(userId), appKey, status: ConnectionStatus.ACTIVE })
+        .lean()
+        .exec();
+
+      if (!connection) {
+        continue;
+      }
+
+      const grantedScopes = Array.isArray(connection.scopes) ? connection.scopes : [];
+      const grantedScopesLower = new Set(grantedScopes.map((scope) => scope.toLowerCase()));
+      const missingScopes = REQUIRED_MAILBOX_SCOPES.filter(
+        (scope) => !grantedScopesLower.has(scope.toLowerCase()),
+      );
+
+      return {
+        appKey,
+        connected: true,
+        mailboxReady: missingScopes.length === 0,
+        providerEmail: connection.providerEmail,
+        missingScopes,
+        grantedScopes,
+      };
+    }
+
+    return {
+      appKey: M365_MAIL_APP_KEYS[0],
+      connected: false,
+      mailboxReady: false,
+      providerEmail: undefined,
+      missingScopes: [...REQUIRED_MAILBOX_SCOPES],
+      grantedScopes: [],
+    };
   }
 
   async disconnect(userId: string, appKey: string): Promise<void> {

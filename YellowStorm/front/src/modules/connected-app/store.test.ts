@@ -2,11 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ConnectedAppWithStatus } from './types';
 
 const getAvailableAppsMock = vi.hoisted(() => vi.fn());
+const getMailboxCapabilityMock = vi.hoisted(() => vi.fn());
 const getAuthorizationUrlMock = vi.hoisted(() => vi.fn());
 const disconnectAppMock = vi.hoisted(() => vi.fn());
 
 vi.mock('./api', () => ({
   getAvailableApps: getAvailableAppsMock,
+  getMailboxCapability: getMailboxCapabilityMock,
   getAuthorizationUrl: getAuthorizationUrlMock,
   disconnectApp: disconnectAppMock,
 }));
@@ -54,6 +56,7 @@ describe('useConnectedAppStore', () => {
       isLoading: false,
       isInitialized: false,
       connectingAppKey: null,
+      mailboxCapability: null,
     });
     vi.clearAllMocks();
   });
@@ -61,11 +64,19 @@ describe('useConnectedAppStore', () => {
   describe('fetchApps', () => {
     it('should set apps and isInitialized on success', async () => {
       getAvailableAppsMock.mockResolvedValue(mockApps);
+      getMailboxCapabilityMock.mockResolvedValue({
+        appKey: 'microsoft',
+        connected: true,
+        mailboxReady: true,
+        missingScopes: [],
+        grantedScopes: ['mail.read'],
+      });
 
       await useConnectedAppStore.getState().fetchApps();
 
       const state = useConnectedAppStore.getState();
       expect(state.apps).toEqual(mockApps);
+      expect(state.mailboxCapability?.mailboxReady).toBe(true);
       expect(state.isInitialized).toBe(true);
       expect(state.isLoading).toBe(false);
     });
@@ -78,11 +89,31 @@ describe('useConnectedAppStore', () => {
       expect(toast.error).toHaveBeenCalled();
       expect(useConnectedAppStore.getState().isLoading).toBe(false);
     });
+
+    it('should tolerate mailbox capability fetch failure', async () => {
+      getAvailableAppsMock.mockResolvedValue(mockApps);
+      getMailboxCapabilityMock.mockRejectedValue(new Error('mailbox failed'));
+
+      await useConnectedAppStore.getState().fetchApps();
+
+      expect(useConnectedAppStore.getState().apps).toEqual(mockApps);
+      expect(useConnectedAppStore.getState().mailboxCapability).toBeNull();
+    });
   });
 
   describe('disconnectApp', () => {
     it('should call api and update local state to connected=false', async () => {
-      useConnectedAppStore.setState({ apps: mockApps, isInitialized: true });
+      useConnectedAppStore.setState({
+        apps: mockApps,
+        isInitialized: true,
+        mailboxCapability: {
+          appKey: 'google-drive',
+          connected: true,
+          mailboxReady: true,
+          missingScopes: [],
+          grantedScopes: ['mail.read'],
+        },
+      });
       disconnectAppMock.mockResolvedValue(undefined);
 
       await useConnectedAppStore.getState().disconnectApp('google-drive');
@@ -93,6 +124,7 @@ describe('useConnectedAppStore', () => {
         .apps.find((a) => a.appKey === 'google-drive');
       expect(app?.connected).toBe(false);
       expect(app?.connection).toBeUndefined();
+      expect(useConnectedAppStore.getState().mailboxCapability?.connected).toBe(false);
       expect(toast.success).toHaveBeenCalled();
     });
 
@@ -132,6 +164,13 @@ describe('useConnectedAppStore', () => {
         isLoading: true,
         isInitialized: true,
         connectingAppKey: 'google-drive',
+        mailboxCapability: {
+          appKey: 'microsoft',
+          connected: true,
+          mailboxReady: false,
+          missingScopes: ['mail.read'],
+          grantedScopes: [],
+        },
       });
 
       useConnectedAppStore.getState().reset();
@@ -141,6 +180,7 @@ describe('useConnectedAppStore', () => {
       expect(state.isLoading).toBe(false);
       expect(state.isInitialized).toBe(false);
       expect(state.connectingAppKey).toBeNull();
+      expect(state.mailboxCapability).toBeNull();
     });
   });
 });
@@ -152,6 +192,7 @@ describe('ensureAppConnected', () => {
       isLoading: false,
       isInitialized: false,
       connectingAppKey: null,
+      mailboxCapability: null,
     });
     vi.clearAllMocks();
   });

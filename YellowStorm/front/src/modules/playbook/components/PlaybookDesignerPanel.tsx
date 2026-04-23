@@ -61,7 +61,8 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const messagesLoading = useDesignMessagesLoading();
   const isDesigning = useIsDesigning();
   const isDirty = useIsDirty();
-  const currentExecution = useCurrentExecution();
+  const rawCurrentExecution = useCurrentExecution();
+  const currentExecution = rawCurrentExecution?.playbookId === playbookId ? rawCurrentExecution : null;
   const selectedStepId = useSelectedStep();
 
   const fetchDesignMessages = usePlaybookStore((s) => s.fetchDesignMessages);

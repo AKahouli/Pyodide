@@ -129,6 +129,171 @@ export interface ExecutionScheduleData {
   advanced: AdvancedSchedulePayloadData | null;
 }
 
+export interface PlaybookManualTriggerData {
+  type: 'manual';
+  enabled: true;
+}
+
+export interface PlaybookScheduleTriggerData {
+  type: 'schedule';
+  enabled: boolean;
+  schedule: ExecutionScheduleData | null;
+}
+
+export interface PlaybookMailTriggerFiltersData {
+  from: string[];
+  subjectContains: string[];
+  bodyContains: string[];
+  hasAttachments: boolean | null;
+}
+
+export interface MailAttachmentWorkspaceImportData {
+  workspaceDocumentId: string | null;
+  filename: string;
+  finalFilename: string | null;
+  mimeType: string | null;
+  size: number | null;
+  sourcePath: string | null;
+  collisionResolved: boolean;
+  error: string | null;
+}
+
+export interface MailMessageAttachmentData {
+  providerAttachmentId: string;
+  filename: string;
+  mimeType: string | null;
+  size: number | null;
+  isInline: boolean;
+  workspaceImport: MailAttachmentWorkspaceImportData | null;
+}
+
+export interface MailTriggerRuntimePayloadData {
+  provider: 'm365';
+  mailboxAppKey: string;
+  providerMessageId: string;
+  providerThreadId: string | null;
+  receivedAt: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  from: { name: string | null; address: string };
+  to: Array<{ name: string | null; address: string }>;
+  cc: Array<{ name: string | null; address: string }>;
+  hasAttachments: boolean;
+  attachments: MailMessageAttachmentData[];
+}
+
+export interface PlaybookMailTriggerNodeInputData {
+  trigger: {
+    type: 'mail';
+    occurredAt: string;
+  };
+  message: MailTriggerRuntimePayloadData;
+}
+
+export type MailEventLedgerStatus = 'received' | 'normalized' | 'matched' | 'deduplicated' | 'ignored' | 'errored';
+
+export interface NormalizedMailEventData {
+  provider: 'm365';
+  mailboxAppKey: string;
+  providerMessageId: string;
+  providerThreadId: string | null;
+  receivedAt: string;
+  occurredAt: string;
+  subject: string;
+  bodyText: string;
+  bodyHtml: string | null;
+  from: { name: string | null; address: string };
+  to: Array<{ name: string | null; address: string }>;
+  cc: Array<{ name: string | null; address: string }>;
+  hasAttachments: boolean;
+  attachments: MailMessageAttachmentData[];
+}
+
+export interface MailEventLedgerEntryData {
+  id: string;
+  dedupeKey: string;
+  status: MailEventLedgerStatus;
+  event: NormalizedMailEventData;
+  error: string | null;
+  createdAt: string;
+}
+
+export interface MailEventIngestionResultData {
+  duplicate: boolean;
+  entry: MailEventLedgerEntryData;
+}
+
+export interface MailTriggerMatchResultData {
+  matched: boolean;
+  reasons: string[];
+}
+
+export interface MailTriggerEvaluationResultData {
+  ingestion: MailEventIngestionResultData;
+  match: MailTriggerMatchResultData;
+  finalStatus: MailEventLedgerStatus;
+}
+
+export interface MailTriggerHandoffResultData {
+  executionId: string | null;
+  handedOff: boolean;
+  skippedReason: 'duplicate' | 'not-matched' | 'already-handed-off' | null;
+}
+
+export interface ExecutionTriggerContextData {
+  type: 'mail';
+  occurredAt: string;
+  payload: PlaybookMailTriggerNodeInputData;
+  ports?: {
+    mail_data?: {
+      kind: 'data';
+      value: {
+        receivedAt: string;
+        from: { name: string | null; address: string };
+        to: Array<{ name: string | null; address: string }>;
+        cc: Array<{ name: string | null; address: string }>;
+        subject: string;
+        bodyText: string;
+        bodyHtml: string | null;
+        hasAttachments: boolean;
+        providerMessageId: string;
+        providerThreadId: string | null;
+      };
+    };
+    mail_attachments?: {
+      kind: 'document';
+      documentIds: string[];
+    };
+  };
+}
+
+export interface PlaybookMailTriggerConfigData {
+  enabled: boolean;
+  mailboxAppKey: string | null;
+  autoRenewUntil: string | null;
+  filters: PlaybookMailTriggerFiltersData;
+  runtimeEnabled: boolean;
+  subscriptionId: string | null;
+  subscriptionClientState: string | null;
+  subscriptionExpiresAt: string | null;
+  runtimePayloadSchema: PlaybookMailTriggerNodeInputData | null;
+}
+
+export interface PlaybookMailTriggerData {
+  type: 'mail';
+  enabled: boolean;
+  available: boolean;
+  config: PlaybookMailTriggerConfigData | null;
+}
+
+export type PlaybookTriggerData = PlaybookManualTriggerData | PlaybookScheduleTriggerData | PlaybookMailTriggerData;
+
+export interface PlaybookTriggersResponse {
+  automatedTriggerType: 'schedule' | 'mail' | null;
+  triggers: PlaybookTriggerData[];
+}
+
 export interface PlaybookSummaryResponse {
   id: string;
   name: string;
@@ -137,6 +302,7 @@ export interface PlaybookSummaryResponse {
   isFavorite: boolean;
   /** True when embedded `executionSchedule` exists and is enabled (scheduled runs). */
   scheduleEnabled: boolean;
+  automatedTriggerType: 'schedule' | 'mail' | null;
   /** Latest execution status for the list badge. */
   executionStatus?: ExecutionStatus | null;
   integrationToken?: string | null;
@@ -165,11 +331,17 @@ export interface PlaybookResponse {
   description: string;
   tasks: PlaybookTaskData[];
   edges: PlaybookEdgeData[];
+  reflectionEnabled: boolean;
+  advisorAutopilotEnabled: boolean;
+  advisorAutopilotTargetScore: number;
+  advisorAutopilotMaxTurns: number;
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;
   isActive: boolean;
   executionSchedule: ExecutionScheduleData | null;
+  triggers: PlaybookTriggerData[];
+  automatedTriggerType: 'schedule' | 'mail' | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -192,7 +364,7 @@ export interface PlaybookExecutionResponse {
   currentAttemptNumber: number;
   status: string;
   executionMode: string;
-  executionTrigger: 'manual' | 'scheduled';
+  executionTrigger: 'manual' | 'scheduled' | 'mail';
   reflectionEnabled: boolean;
   advisorAutopilotEnabled: boolean;
   advisorAutopilotTargetScore: number;
@@ -368,6 +540,13 @@ export interface TaskResultData {
     actionType: 'evaluate' | 'optimize_step' | 'stop';
     stopReason?: string | null;
   }>;
+  advisorOptimizationHistory?: Array<{
+    turn: number;
+    createdAt: string;
+    changedFields: string[];
+    beforeTask: Record<string, unknown>;
+    afterTask: Record<string, unknown>;
+  }>;
   lastAdvisorAction?: string | null;
   lastAdvisorScoreDelta?: number | null;
   advisorStopReason?: string | null;
@@ -380,7 +559,7 @@ export interface PlaybookExecutionSummaryResponse {
   executionNumber: number;
   currentAttemptNumber: number;
   status: string;
-  executionTrigger: 'manual' | 'scheduled';
+  executionTrigger: 'manual' | 'scheduled' | 'mail';
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;

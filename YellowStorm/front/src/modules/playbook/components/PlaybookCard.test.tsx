@@ -90,10 +90,10 @@ describe('PlaybookCard', () => {
     expect(screen.getByText('status.idle')).toBeInTheDocument();
   });
 
-  it('opens the scheduler from the shortcut icon', async () => {
+  it('opens the triggers panel from the shortcut icon', async () => {
     render(<PlaybookCard playbook={playbook} onDelete={vi.fn()} onClone={vi.fn()} onToggleFavorite={vi.fn()} />);
-    await userEvent.click(screen.getByLabelText('Open scheduler'));
-    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1?schedule=1');
+    await userEvent.click(screen.getByLabelText('card.openTriggers'));
+    expect(navigateMock).toHaveBeenCalledWith('/playbooks/p1?triggers=1');
   });
 
   it('navigates to playbook on card click', async () => {

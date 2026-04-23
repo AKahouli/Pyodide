@@ -5,26 +5,27 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "LiteLLM",
       "options": {
-        "baseURL": "http://142.132.131.111:3014"
+        "baseURL": "http://142.132.131.111:3014",
+        "apiKey": "sk-3996237592156101257"
       },
       "models": {
         "MiniMax-M2.7": {
           "name": "MiniMax-M2.7"
         },
         "gpt-5.4-medium-oc": {
-          "name": "GPT-5.4 Medium OC"
+          "name": "GPT-5.4-Medium-OC"
         },
         "gpt-5.4": {
-          "name": "GPT-5.4 OC"
+          "name": "GPT-5.4"
         },
         "gpt-5.4-low-oc": {
-          "name": "GPT-5.4 Low OC"
+          "name": "GPT-5.4-Low-OC"
         },
         "gpt-5.4-mini-oc": {
-          "name": "GPT-5.4 Mini OC"
+          "name": "GPT-5.4-Mini-OC"
         },
         "gpt-5.4-nano-oc": {
-          "name": "GPT-5.4 Nano OC"
+          "name": "GPT-5.4-Nano-OC"
         }
       }
     }
@@ -43,37 +44,45 @@
     "skill": {
       "*": "deny",
       "chrome-devtools": "allow",
-      "ai-elements": "allow"
+      "ai-elements": "allow",
+      "graphify-windows": "allow"
     }
   },
   "agent": {
     "build": {
       "permission": {
         "bash": {
-          "*": "allow",
+          "*": "ask",
           "git status*": "allow",
           "git diff*": "allow",
           "git log*": "allow",
           "npm run test*": "allow",
           "npm run build*": "allow",
           "npm run lint*": "allow",
+          "npm run typecheck*": "allow",
           "pnpm run test*": "allow",
           "pnpm run build*": "allow",
           "pnpm run lint*": "allow",
           "poetry run pytest*": "allow",
-          "npx ctx7*": "allow",
+          "npx *": "allow",
           "git push*": "ask",
           "git reset*": "ask",
           "git rebase*": "ask",
           "del *": "ask",
           "rm *": "ask",
           "docker compose down*": "allow",
-          "kubectl *": "allow"
+          "kubectl *": "allow",
+          "ls *": "allow",
+          "python *": "allow",
+          "pytest *": "allow",
+          "python3 *": "allow"
         },
         "task": {
           "*": "deny",
+          "backend-developer": "allow",
           "general": "allow",
           "explore": "allow",
+          "frontend-developer": "allow",
           "plan": "allow",
           "reviewer": "allow",
           "diagnostics": "allow",
@@ -86,17 +95,18 @@
       "permission": {
         "edit": "deny",
         "bash": {
-          "*": "allow",
+          "*": "deny",
           "git status*": "allow",
           "git diff*": "allow",
           "git log*": "allow",
           "npx ctx7*": "allow"
         },
         "task": {
-          "*": "allow",
+          "*": "deny",
           "explore": "allow",
           "reviewer": "allow",
-          "diagnostics": "allow"
+          "diagnostics": "allow",
+          "maintainer": "allow"
         }
       }
     }

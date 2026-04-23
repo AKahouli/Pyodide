@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
   Res,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from '../../auth/decorators/current-user.decorator';
@@ -39,6 +40,9 @@ import { SkipPlaybookStepDto } from '../dto/skip-playbook-step.dto';
 import { CloneSharePlaybookDto } from '../dto/clone-share-playbook.dto';
 import { BulkDeletePlaybooksDto } from '../dto/bulk-delete-playbooks.dto';
 import { UpsertPlaybookScheduleDto } from '../dto/upsert-playbook-schedule.dto';
+import { UpsertPlaybookMailTriggerDto } from '../dto/upsert-playbook-mail-trigger.dto';
+import { TestPlaybookMailEventDto } from '../dto/test-playbook-mail-event.dto';
+import { SyncPlaybookMailSubscriptionDto } from '../dto/sync-playbook-mail-subscription.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
@@ -50,6 +54,8 @@ import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
 import type { Response } from 'express';
 import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.decorator';
 import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
+import { PlaybookMailTriggerTestEventService } from '../services/playbook-mail-trigger-test-event.service';
+import { PlaybookMailGraphClientService } from '../services/playbook-mail-graph-client.service';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -62,6 +68,8 @@ export class PlaybookController {
     private readonly judgeService: PlaybookJudgeEnrichmentService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly mailTriggerTestEventService: PlaybookMailTriggerTestEventService,
+    private readonly mailGraphClientService: PlaybookMailGraphClientService,
     private readonly streamGateway: PlaybookStreamGatewayService,
     private readonly userService: UserService,
     private readonly notificationsService: NotificationsService,
@@ -157,12 +165,30 @@ export class PlaybookController {
     return this.playbookService.getSchedule(id);
   }
 
+  @Get(':id/triggers')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get playbook triggers (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Derived trigger model for the playbook' })
+  async getTriggers(@Param('id') id: string) {
+    return this.playbookService.getTriggers(id);
+  }
+
   @Put(':id/schedule')
   @UseGuards(PlaybookOwnerGuard)
   @ApiOperation({ summary: 'Create or replace execution schedule (owner only)' })
   @ApiParam({ name: 'id', description: 'Playbook id' })
   @ApiResponse({ status: 200, description: 'Playbook with updated executionSchedule' })
   async upsertSchedule(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
+    return this.playbookService.upsertSchedule(id, dto);
+  }
+
+  @Put(':id/triggers/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create or replace the schedule automated trigger (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with updated schedule trigger' })
+  async upsertScheduleTrigger(@Param('id') id: string, @Body() dto: UpsertPlaybookScheduleDto) {
     return this.playbookService.upsertSchedule(id, dto);
   }
 
@@ -173,6 +199,88 @@ export class PlaybookController {
   @ApiResponse({ status: 200, description: 'Playbook with executionSchedule cleared' })
   async clearSchedule(@Param('id') id: string) {
     return this.playbookService.clearSchedule(id);
+  }
+
+  @Delete(':id/triggers/schedule')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Disable the schedule automated trigger (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with schedule trigger disabled' })
+  async clearScheduleTrigger(@Param('id') id: string) {
+    return this.playbookService.clearSchedule(id);
+  }
+
+  @Put(':id/triggers/mail')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create or replace the mail automated trigger config (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with updated mail trigger config' })
+  async upsertMailTrigger(@Param('id') id: string, @Body() dto: UpsertPlaybookMailTriggerDto) {
+    return this.playbookService.upsertMailTrigger(id, dto);
+  }
+
+  @Delete(':id/triggers/mail')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Disable the mail automated trigger config (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Playbook with mail trigger disabled' })
+  async clearMailTrigger(@Param('id') id: string) {
+    return this.playbookService.clearMailTrigger(id);
+  }
+
+  @Post(':id/triggers/mail/test-event')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Inject a synthetic mail event into the playbook trigger pipeline (owner only)' })
+  @ApiParam({ name: 'id', description: 'Playbook id' })
+  @ApiResponse({ status: 200, description: 'Mail trigger evaluation and optional execution handoff result' })
+  async testMailTriggerEvent(
+    @CurrentUser() user: { _id: string; email: string },
+    @Param('id') id: string,
+    @Body() dto: TestPlaybookMailEventDto,
+  ) {
+    return this.mailTriggerTestEventService.processTestEvent(
+      id,
+      user._id.toString(),
+      user.email,
+      dto,
+    );
+  }
+
+  @Post(':id/triggers/mail/sync-subscription')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Create a Microsoft Graph mailbox subscription for this playbook trigger (owner only)' })
+  async syncMailSubscription(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Body() dto: SyncPlaybookMailSubscriptionDto,
+  ) {
+    const playbook = await this.playbookService.findById(id);
+    const mailTrigger = playbook.triggers.find((trigger) => trigger.type === 'mail');
+    const mailboxAppKey = mailTrigger?.config?.mailboxAppKey || 'microsoft';
+
+    const effectiveCutoff = dto.autoRenewUntil ?? mailTrigger?.config?.autoRenewUntil ?? null;
+    if (effectiveCutoff && new Date(effectiveCutoff).getTime() <= Date.now()) {
+      throw new BadRequestException('autoRenewUntil must be in the future');
+    }
+
+    const subscription = await this.mailGraphClientService.createInboxSubscription(
+      user._id.toString(),
+      mailboxAppKey,
+      dto.notificationUrl || 'http://localhost:3000/api/v1/playbooks/mail/webhook',
+      `ys_${id}`,
+      effectiveCutoff,
+    );
+
+    await this.playbookService.syncMailTriggerSubscription(id, {
+      mailboxAppKey,
+      notificationUrl: dto.notificationUrl || 'http://localhost:3000/api/v1/playbooks/mail/webhook',
+      autoRenewUntil: dto.autoRenewUntil ?? mailTrigger?.config?.autoRenewUntil ?? null,
+      subscriptionId: subscription.id || null,
+      subscriptionClientState: `ys_${id}`,
+      subscriptionExpiresAt: subscription.expirationDateTime || null,
+    });
+
+    return subscription;
   }
 
   @Get(':id')
@@ -401,6 +509,15 @@ export class PlaybookController {
     return this.outputFormatService.updateActiveTemplate(id, taskId, dto);
   }
 
+  @Delete(':id/tasks/:taskId/output-format-template')
+  @UseGuards(PlaybookOwnerGuard)
+  async removeActiveOutputFormatTemplate(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+  ) {
+    return this.outputFormatService.removeActiveTemplate(id, taskId);
+  }
+
   @Post(':id/stop')
   @UseGuards(PlaybookOwnerGuard)
   async stop(
@@ -448,7 +565,7 @@ export class PlaybookController {
       dto.runEvaluation === true,
       dto.executionMode,
       dto.streaming === true,
-      dto.runNodeReflection !== false,
+      dto.runNodeReflection,
       user.email,
       dto.advisorAutopilotEnabled === true,
       dto.advisorAutopilotTargetScore,

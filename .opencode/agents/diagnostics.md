@@ -1,7 +1,7 @@
 ---
 description: Debug and test agent. Reproduces failures, isolates root causes, and writes tests. Invoked before editing on bug reports and after reviewer flags test gaps.
 mode: subagent
-model: azure/gpt-5.4-medium-oc
+model: LiteLLM/gpt-5.4
 tools:
   write: true
   edit: true
@@ -12,7 +12,9 @@ permission:
     "*": deny
     "git status*": allow
     "git diff*": allow
+    "git log*": allow
     "npm run test*": allow
+    "npm run build*": allow
     "pnpm run test*": allow
     "poetry run pytest*": allow
     "npx ctx7*": allow

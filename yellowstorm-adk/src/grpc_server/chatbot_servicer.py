@@ -13,13 +13,15 @@ import time
 import tempfile
 import shutil
 from datetime import timedelta
-from google.protobuf import json_format, struct_pb2
+from google.protobuf import json_format, struct_pb2, timestamp_pb2
 
 import litellm
 import aiohttp
 import aiofiles
 from azure.storage.filedatalake.aio import DataLakeServiceClient
 from typing import AsyncGenerator, Dict, Any, Optional, List
+
+from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
 from src.routers.authentification import create_access_token
@@ -36,9 +38,81 @@ except ImportError:
 from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
+from src.langgraph_engine.types import PortPayload
 
 logger = get_logger(__name__)
 app_settings = get_settings()
+
+
+def _parse_trigger_context_fallback(request: Any) -> Optional[Dict[str, Any]]:
+    struct_payload = _struct_to_dict(getattr(request, "trigger_context", None))
+    if struct_payload:
+        return struct_payload
+
+    raw_json = str(getattr(request, "trigger_context_json", "") or "").strip()
+    if not raw_json:
+        return None
+
+    try:
+        parsed = json.loads(raw_json)
+    except json.JSONDecodeError:
+        logger.warning("[trigger_context] Failed to parse trigger_context_json")
+        return None
+
+    return parsed if isinstance(parsed, dict) else None
+
+
+async def _put_progress_event(queue: asyncio.Queue, item: Dict[str, Any]) -> None:
+    """Keep streaming queues bounded while preferring newer progress updates."""
+
+    def _priority(payload: Optional[Dict[str, Any]]) -> int:
+        if not isinstance(payload, dict):
+            return 0
+
+        update = (
+            payload.get("step_update")
+            if isinstance(payload.get("step_update"), dict)
+            else payload
+        )
+        if not isinstance(update, dict):
+            return 0
+
+        if update.get("interrupt"):
+            return 3
+
+        status = str(update.get("status") or "").strip().lower()
+        if status in {"failed", "completed", "suspended", "skipped"}:
+            return 2
+
+        if status == "in_progress" or update.get("output") or update.get("components"):
+            return 1
+
+        return 0
+
+    try:
+        queue.put_nowait(item)
+        return
+    except asyncio.QueueFull:
+        pass
+
+    dropped_item: Optional[Dict[str, Any]] = None
+    try:
+        dropped_item = queue.get_nowait()
+    except asyncio.QueueEmpty:
+        dropped_item = None
+
+    if dropped_item and _priority(dropped_item) > _priority(item):
+        try:
+            queue.put_nowait(dropped_item)
+        except asyncio.QueueFull:
+            pass
+
+    try:
+        queue.put_nowait(item)
+    except asyncio.QueueFull:
+        logger.warning(
+            "[stream_queue] Dropping progress event because queue remained full"
+        )
 
 
 class ChatbotServicer(
@@ -60,6 +134,17 @@ class ChatbotServicer(
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    @staticmethod
+    def _serialize_run_agent_team_request(
+        request: "chatbot_pb2.RunAgentTeamRequest",
+    ) -> Dict[str, Any]:
+        """Convert RunAgentTeam protobuf request to a JSON-safe dict for logging."""
+        return MessageToDict(
+            request,
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
+        )
 
     async def RunAgentTeam(
         self,
@@ -83,12 +168,25 @@ class ChatbotServicer(
         Yields:
             StreamChunk: Protobuf messages containing text chunks and metadata
         """
+        request_payload = self._serialize_run_agent_team_request(request)
         logger.info(
-            f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}"
+            "[gRPC IN] RunAgentTeam request received",
+            user_id=request.user_context.user_id,
+            username=request.user_context.username,
+            conversation_id=request.conversation_id,
+            agent_mode=request.agent_mode,
+            query_length=len(request.query or ""),
+            agent_count=len(request.agents),
+            workspace_count=len(request.workspace_context),
+            attached_file_count=len(request.attached_files),
+            previous_attached_file_count=len(request.previous_attached_files),
+            request_payload=request_payload,
         )
 
         # Create asyncio queue
         queue: asyncio.Queue[dict] = asyncio.Queue()
+        bg_task: Optional[asyncio.Task] = None
+        get_task: Optional[asyncio.Task] = None
 
         try:
             # Convert protobuf request to internal V1 Pydantic model (for backward compatibility)
@@ -158,6 +256,7 @@ class ChatbotServicer(
 
                 # Get the chunk from the completed get_task
                 chunk_dict = await get_task
+                get_task = None
 
                 if chunk_dict is None:  # End of stream
                     logger.info(
@@ -201,6 +300,15 @@ class ChatbotServicer(
                 # Convert dict to protobuf
                 chunk_pb = self._dict_to_stream_chunk(chunk_dict)
 
+                logger.debug(
+                    "[gRPC OUT] Yielding stream chunk",
+                    conversation_id=request.conversation_id,
+                    action=chunk_dict.get("action"),
+                    component_type=chunk_dict.get("component", {}).get("type"),
+                    message_id=chunk_dict.get("metadata", {}).get("message_id"),
+                    agent_id=chunk_dict.get("metadata", {}).get("agent_id"),
+                )
+
                 # Yield protobuf message
                 yield chunk_pb
 
@@ -211,15 +319,26 @@ class ChatbotServicer(
             )
             return
 
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GeneratorExit):
             # Client cancelled the stream (e.g., call.cancel() was called, or client disconnected)
             logger.info(
                 f"[gRPC] Client cancelled stream - conversation_id: {request.conversation_id}, "
                 f"user_id: {request.user_context.user_id}"
             )
 
+            if get_task is not None and not get_task.done():
+                get_task.cancel()
+                try:
+                    await get_task
+                except asyncio.CancelledError:
+                    logger.debug("[gRPC] Queue get task cancelled successfully")
+                except Exception as cleanup_error:
+                    logger.warning(
+                        f"[gRPC] Error during queue get task cleanup: {cleanup_error}"
+                    )
+
             # Cancel the background task gracefully
-            if not bg_task.done():
+            if bg_task is not None and not bg_task.done():
                 bg_task.cancel()
                 try:
                     await bg_task
@@ -818,6 +937,26 @@ class ChatbotServicer(
         }
         return status_map.get(status_str.lower(), chatbot_pb2.PENDING)
 
+    @staticmethod
+    def _chart_kind_to_enum(kind_str: str) -> int:
+        kind_map = {
+            "bar": chatbot_pb2.CHART_KIND_BAR,
+            "line": chatbot_pb2.CHART_KIND_LINE,
+            "area": chatbot_pb2.CHART_KIND_AREA,
+            "pie": chatbot_pb2.CHART_KIND_PIE,
+            "scatter": chatbot_pb2.CHART_KIND_SCATTER,
+            "composed": chatbot_pb2.CHART_KIND_COMPOSED,
+        }
+        return kind_map.get((kind_str or "").lower(), chatbot_pb2.CHART_KIND_UNSPECIFIED)
+
+    @staticmethod
+    def _chart_layout_to_enum(layout_str: str) -> int:
+        layout_map = {
+            "horizontal": chatbot_pb2.CHART_LAYOUT_HORIZONTAL,
+            "vertical": chatbot_pb2.CHART_LAYOUT_VERTICAL,
+        }
+        return layout_map.get((layout_str or "").lower(), chatbot_pb2.CHART_LAYOUT_UNSPECIFIED)
+
     def _dict_to_stream_chunk(
         self, chunk_dict: Dict[str, Any]
     ) -> "chatbot_pb2.StreamChunk":
@@ -959,12 +1098,24 @@ class ChatbotServicer(
                 title=component_data.get("title", ""), items=items
             )
         elif component_type == "chart":
+            chart_data = component_data.get("chartData", component_data.get("data", []))
+            chart_config = component_data.get("config", {})
+            chart_series = component_data.get("series", [])
             component_kwargs["chart"] = chatbot_pb2.ChartComponent(
                 title=component_data.get("title", ""),
-                data=component_data.get("data", ""),
-                config=component_data.get("config", ""),
+                data=chart_data if isinstance(chart_data, str) else json.dumps(chart_data, ensure_ascii=False),
+                config=chart_config if isinstance(chart_config, str) else json.dumps(chart_config, ensure_ascii=False),
                 xAxisKey=component_data.get("xAxisKey", ""),
-                series=component_data.get("series", ""),
+                series=chart_series if isinstance(chart_series, str) else json.dumps(chart_series, ensure_ascii=False),
+                kind=self._chart_kind_to_enum(component_data.get("kind", "bar")),
+                yAxisKey=component_data.get("yAxisKey", ""),
+                stacked=component_data.get("stacked", False),
+                layout=self._chart_layout_to_enum(component_data.get("layout", "horizontal")),
+                inner_radius=component_data.get("innerRadius", 0),
+                show_legend=component_data.get("showLegend", True),
+                show_grid=component_data.get("showGrid", True),
+                nameKey=component_data.get("nameKey", ""),
+                zAxisKey=component_data.get("zAxisKey", ""),
             )
         elif component_type == "task":
             # Build TaskComponent with items array
@@ -1397,9 +1548,25 @@ class ChatbotServicer(
                 replay.task_id for replay in request.validated_replays
             ],
         )
+        resolved_trigger_context = _parse_trigger_context_fallback(request)
+        logger.info(
+            "*************** [RunPlaybookWorkflow] triggerContext received",
+            triggerContext=resolved_trigger_context,
+        )
+        logger.info(
+            "[RunPlaybookWorkflow] Request payload",
+            request_payload=MessageToDict(
+                request,
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            ),
+        )
 
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
+        )
         thread_id = f"{request.playbook_id}_{uuid.uuid4().hex[:8]}"
+        bg_task: Optional[asyncio.Task] = None
 
         try:
             tasks = [_proto_task_to_dict(t) for t in request.tasks]
@@ -1416,6 +1583,7 @@ class ChatbotServicer(
                     workspace_context=_proto_workspace_context(
                         request.workspace_context
                     ),
+                    trigger_context=resolved_trigger_context,
                     queue=queue,
                     thread_id=thread_id,
                     execution_mode=request.execution_mode or "live",
@@ -1455,8 +1623,9 @@ class ChatbotServicer(
             logger.error(
                 "[RunPlaybookWorkflow] Unhandled error", error=str(e), exc_info=True
             )
-            yield chatbot_pb2.PlaybookStreamChunk(
-                thread_id="",
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Playbook workflow failed: {str(e)}",
             )
 
         finally:
@@ -1474,7 +1643,10 @@ class ChatbotServicer(
             task_id=request.task_id,
         )
 
-        queue: asyncio.Queue = asyncio.Queue()
+        queue: asyncio.Queue = asyncio.Queue(
+            maxsize=app_settings.PLAYBOOK_STREAM_QUEUE_MAXSIZE
+        )
+        bg_task: Optional[asyncio.Task] = None
 
         try:
             human_response = {
@@ -1514,8 +1686,9 @@ class ChatbotServicer(
             logger.error(
                 "[ResumePlaybookWorkflow] Unhandled error", error=str(e), exc_info=True
             )
-            yield chatbot_pb2.PlaybookStreamChunk(
-                thread_id=request.thread_id,
+            await context.abort(
+                grpc.StatusCode.INTERNAL,
+                f"Playbook workflow resume failed: {str(e)}",
             )
 
         finally:
@@ -1585,8 +1758,7 @@ class ChatbotServicer(
                         "[_stream_playbook_queue] Background task was cancelled"
                     )
                     get_task.cancel()
-                    yield chatbot_pb2.PlaybookStreamChunk(thread_id=thread_id)
-                    return
+                    raise asyncio.CancelledError()
                 exc = bg_task.exception()
                 if exc:
                     logger.error(
@@ -1594,8 +1766,7 @@ class ChatbotServicer(
                         error=str(exc),
                     )
                     get_task.cancel()
-                    yield chatbot_pb2.PlaybookStreamChunk(thread_id=thread_id)
-                    return
+                    raise exc
 
             item = await get_task
 
@@ -1625,13 +1796,31 @@ class ChatbotServicer(
     async def RunStep(self, request, context):
         """Execute a single task with an agent."""
         from src.langgraph_engine.step_executor import execute_step
+        from src.langgraph_engine.action_executor import execute_action_task
+        import time
+        from datetime import datetime
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
-        logger.info("[RunStep] Request received", task_id=task_id, agent=agent_name)
+        has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
+        trigger_edge_count = sum(
+            1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
+        )
+        logger.info(
+            "[RunStep] Request received",
+            task_id=task_id,
+            agent=agent_name,
+            has_trigger_context=has_trigger_context,
+            trigger_edge_count=trigger_edge_count,
+        )
 
         try:
             task = _proto_task_to_dict(request.task)
+            task["declared_output_ports"] = [
+                str(p).strip()
+                for p in getattr(request, "declared_output_ports", [])
+                if str(p).strip()
+            ]
             agent = _proto_agent_to_dict(request.agent)
             validated_replay = (
                 _proto_validated_replay_to_dict(request.validated_replay)
@@ -1649,30 +1838,68 @@ class ChatbotServicer(
                     (validated_replay or {}).get("tool_calls", []) or []
                 ),
             )
-
-            result = await execute_step(
-                task=task,
-                agent=agent,
-                context_from_dependencies=request.context_from_dependencies,
-                workspace_context=_proto_workspace_context(request.workspace_context),
-                edges=[_proto_edge_to_dict(edge) for edge in request.edges]
-                if request.edges
-                else [],
-                upstream_results=[
-                    _proto_task_result_to_dict(item)
-                    for item in request.upstream_results
-                ]
-                if request.upstream_results
-                else [],
-                execution_mode=request.execution_mode or "live",
-                validated_replay=validated_replay,
-                evaluation_user_id=request.user_context.username
-                or request.user_context.user_id
-                or "unknown",
-                prompt_overrides=dict(request.prompt_overrides)
-                if getattr(request, "prompt_overrides", None)
-                else {},
+            resolved_trigger_context = _struct_to_dict(request.trigger_context)
+            if not resolved_trigger_context:
+                resolved_trigger_context = _parse_trigger_context_fallback(request)
+            logger.info(
+                "*************** [RunStep] triggerContext received",
+                triggerContext=resolved_trigger_context,
             )
+
+            workspace_context = _proto_workspace_context(request.workspace_context)
+            trigger_context = (
+                _struct_to_dict(request.trigger_context)
+                if _has_struct_payload(getattr(request, "trigger_context", None))
+                else None
+            )
+            edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
+            upstream_results = [
+                _proto_task_result_to_dict(item)
+                for item in request.upstream_results
+            ] if request.upstream_results else []
+            node_inputs = [
+                _proto_port_payload_to_dict(item)
+                for item in getattr(request, "node_inputs", [])
+            ]
+            node_inputs_by_port = _build_node_inputs_by_port(node_inputs)
+            artifacts_by_port = _merge_artifacts_by_port(
+                _build_artifacts_by_port_from_results(upstream_results),
+                _build_artifacts_by_port_from_payloads(node_inputs),
+            )
+
+            if str(task.get("execution_mode") or "agent").strip().lower() == "action":
+                result = await execute_action_task(
+                    task,
+                    task_id=task_id,
+                    start_time=time.time(),
+                    started_at=datetime.utcnow().isoformat() + "Z",
+                    workspace_context=workspace_context,
+                    trigger_context=trigger_context,
+                    edges=edges,
+                    upstream_results=upstream_results,
+                    artifacts_by_port=artifacts_by_port,
+                    node_inputs_by_port=node_inputs_by_port,
+                )
+            else:
+                result = await execute_step(
+                    task=task,
+                    agent=agent,
+                    context_from_dependencies=request.context_from_dependencies,
+                    workspace_context=workspace_context,
+                    trigger_context=trigger_context,
+                    edges=edges,
+                    upstream_results=upstream_results,
+                    artifacts_by_port=artifacts_by_port,
+                    node_inputs_by_port=node_inputs_by_port,
+                    execution_mode=request.execution_mode or "live",
+                    validated_replay=validated_replay,
+                    evaluation_user_id=request.user_context.username
+                    or request.user_context.user_id
+                    or "unknown",
+                    prompt_overrides=dict(request.prompt_overrides)
+                    if getattr(request, "prompt_overrides", None)
+                    else {},
+                )
 
             return _build_step_response(result)
 
@@ -1690,20 +1917,38 @@ class ChatbotServicer(
     async def RunStepStream(self, request, context):
         """Execute a single task and stream step updates in realtime."""
         from src.langgraph_engine.step_executor import execute_step
+        from src.langgraph_engine.action_executor import execute_action_task
+        import time
+        from datetime import datetime
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
+        has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
+        trigger_edge_count = sum(
+            1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
+        )
         logger.info(
-            "[RunStepStream] Request received", task_id=task_id, agent=agent_name
+            "[RunStepStream] Request received",
+            task_id=task_id,
+            agent=agent_name,
+            has_trigger_context=has_trigger_context,
+            trigger_edge_count=trigger_edge_count,
         )
 
-        queue: asyncio.Queue[dict] = asyncio.Queue()
+        queue: asyncio.Queue[dict] = asyncio.Queue(
+            maxsize=app_settings.STEP_STREAM_QUEUE_MAXSIZE
+        )
 
         async def on_progress(progress: Dict[str, Any]) -> None:
-            await queue.put(progress)
+            await _put_progress_event(queue, progress)
 
         try:
             task = _proto_task_to_dict(request.task)
+            task["declared_output_ports"] = [
+                str(p).strip()
+                for p in getattr(request, "declared_output_ports", [])
+                if str(p).strip()
+            ]
             agent = _proto_agent_to_dict(request.agent)
             validated_replay = (
                 _proto_validated_replay_to_dict(request.validated_replay)
@@ -1712,34 +1957,66 @@ class ChatbotServicer(
                 else None
             )
 
-            bg_task = asyncio.create_task(
-                execute_step(
-                    task=task,
-                    agent=agent,
-                    context_from_dependencies=request.context_from_dependencies,
-                    workspace_context=_proto_workspace_context(
-                        request.workspace_context
-                    ),
-                    edges=[_proto_edge_to_dict(edge) for edge in request.edges]
-                    if request.edges
-                    else [],
-                    upstream_results=[
-                        _proto_task_result_to_dict(item)
-                        for item in request.upstream_results
-                    ]
-                    if request.upstream_results
-                    else [],
-                    execution_mode=request.execution_mode or "live",
-                    validated_replay=validated_replay,
-                    evaluation_user_id=request.user_context.username
-                    or request.user_context.user_id
-                    or "unknown",
-                    on_progress=on_progress,
-                    prompt_overrides=dict(request.prompt_overrides)
-                    if getattr(request, "prompt_overrides", None)
-                    else {},
-                )
+            workspace_context = _proto_workspace_context(request.workspace_context)
+            trigger_context = (
+                _struct_to_dict(request.trigger_context)
+                if _has_struct_payload(getattr(request, "trigger_context", None))
+                else None
             )
+            edges = [_proto_edge_to_dict(edge) for edge in request.edges] if request.edges else []
+            upstream_results = [
+                _proto_task_result_to_dict(item)
+                for item in request.upstream_results
+            ] if request.upstream_results else []
+            node_inputs = [
+                _proto_port_payload_to_dict(item)
+                for item in getattr(request, "node_inputs", [])
+            ]
+            node_inputs_by_port = _build_node_inputs_by_port(node_inputs)
+            artifacts_by_port = _merge_artifacts_by_port(
+                _build_artifacts_by_port_from_results(upstream_results),
+                _build_artifacts_by_port_from_payloads(node_inputs),
+            )
+
+            if str(task.get("execution_mode") or "agent").strip().lower() == "action":
+                bg_task = asyncio.create_task(
+                    execute_action_task(
+                        task,
+                        task_id=task_id,
+                        start_time=time.time(),
+                        started_at=datetime.utcnow().isoformat() + "Z",
+                        workspace_context=workspace_context,
+                        trigger_context=trigger_context,
+                        edges=edges,
+                        upstream_results=upstream_results,
+                        artifacts_by_port=artifacts_by_port,
+                        node_inputs_by_port=node_inputs_by_port,
+                        on_progress=on_progress,
+                    )
+                )
+            else:
+                bg_task = asyncio.create_task(
+                    execute_step(
+                        task=task,
+                        agent=agent,
+                        context_from_dependencies=request.context_from_dependencies,
+                        workspace_context=workspace_context,
+                        trigger_context=trigger_context,
+                        edges=edges,
+                        upstream_results=upstream_results,
+                        artifacts_by_port=artifacts_by_port,
+                        node_inputs_by_port=node_inputs_by_port,
+                        execution_mode=request.execution_mode or "live",
+                        validated_replay=validated_replay,
+                        evaluation_user_id=request.user_context.username
+                        or request.user_context.user_id
+                        or "unknown",
+                        on_progress=on_progress,
+                        prompt_overrides=dict(request.prompt_overrides)
+                        if getattr(request, "prompt_overrides", None)
+                        else {},
+                    )
+                )
 
             while True:
                 if bg_task.done():
@@ -1800,12 +2077,15 @@ class ChatbotServicer(
                     stream_name="RunStepStream",
                 )
             else:
+                step_result = result.get("result") or next(
+                    iter((result.get("results") or {}).values()), None
+                )
                 yield _safe_build_step_update_chunk(
                     {
                         "task_id": task_id,
                         "task_title": task.get("title", ""),
                         "status": result.get("status", "completed"),
-                        "result": result.get("result"),
+                        "result": step_result,
                     },
                     stream_name="RunStepStream",
                 )
@@ -1959,6 +2239,8 @@ def _proto_task_to_dict(proto_task) -> dict:
         "title": proto_task.title,
         "description": proto_task.description,
         "assigned_agent_id": proto_task.assigned_agent_id,
+        "execution_mode": getattr(proto_task, "execution_mode", "") or "agent",
+        "selected_action": getattr(proto_task, "selected_action", "") or None,
         "execution_order": proto_task.execution_order,
         "interrupt_before": proto_task.interrupt_before,
         "interrupt_after": proto_task.interrupt_after,
@@ -2140,6 +2422,10 @@ def _proto_edge_to_dict(proto_edge) -> dict:
 
 
 def _proto_task_result_to_dict(proto_result) -> dict:
+    emitted_payloads = [
+        _proto_port_payload_to_dict(payload)
+        for payload in getattr(proto_result, "emitted_payloads", [])
+    ]
     return {
         "task_id": proto_result.task_id,
         "status": proto_result.status,
@@ -2159,7 +2445,243 @@ def _proto_task_result_to_dict(proto_result) -> dict:
         ]
         if proto_result.artifacts
         else [],
+        "emitted_payloads": emitted_payloads,
     }
+
+
+def _proto_port_payload_to_dict(proto_payload) -> dict:
+    raw: Dict[str, Any] = {
+        "port_id": proto_payload.port_id,
+        "artifact_kind": proto_payload.artifact_kind or "text",
+        "metadata": _struct_to_dict(proto_payload.metadata)
+        if _has_struct_payload(getattr(proto_payload, "metadata", None))
+        else {},
+        "source_task_id": getattr(proto_payload, "source_task_id", "") or None,
+        "source_port_id": getattr(proto_payload, "source_port_id", "") or None,
+    }
+
+    if proto_payload.HasField("ref"):
+        raw["ref"] = {
+            "document_id": proto_payload.ref.document_id or None,
+            "workspace_id": proto_payload.ref.workspace_id or None,
+            "url": proto_payload.ref.url or None,
+            "filename": proto_payload.ref.filename or None,
+            "mime_type": proto_payload.ref.mime_type or None,
+        }
+
+    if proto_payload.HasField("data"):
+        raw["data"] = _struct_to_dict(proto_payload.data)
+
+    body_field = proto_payload.WhichOneof("body")
+    if body_field == "content":
+        raw["content"] = proto_payload.content
+    elif raw["metadata"].get("content") not in (None, ""):
+        raw["content"] = raw["metadata"]["content"]
+
+    if getattr(proto_payload, "produced_at", None):
+        try:
+            raw["produced_at"] = proto_payload.produced_at.ToJsonString()
+        except Exception:
+            pass
+
+    # Validate through the pydantic model; falls back to raw dict on unknown artifact_kind
+    # so that new kinds introduced server-side don't break older ADK versions.
+    try:
+        return PortPayload.from_dict(raw).to_dict()
+    except Exception:
+        return raw
+
+
+def _dict_to_proto_port_payload(payload: Dict[str, Any]) -> chatbot_pb2.PortPayload:
+    message = chatbot_pb2.PortPayload(
+        port_id=str(payload.get("port_id") or payload.get("portId") or "default"),
+        artifact_kind=str(
+            payload.get("artifact_kind") or payload.get("artifactKind") or "text"
+        ),
+        source_task_id=str(payload.get("source_task_id") or payload.get("sourceTaskId") or ""),
+        source_port_id=str(payload.get("source_port_id") or payload.get("sourcePortId") or ""),
+    )
+
+    metadata = payload.get("metadata") or {}
+    if isinstance(metadata, dict) and metadata:
+        message.metadata.update(metadata)
+
+    data = payload.get("data")
+    ref = payload.get("ref") or {}
+    content = payload.get("content")
+
+    # PortPayload.body is a oneof, so choose a single canonical body variant.
+    if isinstance(data, dict):
+        if content not in (None, ""):
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata.setdefault("content", str(content or ""))
+            message.metadata.Clear()
+            if metadata:
+                message.metadata.update(metadata)
+        message.data.update(data)
+    elif isinstance(ref, dict) and ref:
+        message.ref.CopyFrom(
+            chatbot_pb2.ArtifactRef(
+                document_id=str(ref.get("document_id") or ref.get("documentId") or ""),
+                workspace_id=str(ref.get("workspace_id") or ref.get("workspaceId") or ""),
+                url=str(ref.get("url") or ""),
+                filename=str(ref.get("filename") or ""),
+                mime_type=str(ref.get("mime_type") or ref.get("mimeType") or ""),
+            )
+        )
+        if content not in (None, ""):
+            metadata = dict(metadata) if isinstance(metadata, dict) else {}
+            metadata.setdefault("content", str(content or ""))
+            message.metadata.Clear()
+            if metadata:
+                message.metadata.update(metadata)
+    elif content is not None:
+        message.content = str(content or "")
+
+    produced_at = payload.get("produced_at") or payload.get("producedAt")
+    if produced_at:
+        try:
+            timestamp = timestamp_pb2.Timestamp()
+            timestamp.FromJsonString(str(produced_at))
+            message.produced_at.CopyFrom(timestamp)
+        except Exception:
+            pass
+
+    return message
+
+
+def _build_artifacts_by_port_from_results(
+    upstream_results: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for result in upstream_results or []:
+        task_id = str(result.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        for artifact in result.get("artifacts") or []:
+            if not isinstance(artifact, dict):
+                continue
+            port_id = str(artifact.get("port_id") or "default").strip() or "default"
+            key = f"{task_id}:{port_id}"
+            artifacts_by_port.setdefault(key, []).append(artifact)
+    return artifacts_by_port
+
+
+def _build_artifacts_by_port_from_payloads(
+    node_inputs: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for payload in node_inputs or []:
+        if not isinstance(payload, dict):
+            continue
+        source_task_id = str(payload.get("source_task_id") or "").strip()
+        source_port_id = str(payload.get("source_port_id") or "default").strip() or "default"
+        if not source_task_id:
+            continue
+        key = f"{source_task_id}:{source_port_id}"
+        ref = payload.get("ref") if isinstance(payload.get("ref"), dict) else {}
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        artifacts_by_port.setdefault(key, []).append(
+            {
+                "port_id": source_port_id,
+                "artifact_kind": payload.get("artifact_kind") or "text",
+                "content": payload.get("content", "") or "",
+                "data": payload.get("data") if isinstance(payload.get("data"), dict) else None,
+                "url": ref.get("url") or metadata.get("url") or "",
+                "filename": ref.get("filename") or metadata.get("filename") or "",
+                "mime_type": ref.get("mime_type") or metadata.get("mime_type") or "",
+                "metadata": {
+                    **metadata,
+                    **(
+                        {"document_id": ref.get("document_id")}
+                        if ref.get("document_id")
+                        else {}
+                    ),
+                    **(
+                        {"workspace_id": ref.get("workspace_id")}
+                        if ref.get("workspace_id")
+                        else {}
+                    ),
+                },
+            }
+        )
+    return artifacts_by_port
+
+
+def _build_node_inputs_by_port(
+    node_inputs: List[Dict[str, Any]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    inputs_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    for payload in node_inputs or []:
+        if not isinstance(payload, dict):
+            continue
+        port_id = str(payload.get("port_id") or "default").strip() or "default"
+        ref = payload.get("ref") if isinstance(payload.get("ref"), dict) else {}
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        artifact: Dict[str, Any] = {
+            "port_id": port_id,
+            "artifact_kind": payload.get("artifact_kind") or "text",
+            "metadata": metadata,
+            "source_task_id": payload.get("source_task_id") or "",
+            "source_output_port_id": payload.get("source_port_id") or "",
+        }
+        if payload.get("content") not in (None, ""):
+            artifact["content"] = payload.get("content")
+        if payload.get("data") is not None:
+            artifact["data"] = payload.get("data")
+        if ref:
+            if ref.get("document_id"):
+                artifact["document_id"] = ref.get("document_id")
+            if ref.get("workspace_id"):
+                artifact.setdefault("metadata", {})["workspace_id"] = ref.get("workspace_id")
+            if ref.get("url"):
+                artifact["url"] = ref.get("url")
+            if ref.get("filename"):
+                artifact["filename"] = ref.get("filename")
+            if ref.get("mime_type"):
+                artifact["mime_type"] = ref.get("mime_type")
+        inputs_by_port.setdefault(port_id, []).append(artifact)
+    return inputs_by_port
+
+
+def _merge_artifacts_by_port(
+    base: Dict[str, List[Dict[str, Any]]],
+    extra: Dict[str, List[Dict[str, Any]]],
+) -> Dict[str, List[Dict[str, Any]]]:
+    merged: Dict[str, List[Dict[str, Any]]] = {
+        key: list(value)
+        for key, value in (base or {}).items()
+    }
+    for key, values in (extra or {}).items():
+        bucket = merged.setdefault(key, [])
+        seen = {
+            json.dumps(item, sort_keys=True, default=str)
+            for item in bucket
+            if isinstance(item, dict)
+        }
+        for value in values or []:
+            marker = json.dumps(value, sort_keys=True, default=str)
+            if marker in seen:
+                continue
+            bucket.append(value)
+            seen.add(marker)
+    return merged
+
+
+def _struct_to_dict(struct_msg) -> dict:
+    """Convert a google.protobuf.Struct to a plain dict."""
+    if not struct_msg or not struct_msg.fields:
+        return {}
+    return MessageToDict(struct_msg, preserving_proto_field_name=True)
+
+
+def _has_struct_payload(struct_msg) -> bool:
+    """Detect whether a Struct-like protobuf field contains data.
+
+    Dynamic gRPC clients may populate Struct message contents without reliable
+    field-presence semantics, so content inspection is safer than `HasField`.
+    """
+    return bool(getattr(struct_msg, "fields", None))
 
 
 def _proto_workspace_context(proto_wc_list) -> list:
@@ -2171,6 +2693,10 @@ def _proto_workspace_context(proto_wc_list) -> list:
         result.append(
             {
                 "workspace_id": wc.workspace_id,
+                "chunks": wc.chunks,
+                "hybrid_search": wc.hybrid_search,
+                "instruction": wc.instruction,
+                "tag": wc.tag,
                 "documents": [
                     {
                         "id": d._id,
@@ -2456,6 +2982,69 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
                 size=int(artifact.get("size", 0) or 0),
             )
         )
+        task_result_proto.emitted_payloads.append(
+            _dict_to_proto_port_payload(
+                {
+                    "port_id": artifact.get("port_id") or artifact.get("portId") or "default",
+                    "artifact_kind": artifact.get("artifact_kind")
+                    or artifact.get("artifactKind")
+                    or "text",
+                    **(
+                        {"data": artifact.get("data")}
+                        if isinstance(artifact.get("data"), dict)
+                        else {}
+                    ),
+                    **(
+                        {"content": artifact.get("content")}
+                        if artifact.get("content") not in (None, "")
+                        else {}
+                    ),
+                    **(
+                        {
+                            "ref": {
+                                "url": artifact.get("url") or "",
+                                "filename": artifact.get("filename") or "",
+                                "mime_type": artifact.get("mime_type")
+                                or artifact.get("mimeType")
+                                or "",
+                                "document_id": (
+                                    (artifact.get("metadata") or {}).get("document_id")
+                                    if isinstance(artifact.get("metadata"), dict)
+                                    else ""
+                                ),
+                                "workspace_id": (
+                                    (artifact.get("metadata") or {}).get("workspace_id")
+                                    if isinstance(artifact.get("metadata"), dict)
+                                    else ""
+                                ),
+                            }
+                        }
+                        if artifact.get("url") or artifact.get("filename") or artifact.get("mime_type") or artifact.get("mimeType")
+                        else {}
+                    ),
+                    **(
+                        {"metadata": artifact.get("metadata")}
+                        if isinstance(artifact.get("metadata"), dict)
+                        else {}
+                    ),
+                    **(
+                        {"source_task_id": artifact.get("source_task_id") or artifact.get("sourceTaskId")}
+                        if artifact.get("source_task_id") or artifact.get("sourceTaskId")
+                        else {}
+                    ),
+                    **(
+                        {"source_port_id": artifact.get("source_port_id") or artifact.get("sourcePortId")}
+                        if artifact.get("source_port_id") or artifact.get("sourcePortId")
+                        else {}
+                    ),
+                    **(
+                        {"produced_at": artifact.get("produced_at") or artifact.get("producedAt")}
+                        if artifact.get("produced_at") or artifact.get("producedAt")
+                        else {}
+                    ),
+                }
+            )
+        )
 
     return task_result_proto
 
@@ -2594,6 +3183,8 @@ def _build_step_response(result: Dict[str, Any]) -> chatbot_pb2.StepResponse:
     )
 
     task_result = result.get("result")
+    if task_result is None and result.get("results"):
+        task_result = next(iter(result["results"].values()), None)
     if task_result:
         response.result.CopyFrom(_build_task_result_proto(task_result))
 

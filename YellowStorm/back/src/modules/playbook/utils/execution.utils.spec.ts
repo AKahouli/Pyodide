@@ -2,6 +2,7 @@ import {
   extractTextFromComponents,
   truncateComponentData,
   mapGrpcComponents,
+  mapGrpcPortPayloads,
   pLimit,
   mergeWithExistingHumanFeedback,
   topologicalSortByLevel,
@@ -413,6 +414,37 @@ describe('execution.utils', () => {
       );
 
       expect(result).toEqual([]);
+    });
+  });
+
+  describe('mapGrpcPortPayloads', () => {
+    it('preserves structured data and provenance fields', () => {
+      const result = mapGrpcPortPayloads([
+        {
+          port_id: 'summary',
+          artifact_kind: 'data',
+          data: { score: 0.9 },
+          source_task_id: 'task-a',
+          source_port_id: 'out-1',
+          produced_at: '2026-04-20T00:00:00.000Z',
+          metadata: { note: 'kept' },
+        },
+      ]);
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          portId: 'summary',
+          artifactKind: 'data',
+          data: { score: 0.9 },
+          sourceTaskId: 'task-a',
+          sourcePortId: 'out-1',
+          producedAt: '2026-04-20T00:00:00.000Z',
+          metadata: expect.objectContaining({
+            note: 'kept',
+            data: { score: 0.9 },
+          }),
+        }),
+      ]);
     });
   });
 

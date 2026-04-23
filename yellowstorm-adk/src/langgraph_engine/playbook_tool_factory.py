@@ -6,14 +6,27 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 """
 
 import copy
+import json
 import re
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Type
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
+from src.config.settings import get_settings
+from src.smart_rag.tools.utilities.connector_tools import (
+    import_connector_items_to_workspace_request,
+)
+
 logger = get_logger(__name__)
+
+
+def _log_payload(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str, indent=2)
+    except (TypeError, ValueError):
+        return str(value)
 
 _GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
     ".pdf": "document",
@@ -77,6 +90,9 @@ class ToolResultCollector:
 
     def __init__(self):
         self.components: List[dict] = []
+        self._connector_source_signatures: Dict[str, str] = {}
+        self._connector_source_links_seen: set[tuple[str, str]] = set()
+        self._connector_reference_counter = 0
 
     def add_component(self, component_type: str, data: dict):
         self.components.append({"type": component_type, "data": data})
@@ -85,6 +101,191 @@ class ToolResultCollector:
         result = list(self.components)
         self.components.clear()
         return result
+
+    def next_connector_reference(self) -> str:
+        self._connector_reference_counter += 1
+        return str(self._connector_reference_counter)
+
+
+def _append_citation_guidance(text: str, references: List[str]) -> str:
+    if not text or not references:
+        return text
+
+    refs = ", ".join(f"[{ref}]" for ref in references)
+    return f"{text}\n\nUse citation {refs} when referencing facts from this connector result."
+
+
+def _build_connector_citation_signature(source: Dict[str, Any]) -> str:
+    source_type = str(source.get("type") or "text")
+    if source_type == "image":
+        parts = [
+            source_type,
+            str(source.get("path") or ""),
+            str(source.get("external_id") or ""),
+            str(source.get("page") or ""),
+        ]
+    else:
+        parts = [
+            source_type,
+            str(source.get("source") or ""),
+            str(source.get("external_id") or ""),
+            str(source.get("page") or ""),
+            str(source.get("page_content") or ""),
+        ]
+    return "::".join(parts)
+
+
+def _collect_connector_response_components(
+    collector: ToolResultCollector,
+    response: Any,
+) -> Any:
+    if not isinstance(response, dict):
+        return response
+
+    normalized_response = dict(response)
+    logger.info(
+        "playbook_connector_component_collection_start response_keys=%s source_count=%s citation_source_count=%s response=%s",
+        sorted(normalized_response.keys()),
+        len(normalized_response.get("sources", []))
+        if isinstance(normalized_response.get("sources"), list)
+        else 0,
+        len(normalized_response.get("citation_sources", []))
+        if isinstance(normalized_response.get("citation_sources"), list)
+        else 0,
+        _log_payload(normalized_response),
+    )
+
+    sources = normalized_response.get("sources")
+    if isinstance(sources, list):
+        new_sources: List[Dict[str, str]] = []
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            title = str(source.get("title") or source.get("url") or "").strip()
+            url = str(source.get("url") or "").strip()
+            if not url:
+                continue
+            signature = (title, url)
+            if signature in collector._connector_source_links_seen:
+                logger.info(
+                    "playbook_connector_source_reused title=%s url=%s",
+                    title,
+                    url,
+                )
+                continue
+            collector._connector_source_links_seen.add(signature)
+            new_sources.append({"title": title, "url": url})
+        if new_sources:
+            collector.add_component("sources", {"sources": new_sources})
+            logger.info(
+                "playbook_connector_sources_component_emitted count=%s sources=%s",
+                len(new_sources),
+                _log_payload(new_sources),
+            )
+
+    citation_sources = normalized_response.get("citation_sources")
+    if not isinstance(citation_sources, list):
+        return normalized_response
+
+    assigned_references: List[str] = []
+    normalized_citation_sources: List[Dict[str, Any]] = []
+
+    for raw_source in citation_sources:
+        if not isinstance(raw_source, dict):
+            continue
+
+        source = dict(raw_source)
+        signature = _build_connector_citation_signature(source)
+        reference = collector._connector_source_signatures.get(signature)
+        is_new_source = reference is None
+        if reference is None:
+            reference = collector.next_connector_reference()
+            collector._connector_source_signatures[signature] = reference
+            logger.warning(
+                "PLAYBOOK_MCP_CITATION_REGISTERED reference=%s source_type=%s source=%s external_id=%s page=%s raw_source=%s",
+                reference,
+                source.get("type", "text"),
+                source.get("source") or source.get("path") or "",
+                source.get("external_id") or "",
+                source.get("page") or "",
+                _log_payload(source),
+            )
+        else:
+            logger.warning(
+                "PLAYBOOK_MCP_CITATION_REUSED reference=%s source_type=%s source=%s external_id=%s page=%s raw_source=%s",
+                reference,
+                source.get("type", "text"),
+                source.get("source") or source.get("path") or "",
+                source.get("external_id") or "",
+                source.get("page") or "",
+                _log_payload(source),
+            )
+        source["reference"] = reference
+        normalized_citation_sources.append(source)
+        assigned_references.append(reference)
+
+        if not is_new_source:
+            continue
+
+        source_type = str(source.get("type") or "text")
+        if source_type == "image":
+            component_payload = {
+                "parent_id": "",
+                "image_source": {
+                    "type": "image",
+                    "path": str(source.get("path") or ""),
+                    "page": str(source.get("page") or ""),
+                    "file_name": str(source.get("file_name") or ""),
+                    "external_id": str(source.get("external_id") or ""),
+                    "workspace_id": str(source.get("workspace_id") or ""),
+                    "height": str(source.get("height") or ""),
+                    "width": str(source.get("width") or ""),
+                    "reference": reference,
+                },
+            }
+            collector.add_component(
+                "citation",
+                component_payload,
+            )
+        else:
+            component_payload = {
+                "parent_id": "",
+                "text_source": {
+                    "type": "text",
+                    "source": str(source.get("source") or ""),
+                    "external_id": str(source.get("external_id") or ""),
+                    "page": str(source.get("page") or ""),
+                    "page_content": str(source.get("page_content") or ""),
+                    "workspace_id": str(source.get("workspace_id") or ""),
+                    "reference": reference,
+                },
+            }
+            collector.add_component(
+                "citation",
+                component_payload,
+            )
+        logger.warning(
+            "PLAYBOOK_MCP_CITATION_COMPONENT_EMITTED reference=%s source_type=%s component=%s",
+            reference,
+            source_type,
+            _log_payload(component_payload),
+        )
+
+    if normalized_citation_sources:
+        normalized_response["citation_sources"] = normalized_citation_sources
+        text = normalized_response.get("text")
+        if isinstance(text, str):
+            normalized_response["text"] = _append_citation_guidance(
+                text,
+                assigned_references,
+            )
+        logger.warning(
+            "PLAYBOOK_MCP_CITATION_COLLECTION_COMPLETE assigned_references=%s citation_sources=%s",
+            assigned_references,
+            _log_payload(normalized_citation_sources),
+        )
+
+    return normalized_response
 
 
 # --- Pydantic schemas for tool inputs ---
@@ -140,6 +341,36 @@ class ActivateSkillInput(BaseModel):
     name: str = Field(description="The exact skill name to activate.")
 
 
+class ConnectorImportInput(BaseModel):
+    mode: str = Field(
+        description="Import mode: 'file', 'files', or 'folder'.",
+    )
+    drive_id: Optional[str] = Field(
+        default=None,
+        description="Optional direct drive ID for simple file or folder import calls.",
+    )
+    item_id: Optional[str] = Field(
+        default=None,
+        description="Optional direct item ID for simple file or folder import calls.",
+    )
+    path: Optional[str] = Field(
+        default=None,
+        description="Optional direct path for simple file or folder import calls when item_id is not available.",
+    )
+    item_ref: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="Single connector item reference for file or folder import.",
+    )
+    item_refs: Optional[List[Dict[str, Any]]] = Field(
+        default=None,
+        description="Multiple connector item references for batch file import.",
+    )
+    recursive: bool = Field(
+        default=True,
+        description="Recursively import folder contents when mode is 'folder'.",
+    )
+
+
 def create_langchain_tools(
     agent_config: dict,
     workspace_context: Optional[list] = None,
@@ -170,7 +401,18 @@ def create_langchain_tools(
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
     if step_connector_bindings:
-        mcp_tools = _create_connector_mcp_tools(step_connector_bindings, collector)
+        agent_brain_ids = agent_config.get("brain_ids") or []
+        mcp_tools = _create_connector_mcp_tools(
+            step_connector_bindings,
+            collector,
+            output_workspace_id=output_workspace_id,
+            brain_ids=agent_brain_ids,
+            external_ids=input_files,
+        )
+
+    # --- Platform tools (e.g. save_file_to_workspace) ---
+    platform_tools = _create_platform_tools(agent_config, collector)
+    mcp_tools.extend(platform_tools)
 
     tool_configs = agent_config.get("tools", [])
 
@@ -1042,6 +1284,9 @@ def _format_search_result(result: Dict[str, Any]) -> str:
 def _create_connector_mcp_tools(
     bindings: List[Dict[str, Any]],
     collector: ToolResultCollector,
+    output_workspace_id: str = "",
+    brain_ids: Optional[List[str]] = None,
+    external_ids: Optional[List[str]] = None,
 ) -> List[StructuredTool]:
     """Create LangChain tools from step-level connector bindings via MCP.
 
@@ -1050,6 +1295,12 @@ def _create_connector_mcp_tools(
     """
     if not bindings:
         return []
+
+    brain_header: Dict[str, str] = {}
+    if brain_ids:
+        brain_header["X-Brain-ID"] = ",".join(brain_ids)
+    if external_ids:
+        brain_header["X-External-ID"] = ",".join(external_ids)
 
     tools: List[StructuredTool] = []
     for binding in bindings:
@@ -1065,6 +1316,19 @@ def _create_connector_mcp_tools(
         fixed_params = binding.get("fixed_params", {})
         binding_auth_headers = binding.get("auth_headers") or {}
         binding_auth_env = binding.get("auth_env") or {}
+        if (
+            connector_id
+            and output_workspace_id
+            and binding_auth_headers.get("Authorization")
+        ):
+            tools.append(
+                _create_connector_import_tool(
+                    connector_id=connector_id,
+                    connector_name=connector_name,
+                    auth_headers=binding_auth_headers,
+                    workspace_id=output_workspace_id,
+                )
+            )
         actions = (
             [
                 {
@@ -1126,10 +1390,10 @@ def _create_connector_mcp_tools(
                 sc: Dict[str, Any] = server_config,
                 fp: Dict[str, Any] = fixed_params,
                 tn: str = tool_name,
-                ah: Dict[str, str] = binding_auth_headers,
+                ah: Dict[str, str] = {**binding_auth_headers, **brain_header},
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
-                async def _execute_mcp(**kwargs: Any) -> str:
+                async def _execute_mcp(**kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
                     if isinstance(raw_params, dict):
                         params = raw_params
@@ -1150,7 +1414,14 @@ def _create_connector_mcp_tools(
                         )
 
                         merged_params = {**fp, **params}
-                        return await call_mcp_tool(
+                        logger.info(
+                            "playbook_connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
+                            cid,
+                            ak,
+                            tn,
+                            _log_payload(merged_params),
+                        )
+                        response = await call_mcp_tool(
                             tt,
                             su,
                             sc,
@@ -1159,6 +1430,34 @@ def _create_connector_mcp_tools(
                             auth_headers=ah,
                             auth_env=ae,
                         )
+                        logger.info(
+                            "playbook_connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
+                            cid,
+                            ak,
+                            tn,
+                            type(response).__name__,
+                            _log_payload(response),
+                        )
+                        if isinstance(response, dict):
+                            logger.info(
+                                "playbook_connector_tool_normalized_response connector_id=%s action_key=%s tool_name=%s keys=%s source_count=%s citation_source_count=%s normalized_response=%s",
+                                cid,
+                                ak,
+                                tn,
+                                sorted(response.keys()),
+                                len(response.get("sources", []))
+                                if isinstance(response.get("sources"), list)
+                                else 0,
+                                len(response.get("citation_sources", []))
+                                if isinstance(response.get("citation_sources"), list)
+                                else 0,
+                                _log_payload(response),
+                            )
+                            response = _collect_connector_response_components(
+                                collector,
+                                response,
+                            )
+                        return response
                     except Exception as e:
                         logger.error("MCP tool execution failed", tool=tn, error=str(e))
                         return f"Connector action '{ak}' failed: {str(e)}"
@@ -1167,7 +1466,11 @@ def _create_connector_mcp_tools(
 
                 return StructuredTool(
                     name=tn,
-                    description=f"{ad} (connector: {cn}, action: {al})",
+                    description=(
+                        f"{ad} (connector: {cn}, action: {al}). "
+                        "Use this connector action to search, browse, or inspect remote items first. "
+                        "When you need those files inside the current workspace for downstream processing, call the matching import_to_workspace tool with the returned item references."
+                    ),
                     func=None,
                     coroutine=_execute_mcp,
                     args_schema=arg_schema,
@@ -1180,6 +1483,182 @@ def _create_connector_mcp_tools(
             connector_id=connector_id,
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
+            brain_ids=brain_ids,
+            brain_header=brain_header,
         )
 
     return tools
+
+
+# ---------------------------------------------------------------------------
+# Platform tools (save_file_to_workspace)
+# ---------------------------------------------------------------------------
+
+
+class _SaveFileToWorkspaceInput(BaseModel):
+    """Input schema for save_file_to_workspace tool."""
+
+    download_url: str = Field(description="URL to download the file from")
+    workspace_id: str = Field(description="Target workspace ID to save the file into")
+    filename: str = Field(description="Target filename (e.g. 'report.xlsx')")
+    mime_type: Optional[str] = Field(
+        default=None,
+        description="File MIME type. If omitted, inferred from the download response.",
+    )
+    auth_headers: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional authorization headers to include when downloading the file",
+    )
+    source_meta: Optional[Dict[str, str]] = Field(
+        default=None,
+        description="Optional metadata about the source (e.g. connector name, item ID)",
+    )
+
+
+def _create_platform_tools(
+    agent_config: dict,
+    collector: "ToolResultCollector",
+) -> List[StructuredTool]:
+    """Create platform tools (e.g. save_file_to_workspace) from agent_params.
+
+    Reads platform_api_url and platform_api_token from agent_params to allow
+    the agent to call back into the NestJS backend for operations like
+    downloading an external file and saving it to a workspace.
+    """
+    agent_params = agent_config.get("agent_params") or {}
+    platform_api_url = agent_params.get("platform_api_url", "")
+    platform_api_token = agent_params.get("platform_api_token", "")
+    user_id = agent_params.get("user_id", "")
+
+    if not platform_api_url or not platform_api_token:
+        return []
+
+    tools: List[StructuredTool] = []
+
+    def _make_save_file_tool(
+        api_url: str = platform_api_url,
+        api_token: str = platform_api_token,
+        uid: str = user_id,
+    ) -> StructuredTool:
+        async def _save_file_to_workspace(
+            download_url: str,
+            workspace_id: str,
+            filename: str,
+            mime_type: Optional[str] = None,
+            auth_headers: Optional[Dict[str, str]] = None,
+            source_meta: Optional[Dict[str, str]] = None,
+        ) -> str:
+            import httpx
+
+            endpoint = f"{api_url}/workspaces/{workspace_id}/documents/ingest-url"
+            body: Dict[str, Any] = {
+                "downloadUrl": download_url,
+                "filename": filename,
+                "userId": uid,
+            }
+            if mime_type:
+                body["mimeType"] = mime_type
+            if auth_headers:
+                body["authHeaders"] = auth_headers
+            if source_meta:
+                body["sourceMeta"] = source_meta
+
+            try:
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(
+                        endpoint,
+                        json=body,
+                        headers={
+                            "X-Internal-Token": api_token,
+                            "Content-Type": "application/json",
+                        },
+                    )
+                    if resp.status_code >= 400:
+                        return f"Error saving file to workspace: HTTP {resp.status_code} - {resp.text}"
+                    data = resp.json()
+                    doc = data.get("document", {})
+                    return (
+                        f"File saved to workspace successfully. "
+                        f"Document ID: {doc.get('id')}, "
+                        f"Filename: {doc.get('originalName')}, "
+                        f"Size: {doc.get('size')} bytes"
+                    )
+            except Exception as e:
+                logger.error("save_file_to_workspace failed", error=str(e))
+                return f"Error saving file to workspace: {str(e)}"
+
+        _save_file_to_workspace.__name__ = "save_file_to_workspace"
+
+        return StructuredTool(
+            name="save_file_to_workspace",
+            description=(
+                "Save an external file to a workspace by providing its download URL. "
+                "Use this when you receive a download_url from an MCP tool (e.g. SharePoint, "
+                "Google Drive) and need to make the file available in the workspace for "
+                "further processing like code interpreter. The platform will download "
+                "the file and store it in the workspace."
+            ),
+            func=None,
+            coroutine=_save_file_to_workspace,
+            args_schema=_SaveFileToWorkspaceInput,
+        )
+
+    tools.append(_make_save_file_tool())
+
+    logger.info(
+        "platform_tools_created",
+        tool_count=len(tools),
+        tool_names=[t.name for t in tools],
+    )
+
+    return tools
+
+
+def _create_connector_import_tool(
+    connector_id: str,
+    connector_name: str,
+    auth_headers: Dict[str, str],
+    workspace_id: str,
+) -> StructuredTool:
+    settings = get_settings()
+    backend_url = getattr(settings, "API_URL", None)
+
+    async def _import_connector_items(
+        mode: str,
+        drive_id: Optional[str] = None,
+        item_id: Optional[str] = None,
+        path: Optional[str] = None,
+        item_ref: Optional[Dict[str, Any]] = None,
+        item_refs: Optional[List[Dict[str, Any]]] = None,
+        recursive: bool = True,
+    ) -> str:
+        direct_item_ref = item_ref
+        if not direct_item_ref and drive_id and (item_id or path):
+            direct_item_ref = {
+                "driveId": drive_id,
+                **({"itemId": item_id} if item_id else {}),
+                **({"path": path} if path else {}),
+            }
+        return import_connector_items_to_workspace_request(
+            backend_url=backend_url or "",
+            connector_id=connector_id,
+            connector_name=connector_name,
+            workspace_id=workspace_id,
+            auth_headers=auth_headers,
+            mode=mode,
+            item_ref=direct_item_ref,
+            item_refs=item_refs,
+            recursive=recursive,
+        )
+
+    return StructuredTool(
+        name=f"{re.sub(r'[^a-z0-9-]', '', connector_name.lower())[:24] or 'connector'}_import_to_workspace",
+        description=(
+            f"Import one file, multiple files, or a folder from {connector_name} into the current workspace. "
+            "Use the connector search or browse tools first to discover the target driveId/itemId values, then call this import tool so downstream tools like the code interpreter can access the files from workspace. "
+            "You can pass direct drive_id/item_id arguments, a direct item_ref like {driveId, itemId}, or the full item object returned by connector tools."
+        ),
+        func=None,
+        coroutine=_import_connector_items,
+        args_schema=ConnectorImportInput,
+    )

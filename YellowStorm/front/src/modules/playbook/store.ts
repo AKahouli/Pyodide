@@ -37,6 +37,10 @@ import type {
   StepEvaluationHistoryEntry,
   PlaybookPageMode,
   PlaybookUndoSnapshot,
+  SyncPlaybookMailSubscriptionData,
+  TaskTemplate,
+  ArtifactKind,
+  UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ToolBinding,
 } from './types';
@@ -103,6 +107,7 @@ const initialState: PlaybookState = {
   currentExecutionLoading: false,
   executionCache: {},
   executionHistory: [],
+  executionHistoryByPlaybook: {},
   executionsLoading: false,
   executingPlaybookIds: [],
   isGenerating: false,
@@ -122,8 +127,11 @@ const initialState: PlaybookState = {
   undoStack: [],
   redoStack: [],
   canvasSyncVersion: 0,
-  scheduleSaving: false,
-  scheduleError: null,
+  triggerSaving: false,
+  triggerError: null,
+  nodeTemplates: [],
+  nodeTemplatesLoading: false,
+  nodeTemplatesLoadedAt: 0,
 };
 
 // ===== Stable empty references =====
@@ -544,10 +552,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
             currentPlaybook: state.currentPlaybook?.id !== id
               ? state.currentPlaybook
               : {
-                  ...playbook,
-                  tasks: state.currentPlaybook.tasks,
-                  edges: state.currentPlaybook.edges,
-                },
+                ...playbook,
+                tasks: state.currentPlaybook.tasks,
+                edges: state.currentPlaybook.edges,
+              },
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,
             savingDirtyVersion: isLatestSaveRequest ? null : state.savingDirtyVersion,
@@ -556,6 +564,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestState = get();
           if (latestState.saveRequestId === requestId) {
             set({ isSaving: false, savingDirtyVersion: null });
+          }
+          if (
+            err &&
+            typeof err === 'object' &&
+            'statusCode' in err &&
+            (err.statusCode === 401 || err.statusCode === 403)
+          ) {
+            return;
           }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
           toast.error(msg);
@@ -597,50 +613,164 @@ export const usePlaybookStore = create<PlaybookStore>()(
         return cloned;
       },
 
-      upsertPlaybookSchedule: async (playbookId: string, data: UpsertPlaybookScheduleData) => {
-        set({ scheduleSaving: true, scheduleError: null });
+      upsertPlaybookTriggerSchedule: async (playbookId: string, data: UpsertPlaybookScheduleData) => {
+        set({ triggerSaving: true, triggerError: null });
         try {
-          const pb = await api.upsertPlaybookSchedule(playbookId, data);
+          const pb = await api.upsertPlaybookTriggerSchedule(playbookId, data);
           const scheduleEnabled = pb.executionSchedule?.enabled === true;
           set((state) => ({
-            scheduleSaving: false,
+            triggerSaving: false,
             currentPlaybook:
               state.currentPlaybook?.id === playbookId
-                ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
                 : state.currentPlaybook,
             playbooks: state.playbooks.some((p) => p.id === playbookId)
               ? state.playbooks.map((p) =>
-                  p.id === playbookId ? { ...p, scheduleEnabled } : p,
-                )
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: pb.automatedTriggerType }
+                  : p,
+              )
               : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleSaved', 'Schedule saved'));
         } catch (err) {
-          set({ scheduleSaving: false, scheduleError: parseApiError(err).message });
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
           handleApiError(err);
           throw err;
         }
       },
 
-      clearPlaybookSchedule: async (playbookId: string) => {
-        set({ scheduleSaving: true, scheduleError: null });
+      clearPlaybookTriggerSchedule: async (playbookId: string) => {
+        set({ triggerSaving: true, triggerError: null });
         try {
-          const pb = await api.clearPlaybookSchedule(playbookId);
+          const pb = await api.clearPlaybookTriggerSchedule(playbookId);
           set((state) => ({
-            scheduleSaving: false,
+            triggerSaving: false,
             currentPlaybook:
               state.currentPlaybook?.id === playbookId
-                ? { ...state.currentPlaybook, executionSchedule: pb.executionSchedule }
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
                 : state.currentPlaybook,
             playbooks: state.playbooks.some((p) => p.id === playbookId)
               ? state.playbooks.map((p) =>
-                  p.id === playbookId ? { ...p, scheduleEnabled: false } : p,
-                )
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled: false, automatedTriggerType: null }
+                  : p,
+              )
               : state.playbooks,
           }));
           toast.success(tPlaybook('store.toasts.scheduleCleared', 'Schedule removed'));
         } catch (err) {
-          set({ scheduleSaving: false, scheduleError: parseApiError(err).message });
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      upsertPlaybookTriggerMail: async (playbookId: string, data: UpsertPlaybookMailTriggerData) => {
+        set({ triggerSaving: true, triggerError: null });
+        try {
+          const pb = await api.upsertPlaybookTriggerMail(playbookId, data);
+          const scheduleEnabled = pb.executionSchedule?.enabled === true;
+          set((state) => ({
+            triggerSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: pb.automatedTriggerType }
+                  : p,
+              )
+              : state.playbooks,
+          }));
+          toast.success(tPlaybook('store.toasts.triggerMailSaved', 'Mail trigger saved'));
+        } catch (err) {
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      clearPlaybookTriggerMail: async (playbookId: string) => {
+        set({ triggerSaving: true, triggerError: null });
+        try {
+          const pb = await api.clearPlaybookTriggerMail(playbookId);
+          const scheduleEnabled = pb.executionSchedule?.enabled === true;
+          set((state) => ({
+            triggerSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: pb.executionSchedule,
+                    triggers: pb.triggers,
+                    automatedTriggerType: pb.automatedTriggerType,
+                  }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: pb.automatedTriggerType }
+                  : p,
+              )
+              : state.playbooks,
+          }));
+          toast.success(tPlaybook('store.toasts.triggerMailCleared', 'Mail trigger removed'));
+        } catch (err) {
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      syncPlaybookTriggerMailSubscription: async (
+        playbookId: string,
+        data: SyncPlaybookMailSubscriptionData,
+      ) => {
+        set({ triggerSaving: true, triggerError: null });
+        try {
+          await api.syncPlaybookTriggerMailSubscription(playbookId, data);
+          const refreshed = await api.getPlaybook(playbookId);
+          const scheduleEnabled = refreshed.executionSchedule?.enabled === true;
+          set((state) => ({
+            triggerSaving: false,
+            currentPlaybook:
+              state.currentPlaybook?.id === playbookId
+                ? {
+                    ...state.currentPlaybook,
+                    executionSchedule: refreshed.executionSchedule,
+                    triggers: refreshed.triggers,
+                    automatedTriggerType: refreshed.automatedTriggerType,
+                  }
+                : state.currentPlaybook,
+            playbooks: state.playbooks.some((p) => p.id === playbookId)
+              ? state.playbooks.map((p) =>
+                p.id === playbookId
+                  ? { ...p, scheduleEnabled, automatedTriggerType: refreshed.automatedTriggerType }
+                  : p,
+              )
+              : state.playbooks,
+          }));
+          toast.success(tPlaybook('store.toasts.triggerMailSubscriptionSynced', 'Mail subscription synced'));
+        } catch (err) {
+          set({ triggerSaving: false, triggerError: parseApiError(err).message });
           handleApiError(err);
           throw err;
         }
@@ -723,6 +853,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           tasks: currentPlaybook.tasks,
           edges: currentPlaybook.edges,
           workspaces: currentPlaybook.workspaces,
+          reflectionEnabled: currentPlaybook.reflectionEnabled,
+          advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
+          advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore,
+          advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns,
         });
       },
 
@@ -760,8 +894,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionTrigger: 'manual',
               reflectionEnabled: data?.runNodeReflection !== false,
               advisorAutopilotEnabled: data?.advisorAutopilotEnabled === true,
-              advisorAutopilotTargetScore: data?.advisorAutopilotTargetScore ?? 80,
-              advisorAutopilotMaxTurns: data?.advisorAutopilotMaxTurns ?? 2,
+              advisorAutopilotTargetScore: data?.advisorAutopilotTargetScore ?? 90,
+              advisorAutopilotMaxTurns: data?.advisorAutopilotMaxTurns ?? 4,
               advisorAutopilotStatus: data?.advisorAutopilotEnabled ? 'running' : 'idle',
               advisorAutopilotTaskId: data?.singleStepTaskId || null,
               advisorAutopilotAttemptCount: 0,
@@ -861,9 +995,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             const taskResults = currentExecution.taskResults.map((taskResult) =>
               taskResult.taskId === taskId
                 ? {
-                    ...taskResult,
-                    stepExecutions: (taskResult.stepExecutions || []).filter((entry) => entry.id !== stepExecutionId),
-                  }
+                  ...taskResult,
+                  stepExecutions: (taskResult.stepExecutions || []).filter((entry) => entry.id !== stepExecutionId),
+                }
                 : taskResult,
             );
 
@@ -931,16 +1065,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set((state) => ({
           currentPlaybook: state.currentPlaybook?.id === playbookId
             ? {
-                ...state.currentPlaybook,
-                tasks: state.currentPlaybook.tasks.map((task) =>
-                  task.id === taskId
-                    ? {
-                        ...task,
-                        isSavingReplayBaseline: true,
-                      }
-                    : task,
-                ),
-              }
+              ...state.currentPlaybook,
+              tasks: state.currentPlaybook.tasks.map((task) =>
+                task.id === taskId
+                  ? {
+                    ...task,
+                    isSavingReplayBaseline: true,
+                  }
+                  : task,
+              ),
+            }
             : state.currentPlaybook,
         }));
         try {
@@ -951,29 +1085,29 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                          hasValidatedReplay: true,
-                          activeReplayId: replay.id,
-                          activeReplayVersion: replay.validationVersion,
-                          activeReplayIsStale: replay.isStale || false,
-                          activeReplayStaleReasons: replay.staleReasons || [],
-                          activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
-                          activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
-                          activeReplayFormatGuideError: replay.formatGuideError || null,
-                          hasOutputFormatTemplate: task.hasOutputFormatTemplate,
-                          activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
-                          activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
-                          activeOutputFormatStatus: task.activeOutputFormatStatus || null,
-                          activeOutputFormatError: task.activeOutputFormatError || null,
-                          isSavingReplayBaseline: false,
-                        }
-                      : task,
-                  ),
-                }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasValidatedReplay: true,
+                      activeReplayId: replay.id,
+                      activeReplayVersion: replay.validationVersion,
+                      activeReplayIsStale: replay.isStale || false,
+                      activeReplayStaleReasons: replay.staleReasons || [],
+                      activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
+                      activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
+                      activeReplayFormatGuideError: replay.formatGuideError || null,
+                      hasOutputFormatTemplate: task.hasOutputFormatTemplate,
+                      activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: task.activeOutputFormatStatus || null,
+                      activeOutputFormatError: task.activeOutputFormatError || null,
+                      isSavingReplayBaseline: false,
+                    }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           toast.success(tPlaybook('store.toasts.saved', 'Replay baseline saved'));
@@ -982,16 +1116,16 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                          isSavingReplayBaseline: false,
-                        }
-                      : task,
-                  ),
-                }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      isSavingReplayBaseline: false,
+                    }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           handleApiError(err);
@@ -1014,29 +1148,29 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                          hasValidatedReplay: true,
-                          activeReplayId: replay.id,
-                          activeReplayVersion: replay.validationVersion,
-                          activeReplayIsStale: replay.isStale || false,
-                          activeReplayStaleReasons: replay.staleReasons || [],
-                          activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
-                          activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
-                          activeReplayFormatGuideError: replay.formatGuideError || null,
-                          hasOutputFormatTemplate: task.hasOutputFormatTemplate,
-                          activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
-                          activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
-                          activeOutputFormatStatus: task.activeOutputFormatStatus || null,
-                          activeOutputFormatError: task.activeOutputFormatError || null,
-                          isSavingReplayBaseline: false,
-                        }
-                      : task,
-                  ),
-                }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasValidatedReplay: true,
+                      activeReplayId: replay.id,
+                      activeReplayVersion: replay.validationVersion,
+                      activeReplayIsStale: replay.isStale || false,
+                      activeReplayStaleReasons: replay.staleReasons || [],
+                      activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
+                      activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
+                      activeReplayFormatGuideError: replay.formatGuideError || null,
+                      hasOutputFormatTemplate: task.hasOutputFormatTemplate,
+                      activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: task.activeOutputFormatStatus || null,
+                      activeOutputFormatError: task.activeOutputFormatError || null,
+                      isSavingReplayBaseline: false,
+                    }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           toast.success(tPlaybook('store.toasts.saved', 'Replay baseline activated'));
@@ -1053,29 +1187,29 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                          hasValidatedReplay: true,
-                          activeReplayId: replay.status === 'active' ? replay.id : task.activeReplayId,
-                          activeReplayVersion: replay.status === 'active' ? replay.validationVersion : task.activeReplayVersion,
-                          activeReplayIsStale: replay.isStale || false,
-                          activeReplayStaleReasons: replay.staleReasons || [],
-                          activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
-                          activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
-                          activeReplayFormatGuideError: replay.formatGuideError || null,
-                          hasOutputFormatTemplate: task.hasOutputFormatTemplate,
-                          activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
-                          activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
-                          activeOutputFormatStatus: task.activeOutputFormatStatus || null,
-                          activeOutputFormatError: task.activeOutputFormatError || null,
-                          isSavingReplayBaseline: false,
-                        }
-                      : task,
-                  ),
-                }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasValidatedReplay: true,
+                      activeReplayId: replay.status === 'active' ? replay.id : task.activeReplayId,
+                      activeReplayVersion: replay.status === 'active' ? replay.validationVersion : task.activeReplayVersion,
+                      activeReplayIsStale: replay.isStale || false,
+                      activeReplayStaleReasons: replay.staleReasons || [],
+                      activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
+                      activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
+                      activeReplayFormatGuideError: replay.formatGuideError || null,
+                      hasOutputFormatTemplate: task.hasOutputFormatTemplate,
+                      activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: task.activeOutputFormatStatus || null,
+                      activeOutputFormatError: task.activeOutputFormatError || null,
+                      isSavingReplayBaseline: false,
+                    }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           toast.success(tPlaybook('store.toasts.saved', 'Replay format guide updated'));
@@ -1090,18 +1224,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set((state) => ({
           currentPlaybook: state.currentPlaybook?.id === playbookId
             ? {
-                ...state.currentPlaybook,
-                tasks: state.currentPlaybook.tasks.map((task) =>
-                  task.id === taskId
-                    ? {
-                        ...task,
-                        isCapturingOutputFormat: true,
-                        activeOutputFormatStatus: 'pending',
-                        activeOutputFormatError: null,
-                      }
-                    : task,
-                ),
-              }
+              ...state.currentPlaybook,
+              tasks: state.currentPlaybook.tasks.map((task) =>
+                task.id === taskId
+                  ? {
+                    ...task,
+                    isCapturingOutputFormat: true,
+                    activeOutputFormatStatus: 'pending',
+                    activeOutputFormatError: null,
+                  }
+                  : task,
+              ),
+            }
             : state.currentPlaybook,
         }));
         try {
@@ -1109,21 +1243,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                          hasOutputFormatTemplate: true,
-                          activeOutputFormatTemplateId: template.id,
-                          activeOutputFormatTemplateVersion: template.templateVersion,
-                          activeOutputFormatStatus: template.generationStatus,
-                          activeOutputFormatError: template.generationError || null,
-                          isCapturingOutputFormat: template.generationStatus === 'pending',
-                        }
-                      : task,
-                  ),
-                }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasOutputFormatTemplate: true,
+                      activeOutputFormatTemplateId: template.id,
+                      activeOutputFormatTemplateVersion: template.templateVersion,
+                      activeOutputFormatStatus: template.generationStatus,
+                      activeOutputFormatError: template.generationError || null,
+                      isCapturingOutputFormat: template.generationStatus === 'pending',
+                    }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           toast.success('Output format captured');
@@ -1132,17 +1266,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                          isCapturingOutputFormat: false,
-                          activeOutputFormatStatus: task.activeOutputFormatTemplateId ? task.activeOutputFormatStatus : null,
-                        }
-                      : task,
-                  ),
-                }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      isCapturingOutputFormat: false,
+                      activeOutputFormatStatus: task.activeOutputFormatTemplateId ? task.activeOutputFormatStatus : null,
+                    }
+                    : task,
+                ),
+              }
               : state.currentPlaybook,
           }));
           handleApiError(err);
@@ -1165,18 +1299,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
               ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                          ...task,
-                        hasOutputFormatTemplate: true,
-                        activeOutputFormatTemplateId: template.id,
-                        activeOutputFormatTemplateVersion: template.templateVersion,
-                        activeOutputFormatStatus: template.generationStatus,
-                        activeOutputFormatError: template.generationError || null,
-                        isCapturingOutputFormat: template.generationStatus === 'pending',
-                      }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasOutputFormatTemplate: true,
+                      activeOutputFormatTemplateId: template.id,
+                      activeOutputFormatTemplateVersion: template.templateVersion,
+                      activeOutputFormatStatus: template.generationStatus,
+                      activeOutputFormatError: template.generationError || null,
+                      isCapturingOutputFormat: template.generationStatus === 'pending',
+                    }
                     : task,
                 ),
               }
@@ -1184,6 +1318,39 @@ export const usePlaybookStore = create<PlaybookStore>()(
           }));
           toast.success('Output format template updated');
           return template;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteOutputFormatTemplate: async (playbookId, taskId) => {
+        try {
+          const result = await api.deleteOutputFormatTemplate(playbookId, taskId);
+          if (result.removed) {
+            set((state) => ({
+              currentPlaybook: state.currentPlaybook?.id === playbookId
+                ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) =>
+                    task.id === taskId
+                      ? {
+                        ...task,
+                        hasOutputFormatTemplate: false,
+                        activeOutputFormatTemplateId: null,
+                        activeOutputFormatTemplateVersion: null,
+                        activeOutputFormatStatus: null,
+                        activeOutputFormatError: null,
+                        isCapturingOutputFormat: false,
+                      }
+                      : task,
+                  ),
+                }
+                : state.currentPlaybook,
+            }));
+            toast.success('Output format template removed');
+          }
+          return result;
         } catch (err) {
           handleApiError(err);
           throw err;
@@ -1350,12 +1517,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const cachedExecution = state.executionCache[executionId];
           const updatedExecution = cachedExecution
             ? {
-                ...cachedExecution,
-                status: 'running' as const,
-                interruptPayload: null,
-                taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
-                updatedAt: new Date().toISOString(),
-              }
+              ...cachedExecution,
+              status: 'running' as const,
+              interruptPayload: null,
+              taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
+              updatedAt: new Date().toISOString(),
+            }
             : null;
           const executionCache = updatedExecution
             ? { ...state.executionCache, [executionId]: updatedExecution }
@@ -1409,12 +1576,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const cachedExecution = state.executionCache[executionId];
           const updatedExecution = cachedExecution
             ? {
-                ...cachedExecution,
-                status: 'running' as const,
-                interruptPayload: null,
-                taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
-                updatedAt: new Date().toISOString(),
-              }
+              ...cachedExecution,
+              status: 'running' as const,
+              interruptPayload: null,
+              taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
+              updatedAt: new Date().toISOString(),
+            }
             : null;
           const executionCache = updatedExecution
             ? { ...state.executionCache, [executionId]: updatedExecution }
@@ -1467,8 +1634,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
           executionTrigger: 'manual',
           reflectionEnabled: data.reflectionEnabled !== false,
           advisorAutopilotEnabled: data.advisorAutopilotEnabled === true,
-          advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 80,
-          advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 2,
+          advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 90,
+          advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 4,
           advisorAutopilotStatus: data.advisorAutopilotStatus || 'idle',
           advisorAutopilotTaskId: data.advisorAutopilotTaskId ?? null,
           advisorAutopilotAttemptCount: data.advisorAutopilotAttemptCount ?? 0,
@@ -1537,43 +1704,43 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const found = existing.some((tr) => tr.taskId === data.taskId);
           const taskResults = found
             ? existing.map((tr) =>
-                tr.taskId === data.taskId
-                  ? {
-                      ...clearTaskResultStaleState(tr),
-                      status: 'running' as const,
-                      output: null,
-                      error: null,
-                      durationMs: null,
-                      startedAt: new Date().toISOString(),
-                      completedAt: null,
-                    }
-                  : tr,
-              )
-            : [
-                ...existing,
-                {
-                  taskId: data.taskId,
-                  nodeTitle: '',
-                  agentName: '',
-                  order: existing.length,
+              tr.taskId === data.taskId
+                ? {
+                  ...clearTaskResultStaleState(tr),
                   status: 'running' as const,
                   output: null,
                   error: null,
                   durationMs: null,
                   startedAt: new Date().toISOString(),
                   completedAt: null,
-                  isStale: false,
-                  staleReason: null,
-                  invalidatedByTaskId: null,
-                  semanticMatch: null,
-                  judgeStatus: 'idle' as const,
-                  judgeResult: null,
-                  judgeError: null,
-                  judgeHistory: [],
-                  evaluationHistory: [],
-                  stepExecutions: [],
-                } as PlaybookExecution['taskResults'][number],
-              ];
+                }
+                : tr,
+            )
+            : [
+              ...existing,
+              {
+                taskId: data.taskId,
+                nodeTitle: '',
+                agentName: '',
+                order: existing.length,
+                status: 'running' as const,
+                output: null,
+                error: null,
+                durationMs: null,
+                startedAt: new Date().toISOString(),
+                completedAt: null,
+                isStale: false,
+                staleReason: null,
+                invalidatedByTaskId: null,
+                semanticMatch: null,
+                judgeStatus: 'idle' as const,
+                judgeResult: null,
+                judgeError: null,
+                judgeHistory: [],
+                evaluationHistory: [],
+                stepExecutions: [],
+              } as PlaybookExecution['taskResults'][number],
+            ];
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -1599,53 +1766,53 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const found = existing.some((tr) => tr.taskId === data.taskId);
           const taskResults = found
             ? existing.map((tr) => {
-                if (tr.taskId !== data.taskId) return tr;
-                const merged = mergeComponents(tr.components, data.components || []);
-                return {
-                  ...tr,
-                  status: 'running' as const,
-                  output: data.output ?? tr.output ?? null,
-                  components: merged,
-                  toolTrace: data.toolTrace ?? tr.toolTrace ?? [],
-                  llmPromptTrace: data.llmPromptTrace ?? tr.llmPromptTrace ?? [],
-                  artifacts: data.artifacts ?? tr.artifacts,
-                  startedAt: tr.startedAt || new Date().toISOString(),
-                  completedAt: null,
-                  durationMs: null,
-                  error: null,
-                  isStale: false,
-                  staleReason: null,
-                  invalidatedByTaskId: null,
-                };
-              })
+              if (tr.taskId !== data.taskId) return tr;
+              const merged = mergeComponents(tr.components, data.components || []);
+              return {
+                ...tr,
+                status: 'running' as const,
+                output: data.output ?? tr.output ?? null,
+                components: merged,
+                toolTrace: data.toolTrace ?? tr.toolTrace ?? [],
+                llmPromptTrace: data.llmPromptTrace ?? tr.llmPromptTrace ?? [],
+                artifacts: data.artifacts ?? tr.artifacts,
+                startedAt: tr.startedAt || new Date().toISOString(),
+                completedAt: null,
+                durationMs: null,
+                error: null,
+                isStale: false,
+                staleReason: null,
+                invalidatedByTaskId: null,
+              };
+            })
             : [
-                ...existing,
-                {
-                  taskId: data.taskId,
-                  nodeTitle: '',
-                  agentName: '',
-                  order: existing.length,
-                  status: 'running' as const,
-                  output: data.output ?? null,
-                  error: null,
-                  durationMs: null,
-                  startedAt: new Date().toISOString(),
-                  completedAt: null,
-                  components: data.components || [],
-                  toolTrace: data.toolTrace ?? [],
-                  llmPromptTrace: data.llmPromptTrace ?? [],
-                  artifacts: data.artifacts,
-                  judgeStatus: 'idle' as const,
-                  judgeResult: null,
-                  judgeError: null,
-                  judgeHistory: [],
-                  evaluationHistory: [],
-                  stepExecutions: [],
-                  isStale: false,
-                  staleReason: null,
-                  invalidatedByTaskId: null,
-                } as PlaybookExecution['taskResults'][number],
-              ];
+              ...existing,
+              {
+                taskId: data.taskId,
+                nodeTitle: '',
+                agentName: '',
+                order: existing.length,
+                status: 'running' as const,
+                output: data.output ?? null,
+                error: null,
+                durationMs: null,
+                startedAt: new Date().toISOString(),
+                completedAt: null,
+                components: data.components || [],
+                toolTrace: data.toolTrace ?? [],
+                llmPromptTrace: data.llmPromptTrace ?? [],
+                artifacts: data.artifacts,
+                judgeStatus: 'idle' as const,
+                judgeResult: null,
+                judgeError: null,
+                judgeHistory: [],
+                evaluationHistory: [],
+                stepExecutions: [],
+                isStale: false,
+                staleReason: null,
+                invalidatedByTaskId: null,
+              } as PlaybookExecution['taskResults'][number],
+            ];
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -1665,71 +1832,71 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const found = existing.some((tr) => tr.taskId === data.taskId);
           const taskResults = found
             ? existing.map((tr) => {
-                if (tr.taskId !== data.taskId) return tr;
-                const merged = mergeComponents(tr.components, data.components || []);
-                const update = {
-                  status: data.status as any,
-                  output: data.output || null,
-                  error: data.error || null,
-                  durationMs: data.durationMs || null,
-                  completedAt: new Date().toISOString(),
-                  toolTrace: data.toolTrace ?? [],
-                  llmPromptTrace: data.llmPromptTrace ?? [],
-                  inputTokens: data.inputTokens ?? null,
-                  outputTokens: data.outputTokens ?? null,
-                  totalTokens: data.totalTokens ?? null,
-                  modelName: data.modelName ?? null,
-                  semanticMatch: data.semanticMatch ?? null,
-                  judgeStatus: 'idle' as const,
-                  judgeResult: null,
-                  judgeError: null,
-                  artifacts: data.artifacts ?? undefined,
-                  isStale: false,
-                  staleReason: null,
-                  invalidatedByTaskId: null,
-                };
-                return {
-                  ...tr,
-                  ...update,
-                  components: merged,
-                  judgeHistory: tr.judgeHistory || [],
-                  evaluationHistory: tr.evaluationHistory || [],
-                  stepExecutions: tr.stepExecutions || [],
-                };
-              })
+              if (tr.taskId !== data.taskId) return tr;
+              const merged = mergeComponents(tr.components, data.components || []);
+              const update = {
+                status: data.status as any,
+                output: data.output || null,
+                error: data.error || null,
+                durationMs: data.durationMs || null,
+                completedAt: new Date().toISOString(),
+                toolTrace: data.toolTrace ?? [],
+                llmPromptTrace: data.llmPromptTrace ?? [],
+                inputTokens: data.inputTokens ?? null,
+                outputTokens: data.outputTokens ?? null,
+                totalTokens: data.totalTokens ?? null,
+                modelName: data.modelName ?? null,
+                semanticMatch: data.semanticMatch ?? null,
+                judgeStatus: 'idle' as const,
+                judgeResult: null,
+                judgeError: null,
+                artifacts: data.artifacts ?? undefined,
+                isStale: false,
+                staleReason: null,
+                invalidatedByTaskId: null,
+              };
+              return {
+                ...tr,
+                ...update,
+                components: merged,
+                judgeHistory: tr.judgeHistory || [],
+                evaluationHistory: tr.evaluationHistory || [],
+                stepExecutions: tr.stepExecutions || [],
+              };
+            })
             : [
-                ...existing,
-                {
-                  taskId: data.taskId,
-                  nodeTitle: '',
-                  agentName: '',
-                  order: existing.length,
-                  status: data.status as any,
-                  output: data.output || null,
-                  error: data.error || null,
-                  durationMs: data.durationMs || null,
-                  startedAt: null,
-                  completedAt: new Date().toISOString(),
-                  components: data.components || undefined,
-                  toolTrace: data.toolTrace ?? [],
-                  llmPromptTrace: data.llmPromptTrace ?? [],
-                  inputTokens: data.inputTokens ?? null,
-                  outputTokens: data.outputTokens ?? null,
-                  totalTokens: data.totalTokens ?? null,
-                  modelName: data.modelName ?? null,
-                  semanticMatch: data.semanticMatch ?? null,
-                  judgeStatus: 'idle' as const,
-                  judgeResult: null,
-                  judgeError: null,
-                  judgeHistory: [],
-                  evaluationHistory: [],
-                  stepExecutions: [],
-                  artifacts: data.artifacts ?? undefined,
-                  isStale: false,
-                  staleReason: null,
-                  invalidatedByTaskId: null,
-                } as PlaybookExecution['taskResults'][number],
-              ];
+              ...existing,
+              {
+                taskId: data.taskId,
+                nodeTitle: '',
+                agentName: '',
+                order: existing.length,
+                status: data.status as any,
+                output: data.output || null,
+                error: data.error || null,
+                durationMs: data.durationMs || null,
+                startedAt: null,
+                completedAt: new Date().toISOString(),
+                components: data.components || undefined,
+                toolTrace: data.toolTrace ?? [],
+                llmPromptTrace: data.llmPromptTrace ?? [],
+                inputTokens: data.inputTokens ?? null,
+                outputTokens: data.outputTokens ?? null,
+                totalTokens: data.totalTokens ?? null,
+                modelName: data.modelName ?? null,
+                semanticMatch: data.semanticMatch ?? null,
+                judgeStatus: 'idle' as const,
+                judgeResult: null,
+                judgeError: null,
+                judgeHistory: [],
+                evaluationHistory: [],
+                stepExecutions: [],
+                artifacts: data.artifacts ?? undefined,
+                isStale: false,
+                staleReason: null,
+                invalidatedByTaskId: null,
+              } as PlaybookExecution['taskResults'][number],
+            ];
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -1756,10 +1923,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const taskResults = cached.taskResults.map((tr) =>
             tr.taskId === data.taskId
               ? {
-                  ...tr,
-                  semanticMatch: data.semanticMatch ?? null,
-                  evaluationHistory: appendEvaluationHistory(tr.evaluationHistory, data.evaluationEntry),
-                }
+                ...tr,
+                semanticMatch: data.semanticMatch ?? null,
+                evaluationHistory: appendEvaluationHistory(tr.evaluationHistory, data.evaluationEntry),
+              }
               : tr,
           );
 
@@ -1799,12 +1966,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const taskResults = cached.taskResults.map((tr) =>
             tr.taskId === data.taskId
               ? {
-                  ...tr,
-                  judgeStatus: data.judgeStatus,
-                  judgeResult: data.judgeResult ?? null,
-                  judgeError: data.judgeError ?? null,
-                  judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
-                }
+                ...tr,
+                judgeStatus: data.judgeStatus,
+                judgeResult: data.judgeResult ?? null,
+                judgeError: data.judgeError ?? null,
+                judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
+              }
               : tr,
           );
 
@@ -1843,19 +2010,22 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const taskResults = data.taskId
             ? cached.taskResults.map((tr) =>
-                tr.taskId === data.taskId
-                  ? {
-                      ...tr,
-                      advisorTurnCount: data.advisorTurnCount ?? tr.advisorTurnCount ?? 0,
-                      lastAdvisorAction: data.lastAdvisorAction ?? tr.lastAdvisorAction ?? null,
-                      lastAdvisorScoreDelta: data.lastAdvisorScoreDelta ?? tr.lastAdvisorScoreDelta ?? null,
-                      advisorStopReason: data.advisorStopReason ?? tr.advisorStopReason ?? null,
-                      advisorTurnHistory: data.advisorTurnHistoryEntry
-                        ? [...(tr.advisorTurnHistory || []), data.advisorTurnHistoryEntry]
-                        : tr.advisorTurnHistory || [],
-                    }
-                  : tr,
-              )
+              tr.taskId === data.taskId
+                ? {
+                  ...tr,
+                  advisorTurnCount: data.advisorTurnCount ?? tr.advisorTurnCount ?? 0,
+                  lastAdvisorAction: data.lastAdvisorAction ?? tr.lastAdvisorAction ?? null,
+                  lastAdvisorScoreDelta: data.lastAdvisorScoreDelta ?? tr.lastAdvisorScoreDelta ?? null,
+                  advisorStopReason: data.advisorStopReason ?? tr.advisorStopReason ?? null,
+                  advisorTurnHistory: data.advisorTurnHistoryEntry
+                    ? [...(tr.advisorTurnHistory || []), data.advisorTurnHistoryEntry]
+                    : tr.advisorTurnHistory || [],
+                  advisorOptimizationHistory: data.advisorOptimizationHistoryEntry
+                    ? [...(tr.advisorOptimizationHistory || []), data.advisorOptimizationHistoryEntry]
+                    : tr.advisorOptimizationHistory || [],
+                }
+                : tr,
+            )
             : cached.taskResults;
 
           const updatedExec: PlaybookExecution = {
@@ -1878,34 +2048,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set((state) => ({
           currentPlaybook: state.currentPlaybook?.id === data.playbookId
             ? {
-                ...state.currentPlaybook,
-                tasks: state.currentPlaybook.tasks.map((task) =>
-                  task.id === data.taskId
-                    ? {
-                        ...task,
-                        hasValidatedReplay: true,
-                        activeReplayId: data.replay.status === 'active' ? data.replay.id : task.activeReplayId,
-                        activeReplayVersion: data.replay.status === 'active' ? data.replay.validationVersion : task.activeReplayVersion,
-                        activeReplayIsStale: data.replay.isStale || false,
-                        activeReplayStaleReasons: data.replay.staleReasons || [],
-                        activeReplayPreserveOutputFormat: data.replay.preserveOutputFormat || false,
-                        activeReplayFormatGuideStatus: data.replay.formatGuideStatus || 'disabled',
-                        activeReplayFormatGuideError: data.replay.formatGuideError || null,
-                        hasOutputFormatTemplate: task.hasOutputFormatTemplate,
-                        activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
-                        activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
-                        activeOutputFormatStatus: task.activeOutputFormatStatus || null,
-                        activeOutputFormatError: task.activeOutputFormatError || null,
-                        isSavingReplayBaseline: false,
-                      }
-                    : task,
-                ),
-              }
+              ...state.currentPlaybook,
+              tasks: state.currentPlaybook.tasks.map((task) =>
+                task.id === data.taskId
+                  ? {
+                    ...task,
+                    hasValidatedReplay: true,
+                    activeReplayId: data.replay.status === 'active' ? data.replay.id : task.activeReplayId,
+                    activeReplayVersion: data.replay.status === 'active' ? data.replay.validationVersion : task.activeReplayVersion,
+                    activeReplayIsStale: data.replay.isStale || false,
+                    activeReplayStaleReasons: data.replay.staleReasons || [],
+                    activeReplayPreserveOutputFormat: data.replay.preserveOutputFormat || false,
+                    activeReplayFormatGuideStatus: data.replay.formatGuideStatus || 'disabled',
+                    activeReplayFormatGuideError: data.replay.formatGuideError || null,
+                    hasOutputFormatTemplate: task.hasOutputFormatTemplate,
+                    activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
+                    activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
+                    activeOutputFormatStatus: task.activeOutputFormatStatus || null,
+                    activeOutputFormatError: task.activeOutputFormatError || null,
+                    isSavingReplayBaseline: false,
+                  }
+                  : task,
+              ),
+            }
             : state.currentPlaybook,
         }));
       },
 
       onOutputFormatTemplateUpdated: (data: PlaybookOutputFormatTemplateUpdatedEvent) => {
+        const isActive = data.template.status === 'active';
         set((state) => ({
           currentPlaybook: state.currentPlaybook?.id === data.playbookId
             ? {
@@ -1914,12 +2085,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   task.id === data.taskId
                     ? {
                         ...task,
-                        hasOutputFormatTemplate: true,
-                        activeOutputFormatTemplateId: data.template.id,
-                        activeOutputFormatTemplateVersion: data.template.templateVersion,
-                        activeOutputFormatStatus: data.template.generationStatus,
-                        activeOutputFormatError: data.template.generationError || null,
-                        isCapturingOutputFormat: data.template.generationStatus === 'pending',
+                        hasOutputFormatTemplate: isActive,
+                        activeOutputFormatTemplateId: isActive ? data.template.id : null,
+                        activeOutputFormatTemplateVersion: isActive ? data.template.templateVersion : null,
+                        activeOutputFormatStatus: isActive ? data.template.generationStatus : null,
+                        activeOutputFormatError: isActive ? (data.template.generationError || null) : null,
+                        isCapturingOutputFormat: isActive ? data.template.generationStatus === 'pending' : false,
                       }
                     : task,
                 ),
@@ -1935,14 +2106,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
         const viewAction = playbookId
           ? {
-              label: tPlaybook('store.toasts.viewExecution', 'View'),
-              onClick: () => {
-                // Navigate to the playbook page (in case the user is elsewhere)
-                window.location.hash = `#/playbooks/${playbookId}`;
-                // Open execution panel after a tick so the canvas page mounts and fetches first
-                setTimeout(() => get().viewExecutionInPanel(data.executionId), 0);
-              },
-            }
+            label: tPlaybook('store.toasts.viewExecution', 'View'),
+            onClick: () => {
+              // Navigate to the playbook page (in case the user is elsewhere)
+              window.location.hash = `#/playbooks/${playbookId}`;
+              // Open execution panel after a tick so the canvas page mounts and fetches first
+              setTimeout(() => get().viewExecutionInPanel(data.executionId), 0);
+            },
+          }
           : undefined;
 
         if (status === 'failed') {
@@ -1974,12 +2145,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
               taskResults = taskResults.map((tr) => (
                 tr.status === 'running'
                   ? {
-                      ...tr,
-                      status: terminalTaskStatus,
-                      completedAt: new Date().toISOString(),
-                      durationMs: tr.durationMs ?? data.durationMs ?? null,
-                      error: status === 'failed' ? (data.error || tr.error || null) : tr.error,
-                    }
+                    ...tr,
+                    status: terminalTaskStatus,
+                    completedAt: new Date().toISOString(),
+                    durationMs: tr.durationMs ?? data.durationMs ?? null,
+                    error: status === 'failed' ? (data.error || tr.error || null) : tr.error,
+                  }
                   : tr
               ));
             }
@@ -2037,12 +2208,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const playbookId = cached?.playbookId || get().currentPlaybook?.id;
         const viewAction = playbookId
           ? {
-              label: tPlaybook('store.toasts.viewExecution', 'View'),
-              onClick: () => {
-                window.location.hash = `#/playbooks/${playbookId}`;
-                setTimeout(() => get().viewExecutionInPanel(data.executionId), 0);
-              },
-            }
+            label: tPlaybook('store.toasts.viewExecution', 'View'),
+            onClick: () => {
+              window.location.hash = `#/playbooks/${playbookId}`;
+              setTimeout(() => get().viewExecutionInPanel(data.executionId), 0);
+            },
+          }
           : undefined;
         toast.warning(tPlaybook('store.toasts.interruptAttention', 'A step requires your attention.'), { action: viewAction });
 
@@ -2159,7 +2330,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               const mergedStatus = shouldKeepRunningExecution(cached, incoming)
                 ? cached.status
                 : isNewerStatus(cached.status, incoming.status)
-                ? cached.status : incoming.status;
+                  ? cached.status : incoming.status;
 
               executionCache[incoming.id] = {
                 ...incoming,
@@ -2206,7 +2377,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
         try {
           const result = await api.getExecutions(playbookId);
           const executions = result.executions.slice(0, MAX_EXECUTION_HISTORY);
-          set({ executionHistory: executions, executionsLoading: false });
+          set((state) => ({
+            executionHistory: state.currentPlaybook?.id === playbookId ? executions : state.executionHistory,
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [playbookId]: executions,
+            },
+            executionsLoading: false,
+          }));
 
           // Pre-fetch the latest execution's full details into the cache
           // so the canvas can show step statuses from previous runs.
@@ -2227,11 +2405,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchExecution: async (playbookId, execId) => {
         // Use cached execution as optimistic value if available
         const cached = get().executionCache[execId];
-        set({
+        set((state) => ({
           currentExecutionLoading: !cached,
-          currentExecution: cached || null,
-          selectedStepId: cached ? get().selectedStepId : null,
-        });
+          currentExecution: state.currentPlaybook?.id === playbookId ? (cached || null) : state.currentExecution,
+          selectedStepId: state.currentPlaybook?.id === playbookId && cached ? state.selectedStepId : state.selectedStepId,
+        }));
         try {
           const apiExecution = await api.getExecution(playbookId, execId);
           // Smart merge: for each task result, keep the version with the more advanced status
@@ -2256,7 +2434,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             const mergedStatus = shouldKeepRunningExecution(latestCached, apiExecution)
               ? latestCached.status
               : isNewerStatus(latestCached.status, apiExecution.status)
-              ? latestCached.status : apiExecution.status;
+                ? latestCached.status : apiExecution.status;
             merged = {
               ...apiExecution,
               taskResults: mergedTaskResults,
@@ -2271,13 +2449,15 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const executingPlaybookIds = isActiveExecutionStatus(merged.status)
             ? get().executingPlaybookIds
             : get().executingPlaybookIds.filter((pid) => pid !== playbookId);
-          set({
-            currentExecution: merged,
+          set((state) => ({
+            currentExecution: state.currentPlaybook?.id === playbookId ? merged : state.currentExecution,
             currentExecutionLoading: false,
             executionCache,
-            selectedStepId: get().selectedStepId || firstStep?.taskId || null,
+            selectedStepId: state.currentPlaybook?.id === playbookId
+              ? (state.selectedStepId || firstStep?.taskId || null)
+              : state.selectedStepId,
             executingPlaybookIds,
-          });
+          }));
         } catch (err) {
           const msg = err instanceof Error ? err.message : 'Failed to fetch execution';
           set({ currentExecutionLoading: false, error: msg });
@@ -2540,6 +2720,60 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
 
+      // ===== Node Templates =====
+
+      fetchNodeTemplates: async () => {
+        const { nodeTemplatesLoadedAt } = get();
+        const now = Date.now();
+        if (now - nodeTemplatesLoadedAt < 30_000) return;
+
+        set({ nodeTemplatesLoading: true });
+        try {
+          const data = await api.getPlaybookNodeTemplates();
+          const items = Array.isArray(data.items) ? data.items : [];
+
+          set({
+            nodeTemplates: items.map((item) => ({
+              id: item.id,
+              type: item.type,
+              title: item.title,
+              description: item.description || '',
+              icon: item.icon || 'FileText',
+              color: item.color || 'blue',
+              category: item.category as TaskTemplate['category'],
+              inputPorts: (Array.isArray(item.inputPorts) ? item.inputPorts : []).map((p) => ({
+                id: p.id,
+                name: p.name,
+                artifactKind: p.artifactKind as ArtifactKind,
+                required: p.required ?? false,
+                description: p.description,
+              })),
+              outputPorts: (Array.isArray(item.outputPorts) ? item.outputPorts : []).map((p) => ({
+                id: p.id,
+                name: p.name,
+                artifactKind: p.artifactKind as ArtifactKind,
+                description: p.description,
+              })),
+              promptTemplate: item.promptTemplate || '',
+              recommendedAgentTypeSlug: item.recommendedAgentTypeSlug,
+              requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
+              executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
+              assignedAgentId: item.assignedAgentId,
+              selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | null,
+            })),
+            nodeTemplatesLoading: false,
+            nodeTemplatesLoadedAt: now,
+          });
+        } catch (err) {
+          set({ nodeTemplatesLoading: false });
+          handleApiError(err, { showToast: true });
+        }
+      },
+
+      invalidateNodeTemplates: () => {
+        set({ nodeTemplatesLoadedAt: 0 });
+      },
+
       // ===== Cleanup =====
 
       reset: () => set(initialState),
@@ -2579,6 +2813,15 @@ export const useCurrentExecutionLoading = () => usePlaybookStore((s) => s.curren
 
 export const useExecutionHistory = () =>
   usePlaybookStore(useShallow((s) => s.executionHistory.length > 0 ? s.executionHistory : EMPTY_EXECUTIONS));
+
+export const useExecutionHistoryForPlaybook = (playbookId: string | undefined) =>
+  usePlaybookStore(useShallow((s) => {
+    if (!playbookId) return EMPTY_EXECUTIONS;
+    const direct = s.executionHistoryByPlaybook[playbookId];
+    if (direct?.length) return direct;
+    const filtered = s.executionHistory.filter((execution) => execution.playbookId === playbookId);
+    return filtered.length > 0 ? filtered : EMPTY_EXECUTIONS;
+  }));
 
 export const useExecutionsLoading = () => usePlaybookStore((s) => s.executionsLoading);
 

@@ -126,7 +126,7 @@ export class ConnectorController {
   // --- Transfer ---
 
   @Post('transfer/import')
-  @ApiOperation({ summary: 'Import a file from a remote connector into a workspace' })
+  @ApiOperation({ summary: 'Import one or more connector items into a workspace' })
   async importFromConnector(
     @Body() dto: ImportConnectorItemDto,
     @CurrentUser() user: UserDocument,
@@ -134,9 +134,16 @@ export class ConnectorController {
     return this.transferService.importToWorkspace(
       user._id.toString(),
       dto.connectorId,
-      dto.itemRef,
       dto.workspaceId,
-      { filename: dto.filename, mimeType: dto.mimeType },
+      {
+        mode: dto.mode || 'file',
+        itemRef: dto.itemRef,
+        itemRefs: dto.itemRefs,
+        recursive: dto.recursive ?? true,
+        flatten: dto.flatten ?? true,
+        filename: dto.filename,
+        mimeType: dto.mimeType,
+      },
     );
   }
 

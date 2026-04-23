@@ -18,6 +18,15 @@ export interface TransferResult {
   error?: string;
 }
 
+export interface ImportTransferResult {
+  success: boolean;
+  mode: 'file' | 'files' | 'folder';
+  workspaceId: string;
+  imported: Array<TransferResult & { finalFilename?: string; sourcePath?: string; collisionResolved?: boolean }>;
+  summary: { requested: number; imported: number; failed: number };
+  errors: Array<{ sourcePath?: string; error: string }>;
+}
+
 @Injectable()
 export class ConnectorTransferService {
   private readonly adapters: Map<string, ConnectorTransferAdapter> = new Map();
@@ -34,6 +43,9 @@ export class ConnectorTransferService {
     this.logger.setContext(ConnectorTransferService.name);
     this.adapters.set('m365', this.m365Adapter);
     this.adapters.set('microsoft365', this.m365Adapter);
+    this.adapters.set('mcp-spo', this.m365Adapter);
+    this.adapters.set('mcp-m365', this.m365Adapter);
+    this.adapters.set('sharepoint', this.m365Adapter);
   }
 
   registerAdapter(provider: string, adapter: ConnectorTransferAdapter): void {
@@ -77,50 +89,176 @@ export class ConnectorTransferService {
     return { adapter, authHeaders: auth.headers, userId, connectorSlug: connector.slug };
   }
 
+  private sanitizePathSegment(value: string): string {
+    return value
+      .replace(/[^a-zA-Z0-9._-]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  private buildCollisionFilename(filename: string, sourcePath: string, usedNames: Set<string>): string {
+    const dotIndex = filename.lastIndexOf('.');
+    const base = dotIndex > 0 ? filename.slice(0, dotIndex) : filename;
+    const ext = dotIndex > 0 ? filename.slice(dotIndex) : '';
+    const parts = sourcePath
+      .split('/')
+      .filter(Boolean)
+      .slice(0, -1)
+      .map((segment) => this.sanitizePathSegment(segment))
+      .filter(Boolean);
+
+    const suffixSeed = parts.length > 0 ? parts.slice(-3).join('_') : 'imported';
+    let candidate = `${base}__${suffixSeed}${ext}`;
+    let counter = 2;
+    while (usedNames.has(candidate.toLowerCase())) {
+      candidate = `${base}__${suffixSeed}_${counter}${ext}`;
+      counter += 1;
+    }
+    return candidate;
+  }
+
   async importToWorkspace(
     callerUserId: string,
     connectorId: string,
-    itemRef: Record<string, unknown>,
     workspaceId: string,
-    options?: { filename?: string; mimeType?: string },
-  ): Promise<TransferResult> {
+    options: {
+      mode: 'file' | 'files' | 'folder';
+      itemRef?: Record<string, unknown>;
+      itemRefs?: Record<string, unknown>[];
+      recursive?: boolean;
+      flatten?: boolean;
+      filename?: string;
+      mimeType?: string;
+    },
+  ): Promise<ImportTransferResult> {
     try {
       const { adapter, authHeaders, userId } = await this.resolveAdapter(connectorId);
       const resolvedUserId = callerUserId || userId;
+      const mode = options.mode || 'file';
+
+      if (options.flatten === false) {
+        throw new Error('Non-flattened folder imports are not supported yet');
+      }
+
+      const itemRefs = mode === 'files'
+        ? (options.itemRefs || [])
+        : (options.itemRef ? [options.itemRef] : []);
+
+      if (itemRefs.length === 0) {
+        throw new Error('At least one item reference is required for import');
+      }
+
+      const candidates = adapter.resolveImportCandidates
+        ? (
+          await Promise.all(
+            itemRefs.map((itemRef) => adapter.resolveImportCandidates!(itemRef, authHeaders, { recursive: options.recursive ?? true })),
+          )
+        ).flat()
+        : itemRefs.map((itemRef) => ({
+          itemRef,
+          filename: options.filename || 'imported-file',
+          mimeType: options.mimeType || 'application/octet-stream',
+          sourcePath: options.filename || 'imported-file',
+        }));
+
+      const existingDocuments = await this.workspaceDocService.findAllByWorkspace(workspaceId, { limit: 1000 });
+      const usedNames = new Set(
+        existingDocuments.documents.map((doc) => String(doc.originalName || '').toLowerCase()).filter(Boolean),
+      );
+      const imported: ImportTransferResult['imported'] = [];
+      const errors: ImportTransferResult['errors'] = [];
 
       this.logger.log('Importing connector item to workspace', {
         connectorId,
         workspaceId,
         provider: adapter.provider,
+        mode,
+        candidateCount: candidates.length,
       });
 
-      const { buffer, filename, mimeType } = await adapter.downloadItem(itemRef, authHeaders);
+      for (const [index, candidate] of candidates.entries()) {
+        try {
+          const isSingleImport = mode === 'file' && candidates.length === 1;
+          let requestedFilename = isSingleImport && options.filename
+            ? options.filename
+            : candidate.filename;
 
-      const doc = await this.workspaceDocService.uploadSmallFile(
-        workspaceId,
-        resolvedUserId,
-        buffer,
-        options?.filename || filename,
-        options?.mimeType || mimeType,
-      );
+          const normalizedRequested = requestedFilename.toLowerCase();
+          let collisionResolved = false;
+          if (usedNames.has(normalizedRequested)) {
+            requestedFilename = this.buildCollisionFilename(requestedFilename, candidate.sourcePath, usedNames);
+            collisionResolved = true;
+          }
+          usedNames.add(requestedFilename.toLowerCase());
 
-      this.logger.log('Import complete', {
-        workspaceDocumentId: doc.id,
-        filename: doc.originalName,
-        size: doc.size,
-      });
+          const { buffer, filename, mimeType } = await adapter.downloadItem(candidate.itemRef, authHeaders);
+          const finalFilename = requestedFilename || filename;
+          const finalMimeType = (isSingleImport && options.mimeType)
+            ? options.mimeType
+            : (candidate.mimeType || mimeType);
+          const doc = await this.workspaceDocService.uploadSmallFile(
+            workspaceId,
+            resolvedUserId,
+            buffer,
+            finalFilename,
+            finalMimeType,
+          );
+
+          imported.push({
+            success: true,
+            workspaceDocumentId: doc.id,
+            filename: doc.originalName,
+            finalFilename,
+            mimeType: doc.mimeType,
+            size: doc.size,
+            sourcePath: candidate.sourcePath,
+            collisionResolved,
+          });
+
+          this.logger.log('Import complete', {
+            workspaceDocumentId: doc.id,
+            filename: doc.originalName,
+            size: doc.size,
+            sourcePath: candidate.sourcePath,
+            importIndex: index,
+          });
+        } catch (error) {
+          const err = error as Error;
+          errors.push({ sourcePath: candidate.sourcePath, error: err.message });
+          imported.push({
+            success: false,
+            filename: candidate.filename,
+            finalFilename: candidate.filename,
+            mimeType: candidate.mimeType,
+            sourcePath: candidate.sourcePath,
+            error: err.message,
+          });
+        }
+      }
 
       return {
-        success: true,
-        workspaceDocumentId: doc.id,
-        filename: doc.originalName,
-        mimeType: doc.mimeType,
-        size: doc.size,
+        success: errors.length === 0,
+        mode,
+        workspaceId,
+        imported,
+        summary: {
+          requested: candidates.length,
+          imported: imported.filter((item) => item.success).length,
+          failed: errors.length,
+        },
+        errors,
       };
     } catch (error) {
       const err = error as Error;
       this.logger.error('Import failed', { connectorId, workspaceId, error: err.message });
-      return { success: false, error: err.message };
+      return {
+        success: false,
+        mode: options.mode || 'file',
+        workspaceId,
+        imported: [],
+        summary: { requested: 0, imported: 0, failed: 1 },
+        errors: [{ error: err.message }],
+      };
     }
   }
 

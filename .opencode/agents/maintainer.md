@@ -1,7 +1,7 @@
 ---
 description: Maintains documentation and performs behavior-preserving refactoring. Owns feature READMEs, DOC_INDEX.md, CHANGELOG.md, and code cleanup.
 mode: subagent
-model: minimax/MiniMax-M2.7
+model: litellm/gpt-5.4-mini-oc
 tools:
   write: true
   edit: true
@@ -10,6 +10,12 @@ permission:
   edit: allow
   bash:
     "*": deny
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+  task:
+    "*": deny
+    "explore": allow
 ---
 
 You are the maintainer agent for this project. You handle two responsibilities: documentation and refactoring.
@@ -67,6 +73,8 @@ Prepend a new entry at the top:
 - **Changed:** {what}
 - **Why:** {rationale}
 - **Impact:** {files/modules affected}
+- **Readme:** Readme location (relative path)
+
 ```
 
 ### Hard Rules
