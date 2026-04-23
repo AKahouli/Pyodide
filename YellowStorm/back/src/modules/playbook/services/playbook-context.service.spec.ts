@@ -1,14 +1,19 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getModelToken } from '@nestjs/mongoose';
 import { PlaybookContextService } from './playbook-context.service';
 import { LoggerService } from '../../logger';
 import { WorkspaceDocumentService } from '../../workspace/workspace-document.service';
 import { DocumentStatus } from '../../workspace/schemas/workspace-document.schema';
 import { IGrpcAgent, IGrpcWorkspaceContext } from '../../agent/interfaces/agent.interface';
+import { Workspace, WorkspaceDocument } from '../../workspace/schemas/workspace.schema';
+import { WorkspaceSetting, WorkspaceSettingDocument } from '../../workspace/schemas/workspace-setting.schema';
 
 describe('PlaybookContextService', () => {
   let service: PlaybookContextService;
   let workspaceDocumentService: jest.Mocked<WorkspaceDocumentService>;
   let loggerService: jest.Mocked<LoggerService>;
+  let workspaceModel: any;
+  let workspaceSettingModel: any;
 
   const mockDocument = (overrides: Partial<Record<string, unknown>> = {}) => ({
     id: 'doc-1',
@@ -53,17 +58,37 @@ describe('PlaybookContextService', () => {
       findAllByWorkspace: jest.fn(),
     };
 
+    const mockWorkspaceModelValue = {
+      findById: jest.fn(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn(),
+    };
+
+    const mockWorkspaceSettingModelValue = {
+      findById: jest.fn(),
+      lean: jest.fn().mockReturnThis(),
+      exec: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlaybookContextService,
         { provide: LoggerService, useValue: mockLoggerService },
         { provide: WorkspaceDocumentService, useValue: mockWorkspaceDocumentService },
+        { provide: getModelToken(Workspace.name), useValue: mockWorkspaceModelValue },
+        { provide: getModelToken(WorkspaceSetting.name), useValue: mockWorkspaceSettingModelValue },
       ],
     }).compile();
 
     service = module.get<PlaybookContextService>(PlaybookContextService);
     workspaceDocumentService = module.get(WorkspaceDocumentService);
     loggerService = module.get(LoggerService);
+    workspaceModel = module.get(getModelToken(Workspace.name));
+    workspaceSettingModel = module.get(getModelToken(WorkspaceSetting.name));
+
+    // Set up default mocks for workspace model
+    workspaceModel.findById.mockReturnValue(workspaceModel);
+    workspaceSettingModel.findById.mockReturnValue(workspaceSettingModel);
   });
 
   describe('constructor', () => {
