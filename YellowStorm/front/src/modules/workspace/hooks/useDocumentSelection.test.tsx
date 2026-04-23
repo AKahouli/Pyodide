@@ -15,6 +15,7 @@ function makeDocument(id: string): WorkspaceDocument {
     createdBy: 'user-1',
     status: 'completed',
     indexingStatus: 'ready',
+    isFolder: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };

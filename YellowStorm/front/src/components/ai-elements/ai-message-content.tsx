@@ -211,7 +211,7 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
     case 'checkpoint':
       return <CheckpointPartRenderer label={part.label} />;
     case 'chart':
-      return <ChartPartRenderer title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} series={part.series} />;
+      return <ChartPartRenderer kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} series={part.series} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
     case 'error':
@@ -677,17 +677,18 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
       <div className='p-4'>
         <ChartContainer config={config} className='aspect-auto h-[250px] w-full min-w-0'>
           <ResponsiveContainer width='100%' height='100%'>
-            {kind === 'line' && (
+            <>
+              {kind === 'line' && (
               <LineChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
                 <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
                 <YAxis />
-            <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />)}
               </LineChart>
-            )}
-            {kind === 'bar' && (
+              )}
+              {kind === 'bar' && (
               <BarChart accessibilityLayer data={data} layout={layout}>
                 {showGrid && <CartesianGrid vertical={layout !== 'vertical'} horizontal={layout === 'vertical'} />}
                 {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />}
@@ -749,7 +750,8 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                   return <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} />;
                 })}
               </ComposedChart>
-            )}
+              )}
+            </>
           </ResponsiveContainer>
         </ChartContainer>
       </div>

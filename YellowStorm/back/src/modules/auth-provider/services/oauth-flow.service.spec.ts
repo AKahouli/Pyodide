@@ -13,6 +13,7 @@ import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService } from '@modules/email';
 import { LoggerService } from '@modules/logger';
+import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
 import { UserStatus } from '@modules/user/schemas/user.schema';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
@@ -138,6 +139,10 @@ describe('OAuthFlowService', () => {
       send: jest.fn().mockResolvedValue({ success: true }),
     };
 
+    const mockWorkspaceInitializerService = {
+      initializeWorkspace: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         OAuthFlowService,
@@ -152,6 +157,7 @@ describe('OAuthFlowService', () => {
         { provide: EmailService, useValue: emailService },
         { provide: ConfigService, useValue: mockConfigService },
         { provide: LoggerService, useValue: mockLoggerService },
+        { provide: WorkspaceInitializerService, useValue: mockWorkspaceInitializerService },
       ],
     }).compile();
 

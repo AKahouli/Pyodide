@@ -1,5 +1,14 @@
 # Changelog
 
+## [2026-04-23 00:00 UTC] — Normalize playbook mail attachment nullable fields
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Normalized `doc.filename` and `doc.path` to `null` when building `MailAttachmentWorkspaceImportData` in the playbook mail webhook service.
+- **Why:** The workspace upload response exposes those fields as optional, but the playbook mail attachment contract requires explicit `string | null` values.
+- **Impact:** `YellowStorm/back/src/modules/playbook/services/playbook-mail-webhook.service.ts`
+- **Readme:** `/docs/playbook/README.md`
+
 ## [2026-04-23 00:00 UTC] — Add webapp backend guidelines documentation
 
 - **Feature:** `webapp-backend`

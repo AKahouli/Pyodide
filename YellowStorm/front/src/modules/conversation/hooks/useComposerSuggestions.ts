@@ -51,6 +51,12 @@ export function useComposerSuggestions({
     const fetchComposerAgent = async () => {
       try {
         const agents = await getAllAgents();
+        console.log('[ComposerSuggestions] All agents fetched:', agents.map(a => ({
+          id: a.id,
+          name: a.name,
+          agentTypeName: a.agentType.name,
+          isDefault: a.isDefault,
+        })));
 
         // Priority 1: Find by name === 'Suggestions' (case-insensitive)
         let composerAgent = agents.find(
@@ -72,6 +78,12 @@ export function useComposerSuggestions({
         }
 
         if (composerAgent) {
+          console.log('[ComposerSuggestions] Found default agent:', {
+            id: composerAgent.id,
+            name: composerAgent.name,
+            agentType: composerAgent.agentType.name,
+            isDefault: composerAgent.isDefault,
+          });
           setResolvedAgentId(composerAgent.id);
         }
       } catch (err) {
