@@ -67,7 +67,7 @@ export function useComposerSuggestions({
         // Priority 3: Try to find by agentType.slug === 'composer-suggestions'
         if (!composerAgent) {
           composerAgent = agents.find(
-            (a) => a.agentType.slug === 'composer-suggestions' && a.isDefault
+            (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
           );
         }
 
@@ -75,7 +75,7 @@ export function useComposerSuggestions({
           setResolvedAgentId(composerAgent.id);
         }
       } catch (err) {
-        // Silently handle error
+        console.error('[ComposerSuggestions] Failed to fetch composer agent:', err);
       }
     };
     fetchComposerAgent();
