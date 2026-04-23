@@ -23,6 +23,8 @@
   "documents.pagination.range": "Showing {{start}}-{{end}} of {{total}} documents",
   "documents.row.actions.index": "Index document",
   "documents.row.actions.reindex": "Re-index document",
+  "documents.indexing": "Indexing",
+  "documents.indexingFailed": "Failed",
   "documents.row.actions.view": "View file",
   "documents.row.actions.upload": "Upload files",
   "documents.row.actions.createSubFolder": "Create subfolder",

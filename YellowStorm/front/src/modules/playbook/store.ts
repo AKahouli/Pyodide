@@ -855,8 +855,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
           workspaces: currentPlaybook.workspaces,
           reflectionEnabled: currentPlaybook.reflectionEnabled,
           advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
-          advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore,
-          advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns,
+          advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
+          advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
         });
       },
 
@@ -2759,7 +2759,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
               executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
-              selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | null,
+              selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
             })),
             nodeTemplatesLoading: false,
             nodeTemplatesLoadedAt: now,

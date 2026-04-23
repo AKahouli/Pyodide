@@ -33,7 +33,10 @@ export function PlaybookTriggerNode({ data, selected }: NodeProps) {
   const outputPorts = Array.isArray(nodeData.outputPorts) ? nodeData.outputPorts : [];
 
   return (
-    <Node className={selected ? 'min-w-[220px] border-primary bg-primary/5 ring-2 ring-primary/30' : 'min-w-[220px] border-primary/30 bg-primary/5'}>
+    <Node
+      handles={{ target: false, source: false }}
+      className={selected ? 'min-w-[220px] border-primary bg-primary/5 ring-2 ring-primary/30' : 'min-w-[220px] border-primary/30 bg-primary/5'}
+    >
       <NodeHeader className="bg-primary/10">
         <div className="flex items-center gap-2">
           <Mail className="h-4 w-4 text-primary" />

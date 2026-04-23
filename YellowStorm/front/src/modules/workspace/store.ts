@@ -1356,6 +1356,7 @@ export const useWorkspaceLoading = () => {
       isLoadingDocuments: state.isLoadingDocuments,
       isLoadingTemplates: state.isLoadingTemplates,
       isLoadingSettings: state.isLoadingSettings,
+      isSavingSettings: state.isSavingSettings,
       isCreating: state.isCreating,
       isDeleting: state.isDeleting,
     })),
