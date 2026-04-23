@@ -3007,7 +3007,7 @@ describe('PlaybookExecutionService', () => {
       });
 
       // The stale interrupt should be logged and skipped
-      expect(mockLoggerService.log).toHaveBeenCalledWith(
+      expect(mockLoggerService.debug).toHaveBeenCalledWith(
         'Skipping stale re-emitted interrupt for resumed task',
         expect.objectContaining({ resumedTaskId: 'task-1' }),
       );

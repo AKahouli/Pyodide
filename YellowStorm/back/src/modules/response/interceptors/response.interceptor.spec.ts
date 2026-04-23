@@ -1,5 +1,6 @@
 import { ExecutionContext, CallHandler } from '@nestjs/common';
 import { of, throwError } from 'rxjs';
+import { Reflector } from '@nestjs/core';
 import { ResponseInterceptor } from './response.interceptor';
 
 describe('ResponseInterceptor', () => {
@@ -15,14 +16,20 @@ describe('ResponseInterceptor', () => {
       switchToHttp: () => ({
         getRequest: () => request,
       }),
+      getHandler: () => ({}),
+      getClass: () => ({}),
     }) as unknown as ExecutionContext;
 
   const createMockCallHandler = (data: unknown): CallHandler => ({
     handle: () => of(data),
   });
 
+  const mockReflector = {
+    getAllAndOverride: jest.fn().mockReturnValue(false),
+  };
+
   beforeEach(() => {
-    interceptor = new ResponseInterceptor();
+    interceptor = new ResponseInterceptor(mockReflector as any);
   });
 
   describe('successful responses', () => {

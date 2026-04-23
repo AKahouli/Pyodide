@@ -329,7 +329,7 @@ describe('PlaybookGrpcService', () => {
 
       await service.runStep({ task: { id: 'task-x' }, playbook_id: 'pb-x' });
 
-      expect(loggerService.log).toHaveBeenCalledWith('gRPC RunStep call initiated', {
+      expect(loggerService.debug).toHaveBeenCalledWith('gRPC RunStep call initiated', {
         taskId: 'task-x',
         playbookId: 'pb-x',
         timeoutMs: 300000,
@@ -341,7 +341,7 @@ describe('PlaybookGrpcService', () => {
 
       await service.runStep({ playbook_id: 'pb-1' });
 
-      expect(loggerService.log).toHaveBeenCalledWith('gRPC RunStep call initiated', {
+      expect(loggerService.debug).toHaveBeenCalledWith('gRPC RunStep call initiated', {
         taskId: undefined,
         playbookId: 'pb-1',
         timeoutMs: 300000,
@@ -397,7 +397,7 @@ describe('PlaybookGrpcService', () => {
         agents: [{ id: 'a1' }, { id: 'a2' }],
       });
 
-      expect(loggerService.log).toHaveBeenCalledWith('gRPC RunPlaybookWorkflow stream initiated', {
+      expect(loggerService.debug).toHaveBeenCalledWith('gRPC RunPlaybookWorkflow stream initiated', {
         playbookId: 'pb-42',
         taskCount: 3,
         agentCount: 2,
@@ -409,7 +409,7 @@ describe('PlaybookGrpcService', () => {
 
       service.runPlaybookWorkflow({ playbook_id: 'pb-1' });
 
-      expect(loggerService.log).toHaveBeenCalledWith('gRPC RunPlaybookWorkflow stream initiated', {
+      expect(loggerService.debug).toHaveBeenCalledWith('gRPC RunPlaybookWorkflow stream initiated', {
         playbookId: 'pb-1',
         taskCount: undefined,
         agentCount: undefined,
@@ -448,7 +448,7 @@ describe('PlaybookGrpcService', () => {
         task_id: 'task-7',
       });
 
-      expect(loggerService.log).toHaveBeenCalledWith(
+      expect(loggerService.debug).toHaveBeenCalledWith(
         'gRPC ResumePlaybookWorkflow stream initiated',
         {
           playbookId: 'pb-5',
@@ -507,7 +507,7 @@ describe('PlaybookGrpcService', () => {
         task_id: 'task-r',
       });
 
-      expect(loggerService.log).toHaveBeenCalledWith('gRPC ResumeStep call initiated', {
+      expect(loggerService.debug).toHaveBeenCalledWith('gRPC ResumeStep call initiated', {
         playbookId: 'pb-r',
         threadId: 'th-r',
         taskId: 'task-r',
@@ -581,7 +581,7 @@ describe('PlaybookGrpcService', () => {
 
       await service.stopPlaybookWorkflow({ playbook_id: 'pb-log' });
 
-      expect(loggerService.log).toHaveBeenCalledWith('gRPC StopPlaybookWorkflow call initiated', {
+      expect(loggerService.debug).toHaveBeenCalledWith('gRPC StopPlaybookWorkflow call initiated', {
         playbookId: 'pb-log',
       });
     });
@@ -778,7 +778,7 @@ describe('PlaybookGrpcService', () => {
 
       service.onModuleDestroy();
 
-      expect(loggerService.log).toHaveBeenCalledWith('Cancelling active stream on shutdown', {
+      expect(loggerService.debug).toHaveBeenCalledWith('Cancelling active stream on shutdown', {
         executionId: 'exec-logged',
       });
     });
@@ -815,7 +815,7 @@ describe('PlaybookGrpcService', () => {
       watchCallback!();
 
       expect(service.isAvailable).toBe(true);
-      expect(loggerService.log).toHaveBeenCalledWith('Playbook gRPC connection restored', {
+      expect(loggerService.debug).toHaveBeenCalledWith('Playbook gRPC connection restored', {
         state: 2,
       });
     });

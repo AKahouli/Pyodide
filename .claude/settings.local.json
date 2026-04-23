@@ -7,7 +7,8 @@
       "Bash(npx vitest *)",
       "Bash(python -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
       "Bash(python *)",
-      "Bash(node -p \"require\\('recharts/package.json'\\).version\")"
+      "Bash(node -p \"require\\('recharts/package.json'\\).version\")",
+      "Bash(npm test *)"
     ]
   }
 }

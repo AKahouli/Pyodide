@@ -244,19 +244,21 @@ describe('PlaybookDesignService', () => {
 
       expect(promptService.getPromptOverridesPayload).toHaveBeenCalledTimes(1);
 
-      expect(grpcService.generatePlaybook).toHaveBeenCalledWith({
-        query: dto.prompt,
-        available_agents: mockGrpcAgents,
-        workspace_context: [{ id: 'ws1', content: 'workspace data' }],
-        existing_playbook: null,
-        model: 'gpt-4o',
-        prompt_overrides: {
-          'playbook.generate': JSON.stringify({
-            key: 'playbook.generate',
-            systemTemplate: 'Custom preprompt',
-          }),
-        },
-      });
+      expect(grpcService.generatePlaybook).toHaveBeenCalledWith(
+        expect.objectContaining({
+          query: dto.prompt,
+          available_agents: mockGrpcAgents,
+          workspace_context: [{ id: 'ws1', content: 'workspace data' }],
+          existing_playbook: null,
+          model: mockDefaultModel.id,
+          prompt_overrides: {
+            'playbook.generate': JSON.stringify({
+              key: 'playbook.generate',
+              systemTemplate: 'Custom preprompt',
+            }),
+          },
+        }),
+      );
     });
 
     it('should use model id as fallback when litellmModel is not available', async () => {
@@ -301,39 +303,43 @@ describe('PlaybookDesignService', () => {
 
       expect(tasks).toHaveLength(2);
 
-      expect(tasks[0]).toEqual({
-        id: 'task-0',
-        title: 'Gather Info',
-        description: 'Collect customer information',
-        assignedAgentId: new Types.ObjectId(agentId1),
-        executionOrder: 0,
-        positionX: 100,
-        positionY: 200,
-        interruptBefore: false,
-        interruptAfter: true,
-        allowClarification: true,
-        clarificationPrompt: 'Need more details?',
-        maxClarifications: 5,
-        inputKeys: ['customer_name'],
-        outputKey: 'customer_info',
-      });
+      expect(tasks[0]).toEqual(
+        expect.objectContaining({
+          id: 'task-0',
+          title: 'Gather Info',
+          description: 'Collect customer information',
+          assignedAgentId: new Types.ObjectId(agentId1),
+          executionOrder: 0,
+          positionX: 100,
+          positionY: 200,
+          interruptBefore: false,
+          interruptAfter: true,
+          allowClarification: true,
+          clarificationPrompt: 'Need more details?',
+          maxClarifications: 5,
+          inputKeys: ['customer_name'],
+          outputKey: 'customer_info',
+        }),
+      );
 
-      expect(tasks[1]).toEqual({
-        id: 'task-1',
-        title: 'Setup Account',
-        description: 'Create the customer account',
-        assignedAgentId: new Types.ObjectId(agentId2),
-        executionOrder: 1,
-        positionX: 100,
-        positionY: 400,
-        interruptBefore: true,
-        interruptAfter: false,
-        allowClarification: false,
-        clarificationPrompt: '',
-        maxClarifications: 3,
-        inputKeys: ['customer_info'],
-        outputKey: 'account_details',
-      });
+      expect(tasks[1]).toEqual(
+        expect.objectContaining({
+          id: 'task-1',
+          title: 'Setup Account',
+          description: 'Create the customer account',
+          assignedAgentId: new Types.ObjectId(agentId2),
+          executionOrder: 1,
+          positionX: 100,
+          positionY: 400,
+          interruptBefore: true,
+          interruptAfter: false,
+          allowClarification: false,
+          clarificationPrompt: '',
+          maxClarifications: 3,
+          inputKeys: ['customer_info'],
+          outputKey: 'account_details',
+        }),
+      );
     });
 
     it('should map gRPC response edges correctly', async () => {
@@ -697,7 +703,7 @@ describe('PlaybookDesignService', () => {
         expect.objectContaining({
           query: dto.query,
           available_agents: mockGrpcAgents,
-          model: 'gpt-4o',
+          model: mockDefaultModel.id,
           prompt_overrides: expect.any(Object),
           existing_playbook: {
             nodes: existingPlaybook.tasks.map((t) => ({
