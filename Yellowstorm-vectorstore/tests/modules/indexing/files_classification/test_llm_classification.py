@@ -2,9 +2,9 @@
 Unit tests for LLM-only classification module.
 """
 import json
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 import pytest
-
+from types import SimpleNamespace
 
 
 class TestDocumentClassifier:
@@ -33,277 +33,251 @@ class TestDocumentClassifier:
         ]
 
     @pytest.fixture
+    def mock_qdrant_client(self):
+        """Mock Qdrant client."""
+        mock_client = MagicMock()
+        mock_point = MagicMock()
+        mock_point.id = "chunk_1"
+        mock_point.payload = {
+            "content": "This is a legal document about contracts",
+            "title": "Contract Document",
+            "metadata": {"page": 1, "chunk_order": 0},
+        }
+        mock_client.scroll.return_value = ([mock_point], None)
+        return mock_client
+
+    @pytest.fixture
     def mock_settings(self):
         """Mock configuration settings."""
         with patch('src.modules.indexing.files_classification.similarity_classification.get_settings') as mock:
             mock_settings = Mock()
-            mock_settings.AZURE_AI_SEARCH_ENDPOINT = "https://test.search.windows.net"
-            mock_settings.AZURE_AI_SEARCH_KEY = "test_key"
+            mock_settings.LITELLM_API_KEY = "test_key"
+            mock_settings.LITELLM_BASE_URL = "https://test.api.com"
+            mock_settings.LLM_CLASSIFICATION_MODEL = "gpt-4"
             mock.return_value = mock_settings
             yield mock_settings
 
-    @pytest.fixture
-    def mock_search_client(self):
-        """Mock Azure Search client."""
-        with patch('src.modules.indexing.files_classification.similarity_classification.SearchClient') as mock:
-            mock_client = Mock()
-            mock.return_value = mock_client
-            yield mock_client
-
-    def test_classifier_initialization(self, sample_directories, mock_settings, mock_search_client):
+    def test_classifier_initialization(self, sample_directories, mock_qdrant_client):
         """Test classifier initialization."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
 
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        assert classifier.external_id == "test_doc"
-        assert classifier.username == "test_user"
-        assert classifier.index_name == "test_index"
-        assert len(classifier.directories) == 2
-
-    def test_classifier_initialization_empty_directories(self, mock_settings, mock_search_client):
-        """Test initialization with empty directories."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=[],
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        assert classifier.directories == []
-        assert classifier._build_category_list_for_prompt().startswith("No predefined categories")
-
-    def test_extract_paths(self, sample_directories, mock_settings, mock_search_client):
-        """Test path extraction from structure."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        paths = classifier.extract_paths(sample_directories)
-        assert "documents" in paths
-        assert "documents/legal" in paths
-        assert "documents/hr" in paths
-        assert "images" in paths
-        assert "images/photos" in paths
-
-    def test_build_category_list_for_prompt(self, sample_directories, mock_settings, mock_search_client):
-        """Test category list building for LLM prompt."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        category_list = classifier._build_category_list_for_prompt()
-        assert "documents (ID: dir_1)" in category_list
-        assert "legal (ID: dir_2)" in category_list
-        assert "hr (ID: dir_3)" in category_list
-        assert "images (ID: dir_4)" in category_list
-
-    def test_classify_chunks_with_azure_search_empty_ids(self, sample_directories, mock_settings, mock_search_client):
-        """Test classification with empty ids list."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        with pytest.raises(ValueError, match="La liste des IDs ne peut pas"):
-            classifier.classify_chunks_with_azure_search([], False)
-
-    @patch('src.modules.indexing.files_classification.similarity_classification.OpenAI')
-    def test_classify_chunks_with_azure_search_llm_success(self, mock_openai, sample_directories, mock_settings, mock_search_client):
-        """Test successful LLM classification."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        mock_results = [
-            {
-                "id": "chunk_1",
-                "content": "This is a legal document about contracts",
-                "title": "Contract Document",
-                "metadata": {},
-            },
-            {
-                "id": "chunk_2",
-                "content": "Employment agreement terms and conditions",
-                "title": "Employment Agreement",
-                "metadata": {},
-            },
-            {
-                "id": "chunk_3",
-                "content": "Company privacy policy and data handling",
-                "title": "Privacy Policy",
-                "metadata": {},
-            },
-        ]
-        mock_search_client.search.return_value = mock_results
-
-        mock_response = {
-            "predicted_category": "documents/legal",
-            "is_new_category": False,
-            "confidence": 0.85,
-            "reasoning": "The document contains legal terminology and contract language",
-            "matched_existing_id": "dir_2",
-        }
-
-        mock_client = Mock()
-        mock_openai.return_value = mock_client
-        mock_completion = Mock()
-        mock_completion.choices = [Mock()]
-        mock_completion.choices[0].message = Mock()
-        mock_completion.choices[0].message.content = json.dumps(mock_response)
-        mock_client.chat.completions.create.return_value = mock_completion
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        result = classifier.classify_chunks_with_azure_search(["chunk_1", "chunk_2", "chunk_3"], False)
-
-        assert result is not None
-        assert result["predicted_category"] == "documents/legal"
-        assert result["is_new_category"] is False
-        assert result["category_id"] == "dir_2"
-        assert result["classification_source"] == "llm_existing"
-        assert result["final_confidence"] == pytest.approx(0.85)
-        assert "reasoning" in result
-
-    @patch('src.modules.indexing.files_classification.similarity_classification.OpenAI')
-    def test_classify_chunks_with_azure_search_llm_new_category(self, mock_openai, sample_directories, mock_settings, mock_search_client):
-        """Test LLM classification with new category."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        mock_results = [
-            {
-                "id": "chunk_1",
-                "content": "Marketing strategy and campaign plans",
-                "title": "Marketing Plan",
-                "metadata": {},
-            }
-        ]
-        mock_search_client.search.return_value = mock_results
-
-        mock_response = {
-            "predicted_category": "marketing",
-            "is_new_category": True,
-            "confidence": 0.92,
-            "reasoning": "This document discusses marketing strategies which doesn't match existing categories",
-            "matched_existing_id": None,
-        }
-
-        mock_client = Mock()
-        mock_openai.return_value = mock_client
-        mock_completion = Mock()
-        mock_completion.choices = [Mock()]
-        mock_completion.choices[0].message = Mock()
-        mock_completion.choices[0].message.content = json.dumps(mock_response)
-        mock_client.chat.completions.create.return_value = mock_completion
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        result = classifier.classify_chunks_with_azure_search(["chunk_1"], False)
-
-        assert result is not None
-        assert result["predicted_category"] == "marketing"
-        assert result["is_new_category"] is True
-        assert result["category_id"] is None
-        assert result["classification_source"] == "llm_new"
-        assert result["final_confidence"] == pytest.approx(0.92)
-
-    @patch('src.modules.indexing.files_classification.similarity_classification.OpenAI')
-    def test_classify_chunks_with_azure_search_llm_error(self, mock_openai, sample_directories, mock_settings, mock_search_client):
-        """Test LLM error handling."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        mock_results = [
-            {
-                "id": "chunk_1",
-                "content": "Test content",
-                "title": "Test Document",
-                "metadata": {},
-            }
-        ]
-        mock_search_client.search.return_value = mock_results
-
-        mock_client = Mock()
-        mock_openai.return_value = mock_client
-        mock_client.chat.completions.create.side_effect = Exception("LLM API error")
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        result = classifier.classify_chunks_with_azure_search(["chunk_1"], False)
-
-        assert result is not None
-        assert result["predicted_category"] == "Autres"
-        assert result["is_new_category"] is False
-        assert result["classification_source"] == "llm_existing"
-        assert result["final_confidence"] == pytest.approx(0.0)
-
-    def test_classify_document_by_external_id(self, sample_directories, mock_settings, mock_search_client):
-        """Test classification by external_id."""
-        from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
-
-        classifier = DocumentClassifier(
-            index_name="test_index",
-            directories=sample_directories,
-            external_id="test_doc",
-            username="test_user",
-        )
-
-        classifier.chunk_retrieval_service.get_chunks_content_by_external_id = Mock(return_value={
-            "chunk_1": {"content": "test content", "metadata": {}}
-        })
-
-        with patch.object(classifier, '_classify_chunks_data') as mock_classify:
-            mock_classify.return_value = {
-                "predicted_category": "documents/legal",
-                "is_new_category": False,
-                "category_id": "dir_2",
-                "classification_source": "llm_existing",
-                "final_confidence": 0.85,
-            }
-
-            result = classifier.classify_document_by_external_id(include_images=False)
-
-            assert result["predicted_category"] == "documents/legal"
-            classifier.chunk_retrieval_service.get_chunks_content_by_external_id.assert_called_once_with(
-                "test_doc",
-                False,
-                None,
-                None,
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
             )
-            mock_classify.assert_called_once()
+
+            assert classifier.external_id == "test_doc"
+            assert classifier.username == "test_user"
+            assert classifier.index_name == "test_index"
+            assert len(classifier.directories) == 2
+
+    def test_classifier_initialization_empty_directories(self, mock_qdrant_client):
+        """Test initialization with empty directories."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=[],
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            assert classifier.directories == []
+            assert classifier._build_category_list_for_prompt().startswith("No predefined categories")
+
+    def test_extract_paths(self, sample_directories, mock_qdrant_client):
+        """Test path extraction from structure."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            paths = classifier.extract_paths(sample_directories)
+            assert "documents" in paths
+            assert "documents/legal" in paths
+            assert "documents/hr" in paths
+            assert "images" in paths
+            assert "images/photos" in paths
+
+    def test_build_category_list_for_prompt(self, sample_directories, mock_qdrant_client):
+        """Test category list building for LLM prompt."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            category_list = classifier._build_category_list_for_prompt()
+            assert "documents (ID: dir_1)" in category_list
+            assert "legal (ID: dir_2)" in category_list
+            assert "hr (ID: dir_3)" in category_list
+            assert "images (ID: dir_4)" in category_list
+
+    def test_classify_chunks_with_qdrant_empty_ids(self, sample_directories, mock_qdrant_client):
+        """Test classification with empty ids list."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            with pytest.raises(ValueError, match="La liste des IDs ne peut pas"):
+                classifier.classify_chunks_with_qdrant([], False)
+
+    @patch('src.modules.indexing.files_classification.similarity_classification.OpenAI')
+    def test_classify_chunks_with_qdrant_llm_success(self, mock_openai, sample_directories, mock_qdrant_client):
+        """Test successful LLM classification."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            mock_response = {
+                "predicted_category": "legal",
+                "is_new_category": False,
+                "confidence": 0.85,
+                "reasoning": "The document contains legal terminology and contract language",
+                "matched_existing_id": "dir_2",
+            }
+
+            mock_client = Mock()
+            mock_openai.return_value = mock_client
+            mock_completion = Mock()
+            mock_completion.choices = [Mock()]
+            mock_completion.choices[0].message = Mock()
+            mock_completion.choices[0].message.content = json.dumps(mock_response)
+            mock_client.chat.completions.create.return_value = mock_completion
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            result = classifier.classify_chunks_with_qdrant(["chunk_1"], False)
+
+            assert result is not None
+            assert result["predicted_category"] == "legal"
+            assert result["is_new_category"] is False
+            assert result["category_id"] == "dir_2"
+            assert result["classification_source"] == "llm_existing"
+            assert result["final_confidence"] == pytest.approx(0.85)
+            assert "reasoning" in result
+
+    @patch('src.modules.indexing.files_classification.similarity_classification.OpenAI')
+    def test_classify_chunks_with_qdrant_llm_new_category(self, mock_openai, sample_directories, mock_qdrant_client):
+        """Test LLM classification with new category."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            mock_response = {
+                "predicted_category": "marketing",
+                "is_new_category": True,
+                "confidence": 0.92,
+                "reasoning": "This document discusses marketing strategies which doesn't match existing categories",
+                "matched_existing_id": None,
+            }
+
+            mock_client = Mock()
+            mock_openai.return_value = mock_client
+            mock_completion = Mock()
+            mock_completion.choices = [Mock()]
+            mock_completion.choices[0].message = Mock()
+            mock_completion.choices[0].message.content = json.dumps(mock_response)
+            mock_client.chat.completions.create.return_value = mock_completion
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            result = classifier.classify_chunks_with_qdrant(["chunk_1"], False)
+
+            assert result is not None
+            assert result["predicted_category"] == "marketing"
+            assert result["is_new_category"] is True
+            assert result["category_id"] is None
+            assert result["classification_source"] == "llm_new"
+            assert result["final_confidence"] == pytest.approx(0.92)
+
+    @patch('src.modules.indexing.files_classification.similarity_classification.OpenAI')
+    def test_classify_chunks_with_qdrant_llm_error(self, mock_openai, sample_directories, mock_qdrant_client):
+        """Test LLM error handling."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            mock_client = Mock()
+            mock_openai.return_value = mock_client
+            mock_client.chat.completions.create.side_effect = Exception("LLM API error")
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            result = classifier.classify_chunks_with_qdrant(["chunk_1"], False)
+
+            assert result is not None
+            assert result["predicted_category"] == "Autres"
+            assert result["is_new_category"] is False
+            assert result["classification_source"] == "llm_existing"
+            assert result["final_confidence"] == pytest.approx(0.0)
+
+    def test_classify_document_by_external_id(self, sample_directories, mock_qdrant_client):
+        """Test classification by external_id."""
+        with patch('src.modules.indexing.files_classification.similarity_classification.get_qdrant_client', return_value=mock_qdrant_client):
+            from src.modules.indexing.files_classification.similarity_classification import DocumentClassifier
+
+            classifier = DocumentClassifier(
+                index_name="test_index",
+                directories=sample_directories,
+                external_id="test_doc",
+                username="test_user",
+            )
+
+            classifier.chunk_retrieval_service.get_chunks_content_by_external_id = Mock(return_value={
+                "chunk_1": {"content": "test content", "metadata": {}}
+            })
+
+            with patch.object(classifier, '_classify_chunks_data') as mock_classify:
+                mock_classify.return_value = {
+                    "predicted_category": "legal",
+                    "is_new_category": False,
+                    "category_id": "dir_2",
+                    "classification_source": "llm_existing",
+                    "final_confidence": 0.85,
+                }
+
+                result = classifier.classify_document_by_external_id(include_images=False)
+
+                assert result["predicted_category"] == "legal"
+                classifier.chunk_retrieval_service.get_chunks_content_by_external_id.assert_called_once_with(
+                    "test_doc",
+                    False,
+                    None,
+                    None,
+                )
+                mock_classify.assert_called_once()
 
 
 class TestCategoryValidation:

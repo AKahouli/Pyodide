@@ -149,6 +149,35 @@ export class PlaybookJudgeEnrichmentService {
     await this.evaluateExecutionSummaryIfReady(userId, executionId);
   }
 
+  private async claimExecutionSummaryEvaluation(executionId: string): Promise<boolean> {
+    const result = await this.executionModel.updateOne(
+      {
+        _id: new Types.ObjectId(executionId),
+        judgeSummaryStatus: { $in: ['idle', 'failed'] },
+      },
+      {
+        $set: {
+          judgeSummaryStatus: 'evaluating',
+          updatedAt: new Date(),
+        },
+      },
+    );
+
+    return result.modifiedCount > 0;
+  }
+
+  private async failClaimedExecutionSummary(executionId: string): Promise<void> {
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), judgeSummaryStatus: 'evaluating' },
+      {
+        $set: {
+          judgeSummaryStatus: 'failed',
+          updatedAt: new Date(),
+        },
+      },
+    );
+  }
+
   async applyCurrentPlaybook(userId: string, playbookId: string, executionId: string): Promise<any> {
     const payload = await this.buildRewritePayload('judge.rewrite_current_playbook', executionId);
     return this.playbookService.update(playbookId, {
@@ -200,6 +229,7 @@ export class PlaybookJudgeEnrichmentService {
       throw new Error('Execution not found');
     }
 
+    const taskResult = (execution.taskResults || []).find((item: any) => item.taskId === taskId);
     const task = (sourcePlaybook.tasks || []).find((item: any) => item.id === taskId);
     if (!task) {
       throw new Error('Task not found');
@@ -208,6 +238,12 @@ export class PlaybookJudgeEnrichmentService {
     const payload = await this.buildStepOptimizationPayload(executionId, taskId);
     const optimizedTask = this.normalizeOptimizedTask(task, payload.task || payload);
     const tasks = (sourcePlaybook.tasks || []).map((item: any) => (item.id === taskId ? optimizedTask : item));
+
+    await this.appendAdvisorOptimizationHistory(executionId, taskId, {
+      turn: Math.max(1, Number((taskResult as any)?.advisorTurnCount ?? 1)),
+      beforeTask: task as unknown as Record<string, unknown>,
+      afterTask: optimizedTask as unknown as Record<string, unknown>,
+    });
 
     return this.playbookService.update(playbookId, { tasks } as any);
   }
@@ -226,7 +262,7 @@ export class PlaybookJudgeEnrichmentService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new Error('No default model configured');
     }
@@ -280,7 +316,7 @@ export class PlaybookJudgeEnrichmentService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new Error('No default model configured');
     }
@@ -336,6 +372,70 @@ export class PlaybookJudgeEnrichmentService {
       outputPorts: originalTask.outputPorts || [],
       inputFiles: originalTask.inputFiles || [],
     };
+  }
+
+  private async appendAdvisorOptimizationHistory(
+    executionId: string,
+    taskId: string,
+    entry: {
+      turn: number;
+      beforeTask: Record<string, unknown>;
+      afterTask: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const historyEntry = {
+      turn: entry.turn,
+      createdAt: new Date(),
+      changedFields: this.computeTaskChangedFields(entry.beforeTask, entry.afterTask),
+      beforeTask: this.pickAdvisorOptimizationTaskFields(entry.beforeTask),
+      afterTask: this.pickAdvisorOptimizationTaskFields(entry.afterTask),
+    };
+
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
+      {
+        $push: {
+          'taskResults.$.advisorOptimizationHistory': {
+            $each: [historyEntry],
+            $slice: -25,
+          },
+        },
+        $set: { updatedAt: new Date() },
+      },
+    ).exec();
+  }
+
+  private pickAdvisorOptimizationTaskFields(task: Record<string, unknown>): Record<string, unknown> {
+    const fields = [
+      'title',
+      'description',
+      'assignedAgentId',
+      'interruptBefore',
+      'interruptAfter',
+      'allowClarification',
+      'clarificationPrompt',
+      'maxClarifications',
+      'enabled',
+      'notifyOnComplete',
+      'notifyEmails',
+      'stepReplayMode',
+      'taskType',
+    ];
+
+    return fields.reduce<Record<string, unknown>>((acc, field) => {
+      acc[field] = task?.[field];
+      return acc;
+    }, {});
+  }
+
+  private computeTaskChangedFields(
+    beforeTask: Record<string, unknown>,
+    afterTask: Record<string, unknown>,
+  ): string[] {
+    const before = this.pickAdvisorOptimizationTaskFields(beforeTask);
+    const after = this.pickAdvisorOptimizationTaskFields(afterTask);
+
+    return Object.keys(after).filter((field) => JSON.stringify(before[field]) !== JSON.stringify(after[field]));
   }
 
   private async evaluateNodeAndPersist(userId: string, executionId: string, taskId: string): Promise<void> {
@@ -473,7 +573,7 @@ export class PlaybookJudgeEnrichmentService {
   private async evaluateExecutionSummaryIfReady(userId: string, executionId: string): Promise<void> {
     const execution = await this.executionModel.findById(executionId).lean().exec();
     if (!execution) return;
-    if (execution.judgeSummaryStatus === 'evaluated') return;
+    if (execution.judgeSummaryStatus === 'evaluated' || execution.judgeSummaryStatus === 'evaluating') return;
 
     const playbook = await this.playbookService.findById(execution.playbookId?.toString?.() || String(execution.playbookId || ''));
 
@@ -481,6 +581,11 @@ export class PlaybookJudgeEnrichmentService {
     if (!completedTasks.length) return;
 
     if (completedTasks.some((item: any) => item.judgeStatus !== JudgeStatus.EVALUATED && item.judgeStatus !== JudgeStatus.FAILED)) {
+      return;
+    }
+
+    const claimed = await this.claimExecutionSummaryEvaluation(executionId);
+    if (!claimed) {
       return;
     }
 
@@ -494,11 +599,17 @@ export class PlaybookJudgeEnrichmentService {
     }));
 
     const httpClient = this.liteLLMConnectionService.getHttpClient();
-    if (!httpClient) return;
+    if (!httpClient) {
+      await this.failClaimedExecutionSummary(executionId);
+      return;
+    }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
-    if (!model) return;
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
+    if (!model) {
+      await this.failClaimedExecutionSummary(executionId);
+      return;
+    }
 
     const prompt = await this.promptService.findByKey('judge.execution_summary');
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return strict JSON only.';
@@ -512,54 +623,59 @@ export class PlaybookJudgeEnrichmentService {
       nodeFindingsJson: JSON.stringify(nodeFindings, null, 2),
     });
 
-    const response = await httpClient.post('/v1/chat/completions', {
-      model,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }, { timeout: EXECUTION_SUMMARY_TIMEOUT_MS });
+    try {
+      const response = await httpClient.post('/v1/chat/completions', {
+        model,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }, { timeout: EXECUTION_SUMMARY_TIMEOUT_MS });
 
-    const usage = response.data?.usage;
-    const payload = this.normalizeExecutionSummaryPayload(
-      this.extractJsonPayload(response.data?.choices?.[0]?.message?.content),
-      usage?.model || model,
-    );
-    const judgeSummary = {
-      overallScore: payload.overallScore,
-      confidence: payload.confidence,
-      structuralIssues: payload.structuralIssues || [],
-      promptIssues: payload.promptIssues || [],
-      contractIssues: payload.contractIssues || [],
-      handoffIssues: payload.handoffIssues || [],
-      toolUsageIssues: payload.toolUsageIssues || [],
-      crossStepToolPatterns: payload.crossStepToolPatterns || [],
-      rootCauseTaskIds: payload.rootCauseTaskIds || [],
-      highImpactRecommendations: payload.highImpactRecommendations || [],
-      recommendation: payload.recommendation || 'update_current_playbook',
-      reason: payload.reason || '',
-    };
-    await this.executionModel.updateOne(
-      { _id: new Types.ObjectId(executionId) },
-      {
-        $set: {
-          judgeSummaryStatus: 'evaluated',
-          judgeSummary,
-          updatedAt: new Date(),
+      const usage = response.data?.usage;
+      const payload = this.normalizeExecutionSummaryPayload(
+        this.extractJsonPayload(response.data?.choices?.[0]?.message?.content),
+        usage?.model || model,
+      );
+      const judgeSummary = {
+        overallScore: payload.overallScore,
+        confidence: payload.confidence,
+        structuralIssues: payload.structuralIssues || [],
+        promptIssues: payload.promptIssues || [],
+        contractIssues: payload.contractIssues || [],
+        handoffIssues: payload.handoffIssues || [],
+        toolUsageIssues: payload.toolUsageIssues || [],
+        crossStepToolPatterns: payload.crossStepToolPatterns || [],
+        rootCauseTaskIds: payload.rootCauseTaskIds || [],
+        highImpactRecommendations: payload.highImpactRecommendations || [],
+        recommendation: payload.recommendation || 'update_current_playbook',
+        reason: payload.reason || '',
+      };
+      await this.executionModel.updateOne(
+        { _id: new Types.ObjectId(executionId), judgeSummaryStatus: 'evaluating' },
+        {
+          $set: {
+            judgeSummaryStatus: 'evaluated',
+            judgeSummary,
+            updatedAt: new Date(),
+          },
         },
-      },
-    );
+      );
 
-    this.streamGateway.sendToUser(userId, {
-      type: 'playbook_judge_summary_updated',
-      data: {
-        executionId,
-        judgeSummary,
-      },
-    });
-    this.logger.log('Completed playbook judge summary', { executionId, overallScore: judgeSummary.overallScore });
+      this.streamGateway.sendToUser(userId, {
+        type: 'playbook_judge_summary_updated',
+        data: {
+          executionId,
+          judgeSummary,
+        },
+      });
+      this.logger.log('Completed playbook judge summary', { executionId, overallScore: judgeSummary.overallScore });
+    } catch (error) {
+      await this.failClaimedExecutionSummary(executionId);
+      throw error;
+    }
   }
 
   private async runNodeJudge(execution: any, task: any, taskResult: any, upstreamContext: Record<string, unknown>): Promise<NodeJudgeResult> {
@@ -571,7 +687,7 @@ export class PlaybookJudgeEnrichmentService {
     const playbook = await this.playbookService.findById(execution.playbookId?.toString?.() || String(execution.playbookId || ''));
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       throw new Error('No default model configured');
     }
@@ -837,7 +953,7 @@ export class PlaybookJudgeEnrichmentService {
     if (!httpClient) throw new Error('LiteLLM is not available');
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) throw new Error('No default model configured');
 
     const prompt = await this.promptService.findByKey('judge.rewrite_current_playbook');

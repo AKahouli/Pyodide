@@ -59,3 +59,12 @@ export interface ConnectedAppWithStatus extends ConnectedAppPublicResponse {
   connected: boolean;
   connection?: UserConnectionResponse;
 }
+
+export interface MailboxCapabilityResponse {
+  appKey: string;
+  connected: boolean;
+  mailboxReady: boolean;
+  providerEmail?: string;
+  missingScopes: string[];
+  grantedScopes: string[];
+}

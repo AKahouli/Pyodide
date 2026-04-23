@@ -40,6 +40,7 @@ from src.smart_rag.tools import (
     SearchToolkit,
     SearchToolADK,
     construct_json,
+    render_chart,
 )
 
 from src.logger.logging import get_logger
@@ -97,6 +98,17 @@ class AgentFactory:
         )
 
         return AgentTool(diagramming_agent, skip_summarization=False)
+
+    @staticmethod
+    def _resolve_connector_workspace_id(
+        conversation_brain_id: Optional[str],
+        brain_documents: Optional[list],
+    ) -> Optional[str]:
+        for doc in brain_documents or []:
+            workspace_id = str(doc.get("workspace_id") or "").strip()
+            if workspace_id:
+                return workspace_id
+        return conversation_brain_id
 
     def create_agent(
         self,
@@ -175,6 +187,8 @@ class AgentFactory:
         if calculator_tool:
             tools.append(calculator)
 
+        tools.append(render_chart)
+
         # Add HTML diagram tool if requested
         if html_design:
             tools.append(self._create_html_diagram_tool(chatbot_name))
@@ -237,7 +251,17 @@ class AgentFactory:
 
         if connector_bindings:
             try:
-                tools.extend(create_connector_tools(connector_bindings))
+                connector_workspace_id = self._resolve_connector_workspace_id(
+                    conversation_brain_id,
+                    brain_documents,
+                )
+                tools.extend(
+                    create_connector_tools(
+                        connector_bindings,
+                        workspace_id=connector_workspace_id,
+                        brain_ids=brain_ids,
+                    )
+                )
             except Exception as e:
                 logger.exception(f"Error adding connector tools: {e}")
 

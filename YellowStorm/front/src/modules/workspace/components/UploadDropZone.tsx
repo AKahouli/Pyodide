@@ -12,9 +12,10 @@ import { validateFiles } from '../utils';
 
 interface UploadDropZoneProps {
   children: React.ReactNode;
+  onDrop?: (e: React.DragEvent) => void | Promise<void>;
 }
 
-export function UploadDropZone({ children }: UploadDropZoneProps) {
+export function UploadDropZone({ children, onDrop }: UploadDropZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const dragCounter = useRef(0);
   const { t } = useModuleTranslation('workspace');
@@ -24,11 +25,22 @@ export function UploadDropZone({ children }: UploadDropZoneProps) {
   const startUpload = useWorkspaceStore((state) => state.startUpload);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    async (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setIsDragOver(false);
       dragCounter.current = 0;
+
+      // Handle document move (if onDrop callback provided)
+      if (onDrop) {
+        await onDrop(e);
+        // Check if event was for file upload or document move
+        const hasFiles = Array.from(e.dataTransfer.files).length > 0;
+        if (!hasFiles) {
+          // No files to upload, document move handled by onDrop
+          return;
+        }
+      }
 
       if (!selectedWorkspace) {
         toast.error(t('upload.dropzone.selectWorkspace'));
@@ -44,7 +56,7 @@ export function UploadDropZone({ children }: UploadDropZoneProps) {
       addFilesToQueue(validFiles, selectedWorkspace.id);
       startUpload();
     },
-    [selectedWorkspace, addFilesToQueue, startUpload],
+    [selectedWorkspace, addFilesToQueue, startUpload, onDrop],
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {

@@ -306,8 +306,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                   <TabsContent value='skills' forceMount className='mt-0 data-[state=inactive]:hidden'>
                     <div className='grid gap-4'>
                       <div className='space-y-2'>
-                        <Label>Additional skills</Label>
-                        <p className='text-xs text-muted-foreground'>Attach extra skills directly to this agent.</p>
+                        <Label>{t('defaultAgents.form.skills.additionalLabel')}</Label>
+                        <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.skills.additionalHelper')}</p>
                         <MultiSelect
                           options={availableSkills.map((skill) => ({
                             value: skill.id,
@@ -316,15 +316,15 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                           }))}
                           value={watchedSkills}
                           onValueChange={(val) => setValue('skills', val)}
-                          placeholder='Select skills'
-                          searchPlaceholder='Search skills'
-                          emptyText='No skills found'
+                          placeholder={t('defaultAgents.form.skills.selectPlaceholder')}
+                          searchPlaceholder={t('defaultAgents.form.skills.searchPlaceholder')}
+                          emptyText={t('defaultAgents.form.skills.emptyText')}
                         />
                       </div>
 
                       <div className='space-y-2'>
-                        <Label>Disabled inherited skills</Label>
-                        <p className='text-xs text-muted-foreground'>Disable skills inherited from the selected agent type.</p>
+                        <Label>{t('defaultAgents.form.skills.disabledLabel')}</Label>
+                        <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.skills.disabledHelper')}</p>
                         <MultiSelect
                           options={availableSkills
                             .filter((skill) => inheritedSkillIds.includes(skill.id))
@@ -335,9 +335,9 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                             }))}
                           value={watchedDisabledSkills}
                           onValueChange={(val) => setValue('disabledSkills', val)}
-                          placeholder='Select inherited skills to disable'
-                          searchPlaceholder='Search inherited skills'
-                          emptyText='No inherited skills available'
+                          placeholder={t('defaultAgents.form.skills.disabledSelectPlaceholder')}
+                          searchPlaceholder={t('defaultAgents.form.skills.disabledSearchPlaceholder')}
+                          emptyText={t('defaultAgents.form.skills.disabledEmptyText')}
                         />
                       </div>
                     </div>

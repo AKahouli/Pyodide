@@ -10,6 +10,7 @@ vi.mock('@/lib/api/config', async (importOriginal) => {
       connectedApps: {
         list: '/connected-apps',
         connections: '/connected-apps/connections',
+        mailboxCapability: '/connected-apps/mailbox-capability',
         authorize: (appKey: string) => `/connected-apps/${appKey}/authorize`,
         disconnect: (appKey: string) => `/connected-apps/${appKey}`,
       },
@@ -24,6 +25,7 @@ vi.mock('@/lib/api/config', async (importOriginal) => {
 import {
   getAvailableApps,
   getUserConnections,
+  getMailboxCapability,
   getAuthorizationUrl,
   disconnectApp,
   getAdminConnectedApps,
@@ -73,6 +75,25 @@ describe('connected-app api', () => {
 
       expect(mockApiClient.get).toHaveBeenCalledWith('/connected-apps/google-drive/authorize');
       expect(result).toBe(authUrl);
+    });
+  });
+
+  describe('getMailboxCapability', () => {
+    it('should GET /connected-apps/mailbox-capability and return data', async () => {
+      const capability = {
+        appKey: 'microsoft',
+        connected: true,
+        mailboxReady: false,
+        providerEmail: 'user@example.com',
+        missingScopes: ['mail.read'],
+        grantedScopes: ['files.read'],
+      };
+      mockApiClient.get.mockResolvedValue({ data: { data: capability } });
+
+      const result = await getMailboxCapability();
+
+      expect(mockApiClient.get).toHaveBeenCalledWith('/connected-apps/mailbox-capability');
+      expect(result).toEqual(capability);
     });
   });
 

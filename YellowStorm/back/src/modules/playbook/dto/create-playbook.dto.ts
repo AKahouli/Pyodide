@@ -8,10 +8,10 @@ export class CreatePlaybookDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
+  @ApiPropertyOptional({ maxLength: 20000 })
   @IsOptional()
   @IsString()
-  @MaxLength(2000)
+  @MaxLength(20000)
   description?: string;
 
   @ApiPropertyOptional({ type: [String], description: 'Workspace IDs to attach' })

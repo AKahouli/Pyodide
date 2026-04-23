@@ -8,12 +8,14 @@ import { SystemController } from './system.controller';
 import { MaintenanceGuard } from './guards/maintenance.guard';
 import { SystemSetting, SystemSettingSchema } from './schemas/system-setting.schema';
 import { AuthorizationModule } from '../authorization/authorization.module';
+import { User, UserSchema } from '../user/schemas/user.schema';
 
 @Global() // Make SystemService available globally for the guard
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: SystemSetting.name, schema: SystemSettingSchema },
+      { name: User.name, schema: UserSchema },
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],

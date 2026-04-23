@@ -499,8 +499,9 @@ async def create_meeting(
 if __name__ == "__main__":
     import sys
 
+    os.environ.setdefault("HOST", "0.0.0.0")
     transport = os.getenv("M365_MCP_TRANSPORT", "sse")
-    port = int(os.getenv("MCP_PORT", os.getenv("PORT", "8001")))
+    port = int(os.getenv("MCP_PORT", os.getenv("PORT", "8012")))
 
     middleware = [Middleware(TokenExtractorMiddleware)]
 
@@ -526,4 +527,4 @@ if __name__ == "__main__":
         f"Starting MCP server with transport: {transport} on port: {port}",
         file=sys.stderr,
     )
-    mcp.run(transport=transport, middleware=middleware, port=port)
+    mcp.run(transport=transport, middleware=middleware,host="0.0.0.0", port=port)

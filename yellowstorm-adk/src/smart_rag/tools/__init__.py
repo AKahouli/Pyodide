@@ -19,6 +19,7 @@ from .search.tools import SearchToolADK, get_transformed_ids_by_names
 from .search.web_search import WebSearchTool
 from .infrastructure.common_helpers import CommonHelpers
 from .search.toolkit import SearchToolkit
+from .utilities.render_chart import render_chart
 
 __all__ = [
     'transform_id',
@@ -36,7 +37,8 @@ __all__ = [
     'get_transformed_ids_by_names',
     'WebSearchTool',
     'CommonHelpers',
-    'SearchToolkit'
+    'SearchToolkit',
+    'render_chart'
 ]
 
 __version__ = "1.0.0"

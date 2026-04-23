@@ -110,10 +110,7 @@ export class ModelsService implements OnApplicationBootstrap {
         } else {
           // Model exists — always update chefSlug, litellmModel, providers (these come from the source of truth)
           const chefSlug = (entry.model_info?.litellm_provider || '').toLowerCase();
-          const litellmModel =
-            (entry.model_info?.litellm_provider && entry.model_name)
-              ? `${entry.model_info.litellm_provider}/${entry.model_name}`
-              : entry.litellm_params?.model || '';
+          const litellmModel = String(entry.litellm_params?.model || '').trim();
           const updateFields: Record<string, unknown> = {
             chefSlug,
             litellmModel,
@@ -256,10 +253,7 @@ export class ModelsService implements OnApplicationBootstrap {
     entry: LiteLLMModelInfoEntry,
   ): Partial<AiModel> {
     const chefSlug = (entry.model_info?.litellm_provider || '').toLowerCase();
-    const litellmModel =
-      (entry.model_info?.litellm_provider && entry.model_name)
-        ? `${entry.model_info.litellm_provider}/${entry.model_name}`
-        : entry.litellm_params?.model || '';
+    const litellmModel = String(entry.litellm_params?.model || '').trim();
 
     return {
       modelId: entry.model_name,

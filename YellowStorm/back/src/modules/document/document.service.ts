@@ -261,6 +261,8 @@ export class DocumentService {
   async generateSasUrl(blobPath: string, options: SasUrlOptions = {}): Promise<string> {
     this.ensureAvailable();
 
+    // If checkExists is true and blob doesn't exist, throw 404 error
+    // This allows folder operations to fail early without trying to generate SAS URLs
     if (options.checkExists) {
       const blobExists = await this.exists(blobPath);
       if (!blobExists) {
@@ -269,6 +271,16 @@ export class DocumentService {
           'Document file not found in storage',
         );
       }
+    }
+
+    // Check if this is a folder path (no filename extension)
+    // Folders should not have SAS URLs generated
+    const isFolder = !blobPath.includes('.');
+
+    if (isFolder) {
+      throw new BadRequestException(
+        'Cannot generate download URL for folders',
+      );
     }
 
     const sharedKeyCredential = this.connectionService.getSharedKeyCredential();

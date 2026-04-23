@@ -135,6 +135,14 @@ class AutoAgentGenerationTeam:
             self.suggestion_generator = AgentSuggestionGenerator(self.prompt_processor, self.llm_factory, self.chatbot_name)
             self.memory_service = MemoryService()
 
+    INLINE_CHART_GUIDANCE = """
+When the answer becomes analytical, you may call the render_chart tool between paragraphs.
+Use line charts for trends over time, bar charts for category comparisons, area charts for cumulative trends,
+pie charts for proportions, scatter charts for correlations, and composed charts for mixed bar+line views.
+Prefer one short setup paragraph, then the chart, then one or two interpretation paragraphs.
+Do not render charts for single values or non-numeric content.
+"""
+
     def get_agent_id_by_name(self, name: str) -> Optional[str]:
         """Get an agent's ID by its name.
         

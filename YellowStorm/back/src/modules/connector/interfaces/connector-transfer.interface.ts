@@ -1,6 +1,19 @@
 export interface ConnectorTransferAdapter {
   readonly provider: string;
 
+  resolveImportCandidates?(
+    itemRef: Record<string, unknown>,
+    authHeaders: Record<string, string>,
+    options?: { recursive?: boolean },
+  ): Promise<
+    Array<{
+      itemRef: Record<string, unknown>;
+      filename: string;
+      mimeType: string;
+      sourcePath: string;
+    }>
+  >;
+
   downloadItem(
     itemRef: Record<string, unknown>,
     authHeaders: Record<string, string>,

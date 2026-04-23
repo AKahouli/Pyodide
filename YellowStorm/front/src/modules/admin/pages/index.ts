@@ -5,6 +5,7 @@ export { LogsPage } from './LogsPage';
 export { PlansPage } from './PlansPage';
 export { AnalyticsPage } from './AnalyticsPage';
 export { SystemPage } from './SystemPage';
+export { AppearancePage } from './AppearancePage';
 export { ReportsPage } from './ReportsPage';
 export { ModelsPage } from './ModelsPage';
 export { ToolsPage } from './ToolsPage';

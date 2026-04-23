@@ -11,7 +11,11 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useSelectedWorkspace } from '../store';
 import { validateFiles, ACCEPT_EXTENSIONS } from '../utils';
 
-export function UploadButton() {
+interface UploadButtonProps {
+  folderId?: string;
+}
+
+export function UploadButton({ folderId }: UploadButtonProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { t } = useModuleTranslation('workspace');
 
@@ -36,7 +40,7 @@ export function UploadButton() {
 
       const { validFiles } = validateFiles(files);
       if (validFiles.length > 0) {
-        addFilesToQueue(validFiles, selectedWorkspace.id);
+        addFilesToQueue(validFiles, selectedWorkspace.id, folderId);
         startUpload();
       }
 
@@ -45,7 +49,7 @@ export function UploadButton() {
         fileInputRef.current.value = '';
       }
     },
-    [selectedWorkspace, addFilesToQueue, startUpload],
+    [selectedWorkspace, addFilesToQueue, startUpload, folderId],
   );
 
   return (

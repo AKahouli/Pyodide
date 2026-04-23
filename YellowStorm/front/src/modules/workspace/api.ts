@@ -23,6 +23,8 @@ import type {
   UploadUrlResponse,
   InitiateBulkUploadRequest,
   BulkUploadSession,
+  CreateFolderData,
+  RenameFolderData,
 } from './types';
 
 // ===== Workspace APIs =====
@@ -36,6 +38,16 @@ export async function getWorkspaces(
   const response = await apiClient.get<ApiResponse<PaginatedWorkspaces>>(
     API_ENDPOINTS.workspaces.list,
     { params },
+  );
+  return response.data.data;
+}
+
+/**
+ * Get or create personal workspace
+ */
+export async function getPersonalWorkspace(): Promise<Workspace> {
+  const response = await apiClient.get<ApiResponse<Workspace>>(
+    '/workspaces/personal',
   );
   return response.data.data;
 }
@@ -182,6 +194,106 @@ export async function reindexDocument(
   return response.data.data;
 }
 
+// ===== Folder APIs =====
+
+/**
+ * Create a folder in a workspace
+ */
+export async function createFolder(
+  workspaceId: string,
+  data: CreateFolderData,
+): Promise<WorkspaceDocument> {
+  const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
+    `/workspaces/${workspaceId}/documents/folders`,
+    data,
+  );
+  return response.data.data;
+}
+
+/**
+ * Rename a folder
+ */
+export async function renameFolder(
+  workspaceId: string,
+  folderId: string,
+  data: RenameFolderData,
+): Promise<WorkspaceDocument> {
+  const response = await apiClient.patch<ApiResponse<WorkspaceDocument>>(
+    `/workspaces/${workspaceId}/documents/folders/${folderId}`,
+    data,
+  );
+  return response.data.data;
+}
+
+/**
+ * Delete a folder and all its contents
+ */
+export async function deleteFolder(
+  workspaceId: string,
+  folderId: string,
+): Promise<{ deletedFolders: number; deletedDocuments: number }> {
+  const response = await apiClient.delete<ApiResponse<{ deletedFolders: number; deletedDocuments: number }>>(
+    `/workspaces/${workspaceId}/documents/folders/${folderId}`,
+  );
+  return response.data.data;
+}
+
+/**
+ * Get contents of a specific folder
+ */
+export async function getFolderContents(
+  workspaceId: string,
+  folderId: string,
+  params?: DocumentQueryParams,
+): Promise<PaginatedDocuments> {
+  const response = await apiClient.get<ApiResponse<PaginatedDocuments>>(
+    `/workspaces/${workspaceId}/documents/folders/${folderId}`,
+    { params },
+  );
+  return response.data.data;
+}
+
+/**
+ * Move documents to a different folder
+ */
+export async function moveDocuments(
+  workspaceId: string,
+  documentIds: string[],
+  targetFolderId?: string,
+): Promise<{ moved: number; failed: string[] }> {
+  const response = await apiClient.post<ApiResponse<{ moved: number; failed: string[] }>>(
+    `/workspaces/${workspaceId}/documents/move`,
+    { documentIds, targetFolderId },
+  );
+  return response.data.data;
+}
+
+/**
+ * Get all documents and folders in hierarchical structure
+ */
+export async function getHierarchicalDocuments(
+  workspaceId: string,
+  params?: DocumentQueryParams,
+): Promise<PaginatedDocuments> {
+  const response = await apiClient.get<ApiResponse<PaginatedDocuments>>(
+    `/workspaces/${workspaceId}/documents/hierarchical`,
+    { params },
+  );
+  return response.data.data;
+}
+
+/**
+ * Get all folders in workspace (no pagination, for sidebar)
+ */
+export async function getAllFolders(
+  workspaceId: string,
+): Promise<WorkspaceDocument[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceDocument[]>>(
+    `/workspaces/${workspaceId}/documents/folders/all`,
+  );
+  return response.data.data;
+}
+
 // ===== Workspace Settings APIs =====
 
 /**
@@ -264,9 +376,13 @@ export async function uploadSmallFile(
   workspaceId: string,
   file: File,
   onProgress?: (progress: number) => void,
+  folderId?: string,
 ): Promise<WorkspaceDocument> {
   const formData = new FormData();
   formData.append('file', file);
+  if (folderId) {
+    formData.append('folderId', folderId);
+  }
 
   const response = await apiClient.post<ApiResponse<WorkspaceDocument>>(
     API_ENDPOINTS.workspaceDocuments.upload(workspaceId),

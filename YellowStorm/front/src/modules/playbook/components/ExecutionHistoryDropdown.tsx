@@ -9,15 +9,22 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
-import { useExecutionHistory, useCurrentExecution, useCurrentPlaybook } from '../store';
+import {
+  useExecutionHistoryForPlaybook,
+  useCurrentExecution,
+  useCurrentPlaybook,
+  useLatestExecutionForPlaybook,
+} from '../store';
 import { formatPlaybookDateTime } from '../utils/formatPlaybookDateTime';
 import { useModuleTranslation } from '@/modules/localization';
 
 export function ExecutionHistoryDropdown() {
   const navigate = useNavigate();
   const { id, executionId } = useParams<{ id: string; executionId: string }>();
-  const history = useExecutionHistory();
-  const current = useCurrentExecution();
+  const history = useExecutionHistoryForPlaybook(id);
+  const currentExecution = useCurrentExecution();
+  const latestExecution = useLatestExecutionForPlaybook(id);
+  const current = currentExecution?.playbookId === id ? currentExecution : latestExecution;
   const playbook = useCurrentPlaybook();
   const { t } = useModuleTranslation('playbook');
   const scheduleTz = playbook?.executionSchedule?.timezone;

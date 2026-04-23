@@ -173,7 +173,7 @@ python -m celery -A worker worker --loglevel=info -P eventlet -Q redis-index -n 
 ```
 
 ```shell
-python -m celery -A worker worker --loglevel=info -P eventlet -Q qdrant-index.low-priority,default,smart-chunking,conversion,data-processing.batch -n qdrant-index.low-priority@%h
+python -m celery -A worker worker --loglevel=info -P eventlet -Q qdrant-index.low-priority,default,conversion@%h
 ```
 
 ```shell
@@ -188,6 +188,12 @@ python -m celery -A worker worker --loglevel=info -P eventlet -Q text-indexation
 python -m celery -A worker flower --loglevel=info --broker=redis://127.0.0.1:6379/0 --port=5555
 ```
 
+```shell
+python -A worker.celery_app worker --loglevel=info -P eventlet -Q logical-indexing -c 5 -n logical-indexing
+```
+
+
+
 ### Search Workers
 ```shell
 celery -A worker.celery_app worker --loglevel=info -P prefork -Q qdrant-index.low-priority -c 5 -n qdrant-index.low-priority@%h
@@ -198,11 +204,11 @@ celery -A worker.celery_app worker --loglevel=info -P prefork -Q qdrant-index.lo
 celery -A worker.celery_app worker --loglevel=info -P prefork -Q default -c 3 -n default@%h
 ```
 ```shell
-celery -A worker.celery_app worker --loglevel=info -P prefork -Q conformity.default -c 1 -n conformity.default@%h
+#celery -A worker.celery_app worker --loglevel=info -P prefork -Q conformity.default -c 1 -n conformity.default@%h
 ```
 
 ```shell
-celery -A worker.celery_app worker --loglevel=info -P prefork -Q data-processing.batch -c 10 -n data-processing.batch@%h
+#celery -A worker.celery_app worker --loglevel=info -P prefork -Q data-processing.batch -c 10 -n data-processing.batch@%h
 ```
 ```shell
 celery -A worker.celery_app worker --loglevel=info -P prefork -Q image-indexation -c 5 -n image-indexation@%h
@@ -210,12 +216,17 @@ celery -A worker.celery_app worker --loglevel=info -P prefork -Q image-indexatio
 ```shell
 celery -A worker.celery_app worker --loglevel=info -P prefork -Q text-indexation -c 5 -n text-indexation@%h
 ```
+
 ```shell
-celery -A worker.celery_app worker --loglevel=info -P prefork -Q smart-chunking -c 5 -n smart-chunking@%h
+#celery -A worker.celery_app worker --loglevel=info -P prefork -Q smart-chunking -c 5 -n smart-chunking@%h
 ```
 
 ```shell
 celery -A worker.celery_app flower --loglevel=info
+```
+
+```shell
+celery -A worker.celery_app worker --loglevel=info -P prefork -Q logical-indexing -c 5 -n logical-indexing
 ```
 
 ## Logging

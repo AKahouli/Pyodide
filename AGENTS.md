@@ -60,7 +60,9 @@ User task
 └─────────────┘
 ```
 
-`diagnostics` and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+`diagnostics`, `backend-developer`, `frontend-developer`, and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+
+`contract` and `integration` are workflow roles described here, but they are not currently implemented as project-local OpenCode subagents in `.opencode/agents/`.
 
 ---
 
@@ -91,9 +93,10 @@ User task
 Primary coding agent. Has bash permissions, skill access, and delegation authority.
 
 **Before writing code:**
+0. check the `/docs/webapp-frontend/` and `/docs/webapp-backend/` for existing documentation.
 1. Check if `plan` is required (see criteria above). If yes, delegate and wait.
-2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs.
-3. Read the top 15 lines of `/docs/CHANGELOG.md`.
+2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs. >> Must say to the user (I'm reading the existing doc ...)
+3. Read the top 40 lines of `/docs/CHANGELOG.md`.
 4. For each related slug, read its `Latest Doc Path`. Note architecture decisions, API contracts, and recent changes.
 5. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
 
@@ -104,7 +107,11 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 
 **Delegation triggers during implementation:**
 - Unclear failure or vague bug → `diagnostics` before editing
+- Backend-only implementation slice in `YellowStorm/back` → `backend-developer` for scoped NestJS work
+- Frontend-only implementation slice in `YellowStorm/front` → `frontend-developer` for scoped UI work
 - Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
+- Proto/API change or cross-service modification → perform explicit contract validation after editing; if a dedicated `contract` agent is added later, use it
+- Cross-service change needing end-to-end verification → perform explicit integration verification after contract validation; if a dedicated `integration` agent is added later, use it
 - Need current library docs → context7 skill (see below)
 
 **Hard rules:**
@@ -157,6 +164,20 @@ Single-pass review across three lenses:
 
 ---
 
+#### `backend-developer` — Backend Implementation
+
+**Invoke when:** A task is mostly contained within `YellowStorm/back` and `build` wants a specialist to implement a backend slice while retaining overall task ownership.
+
+**Does:**
+- Implements NestJS, Mongoose, DTO, validation, and backend test changes in `YellowStorm/back`
+- Preserves repo backend patterns for modules, config, exceptions, and structured logging
+- Adds or updates backend tests when the surrounding area already uses them and behavior changes materially
+- Hands implementation details back to `build` for review, contract/integration handling when needed, and task closure
+
+**Output:** Changed files, verification run, and any follow-up risks for `build`.
+
+---
+
 #### `frontend-qa` — Browser Validation
 
 **Invoke after:** Any frontend change affecting interaction, layout, or browser runtime behavior.
@@ -166,6 +187,106 @@ Single-pass review across three lenses:
 - Visual regression, responsive behavior, interaction quality (focus, keyboard, a11y basics)
 
 **Output:** Pass/fail with evidence. Findings go back to `build`.
+
+---
+
+#### `frontend-developer` — Frontend Implementation
+
+**Invoke when:** A task is mostly contained within `YellowStorm/front` and `build` wants a specialist to implement a frontend slice while retaining overall task ownership.
+
+**Does:**
+- Implements React, TypeScript, Radix UI, and Tailwind changes in `YellowStorm/front`
+- Preserves repo frontend patterns and the project's `i18` localization rule for visible text
+- Adds or updates frontend tests when the surrounding area already uses them and behavior changes materially
+- Hands implementation details back to `build` for review, QA delegation, and task closure
+
+**Output:** Changed files, verification run, and any follow-up risks for `build`.
+
+---
+
+#### `contract` — gRPC & API Contract Validation (read-only)
+
+**Mandatory when:**
+- Any `.proto` file is modified
+- A gRPC service endpoint is added, removed, or changed
+- A REST API endpoint changes signature (path, request/response schema, status codes)
+- Cross-service data model or message type is altered
+- `build` modifies code in both `YellowStorm/back` and `yellowstorm-adk` in the same task
+
+**Skip when:** Changes are internal to a single service with no interface impact.
+
+**Does:**
+1. **Proto consistency check:** Compares proto files across `YellowStorm/back/src/modules/*/proto/` and `yellowstorm-adk/grpc/proto/`. Flags field number conflicts, type mismatches, missing services, or diverging versions.
+2. **Generated stub validation:** Verifies that generated client/server stubs match current proto definitions (TS gRPC stubs in back, Python gRPC stubs in adk).
+3. **Schema drift detection:** Checks that REST API DTOs (`class-validator` decorators in NestJS) align with proto message fields where applicable.
+4. **Breaking change analysis:** Classifies changes as breaking or non-breaking per gRPC compatibility rules (e.g., removing a field is breaking; adding a field to a message is not).
+5. **Env/secret contract check:** Validates that shared `.env` variables (e.g., gRPC host/port, service URLs) are consistent across `yellowstorm-adk/.env` and backend config.
+
+**Output:**
+
+```
+## Contract Verdict: PASS | FAIL
+
+### Proto Consistency
+- [✅|❌] Service definitions match across packages
+- [✅|❌] Message fields aligned (no drift)
+- [✅|❌] Generated stubs up to date
+
+### Breaking Changes
+- [✅|❌] None detected, or list of breaking changes
+
+### Required Actions (if FAIL)
+- ...
+```
+
+- **FAIL** on proto drift, missing stubs, or breaking changes without migration plan.
+- Read-only. Never modifies code or proto files.
+- Hands findings back to `build` for resolution.
+
+---
+
+#### `integration` — Cross-Service Integration Testing
+
+**Invoke when:**
+- A gRPC endpoint is added or modified
+- A REST API contract changes between frontend and backend
+- Any change spans two or more services (back ↔ adk, front ↔ back)
+- `contract` reports PASS but end-to-end behavior needs verification
+- Docker Compose service topology changes
+- Environment variables shared across services are modified
+
+**Does:**
+1. **Service wiring validation:** Starts relevant services (or mocks) and verifies gRPC channels connect and negotiate correctly.
+2. **End-to-end flow testing:** Executes cross-service request paths (e.g., frontend → NestJS → gRPC → Python ADK) using test fixtures and mocked external dependencies.
+3. **Contract-in-practice verification:** Sends actual messages conforming to proto schemas and validates responses match expected shapes — catches issues `contract` cannot see (serialization, encoding, timeout behavior).
+4. **Environment consistency check:** Validates that shared configuration (ports, hosts, secrets names) is consistent across service `.env` files and `docker-compose.yaml`.
+5. **Graceful degradation testing:** Verifies error propagation when one service is unreachable — checks that timeout, retry, and fallback behaviors work as documented.
+
+**Output:**
+
+```
+## Integration Verdict: PASS | FAIL
+
+### Service Connectivity
+- [✅|❌] gRPC channel: NestJS → Python ADK
+- [✅|❌] REST API: Frontend → Backend
+
+### End-to-End Flows
+- [✅|❌] {flow description}
+
+### Environment Consistency
+- [✅|❌] Shared config aligned
+
+### Findings (if any)
+1. [critical|major|minor] description
+
+### Required Actions (if FAIL)
+- ...
+```
+
+- **FAIL** on connectivity errors, response schema mismatches, or missing error handling.
+- May write integration test files (in `tests/` directories) when gaps are found.
+- Hands findings and new test files back to `build`.
 
 ---
 
@@ -189,8 +310,12 @@ See the `maintainer` agent file for the full documentation procedure.
 |--------|--------|
 | Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
 | Vague bug or unclear failure | `diagnostics` first |
+| Backend-only implementation slice | `backend-developer` during implementation |
+| Frontend-only implementation slice | `frontend-developer` during implementation |
 | Any code change | `reviewer` after (mandatory, blocking) |
 | Frontend UI/interaction change | `frontend-qa` after |
+| Proto/API change or cross-service edit | Run explicit contract validation after implementation |
+| Cross-service change needing E2E verification | Run explicit integration verification after contract validation |
 | Task complete and reviewed | `maintainer` last |
 | Need library/framework docs | context7 skill |
 | Single-file, no interface change | `build` directly → `reviewer` → `maintainer` |
@@ -288,9 +413,9 @@ docs/
 
 ## Library Documentation Lookup (context7)
 
-**Available to:** `build`, `plan`, `diagnostics`.
+**Available to:** `build`, `plan`, `diagnostics`, `reviewer`.
 
-When the task involves a library, framework, SDK, or API — even well-known ones — fetch current docs first. Training data may be outdated.
+When the task involves a library, framework, SDK, or API — even well-known ones — Must always fetch current docs first. Training data may be outdated.
 
 ```bash
 npx ctx7@latest library <name> "<question>"
@@ -309,13 +434,14 @@ npx ctx7@latest docs <libraryId> "<question>"
 
 ## Development Workflow
 
-1. Branch from `main`
+1. Must always Use Context7 when the task depends on current library or framework documentation
 2. `plan` if criteria met → action plan
 3. `build` implements (pre-coding protocol mandatory)
-4. `reviewer` validates → **must PASS**
-5. `diagnostics` if test gaps; `frontend-qa` if UI affected
-6. `maintainer` syncs docs per tier
-7. Test: `npm test` / `npm run build` (back/front), `poetry run pytest` (Python)
+4. Run relevant verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`, `poetry run pytest` in `yellowstorm-adk`
+5. `reviewer` validates → **must PASS**
+6. `diagnostics` if test gaps; `frontend-qa` if UI affected
+8. `maintainer` syncs docs per tier
+
 
 ## graphify
 

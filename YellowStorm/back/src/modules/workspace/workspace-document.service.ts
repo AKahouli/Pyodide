@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
+import axios from 'axios';
+import { IngestUrlDto } from './dto/ingest-url.dto';
 import {
   WorkspaceDoc,
   WorkspaceDocumentDoc,
@@ -43,6 +45,7 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  ConflictException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
 
@@ -167,7 +170,7 @@ export class WorkspaceDocumentService {
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
-    this.logger.log('Upload URL generated (custom path)', {
+    this.logger.debug('Upload URL generated (custom path)', {
       documentId: document._id,
       workspaceId,
       pathPrefix,
@@ -240,7 +243,7 @@ export class WorkspaceDocumentService {
 
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
-    this.logger.log('Small file uploaded (custom path)', {
+    this.logger.debug('Small file uploaded (custom path)', {
       documentId: document._id,
       workspaceId,
       pathPrefix,
@@ -323,7 +326,7 @@ export class WorkspaceDocumentService {
 
     const expiresAt = new Date(Date.now() + this.sasUrlExpiryMinutes * 60 * 1000);
 
-    this.logger.log('Upload URL generated', {
+    this.logger.debug('Upload URL generated', {
       documentId: document._id,
       workspaceId,
       filename: data.filename,
@@ -362,12 +365,14 @@ export class WorkspaceDocumentService {
       );
     }
 
-    // Verify blob exists in Azure
-    const exists = await this.documentService.exists(document.path);
-    if (!exists) {
-      throw new BadRequestException(
-        'Document was not uploaded to storage',
-      );
+    // Verify blob exists in Azure (skip for folders)
+    if (!document.isFolder && document.path) {
+      const exists = await this.documentService.exists(document.path);
+      if (!exists) {
+        throw new BadRequestException(
+          'Document was not uploaded to storage',
+        );
+      }
     }
 
     // Update document status
@@ -387,7 +392,7 @@ export class WorkspaceDocumentService {
       document: this.mapToResponse(document),
     });
 
-    this.logger.log('Upload confirmed', {
+    this.logger.debug('Upload confirmed', {
       documentId: document._id,
       workspaceId,
     });
@@ -404,6 +409,7 @@ export class WorkspaceDocumentService {
     file: Buffer,
     originalName: string,
     mimeType: string,
+    folderId?: string,
   ): Promise<DocumentResponse> {
     const size = file.length;
 
@@ -425,6 +431,19 @@ export class WorkspaceDocumentService {
         ErrorCode.WORKSPACE_STORAGE_QUOTA_EXCEEDED,
         `Insufficient storage. Available: ${Math.round(quota.available / 1024 / 1024)}MB`,
       );
+    }
+
+    // Validate folderId if provided
+    let parentFolder = null;
+    if (folderId) {
+      parentFolder = await this.documentModel.findOne({
+        _id: new Types.ObjectId(folderId),
+        workspaceId: new Types.ObjectId(workspaceId),
+        isFolder: true,
+      });
+      if (!parentFolder) {
+        throw new BadRequestException('Folder not found');
+      }
     }
 
     // Create document record
@@ -457,18 +476,92 @@ export class WorkspaceDocumentService {
       createdBy: new Types.ObjectId(userId),
       status: DocumentStatus.COMPLETED,
       uploadedAt: new Date(),
+      parentId: folderId ? new Types.ObjectId(folderId) : undefined,
     });
 
     // Update workspace storage
     await this.workspaceService.updateStorageUsage(workspaceId, size, 1);
 
-    this.logger.log('Small file uploaded', {
+    this.logger.debug('Small file uploaded', {
       documentId: document._id,
       workspaceId,
       size,
+      folderId,
     });
 
     return this.mapToResponse(document);
+  }
+
+  /**
+   * Ingest a file from an external download URL into a workspace.
+   * Downloads the file, then delegates to uploadSmallFile for storage.
+   * Used by the brain/agent to save MCP-sourced files (e.g., SharePoint download URLs).
+   */
+  async ingestFromUrl(
+    workspaceId: string,
+    dto: IngestUrlDto,
+  ): Promise<DocumentResponse> {
+    this.logger.log('Ingesting file from URL', {
+      workspaceId,
+      userId: dto.userId,
+      filename: dto.filename,
+      hasAuthHeaders: !!dto.authHeaders,
+    });
+
+    let buffer: Buffer;
+    let resolvedMimeType = dto.mimeType || 'application/octet-stream';
+
+    try {
+      const response = await axios.get(dto.downloadUrl, {
+        responseType: 'arraybuffer',
+        timeout: 30_000,
+        maxContentLength: this.maxFileSizeMb * 1024 * 1024,
+        headers: dto.authHeaders || {},
+      });
+
+      buffer = Buffer.from(response.data);
+
+      if (!dto.mimeType && response.headers['content-type']) {
+        resolvedMimeType = response.headers['content-type'].split(';')[0].trim();
+      }
+    } catch (error) {
+      const err = error as any;
+      const status = err.response?.status;
+      const message = status
+        ? `Failed to download file: HTTP ${status}`
+        : `Failed to download file: ${err.message}`;
+
+      this.logger.error('File download failed during ingest', {
+        workspaceId,
+        downloadUrl: dto.downloadUrl,
+        error: message,
+      });
+
+      throw new BadRequestException(ErrorCode.WORKSPACE_DOCUMENT_UPLOAD_FAILED, message);
+    }
+
+    const doc = await this.uploadSmallFile(
+      workspaceId,
+      dto.userId,
+      buffer,
+      dto.filename,
+      resolvedMimeType,
+    );
+
+    if (dto.sourceMeta) {
+      await this.documentModel.findByIdAndUpdate(doc.id, {
+        $set: { metadata: dto.sourceMeta },
+      });
+    }
+
+    this.logger.debug('File ingested from URL', {
+      documentId: doc.id,
+      workspaceId,
+      filename: doc.originalName,
+      size: doc.size,
+    });
+
+    return doc;
   }
 
   /**
@@ -581,7 +674,7 @@ export class WorkspaceDocumentService {
       expiresAt,
     });
 
-    this.logger.log('Bulk upload session created', {
+    this.logger.debug('Bulk upload session created', {
       sessionId: session._id,
       workspaceId,
       fileCount: files.length,
@@ -698,10 +791,10 @@ export class WorkspaceDocumentService {
         continue;
       }
 
-      // Check if blob exists
-      const exists = await this.documentService.exists(document.path);
+      // Check if blob exists (skip for folders)
+      const exists = document.isFolder ? false : document.path ? await this.documentService.exists(document.path) : false;
 
-      if (exists) {
+      if (exists || document.isFolder) {
         // Mark as completed
         document.status = DocumentStatus.COMPLETED;
         document.uploadedAt = new Date();
@@ -714,9 +807,11 @@ export class WorkspaceDocumentService {
         successful.count++;
         successful.documents.push(this.mapToResponse(document));
       } else {
-        // Clean up any partial blob that might exist
+        // Clean up any partial blob that might exist (skip for folders)
         try {
-          await this.documentService.delete(document.path);
+          if (!document.isFolder && document.path) {
+            await this.documentService.delete(document.path);
+          }
         } catch (error) {
           this.logger.warn('Failed to delete orphaned blob during bulk upload completion', {
             sessionId,
@@ -773,7 +868,7 @@ export class WorkspaceDocumentService {
       },
     });
 
-    this.logger.log('Bulk upload completed', {
+    this.logger.debug('Bulk upload completed', {
       sessionId,
       workspaceId,
       status,
@@ -830,6 +925,7 @@ export class WorkspaceDocumentService {
       search,
       sortBy = 'createdAt',
       sortOrder = 'desc',
+      parentId,
     } = params;
 
     const skip = (page - 1) * limit;
@@ -840,16 +936,30 @@ export class WorkspaceDocumentService {
       status: status || DocumentStatus.COMPLETED,
     };
 
-    if (search) {
-      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
+    // Filter by parent folder ID
+    if (parentId === null || parentId === undefined) {
+      // Root level: show items with no parent
+      query.parentId = { $in: [null, undefined] };
+    } else if (parentId) {
+      // Specific folder: show items in that folder
+      query.parentId = new Types.ObjectId(parentId);
     }
 
-    // Build sort
+    if (search) {
+      query.$or = [
+        { originalName: { $regex: escapeRegex(search), $options: 'i' } },
+        { folderName: { $regex: escapeRegex(search), $options: 'i' } },
+      ];
+    }
+
+    // Build sort - folders first
     const sort: Record<string, 1 | -1> = {
+      isFolder: -1,
       [sortBy]: sortOrder === 'asc' ? 1 : -1,
     };
 
     // Execute queries
+    // Count includes both folders and documents for accurate pagination
     const [documents, total] = await Promise.all([
       this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
       this.documentModel.countDocuments(query),
@@ -954,13 +1064,19 @@ export class WorkspaceDocumentService {
       );
     }
 
+    if (document.isFolder) {
+      throw new BadRequestException(
+        'Folders cannot be downloaded directly',
+      );
+    }
+
     if (document.status !== DocumentStatus.COMPLETED) {
       throw new BadRequestException(
         'Document is not available for download',
       );
     }
 
-    const url = await this.documentService.generateSasUrl(document.path, {
+    const url = await this.documentService.generateSasUrl(document.path!, {
       permissions: 'r',
       expiryMinutes: this.sasUrlExpiryMinutes,
       contentDisposition: `attachment; filename="${document.originalName}"`,
@@ -995,9 +1111,11 @@ export class WorkspaceDocumentService {
       );
     }
 
-    // Delete from blob storage
+    // Delete from blob storage (skip for folders)
     try {
-      await this.documentService.delete(document.path);
+      if (!document.isFolder && document.path) {
+        await this.documentService.delete(document.path);
+      }
     } catch (error) {
       this.logger.warn('Failed to delete blob', {
         documentId,
@@ -1025,7 +1143,7 @@ export class WorkspaceDocumentService {
       await this.workspaceService.updateStorageUsage(workspaceId, -document.size, -1);
     }
 
-    this.logger.log('Document deleted', {
+    this.logger.debug('Document deleted', {
       documentId,
       workspaceId,
     });
@@ -1084,11 +1202,12 @@ export class WorkspaceDocumentService {
       await Promise.all(indexDeletions);
     }
 
-    // Delete all blobs
+    // Delete all blobs (skip for folders)
     const blobDeletions = documents.map((doc) =>
-      this.documentService.delete(doc.path).catch((err) => {
-        this.logger.warn('Failed to delete blob during workspace cleanup', {
-          path: doc.path,
+      (!doc.isFolder && doc.path ? this.documentService.delete(doc.path) : Promise.resolve())
+        .catch((err) => {
+          this.logger.warn('Failed to delete blob during workspace cleanup', {
+            path: doc.path,
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       }),
@@ -1120,7 +1239,7 @@ export class WorkspaceDocumentService {
       );
     }
 
-    this.logger.log('All documents deleted from workspace', {
+    this.logger.debug('All documents deleted from workspace', {
       workspaceId,
       count: documents.length,
       indexedCount: indexedDocuments.length,
@@ -1155,7 +1274,7 @@ export class WorkspaceDocumentService {
         return;
       }
 
-      this.logger.log('Starting cleanup of expired upload sessions', {
+      this.logger.debug('Starting cleanup of expired upload sessions', {
         count: expiredSessions.length,
       });
 
@@ -1175,12 +1294,12 @@ export class WorkspaceDocumentService {
 
             // Only clean up documents still in PENDING status
             // (documents that were never confirmed)
-            if (document.status === DocumentStatus.PENDING) {
+            if (document.status === DocumentStatus.PENDING && !document.isFolder) {
               // Try to delete the blob from Azure (it may or may not exist)
               try {
-                const exists = await this.documentService.exists(document.path);
+                const exists = document.path ? await this.documentService.exists(document.path) : false;
                 if (exists) {
-                  await this.documentService.delete(document.path);
+                  await this.documentService.delete(document.path!);
                   totalBlobsDeleted++;
                 }
               } catch (error) {
@@ -1212,7 +1331,7 @@ export class WorkspaceDocumentService {
 
       const duration = Date.now() - startTime;
 
-      this.logger.log('Expired upload sessions cleanup completed', {
+      this.logger.debug('Expired upload sessions cleanup completed', {
         sessionsExpired: totalSessionsExpired,
         documentsDeleted: totalDocumentsDeleted,
         blobsDeleted: totalBlobsDeleted,
@@ -1283,6 +1402,482 @@ export class WorkspaceDocumentService {
   }
 
   /**
+   * Create a folder in a workspace
+   */
+  async createFolder(
+    workspaceId: string,
+    userId: string,
+    name: string,
+    parentId?: string,
+  ): Promise<DocumentResponse> {
+    // Validate folder name
+    const sanitizedName = this.sanitizeFilename(name);
+    if (!sanitizedName) {
+      throw new BadRequestException('Folder name cannot be empty');
+    }
+
+    // Check for duplicate folder name in same parent
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(userId),
+      isFolder: true,
+      folderName: sanitizedName,
+    };
+
+    if (parentId) {
+      query.parentId = new Types.ObjectId(parentId);
+    } else {
+      query.parentId = null;
+    }
+
+    const existing = await this.documentModel.findOne(query);
+    if (existing) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'A folder with this name already exists in this location',
+      );
+    }
+
+    // Create folder record
+    const folderId = new Types.ObjectId();
+    const folderPath = `folder:${folderId}`; // Unique path for folders
+
+    const folder = await this.documentModel.create({
+      _id: folderId,
+      filename: '', // Folders don't have files
+      originalName: sanitizedName,
+      mimeType: 'folder',
+      size: 0,
+      path: folderPath, // Unique path for folders to avoid duplicate key error
+      workspaceId: new Types.ObjectId(workspaceId),
+      createdBy: new Types.ObjectId(userId),
+      status: DocumentStatus.COMPLETED,
+      isFolder: true,
+      folderName: sanitizedName,
+      parentId: parentId ? new Types.ObjectId(parentId) : null,
+    });
+
+    this.logger.log('Folder created', {
+      folderId: folder._id,
+      workspaceId,
+      name: sanitizedName,
+      parentId,
+    });
+
+    return this.mapToResponse(folder);
+  }
+
+  /**
+   * Rename a folder
+   */
+  async renameFolder(
+    folderId: string,
+    newName: string,
+    userId: string,
+  ): Promise<DocumentResponse> {
+    const folder = await this.documentModel.findById(folderId);
+
+    if (!folder) {
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
+        'Folder not found',
+      );
+    }
+
+    if (!folder.isFolder) {
+      throw new BadRequestException('Document is not a folder');
+    }
+
+    // Check permission - only creator can rename
+    if (folder.createdBy.toString() !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have permission to rename this folder',
+      );
+    }
+
+    // Validate new name
+    const sanitizedName = this.sanitizeFilename(newName);
+    if (!sanitizedName) {
+      throw new BadRequestException('Folder name cannot be empty');
+    }
+
+    // Check for duplicate folder name in same parent
+    const query: Record<string, unknown> = {
+      workspaceId: folder.workspaceId,
+      createdBy: folder.createdBy,
+      isFolder: true,
+      folderName: sanitizedName,
+      parentId: folder.parentId,
+      _id: { $ne: folderId },
+    };
+
+    const existing = await this.documentModel.findOne(query);
+    if (existing) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'A folder with this name already exists in this location',
+      );
+    }
+
+    folder.folderName = sanitizedName;
+    folder.originalName = sanitizedName;
+    await folder.save();
+
+    this.logger.log('Folder renamed', {
+      folderId: folder._id,
+      userId,
+      oldName: folder.originalName,
+      newName: sanitizedName,
+    });
+
+    return this.mapToResponse(folder);
+  }
+
+  /**
+   * Delete a folder and all its contents recursively
+   */
+  async deleteFolder(
+    workspaceId: string,
+    userId: string,
+    folderId: string,
+  ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
+    const folder = await this.documentModel.findById(folderId);
+
+    if (!folder) {
+      throw new NotFoundException(
+        ErrorCode.WORKSPACE_DOCUMENT_NOT_FOUND,
+        'Folder not found',
+      );
+    }
+
+    if (!folder.isFolder) {
+      throw new BadRequestException('Document is not a folder');
+    }
+
+    if (folder.createdBy.toString() !== userId) {
+      throw new ForbiddenException(
+        ErrorCode.WORKSPACE_FORBIDDEN,
+        'You do not have access to this folder',
+      );
+    }
+
+    // Recursively delete all contents
+    const result = await this.deleteFolderRecursive(new Types.ObjectId(folderId), workspaceId, userId);
+
+    // Delete the folder itself
+    await this.documentModel.deleteOne({ _id: folderId });
+
+    this.logger.log('Folder deleted', {
+      folderId,
+      workspaceId,
+      deletedFolders: result.deletedFolders + 1,
+      deletedDocuments: result.deletedDocuments,
+    });
+
+    return {
+      deletedFolders: result.deletedFolders + 1,
+      deletedDocuments: result.deletedDocuments,
+    };
+  }
+
+  /**
+   * Recursively delete folder contents
+   */
+  private async deleteFolderRecursive(
+    folderId: Types.ObjectId,
+    workspaceId: string,
+    userId: string,
+  ): Promise<{ deletedFolders: number; deletedDocuments: number }> {
+    // Find all items in the folder
+    const items = await this.documentModel.find({
+      parentId: folderId,
+    });
+
+    let deletedFolders = 0;
+    let deletedDocuments = 0;
+
+    for (const item of items) {
+      if (item.isFolder) {
+        // Recursively delete subfolder
+        const subResult = await this.deleteFolderRecursive(
+          item._id,
+          workspaceId,
+          userId,
+        );
+        deletedFolders += subResult.deletedFolders + 1;
+        deletedDocuments += subResult.deletedDocuments;
+      } else {
+        // Delete document file from storage (skip for folders)
+        try {
+          if (!item.isFolder && item.path) {
+            await this.documentService.delete(item.path);
+          }
+        } catch (error) {
+          this.logger.warn('Failed to delete blob', {
+            documentId: item._id,
+            path: item.path,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          });
+        }
+
+        // Delete document index
+        if (item.indexingStatus === IndexingStatus.READY) {
+          this.indexingService.deleteDocumentIndex(item._id.toString(), workspaceId).catch((err) => {
+            this.logger.warn('Failed to delete document index', {
+              documentId: item._id,
+              error: err instanceof Error ? err.message : 'Unknown error',
+            });
+          });
+        }
+
+        deletedDocuments++;
+      }
+
+      // Delete item record
+      await this.documentModel.deleteOne({ _id: item._id });
+    }
+
+    return { deletedFolders, deletedDocuments };
+  }
+
+  /**
+   * Move documents/folders to a different folder
+   */
+  async moveDocuments(
+    workspaceId: string,
+    documentIds: string[],
+    targetFolderId?: string,
+    userId?: string,
+  ): Promise<{ moved: number; failed: string[] }> {
+    const moved: string[] = [];
+    const failed: string[] = [];
+
+    // Helper function to get all descendant folder IDs (to prevent circular moves)
+    const getDescendantFolderIds = async (folderId: string): Promise<Set<string>> => {
+      const descendants = new Set<string>();
+      const queue = [folderId];
+
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        const children = await this.documentModel.find({
+          parentId: new Types.ObjectId(currentId),
+          isFolder: true,
+        }).select('_id').exec();
+
+        for (const child of children) {
+          descendants.add(child._id.toString());
+          queue.push(child._id.toString());
+        }
+      }
+
+      return descendants;
+    };
+
+    // If target folder is provided, verify it exists and user has access
+    if (targetFolderId) {
+      const targetFolder = await this.documentModel.findById(targetFolderId);
+      if (!targetFolder || !targetFolder.isFolder) {
+        throw new BadRequestException('Target folder not found');
+      }
+      if (userId && targetFolder.createdBy.toString() !== userId) {
+        throw new ForbiddenException(
+          ErrorCode.WORKSPACE_FORBIDDEN,
+          'You do not have permission to move items into this folder',
+        );
+      }
+    }
+
+    for (const documentId of documentIds) {
+      try {
+        const document = await this.documentModel.findById(documentId);
+
+        if (!document) {
+          failed.push(documentId);
+          continue;
+        }
+
+        if (document.workspaceId.toString() !== workspaceId) {
+          failed.push(documentId);
+          continue;
+        }
+
+        // Check permission - only creator can move
+        if (userId && document.createdBy.toString() !== userId) {
+          failed.push(documentId);
+          continue;
+        }
+
+        // If moving a folder, check for circular references
+        if (document.isFolder && targetFolderId) {
+          const descendants = await getDescendantFolderIds(documentId);
+          if (descendants.has(targetFolderId)) {
+            failed.push(documentId);
+            continue;
+          }
+
+          // Cannot move folder into itself
+          if (documentId === targetFolderId) {
+            failed.push(documentId);
+            continue;
+          }
+        }
+
+        // Update parent folder
+        document.parentId = targetFolderId
+          ? new Types.ObjectId(targetFolderId)
+          : undefined;
+        await document.save();
+
+        moved.push(documentId);
+      } catch (error) {
+        this.logger.warn('Failed to move document/folder', {
+          documentId,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+        failed.push(documentId);
+      }
+    }
+
+    this.logger.log('Documents/folders moved', {
+      workspaceId,
+      targetFolderId,
+      movedCount: moved.length,
+      failedCount: failed.length,
+    });
+
+    return {
+      moved: moved.length,
+      failed,
+    };
+  }
+
+  /**
+   * Get all documents and folders in a hierarchical structure
+   */
+  async findAllSorted(
+    workspaceId: string,
+    params: DocumentQueryParams,
+  ): Promise<PaginatedDocuments> {
+    const {
+      page = 1,
+      limit = 100,
+      status,
+      search,
+      sortBy = 'originalName',
+      sortOrder = 'asc',
+    } = params;
+
+    const skip = (page - 1) * limit;
+
+    // Build query
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      status: status || DocumentStatus.COMPLETED,
+    };
+
+    if (search) {
+      query.originalName = { $regex: escapeRegex(search), $options: 'i' };
+    }
+
+    // Build sort
+    const sort: Record<string, 1 | -1> = {
+      isFolder: -1, // Folders first
+      [sortBy]: sortOrder === 'asc' ? 1 : -1,
+    };
+
+    // Execute queries
+    const [items, total] = await Promise.all([
+      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
+      this.documentModel.countDocuments(query),
+    ]);
+
+    return {
+      documents: items.map((d) => this.mapToResponse(d)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get all folders in a workspace (no pagination, for sidebar tree view)
+   */
+  async getAllFolders(workspaceId: string): Promise<DocumentResponse[]> {
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      isFolder: true,
+      status: DocumentStatus.COMPLETED,
+    };
+
+    const folders = await this.documentModel
+      .find(query)
+      .sort({ originalName: 1 })
+      .exec();
+
+    return folders.map((d) => this.mapToResponse(d));
+  }
+
+  /**
+   * Get contents of a specific folder
+   */
+  async getFolderContents(
+    workspaceId: string,
+    folderId: string,
+    params: DocumentQueryParams,
+  ): Promise<PaginatedDocuments> {
+    const {
+      page = 1,
+      limit = 50,
+      search,
+      sortBy = 'originalName',
+      sortOrder = 'asc',
+    } = params;
+
+    const skip = (page - 1) * limit;
+
+    // Build query for folder contents
+    const query: Record<string, unknown> = {
+      workspaceId: new Types.ObjectId(workspaceId),
+      parentId: new Types.ObjectId(folderId),
+      status: DocumentStatus.COMPLETED,
+    };
+
+    if (search) {
+      query.$or = [
+        { originalName: { $regex: escapeRegex(search), $options: 'i' } },
+        { folderName: { $regex: escapeRegex(search), $options: 'i' } },
+      ];
+    }
+
+    // Build sort - folders first
+    const sort: Record<string, 1 | -1> = {
+      isFolder: -1,
+      [sortBy]: sortOrder === 'asc' ? 1 : -1,
+    };
+
+    // Execute queries
+    // Count includes both folders and documents for accurate pagination
+    const [items, total] = await Promise.all([
+      this.documentModel.find(query).sort(sort).skip(skip).limit(limit).exec(),
+      this.documentModel.countDocuments(query),
+    ]);
+
+    return {
+      documents: items.map((d) => this.mapToResponse(d)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
    * Map document to response
    */
   private mapToResponse(document: WorkspaceDocumentDoc): DocumentResponse {
@@ -1306,6 +1901,9 @@ export class WorkspaceDocumentService {
       lastIndexedAt: document.lastIndexedAt?.toISOString(),
       detected_language: document.detected_language,
       chunk_size: document.chunk_size,
+      parentId: document.parentId?.toString(),
+      isFolder: document.isFolder || false,
+      folderName: document.folderName,
       createdAt: document.createdAt.toISOString(),
       updatedAt: document.updatedAt.toISOString(),
     };

@@ -46,6 +46,7 @@ class WebhookNotificationPayload(BaseModel):
     # for indexation notification
     status: Optional[NotificationStatus] = None
     status_image: Optional[NotificationStatus] = None
+    status_logical: Optional[NotificationStatus] = None
     error_details: Optional[TaskErrorDetails] = None
     error_details_image: Optional[TaskErrorDetails] = None
     # for language detection notification

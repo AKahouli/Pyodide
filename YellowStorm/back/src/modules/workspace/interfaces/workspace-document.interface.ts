@@ -23,15 +23,16 @@ export interface DocumentQueryParams {
   search?: string;
   sortBy?: 'originalName' | 'createdAt' | 'size';
   sortOrder?: 'asc' | 'desc';
+  parentId?: string | null;
 }
 
 export interface DocumentResponse {
   id: string;
-  filename: string;
+  filename?: string;
   originalName: string;
   mimeType: string;
   size: number;
-  path: string;
+  path?: string;
   url?: string; // Optional for pending documents
   contentHash?: string;
   workspaceId: string;
@@ -45,6 +46,9 @@ export interface DocumentResponse {
   lastIndexedAt?: string;
   detected_language?: string;
   chunk_size?: number;
+  parentId?: string;
+  isFolder: boolean;
+  folderName?: string;
   createdAt: string;
   updatedAt: string;
 }

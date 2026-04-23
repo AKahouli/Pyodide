@@ -18,6 +18,8 @@ import { useConnectedAppStore } from '../store';
 import type { ConnectedAppWithStatus } from '../types';
 import { AppIcon } from './AppIcon';
 
+const MAILBOX_APP_KEYS = new Set(['microsoft', 'microsoft365', 'm365']);
+
 interface AppCardProps {
   app: ConnectedAppWithStatus;
 }
@@ -27,9 +29,12 @@ export const AppCard = memo(function AppCard({ app }: AppCardProps) {
   const connectApp = useConnectedAppStore((s) => s.connectApp);
   const disconnectApp = useConnectedAppStore((s) => s.disconnectApp);
   const connectingAppKey = useConnectedAppStore((s) => s.connectingAppKey);
+  const mailboxCapability = useConnectedAppStore((s) => s.mailboxCapability);
 
   const isConnecting = connectingAppKey === app.appKey;
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const isMailboxApp = MAILBOX_APP_KEYS.has(app.appKey);
+  const showMailboxStatus = isMailboxApp && mailboxCapability?.appKey === app.appKey;
 
   const handleConnect = useCallback(() => {
     connectApp(app.appKey);
@@ -66,6 +71,16 @@ export const AppCard = memo(function AppCard({ app }: AppCardProps) {
             {app.connection?.providerEmail && (
               <p className="text-xs text-muted-foreground mt-0.5">
                 {t('card.connectedAs', { email: app.connection.providerEmail })}
+              </p>
+            )}
+            {showMailboxStatus && mailboxCapability?.connected && !mailboxCapability.mailboxReady && (
+              <p className="text-xs text-amber-600 mt-1">
+                {t('card.mailboxScopesMissing', { scopes: mailboxCapability.missingScopes.join(', ') })}
+              </p>
+            )}
+            {showMailboxStatus && mailboxCapability?.mailboxReady && (
+              <p className="text-xs text-green-600 mt-1">
+                {t('card.mailboxReady')}
               </p>
             )}
           </div>

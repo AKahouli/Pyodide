@@ -4,28 +4,53 @@
  * Responsive: Card layout on mobile, table on larger screens
  */
 
-import { Loader2, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useState, useRef, useCallback } from 'react';
+import { Loader2, Upload, ChevronLeft, ChevronRight, FolderPlus } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useModuleTranslation } from '@/modules/localization';
 import { useWorkspaceStore, useDocuments, useDocumentPagination, useWorkspaceLoading, useSelectedWorkspace } from '../store';
-import { DEFAULT_PAGE_LIMIT } from '../utils';
+import { DEFAULT_PAGE_LIMIT, ACCEPT_EXTENSIONS, validateFiles } from '../utils';
 import { useDocumentSelection } from '../hooks';
+import { useDocumentDragDrop } from '../hooks/useDocumentDragDrop';
 import { FloatingActionBar } from './FloatingActionBar';
 import DocumentRow from './DocumentRow';
 import { DocumentCard } from './DocumentRow/DocumentCard';
 
-export function DocumentsTable() {
+interface DocumentsTableProps {
+  onFolderDoubleClick?: (folderId: string) => void;
+}
+
+export function DocumentsTable({ onFolderDoubleClick }: DocumentsTableProps) {
   const { t } = useModuleTranslation('workspace');
-  const documents = useDocuments();
+  const { documents } = useDocuments();
   const selectedWorkspace = useSelectedWorkspace();
   const { currentPage, totalPages, totalDocuments } = useDocumentPagination();
   const { isLoadingDocuments } = useWorkspaceLoading();
   const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
+  const addFilesToQueue = useWorkspaceStore((state) => state.addFilesToQueue);
+  const startUpload = useWorkspaceStore((state) => state.startUpload);
+  const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
+
+  // Drag and drop
+  const {
+    isDragging,
+    dropTargetId,
+    handleDragStart,
+    handleDragEnd,
+    handleDragOver,
+    handleDragLeave,
+    handleDropOnFolder,
+    handleDropOnRoot,
+  } = useDocumentDragDrop();
 
   const { selectedCount, isAllSelected, isSomeSelected, isSelected, toggleSelect, toggleSelectAll, clearSelection, getSelectedIds } = useDocumentSelection(documents);
+
+  // Shared file input ref for folder uploads
+  const folderFileInputRef = useRef<HTMLInputElement>(null);
+  const [currentUploadFolderId, setCurrentUploadFolderId] = useState<string | null>(null);
 
   const handlePrevPage = () => {
     if (selectedWorkspace && currentPage > 1) {
@@ -39,6 +64,25 @@ export function DocumentsTable() {
     }
   };
 
+  const handleFolderUpload = (folderId: string) => {
+    setCurrentUploadFolderId(folderId);
+    folderFileInputRef.current?.click();
+  };
+
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0 || !selectedWorkspace) return;
+
+    const { validFiles } = validateFiles(files);
+    if (validFiles.length > 0) {
+      addFilesToQueue(validFiles, selectedWorkspace.id, currentUploadFolderId ?? undefined);
+      startUpload();
+    }
+
+    e.target.value = '';
+    setCurrentUploadFolderId(null);
+  };
+
   if (isLoadingDocuments) {
     return (
       <div className='flex items-center justify-center py-12'>
@@ -49,15 +93,16 @@ export function DocumentsTable() {
 
   if (documents.length === 0) {
     return (
-      <div className='flex flex-col items-center justify-center py-16 text-center w-full'>
-        <div className='rounded-full bg-muted/50 p-6 mb-6'>
-          <Upload className='h-12 w-12 text-muted-foreground/70' />
+        <div className='flex flex-col items-center justify-center py-16 text-center w-full'>
+          <div className='rounded-full bg-muted/50 p-6 mb-6'>
+            <Upload className='h-12 w-12 text-muted-foreground/70' />
+          </div>
+          <h3 className='text-lg font-medium text-foreground mb-2'>{t('documents.empty.title')}</h3>
+          <p className='text-sm text-muted-foreground max-w-sm mb-4'>{t('documents.empty.description', { action: t('upload.button.add') })}</p>
+        <div />
+          <p className='text-xs text-muted-foreground mt-3'>{t('documents.empty.supported')}</p>
         </div>
-        <h3 className='text-lg font-medium text-foreground mb-2'>{t('documents.empty.title')}</h3>
-        <p className='text-sm text-muted-foreground max-w-sm'>{t('documents.empty.description', { action: t('upload.button.add') })}</p>
-        <p className='text-xs text-muted-foreground mt-3'>{t('documents.empty.supported')}</p>
-      </div>
-    );
+      );
   }
 
   const PaginationBar = () => {
@@ -86,7 +131,18 @@ export function DocumentsTable() {
   };
 
   return (
-    <div className='relative h-full flex flex-col'>
+    <>
+      <div className='relative h-full flex flex-col'>
+        {/* Hidden shared file input for folder uploads */}
+      <input
+        ref={folderFileInputRef}
+        type='file'
+        accept={ACCEPT_EXTENSIONS}
+        multiple
+        style={{ position: 'absolute', left: -9999, visibility: 'hidden' }}
+        onChange={handleFileInputChange}
+      />
+
       {/* Mobile: Card layout */}
       <div className='flex flex-col sm:hidden flex-1 min-h-0'>
         {/* Mobile select all header */}
@@ -98,7 +154,20 @@ export function DocumentsTable() {
         <ScrollArea className='h-[calc(100vh-320px)]'>
           <div className='divide-y w-full'>
             {documents.map((document) => (
-              <DocumentCard key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} />
+              <DocumentCard
+                key={document.id}
+                document={document}
+                isSelected={isSelected(document.id)}
+                onToggleSelect={() => toggleSelect(document.id)}
+                onFolderUpload={handleFolderUpload}
+                onFolderDoubleClick={onFolderDoubleClick}
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDropOnFolder={handleDropOnFolder}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                isDropTarget={dropTargetId === document.id}
+              />
             ))}
           </div>
         </ScrollArea>
@@ -124,7 +193,20 @@ export function DocumentsTable() {
             </TableHeader>
             <TableBody>
               {documents.map((document) => (
-                <DocumentRow key={document.id} document={document} isSelected={isSelected(document.id)} onToggleSelect={() => toggleSelect(document.id)} />
+                <DocumentRow
+                  key={document.id}
+                  document={document}
+                  isSelected={isSelected(document.id)}
+                  onToggleSelect={() => toggleSelect(document.id)}
+                  onFolderUpload={handleFolderUpload}
+                  onFolderDoubleClick={onFolderDoubleClick}
+                  onDragStart={handleDragStart}
+                  onDragEnd={handleDragEnd}
+                  onDropOnFolder={handleDropOnFolder}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  isDropTarget={dropTargetId === document.id}
+                />
               ))}
             </TableBody>
           </Table>
@@ -133,8 +215,10 @@ export function DocumentsTable() {
         <PaginationBar />
       </div>
 
-      {/* Floating action bar for bulk operations */}
-      {selectedCount > 0 && <FloatingActionBar selectedCount={selectedCount} selectedIds={getSelectedIds()} onClearSelection={clearSelection} />}
-    </div>
+        {/* Floating action bar for bulk operations */}
+        {selectedCount > 0 && <FloatingActionBar selectedCount={selectedCount} selectedIds={getSelectedIds()} onClearSelection={clearSelection} />}
+      </div>
+
+  </>
   );
 }

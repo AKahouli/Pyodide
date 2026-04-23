@@ -13,6 +13,7 @@ import { UsageService } from '@modules/usage';
 import { AuthorizationService } from '@modules/authorization/authorization.service';
 import { EmailService } from '@modules/email';
 import { LoggerService } from '@modules/logger';
+import { WorkspaceInitializerService } from '@modules/workspace/workspace-initializer.service';
 import { UserStatus } from '@modules/user/schemas/user.schema';
 import { BadRequestException, ForbiddenException, UnauthorizedException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
@@ -42,6 +43,7 @@ export class OAuthFlowService {
     private readonly emailService: EmailService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly workspaceInitializer: WorkspaceInitializerService,
   ) {
     this.logger.setContext(OAuthFlowService.name);
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
@@ -319,9 +321,10 @@ export class OAuthFlowService {
       },
     });
 
-    // Assign default plan
+    // Assign default plan and create personal workspace
+    let defaultPlan;
     try {
-      const defaultPlan = await this.usageService.getDefaultPlan();
+      defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         newUser._id.toString(),
         defaultPlan._id as Types.ObjectId,
@@ -329,6 +332,23 @@ export class OAuthFlowService {
       );
     } catch (error) {
       this.logger.warn('Failed to assign default plan to OAuth user', {
+        userId: newUser._id,
+        error: (error as Error).message,
+      });
+    }
+
+    // Create personal workspace for the new OAuth user
+    try {
+      const workspaceStorage = defaultPlan?.workspaceStorageBytes ?? 100 * 1024 * 1024; // 100MB default
+      await this.workspaceInitializer.getOrCreatePersonalWorkspace(
+        newUser._id.toString(),
+        workspaceStorage,
+      );
+      this.logger.log('Personal workspace created for new OAuth user', {
+        userId: newUser._id,
+      });
+    } catch (error) {
+      this.logger.warn('Failed to create personal workspace for OAuth user', {
         userId: newUser._id,
         error: (error as Error).message,
       });

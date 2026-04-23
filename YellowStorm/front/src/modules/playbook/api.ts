@@ -21,6 +21,9 @@ import type {
   ResumePlaybookData,
   RerunStepData,
   CloneShareResult,
+  PlaybookTriggersData,
+  SyncPlaybookMailSubscriptionData,
+  UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ValidateTaskReplayData,
   ValidatedTaskReplay,
@@ -54,6 +57,8 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       title: task.title,
       description: task.description,
       assignedAgentId: task.assignedAgentId,
+      executionMode: task.executionMode,
+      selectedAction: task.selectedAction,
       executionOrder: task.executionOrder,
       positionX: task.positionX,
       positionY: task.positionY,
@@ -88,6 +93,16 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
     })),
+  };
+}
+
+function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData {
+  return {
+    ...data,
+    reflectionEnabled: data.reflectionEnabled,
+    advisorAutopilotEnabled: data.advisorAutopilotEnabled,
+    advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
+    advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
   };
 }
 
@@ -185,7 +200,7 @@ export async function updatePlaybook(
 ): Promise<Playbook> {
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
-    sanitizePlaybookUpdate(data),
+    sanitizePlaybookSettings(sanitizePlaybookUpdate(data)),
   );
   return response.data.data;
 }
@@ -398,6 +413,16 @@ export async function updateOutputFormatTemplate(
   return response.data.data;
 }
 
+export async function deleteOutputFormatTemplate(
+  playbookId: string,
+  taskId: string,
+): Promise<{ removed: boolean }> {
+  const response = await apiClient.delete<ApiResponse<{ removed: boolean }>>(
+    API_ENDPOINTS.playbooks.outputFormatTemplate(playbookId, taskId),
+  );
+  return response.data.data;
+}
+
 export async function designPlaybook(
   id: string,
   data: DesignPlaybookData,
@@ -495,20 +520,56 @@ export async function getActiveExecutions(): Promise<PlaybookExecution[]> {
   return response.data.data;
 }
 
-export async function upsertPlaybookSchedule(
+export async function upsertPlaybookTriggerSchedule(
   playbookId: string,
   data: UpsertPlaybookScheduleData,
 ): Promise<Playbook> {
   const response = await apiClient.put<ApiResponse<Playbook>>(
-    API_ENDPOINTS.playbooks.schedule(playbookId),
+    API_ENDPOINTS.playbooks.triggerSchedule(playbookId),
     data,
   );
   return response.data.data;
 }
 
-export async function clearPlaybookSchedule(playbookId: string): Promise<Playbook> {
+export async function clearPlaybookTriggerSchedule(playbookId: string): Promise<Playbook> {
   const response = await apiClient.delete<ApiResponse<Playbook>>(
-    API_ENDPOINTS.playbooks.schedule(playbookId),
+    API_ENDPOINTS.playbooks.triggerSchedule(playbookId),
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookTriggers(playbookId: string): Promise<PlaybookTriggersData> {
+  const response = await apiClient.get<ApiResponse<PlaybookTriggersData>>(
+    API_ENDPOINTS.playbooks.triggers(playbookId),
+  );
+  return response.data.data;
+}
+
+export async function upsertPlaybookTriggerMail(
+  playbookId: string,
+  data: UpsertPlaybookMailTriggerData,
+): Promise<Playbook> {
+  const response = await apiClient.put<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.triggerMail(playbookId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function clearPlaybookTriggerMail(playbookId: string): Promise<Playbook> {
+  const response = await apiClient.delete<ApiResponse<Playbook>>(
+    API_ENDPOINTS.playbooks.triggerMail(playbookId),
+  );
+  return response.data.data;
+}
+
+export async function syncPlaybookTriggerMailSubscription(
+  playbookId: string,
+  data: SyncPlaybookMailSubscriptionData,
+): Promise<Record<string, unknown>> {
+  const response = await apiClient.post<ApiResponse<Record<string, unknown>>>(
+    API_ENDPOINTS.playbooks.triggerMail(playbookId) + '/sync-subscription',
+    data,
   );
   return response.data.data;
 }
@@ -527,6 +588,47 @@ export async function cloneSharePlaybook(
 export async function clonePlaybook(id: string): Promise<Playbook> {
   const response = await apiClient.post<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.clone(id),
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
+  id: string;
+  key: string;
+  type: string;
+  title: string;
+  description?: string;
+  icon?: string;
+  color?: string;
+  category: string;
+  inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+  outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+  promptTemplate: string;
+  recommendedAgentTypeSlug: string | null;
+  requiredToolNames: string[];
+  executionMode?: string;
+  assignedAgentId?: string | null;
+  selectedAction?: string | null;
+}> }> {
+  const response = await apiClient.get<ApiResponse<{ items: Array<{
+    id: string;
+    key: string;
+    type: string;
+    title: string;
+    description?: string;
+    icon?: string;
+    color?: string;
+    category: string;
+    inputPorts: Array<{ id: string; name: string; artifactKind: string; required?: boolean; description?: string }>;
+    outputPorts: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
+    promptTemplate: string;
+    recommendedAgentTypeSlug: string | null;
+    requiredToolNames: string[];
+    executionMode?: string;
+    assignedAgentId?: string | null;
+    selectedAction?: string | null;
+  }> }>>(
+    API_ENDPOINTS.playbookNodeTemplates.list,
   );
   return response.data.data;
 }

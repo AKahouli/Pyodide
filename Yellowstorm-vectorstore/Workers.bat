@@ -28,6 +28,9 @@ start "Celery Image Indexation" powershell -NoProfile -NoExit -ExecutionPolicy B
 echo Starting Celery Worker (Text Indexation)...
 start "Celery Text Indexation" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -Command "& { cd '%TARGET_DIR%'; . '%VENV_DIR%\Scripts\Activate.ps1'; celery -A worker.celery_app worker --loglevel=info -P solo -Q text-indexation -c 5 -n text-indexation@%%h }"
 
+echo Starting Celery Worker (Logical Indexing)...
+start "Celery Logical Indexing" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -Command "& { cd '%TARGET_DIR%'; . '%VENV_DIR%\Scripts\Activate.ps1'; celery -A worker.celery_app worker --loglevel=info -P eventlet -Q logical-indexing -c 5 -n logical-indexing@%%h }"
+
 :: echo Starting Celery Worker (Classification)...
 :: start "Celery Classification" powershell -NoProfile -NoExit -ExecutionPolicy Bypass -Command "& { cd '%TARGET_DIR%'; . '%VENV_DIR%\Scripts\Activate.ps1'; celery -A worker.celery_app worker --loglevel=info -P solo -Q classification -c 5 -n classification@%%h }"
 

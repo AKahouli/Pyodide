@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { StreamGatewayService } from './stream-gateway.service';
 import { MessageService } from './message.service';
@@ -112,7 +113,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
   private initGrpcClient() {
     try {
-      const protoPath = path.join(__dirname, '..', 'proto', 'chatbot.proto');
+      const protoPath = this.resolveChatbotProtoPath();
 
       const packageDefinition = protoLoader.loadSync(protoPath, {
         keepCase: true,
@@ -157,6 +158,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       this.lastError = (error as Error).message;
       this.lastCheckedAt = new Date();
     }
+  }
+
+  private resolveChatbotProtoPath(): string {
+    const candidatePaths = [
+      path.join(__dirname, '..', 'proto', 'chatbot.proto'),
+      path.resolve(process.cwd(), 'dist', 'modules', 'conversation', 'proto', 'chatbot.proto'),
+      path.resolve(process.cwd(), 'src', 'modules', 'conversation', 'proto', 'chatbot.proto'),
+    ];
+
+    const existingPath = candidatePaths.find((candidatePath) => fs.existsSync(candidatePath));
+    if (!existingPath) {
+      throw new Error(`chatbot.proto not found in expected locations: ${candidatePaths.join(', ')}`);
+    }
+
+    return existingPath;
   }
 
   isAvailable(): boolean {
@@ -220,7 +236,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
             filename: doc.originalName,
-            filepath: doc.path,
+            filepath: doc.path || '',
             in_memory: false,
             language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200,
@@ -230,7 +246,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      this.logger.log('Workspace contexts built', {
+      this.logger.debug('Workspace contexts built', {
         conversationId,
         workspaceCount: contexts.length,
         totalDocuments: contexts.reduce((sum, ctx) => sum + ctx.workspace_documents.length, 0),
@@ -266,7 +282,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
             filename: doc.originalName,
-            filepath: doc.path,
+            filepath: doc.path || '',
             in_memory: false,
             language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200,
@@ -342,17 +358,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         if (isImage) {
           return {
             type: 'image',
-            image: { filepath: doc.path, createdAt: doc.createdAt },
+            image: { filepath: doc.path || '', createdAt: doc.createdAt },
           };
         }
         return {
           type: 'document',
           document: {
-            filepath: doc.path,
+            filepath: doc.path || '',
             filename: doc.originalName,
             external_id: doc.id,
             workspace_id: doc.workspaceId,
-            source: doc.path,
+            source: doc.path || '',
             brain_type: 'doc',
             lang_code: 'fr',
             chunk_size: 4000,
@@ -414,7 +430,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       return previousDocs.map((doc) => ({
         _id: doc.id,
         filename: doc.originalName,
-        filepath: doc.path,
+        filepath: doc.path || '',
         in_memory: false,
         language: doc.detected_language || 'fr',
         indexing_token: doc.chunk_size || 1200,
@@ -440,7 +456,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
-    this.logger.log(
+    this.logger.debug(
       'Stream start requested',
       {
         userId,
@@ -518,7 +534,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       modelId: request.modelId,
     });
 
-    this.logger.log(
+    this.logger.debug(
       'Stream registered, starting gRPC call',
       {
         streamKey,
@@ -579,7 +595,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     };
 
     const timeoutMs = this.configService.get<number>('conversation.grpcTimeoutMs', 120000);
-    this.logger.log(
+    this.logger.debug(
       `GRPC request Prepared with an idle timeout of ${timeoutMs}ms`,
       grpcRequest,
       logOpts,
@@ -614,7 +630,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   async stopStream(userId: string, conversationId: string, messageId: string): Promise<void> {
     const streamKey = `${userId}:${conversationId}:${messageId}`;
 
-    this.logger.log('Stream stop requested', {
+    this.logger.debug('Stream stop requested', {
       userId,
       conversationId,
       messageId,
@@ -638,7 +654,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // Persist current buffer
     const buffer = this.componentBuffers.get(streamKey) || new Map();
     if (buffer.size > 0) {
-      this.logger.log('Persisting buffer on stop', {
+        this.logger.debug('Persisting buffer on stop', {
         streamKey,
         bufferSize: buffer.size,
       });
@@ -660,7 +676,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // Record partial usage on stop
     const usageData = this.streamUsage.get(streamKey);
     if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
-      this.logger.log('Recording partial usage on stop', {
+        this.logger.debug('Recording partial usage on stop', {
         streamKey,
         inputTokens: usageData.inputTokens,
         outputTokens: usageData.outputTokens,
@@ -700,7 +716,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     call.cancel();
     this.cleanupStream(userId, conversationId, streamKey);
 
-    this.logger.log('Stream stopped successfully', {
+    this.logger.debug('Stream stopped successfully', {
       streamKey,
       conversationId,
       messageId,
@@ -720,7 +736,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     const logOpts: LogOptions = { requestId };
 
     return new Promise<void>((resolve, reject) => {
-      this.logger.log(
+      this.logger.debug(
         'gRPC call initiated',
         {
           streamKey,
@@ -777,7 +793,6 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
         chunkCount++;
-
         // Capture time to first chunk
         if (chunkCount === 1) {
           timeToFirstChunk = Date.now() - startTime;
@@ -884,7 +899,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
         const durationMs = Date.now() - startTime;
 
-        this.logger.log(
+        this.logger.debug(
           'gRPC stream ended',
           {
             streamKey,
@@ -907,7 +922,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             components.unshift(plan);
           }
 
-          this.logger.log(
+          this.logger.debug(
             'Persisting stream components',
             {
               streamKey,
@@ -929,7 +944,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
           // Record usage
           const usageData = this.streamUsage.get(streamKey);
-          this.logger.log(
+          this.logger.debug(
             'Recording usage',
             {
               streamKey,
@@ -977,7 +992,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
           this.cleanupStream(userId, conversationId, streamKey);
 
-          this.logger.log(
+          this.logger.debug(
             'Stream completed successfully',
             {
               streamKey,
@@ -1076,7 +1091,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       },
     });
 
-    this.logger.log(
+    this.logger.debug(
       'Persisting buffer with error component',
       {
         streamKey,
@@ -1103,7 +1118,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     // Record partial usage
     const usageData = this.streamUsage.get(streamKey);
     if (usageData && (usageData.inputTokens > 0 || usageData.outputTokens > 0)) {
-      this.logger.log(
+      this.logger.debug(
         'Recording partial usage on error',
         {
           streamKey,
@@ -1138,7 +1153,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     this.sendErrorEvent(userId, conversationId, errorCode);
     this.cleanupStream(userId, conversationId, streamKey);
 
-    this.logger.log(
+    this.logger.debug(
       'Stream error handling completed',
       {
         streamKey,
@@ -1338,7 +1353,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     const count = await this.messageService.cleanupStaleStreams(staleMinutes);
     if (count > 0) {
-      this.logger.log('Cleaned up stale streams', { count });
+      this.logger.debug('Cleaned up stale streams', { count });
     }
   }
 
@@ -1392,7 +1407,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         },
       });
 
-      this.logger.log('Conversation name generated', {
+      this.logger.debug('Conversation name generated', {
         conversationId,
         name: generatedName,
       });

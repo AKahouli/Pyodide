@@ -3,7 +3,10 @@ from typing import Dict, Any, Optional, List
 
 from src.smart_rag.tools import build_tree
 from src.smart_rag.tools.utilities import calculator, python_interpreter
-from src.smart_rag.tools.utilities.connector_tools import create_connector_tools
+from src.smart_rag.tools.utilities.connector_tools import (
+    create_connector_tools,
+    create_platform_tools,
+)
 from src.smart_rag.infrastructure.external.mcp_helper import MCPHelper
 from src.smart_rag.infrastructure.processing.sandbox_callbacks import (
     create_sandbox_callbacks,
@@ -281,9 +284,27 @@ def create_search_agent_with_tools(
 
     if connector_bindings:
         try:
-            agent.tools.extend(create_connector_tools(connector_bindings))
+            connector_workspace_id = agent_factory._resolve_connector_workspace_id(
+                config.brain_ids[0] if config.brain_ids else None,
+                agent_config.get("brain_documents", []),
+            )
+            agent.tools.extend(
+                create_connector_tools(
+                    connector_bindings,
+                    workspace_id=connector_workspace_id,
+                    brain_ids=final_brain_ids,
+                )
+            )
         except Exception as e:
             logger.exception("Error adding connector tools to search agent: %s", e)
+
+    # Platform tools (save_file_to_workspace)
+    agent_params = agent_config.get("agent_params") or {}
+    if agent_params.get("platform_api_url"):
+        try:
+            agent.tools.extend(create_platform_tools(agent_params))
+        except Exception as e:
+            logger.exception("Error adding platform tools to search agent: %s", e)
 
     if "calculator" in tools:
         agent.tools.append(calculator)
@@ -435,6 +456,14 @@ def create_standard_agent_with_tools(
         user_id=config.user_id,
         connector_bindings=connector_bindings,
     )
+
+    # Platform tools (save_file_to_workspace)
+    agent_params = agent_config.get("agent_params") or {}
+    if agent_params.get("platform_api_url"):
+        try:
+            agent.tools.extend(create_platform_tools(agent_params))
+        except Exception as e:
+            logger.exception("Error adding platform tools to standard agent: %s", e)
 
     return agent, None
 

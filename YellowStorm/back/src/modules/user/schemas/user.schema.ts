@@ -16,6 +16,16 @@ export class UserProfile {
 }
 
 @Schema({ _id: false })
+export class UserAppearance {
+  @Prop({
+    type: String,
+    enum: ['default', 'yellow', 'orange', 'blue'],
+    default: 'default',
+  })
+  colorTheme!: 'default' | 'yellow' | 'orange' | 'blue';
+}
+
+@Schema({ _id: false })
 export class UserConsents {
   @Prop({ default: false })
   privacyPolicy!: boolean;
@@ -73,6 +83,10 @@ export class User extends Document {
   // Profile
   @Prop({ type: UserProfile, default: {} })
   profile!: UserProfile;
+
+  // Appearance preferences
+  @Prop({ type: UserAppearance, default: { colorTheme: 'default' } })
+  appearance!: UserAppearance;
 
   // Consents
   @Prop({ type: UserConsents, default: {} })

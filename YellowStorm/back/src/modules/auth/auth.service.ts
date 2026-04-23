@@ -14,6 +14,7 @@ import { EmailService } from '../email';
 import { UsageService } from '../usage';
 import { AuthorizationService } from '../authorization/authorization.service';
 import { SystemService } from '../system/system.service';
+import { WorkspaceInitializerService } from '../workspace/workspace-initializer.service';
 import { TokenPair, LoginResponse, DeviceInfoData, SessionInfo } from './interfaces/auth.interface';
 import { BadRequestException, UnauthorizedException, ForbiddenException, NotFoundException } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
@@ -42,6 +43,8 @@ export class AuthService {
     @Inject(forwardRef(() => AuthorizationService))
     private readonly authorizationService: AuthorizationService,
     private readonly systemService: SystemService,
+    @Inject(forwardRef(() => WorkspaceInitializerService))
+    private readonly workspaceInitializer: WorkspaceInitializerService,
   ) {
     this.logger.setContext(AuthService.name);
     this.bcryptRounds = this.configService.get<number>('auth.bcryptRounds', 12);
@@ -69,8 +72,9 @@ export class AuthService {
       password: dto.password,
     });
     // Assign default (free) plan to new user
+    let defaultPlan;
     try {
-      const defaultPlan = await this.usageService.getDefaultPlan();
+      defaultPlan = await this.usageService.getDefaultPlan();
       await this.userService.assignPlan(
         user._id.toString(),
         defaultPlan._id as Types.ObjectId,
@@ -83,6 +87,24 @@ export class AuthService {
     } catch (error) {
       // Log but don't fail registration if plan assignment fails
       this.logger.warn('Failed to assign default plan to user', {
+        userId: user._id,
+        error: (error as Error).message,
+      });
+    }
+
+    // Create personal workspace for the new user
+    try {
+      const workspaceStorage = defaultPlan?.workspaceStorageBytes ?? 100 * 1024 * 1024; // 100MB default
+      await this.workspaceInitializer.getOrCreatePersonalWorkspace(
+        user._id.toString(),
+        workspaceStorage,
+      );
+      this.logger.log('Personal workspace created for new user', {
+        userId: user._id,
+      });
+    } catch (error) {
+      // Log but don't fail registration if workspace creation fails
+      this.logger.warn('Failed to create personal workspace for user', {
         userId: user._id,
         error: (error as Error).message,
       });
@@ -171,6 +193,9 @@ export class AuthService {
           email: user.email,
           emailVerified: user.emailVerified,
           profileComplete: user.profileComplete,
+          appearance: {
+            colorTheme: user.appearance?.colorTheme ?? 'default',
+          },
           profile: {
             firstName: user.profile?.firstName,
             lastName: user.profile?.lastName,

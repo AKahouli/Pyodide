@@ -101,10 +101,10 @@ export function PlaybookCard({ playbook, onDelete, onClone, onToggleFavorite, se
               className='h-7 w-7'
               onClick={(e) => {
                 e.stopPropagation();
-                navigate(`/playbooks/${playbook.id}?schedule=1`);
+                navigate(`/playbooks/${playbook.id}?triggers=1`);
               }}
-              title='Open scheduler'
-              aria-label='Open scheduler'>
+              title={t('card.openTriggers')}
+              aria-label={t('card.openTriggers')}>
               <CalendarClock className='h-3.5 w-3.5' />
             </Button>
           </div>

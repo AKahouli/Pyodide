@@ -211,7 +211,7 @@ export class PlaybookOutputFormatService {
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.litellmModel || defaultModel?.id || '';
+    const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) {
       return { guide: this.getFallbackGuide(text), promptTrace: [] };
     }
@@ -391,6 +391,24 @@ export class PlaybookOutputFormatService {
     await template.save();
     await this.emitTemplateUpdated(template);
     return this.mapTemplateToResponse(template.toJSON());
+  }
+
+  async removeActiveTemplate(playbookId: string, taskId: string) {
+    const template = await this.templateModel.findOne({
+      playbookId: new Types.ObjectId(playbookId),
+      taskId,
+      status: OutputFormatTemplateStatus.ACTIVE,
+    }).exec();
+
+    if (!template) {
+      return { removed: false };
+    }
+
+    template.status = OutputFormatTemplateStatus.INACTIVE;
+    await template.save();
+    await this.emitTemplateUpdated(template);
+
+    return { removed: true };
   }
 
   async getActiveTemplates(playbookId: string, taskIds: string[]) {

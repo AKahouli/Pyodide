@@ -27,6 +27,7 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  AppearanceSettings,
   PlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
@@ -54,6 +55,10 @@ import type {
   PlaybookPromptListResponse,
   PlaybookPromptResponse,
   UpsertPlaybookPromptRequest,
+  PlaybookNodeTemplateListResponse,
+  PlaybookNodeTemplateResponse,
+  CreatePlaybookNodeTemplateRequest,
+  UpdatePlaybookNodeTemplateRequest,
   ToolListResponse,
   ToolResponse,
   CreateToolRequest,
@@ -160,6 +165,21 @@ export async function setRegistrationStatus(
 ): Promise<RegistrationStatus> {
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
+    data
+  );
+  return response.data.data;
+}
+
+export async function getAppearanceSettings(): Promise<AppearanceSettings> {
+  const response = await apiClient.get<ApiResponse<AppearanceSettings>>(
+    `${API_ENDPOINTS.system.maintenance.replace('/maintenance', '/appearance')}`
+  );
+  return response.data.data;
+}
+
+export async function setAppearanceSettings(data: AppearanceSettings): Promise<AppearanceSettings> {
+  const response = await apiClient.post<ApiResponse<AppearanceSettings>>(
+    `${API_ENDPOINTS.system.maintenance.replace('/maintenance', '/appearance')}`,
     data
   );
   return response.data.data;
@@ -503,6 +523,47 @@ export async function updatePlaybookPrompt(
     data,
   );
   return response.data.data;
+}
+
+// Playbook Node Templates API
+
+export async function getPlaybookNodeTemplates(): Promise<PlaybookNodeTemplateListResponse> {
+  const response = await apiClient.get<ApiResponse<PlaybookNodeTemplateListResponse>>(
+    API_ENDPOINTS.adminPlaybookNodeTemplates.list
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookNodeTemplate(id: string): Promise<PlaybookNodeTemplateResponse | null> {
+  const response = await apiClient.get<ApiResponse<PlaybookNodeTemplateResponse | null>>(
+    API_ENDPOINTS.adminPlaybookNodeTemplates.byId(id)
+  );
+  return response.data.data;
+}
+
+export async function createPlaybookNodeTemplate(
+  data: CreatePlaybookNodeTemplateRequest,
+): Promise<PlaybookNodeTemplateResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookNodeTemplateResponse>>(
+    API_ENDPOINTS.adminPlaybookNodeTemplates.list,
+    data
+  );
+  return response.data.data;
+}
+
+export async function updatePlaybookNodeTemplate(
+  id: string,
+  data: UpdatePlaybookNodeTemplateRequest,
+): Promise<PlaybookNodeTemplateResponse> {
+  const response = await apiClient.patch<ApiResponse<PlaybookNodeTemplateResponse>>(
+    API_ENDPOINTS.adminPlaybookNodeTemplates.byId(id),
+    data
+  );
+  return response.data.data;
+}
+
+export async function deletePlaybookNodeTemplate(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminPlaybookNodeTemplates.byId(id));
 }
 
 export async function getDefaultModel(): Promise<AdminModelResponse | null> {

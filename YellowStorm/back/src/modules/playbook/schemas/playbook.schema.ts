@@ -5,6 +5,61 @@ import {
   ExecutionScheduleSchema,
 } from './execution-schedule.schema';
 
+@Schema({ _id: false })
+export class PlaybookMailTriggerFilters {
+  @Prop({ type: [String], default: [] })
+  from!: string[];
+
+  @Prop({ type: [String], default: [] })
+  subjectContains!: string[];
+
+  @Prop({ type: [String], default: [] })
+  bodyContains!: string[];
+
+  @Prop({ type: Boolean, default: null })
+  hasAttachments!: boolean | null;
+}
+
+export const PlaybookMailTriggerFiltersSchema = SchemaFactory.createForClass(PlaybookMailTriggerFilters);
+
+@Schema({ _id: false })
+export class PlaybookMailTrigger {
+  @Prop({ type: Boolean, default: false })
+  enabled!: boolean;
+
+  @Prop({ type: String, default: null })
+  mailboxAppKey!: string | null;
+
+  @Prop({ type: String, default: null })
+  notificationUrl!: string | null;
+
+  @Prop({ type: Date, default: null })
+  autoRenewUntil!: Date | null;
+
+  @Prop({ type: Boolean, default: false })
+  attachmentImportEnabled!: boolean;
+
+  @Prop({ type: [String], default: [] })
+  allowedAttachmentExtensions!: string[];
+
+  @Prop({ type: Boolean, default: false })
+  runtimeEnabled!: boolean;
+
+  @Prop({ type: String, default: null })
+  subscriptionId!: string | null;
+
+  @Prop({ type: String, default: null })
+  subscriptionClientState!: string | null;
+
+  @Prop({ type: Date, default: null })
+  subscriptionExpiresAt!: Date | null;
+
+  @Prop({ type: PlaybookMailTriggerFiltersSchema, default: () => ({}) })
+  filters!: PlaybookMailTriggerFilters;
+}
+
+export const PlaybookMailTriggerSchema = SchemaFactory.createForClass(PlaybookMailTrigger);
+
 export type PlaybookDocument = HydratedDocument<Playbook>;
 
 @Schema({ _id: false, strict: false })
@@ -92,11 +147,17 @@ export class PlaybookTask {
   @Prop({ type: String, required: true, trim: true, maxlength: 200 })
   title!: string;
 
-  @Prop({ type: String, trim: true, maxlength: 2000, default: '' })
+  @Prop({ type: String, trim: true, maxlength: 20000, default: '' })
   description!: string;
 
   @Prop({ type: Types.ObjectId, ref: 'Agent', default: null })
   assignedAgentId!: Types.ObjectId | null;
+
+  @Prop({ type: String, enum: ['agent', 'action'], default: 'agent' })
+  executionMode!: string;
+
+  @Prop({ type: String, enum: ['index', 'delete', 'read'], default: null })
+  selectedAction!: string | null;
 
   @Prop({ type: Number, default: 0 })
   executionOrder!: number;
@@ -154,6 +215,15 @@ export class PlaybookTask {
 
   @Prop({ type: [ToolBindingSchema], default: [], _id: false })
   toolBindings!: ToolBinding[];
+
+  @Prop({ type: Boolean, default: false })
+  advisorAutopilotEnabled!: boolean;
+
+  @Prop({ type: Number, default: 90 })
+  advisorAutopilotTargetScore!: number;
+
+  @Prop({ type: Number, default: 4 })
+  advisorAutopilotMaxTurns!: number;
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);
@@ -183,7 +253,7 @@ export class Playbook extends Document {
   @Prop({ type: String, required: true, trim: true, minlength: 2, maxlength: 100 })
   name!: string;
 
-  @Prop({ type: String, trim: true, maxlength: 2000, default: '' })
+  @Prop({ type: String, trim: true, maxlength: 20000, default: '' })
   description!: string;
 
   @Prop({ type: [PlaybookTaskSchema], default: [] })
@@ -191,6 +261,18 @@ export class Playbook extends Document {
 
   @Prop({ type: [PlaybookEdgeSchema], default: [] })
   edges!: PlaybookEdge[];
+
+  @Prop({ type: Boolean, default: true })
+  reflectionEnabled!: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  advisorAutopilotEnabled!: boolean;
+
+  @Prop({ type: Number, default: 90 })
+  advisorAutopilotTargetScore!: number;
+
+  @Prop({ type: Number, default: 4 })
+  advisorAutopilotMaxTurns!: number;
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Workspace' }], default: [] })
   workspaces!: Types.ObjectId[];
@@ -209,6 +291,9 @@ export class Playbook extends Document {
 
   @Prop({ type: ExecutionScheduleSchema, default: null })
   executionSchedule!: ExecutionSchedule | null;
+
+  @Prop({ type: PlaybookMailTriggerSchema, default: null })
+  mailTrigger!: PlaybookMailTrigger | null;
 
   createdAt!: Date;
   updatedAt!: Date;

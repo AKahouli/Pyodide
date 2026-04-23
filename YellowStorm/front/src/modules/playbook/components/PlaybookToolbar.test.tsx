@@ -7,23 +7,10 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('../utils/task-template-registry', () => ({
-  TASK_TEMPLATES: [
-    { id: 'summarizer', type: 'summarizer', title: 'Summarizer', description: 'Summarize', icon: 'FileText', color: 'blue', category: 'content', inputPorts: [{ id: 'source', name: 'Source Content', artifactKind: 'text', required: true }], outputPorts: [{ id: 'summary', name: 'Summary', artifactKind: 'text' }], promptTemplate: '', recommendedAgentTypeSlug: null, requiredToolNames: [] },
-  ],
-}));
-
-vi.mock('../utils/port-colors', () => ({
-  PORT_COLORS: { text: { icon: () => null, bg: '', ring: '', dot: '' }, document: { icon: () => null, bg: '', ring: '', dot: '' }, code: { icon: () => null, bg: '', ring: '', dot: '' }, image: { icon: () => null, bg: '', ring: '', dot: '' }, data: { icon: () => null, bg: '', ring: '', dot: '' }, dashboard: { icon: () => null, bg: '', ring: '', dot: '' } },
-}));
-
 const defaultProps = {
   pageMode: 'design' as const,
   onPageModeChange: vi.fn(),
   hasExecutionContext: false,
-  onAddStep: vi.fn(),
-  onAddStepFromTemplate: vi.fn(),
-  onAutoLayout: vi.fn(),
   onRun: vi.fn(),
   onSave: vi.fn(),
   onViewExecutions: vi.fn(),
@@ -33,14 +20,8 @@ const defaultProps = {
   isSaving: false,
   isExecuting: false,
   canRun: true,
-  executionMode: 'live' as const,
-  onExecutionModeChange: vi.fn(),
   nodeReflectionEnabled: true,
   onNodeReflectionChange: vi.fn(),
-  canUndo: false,
-  canRedo: false,
-  onUndo: vi.fn(),
-  onRedo: vi.fn(),
   onDownloadAllResults: vi.fn(),
   canDownloadAllResults: true,
 };
@@ -51,8 +32,7 @@ describe('PlaybookToolbar', () => {
     expect(screen.getByText('mode.design')).toBeInTheDocument();
     expect(screen.getByText('mode.run')).toBeInTheDocument();
     expect(screen.getByText('toolbar.designer')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.addBlankStep')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.autoLayout')).toBeInTheDocument();
+    expect(screen.getByText('toolbar.runSettings')).toBeInTheDocument();
     expect(screen.getByText('execution.downloadAllResults')).toBeInTheDocument();
     expect(screen.getByText('toolbar.saved')).toBeInTheDocument();
     expect(screen.getByText('toolbar.run')).toBeInTheDocument();
@@ -63,13 +43,6 @@ describe('PlaybookToolbar', () => {
     render(<PlaybookToolbar {...defaultProps} onPageModeChange={onPageModeChange} />);
     await userEvent.click(screen.getByText('mode.run'));
     expect(onPageModeChange).toHaveBeenCalledWith('run');
-  });
-
-  it('calls onAddStep when add button is clicked', async () => {
-    const onAddStep = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onAddStep={onAddStep} />);
-    await userEvent.click(screen.getByText('toolbar.addBlankStep'));
-    expect(onAddStep).toHaveBeenCalledOnce();
   });
 
   it('calls onRun when run button is clicked', async () => {
@@ -125,5 +98,11 @@ describe('PlaybookToolbar', () => {
     render(<PlaybookToolbar {...defaultProps} onDownloadAllResults={onDownloadAllResults} />);
     await userEvent.click(screen.getByText('execution.downloadAllResults'));
     expect(onDownloadAllResults).toHaveBeenCalledOnce();
+  });
+
+  it('shows run settings content when the popover is opened', async () => {
+    render(<PlaybookToolbar {...defaultProps} />);
+    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    expect(screen.getByText('toolbar.advisor')).toBeInTheDocument();
   });
 });

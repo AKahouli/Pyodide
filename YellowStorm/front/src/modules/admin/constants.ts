@@ -18,11 +18,22 @@ import {
   KeyRound,
   Plug,
   Cable,
+  Palette,
 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
 // Admin menu items with their required permissions
 export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    labelKey: 'appearance.title',
+    path: '/admin/appearance',
+    icon: Palette,
+    permissions: ['system.maintenance', 'system.registration', 'system.*', '*'],
+    description: 'Configure colors and logos',
+    descriptionKey: 'appearance.description',
+  },
   {
     id: 'users',
     label: 'Users',

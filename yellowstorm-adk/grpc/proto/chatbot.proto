@@ -3,6 +3,7 @@ syntax = "proto3";
 package chatbot;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 // ===== COMMON MESSAGES =====
 
@@ -47,6 +48,8 @@ message Tool {
     string prompt = 2;
     string description = 3;
     int32 top_k = 4;
+    string accessToken = 5;
+    string guidelines = 6;
 }
 
 message AgentParams {
@@ -104,6 +107,10 @@ message Document {
 message WorkspaceContext {
     string workspace_id = 1;
     repeated Document workspace_documents = 2;
+    int32 chunks = 3;
+    bool hybrid_search = 4;
+    string instruction = 5;
+    string tag = 6;
 }
 
 // ===== AGENT SUGGESTION MESSAGE =====
@@ -213,12 +220,37 @@ message CheckpointComponent {
     string label = 1;            // Checkpoint label
 }
 
+enum ChartKind {
+    CHART_KIND_UNSPECIFIED = 0;
+    CHART_KIND_BAR = 1;
+    CHART_KIND_LINE = 2;
+    CHART_KIND_AREA = 3;
+    CHART_KIND_PIE = 4;
+    CHART_KIND_SCATTER = 5;
+    CHART_KIND_COMPOSED = 6;
+}
+
+enum ChartLayout {
+    CHART_LAYOUT_UNSPECIFIED = 0;
+    CHART_LAYOUT_HORIZONTAL = 1;
+    CHART_LAYOUT_VERTICAL = 2;
+}
+
 message ChartComponent {
     string title = 1;            // Optional chart title
     string data = 2;             // JSON string of data array
     string config = 3;           // JSON string of ChartConfig
     string xAxisKey = 4;         // Key for X-axis
     string series = 5;           // JSON string of series array
+    ChartKind kind = 6;          // Chart kind. Defaults to BAR when unspecified.
+    string yAxisKey = 7;         // Optional explicit Y-axis key
+    bool stacked = 8;            // Stack compatible chart series
+    ChartLayout layout = 9;      // Chart layout orientation
+    int32 inner_radius = 10;     // Donut inner radius for pie charts
+    bool show_legend = 11;       // Whether the legend should be shown
+    bool show_grid = 12;         // Whether cartesian grid should be shown
+    string nameKey = 13;         // Label/name key for pie-like charts
+    string zAxisKey = 14;        // Optional Z axis key for scatter charts
 }
 
 message ErrorComponent {
@@ -359,6 +391,8 @@ message PlaybookTaskConfig {
     string title = 2;
     string description = 3;
     string assigned_agent_id = 4;
+    string execution_mode = 19;
+    string selected_action = 20;
     int32 execution_order = 5;
     bool interrupt_before = 6;      // Pause for approval before execution
     bool interrupt_after = 7;       // Pause for review after execution
@@ -424,6 +458,28 @@ message TaskArtifact {
     int64 size = 7;
 }
 
+message ArtifactRef {
+    string document_id = 1;
+    string workspace_id = 2;
+    string url = 3;
+    string filename = 4;
+    string mime_type = 5;
+}
+
+message PortPayload {
+    string port_id = 1;
+    string artifact_kind = 2;
+    oneof body {
+        string content = 3;
+        ArtifactRef ref = 4;
+        google.protobuf.Struct data = 5;
+    }
+    google.protobuf.Struct metadata = 6;
+    string source_task_id = 7;
+    string source_port_id = 8;
+    google.protobuf.Timestamp produced_at = 9;
+}
+
 message PlaybookEdgeConfig {
     string source_id = 1;
     string target_id = 2;
@@ -485,6 +541,8 @@ message RunPlaybookWorkflowRequest {
     repeated ValidatedTaskReplay validated_replays = 10;
     map<string, string> step_execution_modes = 11;
     map<string, string> prompt_overrides = 12;
+    google.protobuf.Struct trigger_context = 13;
+    string trigger_context_json = 14;
 }
 
 message ResumePlaybookWorkflowRequest {
@@ -507,6 +565,9 @@ message RunStepRequest {
     repeated PlaybookEdgeConfig edges = 10;
     repeated PlaybookTaskResult upstream_results = 11;
     map<string, string> prompt_overrides = 12;
+    google.protobuf.Struct trigger_context = 13;
+    repeated PortPayload node_inputs = 14;
+    repeated string declared_output_ports = 15;
 }
 
 message ResumeStepRequest {
@@ -587,6 +648,7 @@ message PlaybookTaskResult {
     SemanticMatch semantic_match = 9;
     repeated LLMPromptTraceItem llm_prompt_trace = 10;
     repeated TaskArtifact artifacts = 11;
+    repeated PortPayload emitted_payloads = 20;
 }
 
 message InterruptPayload {

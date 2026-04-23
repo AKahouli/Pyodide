@@ -8,11 +8,16 @@ export interface ConnectorFormValues {
   authSourceType: string;
   connectedAppKey: string;
   runtimeAuthConfig: string;
+  runtimeAuthStrategy: string;
+  runtimeHeaderName: string;
+  runtimeHeaderPrefix: string;
+  runtimeHeaderMappings: Array<{ id: string; key: string; value: string }>;
+  runtimeEnvMappings: Array<{ id: string; key: string; value: string }>;
   mcpTransportType: string;
   mcpServerUrl: string;
   mcpServerConfig: string;
   actionsJson: string;
-  referencedSkillIds: string;
+  referencedSkillIds: string[];
   isActive: boolean;
 }
 
@@ -23,13 +28,18 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   icon: '',
   color: '',
   authType: 'none',
-  authSourceType: 'credential',
+  authSourceType: 'none',
   connectedAppKey: '',
   runtimeAuthConfig: '',
+  runtimeAuthStrategy: 'http_header_bearer',
+  runtimeHeaderName: 'Authorization',
+  runtimeHeaderPrefix: 'Bearer ',
+  runtimeHeaderMappings: [],
+  runtimeEnvMappings: [],
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
   mcpServerConfig: '',
   actionsJson: '',
-  referencedSkillIds: '',
+  referencedSkillIds: [],
   isActive: true,
 };

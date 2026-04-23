@@ -139,21 +139,39 @@ async def listen_to_task_status_webhook(
         logger: Logger,
         webhook_url: str,
         task_image_id: Optional[str] = None,
+        logical_task_id: Optional[str] = None,
         temp_folder: Optional[str] = None,
 ):
     logger.info(f"Listening to task {task_id} status")
     if task_image_id is not None:
         logger.info(f"Listening to task Image {task_image_id} status")
+    if logical_task_id is not None:
+        logger.info(f"Listening to task Logical {logical_task_id} status")
     logger.info("Webhook listener initialized successfully")
 
     started = False
     started_image = False
+    started_logical = False
     task_finished = False
     image_finished = task_image_id is None
+    logical_finished = logical_task_id is None
 
     # Track error details for structured error responses
     task_error_details: Optional[TaskErrorDetails] = None
     image_task_error_details: Optional[TaskErrorDetails] = None
+    logical_task_error_details: Optional[TaskErrorDetails] = None
+    temp_cleanup_scheduled = False
+
+    def schedule_temp_folder_cleanup_once() -> None:
+        nonlocal temp_cleanup_scheduled
+        if temp_cleanup_scheduled or not temp_folder:
+            return
+        try:
+            delete_temp_folder.apply_async(args=[temp_folder])
+            temp_cleanup_scheduled = True
+            logger.info(f"Scheduled temp folder deletion for: {temp_folder}")
+        except Exception as e:
+            logger.exception(f"Error scheduling temp folder deletion for {temp_folder}: {e}")
 
     while not task_finished:
         task_status_future = asyncio.to_thread(get_task_status, task_id)
@@ -162,19 +180,60 @@ async def listen_to_task_status_webhook(
             if task_image_id is not None
             else None
         )
+        logical_status_future = (
+            asyncio.to_thread(get_task_status, logical_task_id)
+            if logical_task_id is not None and not logical_finished
+            else None
+        )
 
+        futures = [task_status_future]
         if image_status_future:
-            task_status, image_status = await asyncio.gather(task_status_future, image_status_future)
+            futures.append(image_status_future)
+        if logical_status_future:
+            futures.append(logical_status_future)
+
+        results = await asyncio.gather(*futures)
+        task_status = results[0]
+        result_index = 1
+        if image_status_future:
+            image_status = results[result_index]
+            result_index += 1
         else:
-            task_status = await task_status_future
             image_status = None
+        if logical_status_future:
+            logical_status = results[result_index]
+        else:
+            logical_status = None
 
         logger.info(f"Task {task_id} status: {task_status.status}")
         if task_image_id:
             logger.info(
                 f"Task {task_image_id} status Image: {image_status.status if image_status else 'No Image Task'}")
+        if logical_task_id:
+            logger.info(
+                f"Task {logical_task_id} status Logical: {logical_status.status if logical_status else 'No Logical Task'}")
 
-        if task_status.status == "SUCCESS":
+        if logical_status and logical_status.status == "FAILURE":
+            status = NotificationStatus.FAIL
+            logical_task_error_details = parse_celery_exception(
+                logical_status.result, "logical_indexing_task"
+            ) if logical_status.result else None
+            task_error_details = logical_task_error_details
+            if isinstance(logical_status.result, str):
+                metadata['error_message'] = logical_status.result
+            task_finished = True
+            logical_finished = True
+
+            if not task_image_id:
+                schedule_temp_folder_cleanup_once()
+        elif logical_status and logical_status.status == "SUCCESS":
+            logical_finished = True
+        elif logical_status and logical_status.status == "PENDING" and not started_logical:
+            started_logical = True
+
+        if task_finished:
+            pass
+        elif task_status.status == "SUCCESS":
             status = NotificationStatus.FINISH
             task_status.result = ast.literal_eval(task_status.result)
             if isinstance(task_status.result, dict):
@@ -185,15 +244,6 @@ async def listen_to_task_status_webhook(
                         metadata['graphml_path'] = value
                 metadata["dpp_moa"] = task_status.result
             task_finished = True
-
-            # Launch Celery task to delete temp folder if no image task
-            if not task_image_id and temp_folder:
-                try:
-                    # Trigger the Celery task to delete the folder
-                    delete_temp_folder.apply_async(args=[temp_folder])  # This will trigger the Celery task
-                    logger.info(f"Scheduled temp folder deletion for: {temp_folder}")
-                except Exception as e:
-                    logger.exception(f"Error scheduling temp folder deletion for {temp_folder}: {e}")
 
         elif task_status.status == "FAILURE":
             status = NotificationStatus.FAIL
@@ -206,13 +256,8 @@ async def listen_to_task_status_webhook(
 
             task_finished = True
 
-            # Launch Celery task to delete temp folder if no image task
-            if not task_image_id and temp_folder:
-                try:
-                    delete_temp_folder.apply_async(args=[temp_folder])  # Trigger Celery task for folder deletion
-                    logger.info(f"Scheduled temp folder deletion for: {temp_folder}")
-                except Exception as e:
-                    logger.exception(f"Error scheduling temp folder deletion for {temp_folder}: {e}")
+            if not task_image_id:
+                schedule_temp_folder_cleanup_once()
 
         elif task_status.status == "PENDING" and not started:
             started = True
@@ -271,32 +316,17 @@ async def listen_to_task_status_webhook(
             status_image = NotificationStatus.FINISH
             image_finished = True
 
-            # Launch Celery task to delete temp folder when both tasks are finished
-            if temp_folder and (task_status.status in ["SUCCESS", "FAILURE"]):
-                try:
-                    delete_temp_folder.apply_async(args=[temp_folder])  # Trigger Celery task for folder deletion
-                    logger.info(f"Scheduled temp folder deletion for: {temp_folder}")
-                except Exception as e:
-                    logger.exception(f"Error scheduling temp folder deletion for {temp_folder}: {e}")
-
         elif image_status.status == "FAILURE":
             status_image = NotificationStatus.FAIL
-            # Parse the image task error and create structured error details
             image_task_error_details = parse_celery_exception(image_status.result, "image_processing_task") if image_status.result else None
 
-            # Keep backward compatibility with legacy error_message_image field
             if isinstance(image_status.result, str):
                 metadata['error_message_image'] = image_status.result
 
             image_finished = True
 
-            # Launch Celery task to delete temp folder when both tasks are finished
-            if temp_folder and (task_status.status in ["SUCCESS", "FAILURE"]):
-                try:
-                    delete_temp_folder.apply_async(args=[temp_folder])  # Trigger Celery task for folder deletion
-                    logger.info(f"Scheduled temp folder deletion for: {temp_folder}")
-                except Exception as e:
-                    logger.exception(f"Error scheduling temp folder deletion for {temp_folder}: {e}")
+            if task_status.status == "FAILURE":
+                schedule_temp_folder_cleanup_once()
 
         elif image_status.status == "PENDING" and not started_image:
             started_image = True
@@ -304,28 +334,56 @@ async def listen_to_task_status_webhook(
 
         await sleep(5)
 
+    # Continue to check for logical status if logical_task_id exists
+    status_logical = None
+    while not logical_finished:
+        logical_status = await asyncio.to_thread(get_task_status, logical_task_id)
+        logger.info(f"Task {logical_task_id} status Logical: {logical_status.status if logical_status else 'No Logical Task'}")
+
+        if logical_status.status == "SUCCESS":
+            status_logical = NotificationStatus.FINISH
+            logical_finished = True
+            if isinstance(logical_status.result, str):
+                try:
+                    logical_result = ast.literal_eval(logical_status.result)
+                    if isinstance(logical_result, dict):
+                        metadata["logical_indexing"] = logical_result
+                except Exception:
+                    pass
+        elif logical_status.status == "FAILURE":
+            status_logical = NotificationStatus.FAIL
+            logical_task_error_details = parse_celery_exception(
+                logical_status.result, "logical_indexing_task"
+            ) if logical_status.result else None
+            if isinstance(logical_status.result, str):
+                metadata['error_message_logical'] = logical_status.result
+            logical_finished = True
+        elif logical_status.status == "PENDING" and not started_logical:
+            started_logical = True
+
+        await sleep(5)
+
     if task_image_id:
-        # Send final notification with both main task and image task results
-        if task_error_details or image_task_error_details or status == NotificationStatus.FAIL or status_image == NotificationStatus.FAIL:
-            # Use structured error payload for failures
+        if task_error_details or image_task_error_details or logical_task_error_details or status == NotificationStatus.FAIL or status_image == NotificationStatus.FAIL or status_logical == NotificationStatus.FAIL:
             notification_payload = WebhookNotificationPayload(
                 event_type="indexation_task",
                 task_id=task_id,
                 metadata=metadata,
                 status=status,
                 status_image=status_image,
+                status_logical=status_logical,
                 error_details=task_error_details,
                 error_details_image=image_task_error_details
             )
             final_data = notification_payload.dict()
         else:
-            # Use legacy format for successful tasks (backward compatibility)
             notification_payload = WebhookNotificationPayload(
                 event_type="indexation_task",
                 task_id=task_id,
                 metadata=metadata,
                 status=status,
                 status_image=status_image,
+                status_logical=status_logical,
             )
             final_data = notification_payload.model_dump()
 

@@ -1,3 +1,4 @@
+import { forwardRef } from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookNode } from './PlaybookNode';
@@ -44,7 +45,7 @@ vi.mock('@xyflow/react', () => ({
 }));
 
 vi.mock('@/components/ai-elements/node', () => ({
-  Node: ({ children }: any) => <div>{children}</div>,
+  Node: forwardRef<HTMLDivElement, any>(({ children, handles, ...props }, ref) => <div ref={ref} {...props}>{children}</div>),
   NodeHeader: ({ children }: any) => <div>{children}</div>,
   NodeTitle: ({ children }: any) => <div>{children}</div>,
   NodeContent: ({ children }: any) => <div>{children}</div>,
@@ -66,7 +67,9 @@ vi.mock('@/components/ui/tooltip', () => ({
 
 vi.mock('@/components/ui/context-menu', () => ({
   ContextMenu: ({ children }: any) => <>{children}</>,
-  ContextMenuTrigger: ({ children }: any) => <>{children}</>,
+  ContextMenuTrigger: ({ children, asChild, ...props }: any) => asChild
+    ? <>{children}</>
+    : <div {...props}>{children}</div>,
   ContextMenuContent: ({ children }: any) => <>{children}</>,
   ContextMenuItem: ({ children }: any) => <>{children}</>,
   ContextMenuSeparator: () => null,

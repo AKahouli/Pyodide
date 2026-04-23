@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -67,6 +68,9 @@ export class WorkspaceDocumentController {
           type: 'string',
           format: 'binary',
         },
+        folderId: {
+          type: 'string',
+        },
       },
     },
   })
@@ -76,6 +80,7 @@ export class WorkspaceDocumentController {
     @CurrentUser() user: UserDocument,
     @Param('workspaceId') workspaceId: string,
     @UploadedFile() file: MulterFile,
+    @Body() body?: { folderId?: string },
   ) {
     return this.workspaceDocumentService.uploadSmallFile(
       workspaceId,
@@ -83,6 +88,7 @@ export class WorkspaceDocumentController {
       file.buffer,
       file.originalname,
       file.mimetype,
+      body?.folderId,
     );
   }
 
@@ -219,6 +225,33 @@ export class WorkspaceDocumentController {
   }
 
   /**
+   * Get all documents and folders in sorted view (folders first, then documents)
+   * NOTE: This route MUST come before :docId route to avoid "hierarchical" being captured as a document ID
+   */
+  @Get('hierarchical')
+  @ApiOperation({ summary: 'Get all documents and folders in sorted structure' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async findAllHierarchical(
+    @Param('workspaceId') workspaceId: string,
+    @Query() query: DocumentQueryDto,
+  ) {
+    return this.workspaceDocumentService.findAllSorted(workspaceId, query);
+  }
+
+  /**
+   * Get all folders (no pagination, for sidebar tree view)
+   * NOTE: This route MUST come before :docId route to avoid "folders" being captured as a document ID
+   */
+  @Get('folders/all')
+  @ApiOperation({ summary: 'Get all folders in workspace' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async getAllFolders(
+    @Param('workspaceId') workspaceId: string,
+  ) {
+    return this.workspaceDocumentService.getAllFolders(workspaceId);
+  }
+
+  /**
    * Get document metadata
    */
   @Get(':docId')
@@ -299,5 +332,101 @@ export class WorkspaceDocumentController {
       docId,
     );
     return { message: 'Document deleted successfully' };
+  }
+
+  // ===== Folder Management Endpoints =====
+
+  /**
+   * Create a folder
+   */
+  @Post('folders')
+  @ApiOperation({ summary: 'Create a new folder in the workspace' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async createFolder(
+    @CurrentUser() user: UserDocument,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: { name: string; parentId?: string },
+  ) {
+    return this.workspaceDocumentService.createFolder(
+      workspaceId,
+      user._id.toString(),
+      body.name,
+      body.parentId,
+    );
+  }
+
+  /**
+   * Rename a folder
+   */
+  @Patch('folders/:folderId')
+  @ApiOperation({ summary: 'Rename a folder' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiParam({ name: 'folderId', description: 'Folder ID' })
+  async renameFolder(
+    @CurrentUser() user: UserDocument,
+    @Param('workspaceId') workspaceId: string,
+    @Param('folderId') folderId: string,
+    @Body() body: { name: string },
+  ) {
+    return this.workspaceDocumentService.renameFolder(
+      folderId,
+      body.name,
+      user._id.toString(),
+    );
+  }
+
+  /**
+   * Delete a folder and all its contents
+   */
+  @Delete('folders/:folderId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete a folder and all its contents' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiParam({ name: 'folderId', description: 'Folder ID' })
+  async deleteFolder(
+    @CurrentUser() user: UserDocument,
+    @Param('workspaceId') workspaceId: string,
+    @Param('folderId') folderId: string,
+  ) {
+    return this.workspaceDocumentService.deleteFolder(
+      workspaceId,
+      user._id.toString(),
+      folderId,
+    );
+  }
+
+  /**
+   * Get contents of a specific folder
+   */
+  @Get('folders/:folderId')
+  @ApiOperation({ summary: 'Get contents of a folder' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  @ApiParam({ name: 'folderId', description: 'Folder ID' })
+  async getFolderContents(
+    @Param('workspaceId') workspaceId: string,
+    @Param('folderId') folderId: string,
+    @Query() query: DocumentQueryDto,
+  ) {
+    return this.workspaceDocumentService.getFolderContents(workspaceId, folderId, query);
+  }
+
+  /**
+   * Move documents to a folder
+   */
+  @Post('move')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Move documents to a different folder' })
+  @ApiParam({ name: 'workspaceId', description: 'Workspace ID' })
+  async moveDocuments(
+    @CurrentUser() user: UserDocument,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: { documentIds: string[]; targetFolderId?: string },
+  ) {
+    return this.workspaceDocumentService.moveDocuments(
+      workspaceId,
+      body.documentIds,
+      body.targetFolderId,
+      user._id.toString(),
+    );
   }
 }

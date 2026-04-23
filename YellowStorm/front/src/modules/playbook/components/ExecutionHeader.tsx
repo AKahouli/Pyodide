@@ -59,9 +59,6 @@ export function ExecutionHeader({ execution, playbook }: Props) {
         {execution && (
           <>
             <PlaybookStatusBadge status={visibleStatus || execution.status} size="md" />
-            <span className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-              {getExecutionModeLabel(execution.executionMode)}
-            </span>
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               <span>{formatDuration(execution.durationMs)}</span>

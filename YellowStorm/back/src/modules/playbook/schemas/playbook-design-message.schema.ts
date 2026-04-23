@@ -22,7 +22,7 @@ export class PlaybookDesignMessage extends Document {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   createdBy!: Types.ObjectId;
 
-  @Prop({ type: String, maxlength: 5000, default: '' })
+  @Prop({ type: String, maxlength: 20000, default: '' })
   userQuery!: string;
 
   @Prop({ type: String, default: '' })

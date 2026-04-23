@@ -10,10 +10,11 @@ import {
   getExecution,
   getPlaybook,
   getPlaybooks,
+  syncPlaybookTriggerMailSubscription,
   toggleFavorite,
   updatePlaybook,
-  upsertPlaybookSchedule,
-  clearPlaybookSchedule,
+  upsertPlaybookTriggerSchedule,
+  clearPlaybookTriggerSchedule,
   rerunPlaybookStep,
   resumePlaybookFromStep,
 } from './api';
@@ -94,6 +95,10 @@ describe('playbook api', () => {
     await updatePlaybook('p1', { tasks: [task] });
 
     expect(apiClientMock.patch).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.byId('p1'), {
+      reflectionEnabled: undefined,
+      advisorAutopilotEnabled: undefined,
+      advisorAutopilotTargetScore: undefined,
+      advisorAutopilotMaxTurns: undefined,
       tasks: [{
         id: 'task-1',
         title: 'Step 1',
@@ -121,6 +126,24 @@ describe('playbook api', () => {
     });
   });
 
+  it('keeps playbook advisor settings when updating without tasks', async () => {
+    apiClientMock.patch.mockResolvedValueOnce({ data: { data: { id: 'p1' } } });
+
+    await updatePlaybook('p1', {
+      reflectionEnabled: false,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 95,
+      advisorAutopilotMaxTurns: 3,
+    });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.byId('p1'), {
+      reflectionEnabled: false,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 95,
+      advisorAutopilotMaxTurns: 3,
+    });
+  });
+
   it('executes and gets execution details', async () => {
     apiClientMock.post.mockResolvedValueOnce({ data: { data: { executionId: 'e1' } } });
     const started = await executePlaybook('p1', { query: 'test run' });
@@ -132,15 +155,15 @@ describe('playbook api', () => {
     expect(apiClientMock.get).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.execution('p1', 'e1'));
   });
 
-  it('upserts and clears playbook schedule', async () => {
+  it('upserts and clears playbook trigger schedule', async () => {
     apiClientMock.put.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
-    await upsertPlaybookSchedule('p1', {
+    await upsertPlaybookTriggerSchedule('p1', {
       enabled: true,
       timezone: 'UTC',
       type: 'daily',
       daily: { timesLocal: ['09:00'] },
     });
-    expect(apiClientMock.put).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'), {
+    expect(apiClientMock.put).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.triggerSchedule('p1'), {
       enabled: true,
       timezone: 'UTC',
       type: 'daily',
@@ -148,8 +171,25 @@ describe('playbook api', () => {
     });
 
     apiClientMock.delete.mockResolvedValueOnce({ data: { data: { id: 'p1', executionSchedule: null } } });
-    await clearPlaybookSchedule('p1');
-    expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.schedule('p1'));
+    await clearPlaybookTriggerSchedule('p1');
+    expect(apiClientMock.delete).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.triggerSchedule('p1'));
+  });
+
+  it('syncs playbook mail subscription', async () => {
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { id: 'sub-1' } } });
+
+    await syncPlaybookTriggerMailSubscription('p1', {
+      notificationUrl: 'https://example.com/api/v1/playbooks/mail/webhook',
+      autoRenewUntil: '2026-05-01T23:59:59.999Z',
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      `${API_ENDPOINTS.playbooks.triggerMail('p1')}/sync-subscription`,
+      {
+        notificationUrl: 'https://example.com/api/v1/playbooks/mail/webhook',
+        autoRenewUntil: '2026-05-01T23:59:59.999Z',
+      },
+    );
   });
 
   it('toggles favorite, bulk deletes, clones, and clone-shares', async () => {

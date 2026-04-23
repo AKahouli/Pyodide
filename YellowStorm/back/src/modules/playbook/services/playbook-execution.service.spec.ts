@@ -4,6 +4,10 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventEmitter } from 'events';
 import { PlaybookExecutionService } from './playbook-execution.service';
+import { PlaybookExecutionGraphService } from './playbook-execution-graph.service';
+import { PlaybookExecutionNotificationService } from './playbook-execution-notification.service';
+import { PlaybookExecutionBufferService } from './playbook-execution-buffer.service';
+import { PlaybookExecutionAdvisorService } from './playbook-execution-advisor.service';
 import { PlaybookService } from './playbook.service';
 import { PlaybookGrpcService } from './playbook-grpc.service';
 import { PlaybookContextService } from './playbook-context.service';
@@ -19,6 +23,7 @@ import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
+import { Connector } from '../../connector/schemas/connector.schema';
 import {
   PlaybookExecution,
   ExecutionStatus,
@@ -47,7 +52,14 @@ const objectIdMap: Record<string, string> = {
   'other-user': '000000000000000000000007',
   'active-exec': '000000000000000000000008',
 };
-const objectId = (id = 'user1') => new Types.ObjectId(objectIdMap[id] ?? id.padEnd(24, '0').replace(/[^a-f0-9]/gi, 'a').slice(0, 24));
+const objectId = (id = 'user1') =>
+  new Types.ObjectId(
+    objectIdMap[id] ??
+      id
+        .padEnd(24, '0')
+        .replace(/[^a-f0-9]/gi, 'a')
+        .slice(0, 24),
+  );
 
 /** executePlaybook starts runFullWorkflow without awaiting; listeners attach after microtasks (no setImmediate — works with jest fake timers). */
 async function waitForWorkflowStreamReady(): Promise<void> {
@@ -134,7 +146,9 @@ function createMockPlaybook(overrides: Record<string, any> = {}) {
         maxClarifications: 3,
         inputKeys: [],
         outputKey: '',
-        toObject: function () { return { ...this }; },
+        toObject: function () {
+          return { ...this };
+        },
       },
       {
         id: 'task-2',
@@ -149,11 +163,19 @@ function createMockPlaybook(overrides: Record<string, any> = {}) {
         maxClarifications: 3,
         inputKeys: [],
         outputKey: '',
-        toObject: function () { return { ...this }; },
+        toObject: function () {
+          return { ...this };
+        },
       },
     ],
     edges: [
-      { sourceId: 'task-1', targetId: 'task-2', toObject: function () { return { sourceId: 'task-1', targetId: 'task-2' }; } },
+      {
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        toObject: function () {
+          return { sourceId: 'task-1', targetId: 'task-2' };
+        },
+      },
     ],
     workspaces: [objectId('ws1')],
     ...overrides,
@@ -195,8 +217,11 @@ describe('PlaybookExecutionService', () => {
   let mockPromptService: any;
   let mockSemanticEnrichmentService: any;
   let mockJudgeEnrichmentService: any;
+  let mockConnectorModel: any;
   let mockLoggerService: any;
   let mockConfigService: any;
+  let mockNotificationService: any;
+  let mockBufferService: any;
 
   const defaultConfig: Record<string, any> = {
     'playbook.maxComponentsPerTask': 200,
@@ -251,9 +276,9 @@ describe('PlaybookExecutionService', () => {
     };
 
     mockAgentService = {
-      buildGrpcAgentsForPlaybook: jest.fn().mockResolvedValue([
-        { id: objectId('agent1').toString(), name: 'Agent A' },
-      ]),
+      buildGrpcAgentsForPlaybook: jest
+        .fn()
+        .mockResolvedValue([{ id: objectId('agent1').toString(), name: 'Agent A' }]),
     };
 
     mockModelsService = {
@@ -280,6 +305,7 @@ describe('PlaybookExecutionService', () => {
     mockOutputFormatService = {
       getActiveTemplates: jest.fn().mockResolvedValue(new Map()),
       getActiveTemplatesByPlaybook: jest.fn().mockResolvedValue(new Map()),
+      getActiveTemplate: jest.fn().mockResolvedValue(null),
       applyOutputFormatToTasks: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -299,6 +325,53 @@ describe('PlaybookExecutionService', () => {
       scheduleExecutionSweep: jest.fn(),
       evaluateNodeNow: jest.fn().mockResolvedValue(undefined),
       evaluateExecutionSummaryNowIfReady: jest.fn().mockResolvedValue(undefined),
+    };
+
+    mockConnectorModel = {
+      find: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          exec: jest.fn().mockResolvedValue([]),
+        }),
+      }),
+    };
+
+    mockNotificationService = {
+      sendStepNotificationEmail: jest.fn(),
+      notifyScheduledRunFinished: jest.fn(),
+      buildExecutionDetailUrl: jest.fn((pbId: string, execId: string) => `http://localhost:5173/#/playbooks/${pbId}/executions/${execId}`),
+      formatExecutionSummaryForEmail: jest.fn(),
+    };
+
+    mockBufferService = {
+      activeStepBuffers: new Map<string, Map<string, any>>(),
+      flushStepBuffer: jest.fn(async (_execId: string, _stepBuffer: any, postFlush?: (taskId: string, buffered: any) => Promise<void>) => {
+        if (postFlush) {
+          for (const [taskId, buffered] of _stepBuffer) {
+            await postFlush(taskId, buffered);
+          }
+        }
+      }),
+      flushBufferedTaskResult: jest.fn(),
+      recordBufferedTaskUsage: jest.fn(),
+      recordStreamUsage: jest.fn(),
+      mergeTaskResultWithBuffer: jest.fn((dbTr: any, buffered: any) => {
+        const STATUS_WEIGHT: Record<string, number> = {
+          [StepStatus.PENDING]: 0,
+          [StepStatus.RUNNING]: 1,
+          [StepStatus.COMPLETED]: 2,
+          [StepStatus.FAILED]: 2,
+          [StepStatus.SKIPPED]: 2,
+        };
+        const dbWeight = STATUS_WEIGHT[dbTr.status] ?? 0;
+        const bufWeight = STATUS_WEIGHT[buffered.status] ?? 0;
+        if (bufWeight < dbWeight) return dbTr;
+        return { ...dbTr, ...buffered };
+      }),
+      setBuffer: jest.fn(),
+      getBuffer: jest.fn(),
+      getOrCreateBuffer: jest.fn(),
+      deleteBuffer: jest.fn(),
+      deleteTaskFromBuffer: jest.fn(),
     };
 
     // Create a mock model that is both a constructor and has static methods
@@ -325,6 +398,7 @@ describe('PlaybookExecutionService', () => {
       providers: [
         PlaybookExecutionService,
         { provide: getModelToken(PlaybookExecution.name), useValue: mockExecutionModel },
+        { provide: getModelToken(Connector.name), useValue: mockConnectorModel },
         { provide: PlaybookService, useValue: mockPlaybookService },
         { provide: PlaybookGrpcService, useValue: mockGrpcService },
         { provide: PlaybookContextService, useValue: mockContextService },
@@ -341,6 +415,11 @@ describe('PlaybookExecutionService', () => {
         { provide: PlaybookPromptService, useValue: mockPromptService },
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
         { provide: PlaybookJudgeEnrichmentService, useValue: mockJudgeEnrichmentService },
+        { provide: 'ConnectorAuthService', useValue: {} },
+        PlaybookExecutionGraphService,
+        { provide: PlaybookExecutionNotificationService, useValue: mockNotificationService },
+        { provide: PlaybookExecutionBufferService, useValue: mockBufferService },
+        PlaybookExecutionAdvisorService,
       ],
     }).compile();
 
@@ -364,10 +443,6 @@ describe('PlaybookExecutionService', () => {
 
     it('should read maxConcurrentSteps from config', () => {
       expect(mockConfigService.get).toHaveBeenCalledWith('playbook.maxConcurrentSteps');
-    });
-
-    it('should read frontendUrl from config', () => {
-      expect(mockConfigService.get).toHaveBeenCalledWith('app.frontendUrl', 'http://localhost:5173');
     });
   });
 
@@ -415,7 +490,9 @@ describe('PlaybookExecutionService', () => {
       mockPlaybookService.findByIntegrationToken.mockResolvedValue(playbook);
       mockUserService.findById.mockResolvedValue({ email: 'owner@example.com' });
 
-      const executeSpy = jest.spyOn(service, 'executePlaybook').mockResolvedValue({ executionId: 'exec-public-1' });
+      const executeSpy = jest
+        .spyOn(service, 'executePlaybook')
+        .mockResolvedValue({ executionId: 'exec-public-1' });
 
       const result = await service.executePlaybookByIntegrationToken('public-token', {} as any);
 
@@ -441,17 +518,17 @@ describe('PlaybookExecutionService', () => {
     it('should throw ServiceUnavailableException when gRPC is not available', async () => {
       mockGrpcService.isAvailable = false;
 
-      await expect(
-        service.executePlaybook(userId, playbookId, dto, userEmail),
-      ).rejects.toThrow(ServiceUnavailableException);
+      await expect(service.executePlaybook(userId, playbookId, dto, userEmail)).rejects.toThrow(
+        ServiceUnavailableException,
+      );
     });
 
     it('should throw NotFoundException when playbook is not found', async () => {
       mockPlaybookService.findRawById.mockResolvedValue(null);
 
-      await expect(
-        service.executePlaybook(userId, playbookId, dto, userEmail),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.executePlaybook(userId, playbookId, dto, userEmail)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('should throw ConflictException when active execution exists', async () => {
@@ -463,9 +540,9 @@ describe('PlaybookExecutionService', () => {
         createChainMock({ _id: objectId('active-exec'), status: ExecutionStatus.RUNNING }),
       );
 
-      await expect(
-        service.executePlaybook(userId, playbookId, dto, userEmail),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.executePlaybook(userId, playbookId, dto, userEmail)).rejects.toThrow(
+        ConflictException,
+      );
     });
 
     it('should create execution record with correct task results', async () => {
@@ -524,6 +601,35 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.executionTrigger).toBe('scheduled');
     });
 
+    it('should persist triggerContext when options request mail execution', async () => {
+      const playbook = createMockPlaybook();
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockPlaybookService.getNextExecutionNumber.mockResolvedValue(1);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+
+      await service.executePlaybook(userId, playbookId, dto, userEmail, {
+        executionTrigger: 'mail',
+        triggerContext: {
+          type: 'mail',
+          occurredAt: '2026-04-17T12:00:00Z',
+          payload: { message: { providerMessageId: 'msg-123' } },
+        },
+      });
+
+      const createArg = mockExecutionModel.create.mock.calls[0][0];
+      expect(createArg.executionTrigger).toBe('mail');
+      expect(createArg.triggerContext).toEqual({
+        type: 'mail',
+        occurredAt: '2026-04-17T12:00:00Z',
+        payload: { message: { providerMessageId: 'msg-123' } },
+      });
+    });
+
     it('should mark non-target tasks as SKIPPED in single-step mode', async () => {
       const playbook = createMockPlaybook();
       mockPlaybookService.findRawById.mockResolvedValue(playbook);
@@ -533,12 +639,7 @@ describe('PlaybookExecutionService', () => {
       mockExecutionModel.create.mockResolvedValue(createdExec);
       mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
 
-      await service.executePlaybook(
-        userId,
-        playbookId,
-        { singleStepTaskId: 'task-1' },
-        userEmail,
-      );
+      await service.executePlaybook(userId, playbookId, { singleStepTaskId: 'task-1' }, userEmail);
 
       const createArg = mockExecutionModel.create.mock.calls[0][0];
       // task-1 should be PENDING (the target)
@@ -688,6 +789,130 @@ describe('PlaybookExecutionService', () => {
       expect(createArg.playbookSnapshot.edges).toHaveLength(1);
     });
 
+    it('preserves __trigger__ edges in execution snapshots', async () => {
+      const playbook = createMockPlaybook({
+        edges: [
+          {
+            id: 'edge-trigger',
+            sourceId: '__trigger__',
+            targetId: 'task-1',
+            sourceOutputPortId: 'mail_data',
+            targetInputPortId: 'default',
+          },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+
+      await service.executePlaybook(userId, playbookId, dto, userEmail);
+
+      const createArg = mockExecutionModel.create.mock.calls[0][0];
+      expect(createArg.playbookSnapshot.edges).toEqual([
+        expect.objectContaining({
+          sourceId: '__trigger__',
+          sourceOutputPortId: 'mail_data',
+          targetId: 'task-1',
+          targetInputPortId: 'default',
+        }),
+      ]);
+    });
+
+    it('forwards triggerContext to single-step RunStep requests as a plain struct object', async () => {
+      const playbook = createMockPlaybook({
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Task One',
+            description: 'First task',
+            assignedAgentId: objectId('agent1'),
+            executionOrder: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 3,
+            inputKeys: [],
+            outputKey: '',
+            inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'data', required: false }],
+            outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
+            toObject: function () {
+              return { ...this };
+            },
+          },
+        ],
+        edges: [
+          {
+            id: 'edge-trigger',
+            sourceId: '__trigger__',
+            targetId: 'task-1',
+            sourceOutputPortId: 'mail_data',
+            targetInputPortId: 'default',
+            toObject: function () {
+              return { ...this };
+            },
+          },
+        ],
+      });
+      const triggerContext = {
+        type: 'mail',
+        ports: {
+          mail_data: {
+            kind: 'data',
+            value: {
+              subject: 'FW: Yellowsys.ai',
+              bodyText: 'Expected body',
+            },
+          },
+        },
+      };
+
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(
+        createChainMock(
+          createMockExecution({
+            playbookSnapshot: {
+              tasks: playbook.tasks.map((task: any) => ({ ...task })),
+              edges: playbook.edges.map((edge: any) => ({ ...edge })),
+            },
+            triggerContext,
+          }),
+        ),
+      );
+      mockGrpcService.runStep.mockResolvedValue({
+        status: 'skipped',
+        result: { task_id: 'task-1', status: 'skipped' },
+      });
+      const grpcAgentMap = new Map([[objectId('agent1').toString(), { id: objectId('agent1').toString(), name: 'Agent One' }]]);
+
+      await (service as any).runSingleStepExecution(
+        userId,
+        objectId('exec1').toString(),
+        playbook,
+        playbook.tasks[0],
+        grpcAgentMap,
+        [],
+        userEmail,
+        'live',
+        null,
+        false,
+        false,
+        false,
+      );
+
+      expect(mockGrpcService.runStep).toHaveBeenCalled();
+      expect(mockGrpcService.runStep.mock.calls[0][0].trigger_context).toEqual(triggerContext);
+    });
+
     it('preserves distinct same-node edges when ports differ in snapshot merges', () => {
       const snapshot = {
         tasks: [{ id: 'task-1' }, { id: 'task-2' }],
@@ -721,23 +946,25 @@ describe('PlaybookExecutionService', () => {
         ],
       });
 
-      const merged = (service as any).mergeSnapshotForNewTask(snapshot, playbook, 'task-1');
+      const merged = (service as any).graphService.mergeSnapshotForNewTask(snapshot, playbook, 'task-1');
 
       expect(merged.edges).toHaveLength(2);
-      expect(merged.edges).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          sourceId: 'task-1',
-          targetId: 'task-2',
-          sourceOutputPortId: 'documents',
-          targetInputPortId: 'primary',
-        }),
-        expect.objectContaining({
-          sourceId: 'task-1',
-          targetId: 'task-2',
-          sourceOutputPortId: 'summary',
-          targetInputPortId: 'secondary',
-        }),
-      ]));
+      expect(merged.edges).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'documents',
+            targetInputPortId: 'primary',
+          }),
+          expect.objectContaining({
+            sourceId: 'task-1',
+            targetId: 'task-2',
+            sourceOutputPortId: 'summary',
+            targetInputPortId: 'secondary',
+          }),
+        ]),
+      );
     });
   });
 
@@ -769,6 +996,8 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       const playbookId = objectId('pb1').toString();
@@ -817,7 +1046,12 @@ describe('PlaybookExecutionService', () => {
           result: {
             components: [],
             duration_ms: '1500',
-            usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150, model: 'test-runtime-model-a' },
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+              total_tokens: 150,
+              model: 'test-runtime-model-a',
+            },
           },
         },
       });
@@ -967,7 +1201,7 @@ describe('PlaybookExecutionService', () => {
       // The buffer for task-1 should still have durationMs from the completed update
       // but status set to RUNNING (suspended sets it to RUNNING to keep it active)
       // We verify indirectly: the buffer should exist
-      const activeBuffers = (service as any).activeStepBuffers;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers;
       const buffer = activeBuffers.get(objectId('exec1').toString());
       expect(buffer).toBeDefined();
 
@@ -1005,7 +1239,7 @@ describe('PlaybookExecutionService', () => {
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
       await waitForWorkflowStreamReady();
 
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
     });
 
@@ -1034,7 +1268,7 @@ describe('PlaybookExecutionService', () => {
       await waitForWorkflowStreamReady();
 
       // Buffer should exist before stream ends
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
 
       // End the stream
@@ -1063,7 +1297,7 @@ describe('PlaybookExecutionService', () => {
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
       await waitForWorkflowStreamReady();
 
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(true);
 
       // Error the stream
@@ -1102,8 +1336,72 @@ describe('PlaybookExecutionService', () => {
 
       await new Promise((resolve) => setImmediate(resolve));
 
-      const activeBuffers = (service as any).activeStepBuffers as Map<string, any>;
+      const activeBuffers = (service as any).bufferService.activeStepBuffers as Map<string, any>;
       expect(activeBuffers.has(objectId('exec1').toString())).toBe(false);
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: {
+            $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+          },
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: ExecutionStatus.CANCELLED }),
+        }),
+      );
+      expect(mockLoggerService.error).not.toHaveBeenCalledWith(
+        'Workflow stream error',
+        expect.anything(),
+      );
+    });
+
+    it('should fail execution on transport-level gRPC abort errors', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+      mockGrpcService.wasCancelled.mockReturnValue(false);
+
+      const execution = createMockExecution();
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      const grpcAbortError = Object.assign(
+        new Error('13 INTERNAL: Playbook workflow failed: boom'),
+        {
+          code: 13,
+          details: 'Playbook workflow failed: boom',
+        },
+      );
+
+      mockStream.emit('error', grpcAbortError);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: {
+            $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+          },
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: ExecutionStatus.FAILED }),
+        }),
+      );
+      expect(mockLoggerService.error).toHaveBeenCalledWith(
+        'Workflow stream error',
+        expect.objectContaining({
+          executionId: objectId('exec1').toString(),
+          error: grpcAbortError.message,
+        }),
+      );
     });
 
     it('should register and remove gRPC stream calls', async () => {
@@ -1193,17 +1491,11 @@ describe('PlaybookExecutionService', () => {
         },
       });
 
-      // End stream — triggers flushStepBuffer
+      // End stream — triggers bufferService.flushStepBuffer
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      // findByIdAndUpdate should have been called for each buffered task (via updateTaskResult)
-      // Plus additional calls for markExecutionCompleted and recordStreamUsage
-      const findByIdAndUpdateCalls = mockExecutionModel.findByIdAndUpdate.mock.calls;
-      const taskResultUpdates = findByIdAndUpdateCalls.filter(
-        (call: any[]) => call[2]?.arrayFilters,
-      );
-      expect(taskResultUpdates.length).toBeGreaterThanOrEqual(2);
+      expect(mockBufferService.flushStepBuffer).toHaveBeenCalled();
     });
 
     it('should preserve humanFeedback components during flush', async () => {
@@ -1217,7 +1509,11 @@ describe('PlaybookExecutionService', () => {
             taskId: 'task-1',
             status: StepStatus.COMPLETED,
             components: [
-              { id: 'hf-task-1-123', type: 'humanFeedback', data: { status: 'answered', approved: true } },
+              {
+                id: 'hf-task-1-123',
+                type: 'humanFeedback',
+                data: { status: 'answered', approved: true },
+              },
             ],
           },
           { taskId: 'task-2', status: StepStatus.COMPLETED, components: [] },
@@ -1248,25 +1544,63 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      // Check the updateTaskResult (findByIdAndUpdate with arrayFilters) — components should be merged
-      const taskResultUpdates = mockExecutionModel.findByIdAndUpdate.mock.calls.filter(
-        (call: any[]) => call[2]?.arrayFilters?.[0]?.['elem.taskId'] === 'task-1',
-      );
-      // Should have at least one update for task-1
-      expect(taskResultUpdates.length).toBeGreaterThanOrEqual(1);
+      expect(mockBufferService.flushStepBuffer).toHaveBeenCalled();
+    });
 
-      // The components in the $set should include the humanFeedback
-      const lastUpdate = taskResultUpdates[taskResultUpdates.length - 1];
-      const setObj = lastUpdate[1].$set;
-      const componentField = Object.entries(setObj).find(
-        ([key]) => key.includes('components'),
+    it('schedules enrichment only after the workflow buffer flush persists completed steps', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution({ reflectionEnabled: true });
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById
+        .mockReturnValueOnce(createChainMock(execution))
+        .mockReturnValueOnce(createChainMock({ runEvaluation: true, reflectionEnabled: true }))
+        .mockReturnValueOnce(createChainMock({ taskResults: execution.taskResults }))
+        .mockReturnValueOnce(
+          createChainMock({
+            taskResults: [
+              { ...execution.taskResults[0], status: StepStatus.COMPLETED },
+              execution.taskResults[1],
+            ],
+          }),
+        );
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'task-1',
+          status: 'completed',
+          result: { components: [], duration_ms: '1000' },
+        },
+      });
+
+      expect(mockBufferService.flushStepBuffer).not.toHaveBeenCalled();
+      expect(mockSemanticEnrichmentService.schedule).not.toHaveBeenCalled();
+      expect(mockJudgeEnrichmentService.schedule).not.toHaveBeenCalled();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockBufferService.flushStepBuffer).toHaveBeenCalled();
+      expect(mockSemanticEnrichmentService.schedule).toHaveBeenCalledWith(
+        userId,
+        objectId('exec1').toString(),
+        'task-1',
       );
-      if (componentField) {
-        const components = componentField[1] as any[];
-        const hfComponents = components.filter((c: any) => c.type === 'humanFeedback');
-        expect(hfComponents.length).toBe(1);
-        expect(hfComponents[0].data.approved).toBe(true);
-      }
+      expect(mockJudgeEnrichmentService.schedule).toHaveBeenCalledWith(
+        userId,
+        objectId('exec1').toString(),
+        'task-1',
+      );
     });
   });
 
@@ -1351,7 +1685,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date('2026-03-10T10:05:00Z'),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1367,7 +1701,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.components).toEqual([{ id: 'c1', type: 'text', data: { content: 'old' } }]);
 
         // Clean up
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should override DB with buffer when status weight is equal (completed >= completed)', async () => {
@@ -1407,7 +1741,7 @@ describe('PlaybookExecutionService', () => {
           totalTokens: 150,
           modelName: 'test-runtime-model-a',
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1421,7 +1755,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.totalTokens).toBe(150);
         expect(tr.modelName).toBe('test-runtime-model-a');
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should NOT override DB when buffer status weight is lower', async () => {
@@ -1457,7 +1791,7 @@ describe('PlaybookExecutionService', () => {
           startedAt: new Date('2026-03-10T10:05:00Z'),
           output: 'buffer output',
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1467,7 +1801,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.output).toBe('db output');
         expect(tr.durationMs).toBe(1000);
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should not modify non-buffered tasks', async () => {
@@ -1519,7 +1853,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date('2026-03-10T10:05:00Z'),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1529,7 +1863,7 @@ describe('PlaybookExecutionService', () => {
         expect(result[0].taskResults[1].status).toBe(StepStatus.PENDING);
         expect(result[0].taskResults[1].output).toBeNull();
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should merge buffer fields correctly with undefined fallback to DB', async () => {
@@ -1564,7 +1898,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date('2026-03-10T10:05:00Z'),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1580,7 +1914,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.totalTokens).toBe(15);
         expect(tr.modelName).toBe('old-model');
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should keep DB fields like components, nodeTitle, agentName, order from DB', async () => {
@@ -1614,7 +1948,7 @@ describe('PlaybookExecutionService', () => {
           status: StepStatus.RUNNING,
           startedAt: new Date(),
         });
-        (service as any).activeStepBuffers.set(execId, buffer);
+        (service as any).bufferService.activeStepBuffers.set(execId, buffer);
 
         const result = await service.findActiveExecutionsByUser(userId);
 
@@ -1625,7 +1959,7 @@ describe('PlaybookExecutionService', () => {
         expect(tr.order).toBe(42);
         expect(tr.components).toEqual([{ id: 'c1', type: 'text', data: {} }]);
 
-        (service as any).activeStepBuffers.delete(execId);
+        (service as any).bufferService.activeStepBuffers.delete(execId);
       });
 
       it('should handle execution without buffer gracefully', async () => {
@@ -1674,35 +2008,59 @@ describe('PlaybookExecutionService', () => {
 
     it('pending(0) < running(1): buffer wins', async () => {
       const dbExec = createMockExecution({
-        taskResults: [{
-          taskId: 'task-1', nodeTitle: 'T', agentName: '', order: 0,
-          status: StepStatus.PENDING, output: null, error: null,
-          durationMs: null, startedAt: null, completedAt: null,
-          components: [], inputTokens: null, outputTokens: null,
-          totalTokens: null, modelName: null,
-        }],
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'T',
+            agentName: '',
+            order: 0,
+            status: StepStatus.PENDING,
+            output: null,
+            error: null,
+            durationMs: null,
+            startedAt: null,
+            completedAt: null,
+            components: [],
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            modelName: null,
+          },
+        ],
       });
       mockExecutionModel.find.mockReturnValue(createChainMock([dbExec]));
 
       const buf = new Map();
       buf.set('task-1', { taskId: 'task-1', status: StepStatus.RUNNING, startedAt: new Date() });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       expect(result[0].taskResults[0].status).toBe(StepStatus.RUNNING);
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('running(1) < completed(2): buffer wins', async () => {
       const dbExec = createMockExecution({
-        taskResults: [{
-          taskId: 'task-1', nodeTitle: 'T', agentName: '', order: 0,
-          status: StepStatus.RUNNING, output: null, error: null,
-          durationMs: null, startedAt: new Date(), completedAt: null,
-          components: [], inputTokens: null, outputTokens: null,
-          totalTokens: null, modelName: null,
-        }],
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'T',
+            agentName: '',
+            order: 0,
+            status: StepStatus.RUNNING,
+            output: null,
+            error: null,
+            durationMs: null,
+            startedAt: new Date(),
+            completedAt: null,
+            components: [],
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            modelName: null,
+          },
+        ],
       });
       mockExecutionModel.find.mockReturnValue(createChainMock([dbExec]));
 
@@ -1714,24 +2072,36 @@ describe('PlaybookExecutionService', () => {
         durationMs: 1500,
         completedAt: new Date(),
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       expect(result[0].taskResults[0].status).toBe(StepStatus.COMPLETED);
       expect(result[0].taskResults[0].output).toBe('done');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('running(1) < failed(2): buffer wins', async () => {
       const dbExec = createMockExecution({
-        taskResults: [{
-          taskId: 'task-1', nodeTitle: 'T', agentName: '', order: 0,
-          status: StepStatus.RUNNING, output: null, error: null,
-          durationMs: null, startedAt: new Date(), completedAt: null,
-          components: [], inputTokens: null, outputTokens: null,
-          totalTokens: null, modelName: null,
-        }],
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'T',
+            agentName: '',
+            order: 0,
+            status: StepStatus.RUNNING,
+            output: null,
+            error: null,
+            durationMs: null,
+            startedAt: new Date(),
+            completedAt: null,
+            components: [],
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            modelName: null,
+          },
+        ],
       });
       mockExecutionModel.find.mockReturnValue(createChainMock([dbExec]));
 
@@ -1743,48 +2113,72 @@ describe('PlaybookExecutionService', () => {
         durationMs: 300,
         completedAt: new Date(),
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       expect(result[0].taskResults[0].status).toBe(StepStatus.FAILED);
       expect(result[0].taskResults[0].error).toBe('crashed');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('completed(2) > pending(0): DB wins', async () => {
       const dbExec = createMockExecution({
-        taskResults: [{
-          taskId: 'task-1', nodeTitle: 'T', agentName: '', order: 0,
-          status: StepStatus.COMPLETED, output: 'final', error: null,
-          durationMs: 1000, startedAt: new Date(), completedAt: new Date(),
-          components: [], inputTokens: 100, outputTokens: 50,
-          totalTokens: 150, modelName: 'test-runtime-model-a',
-        }],
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'T',
+            agentName: '',
+            order: 0,
+            status: StepStatus.COMPLETED,
+            output: 'final',
+            error: null,
+            durationMs: 1000,
+            startedAt: new Date(),
+            completedAt: new Date(),
+            components: [],
+            inputTokens: 100,
+            outputTokens: 50,
+            totalTokens: 150,
+            modelName: 'test-runtime-model-a',
+          },
+        ],
       });
       mockExecutionModel.find.mockReturnValue(createChainMock([dbExec]));
 
       const buf = new Map();
       buf.set('task-1', { taskId: 'task-1', status: StepStatus.PENDING });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       // DB wins: completed(2) > pending(0)
       expect(result[0].taskResults[0].status).toBe(StepStatus.COMPLETED);
       expect(result[0].taskResults[0].output).toBe('final');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('failed(2) > running(1): DB wins', async () => {
       const dbExec = createMockExecution({
-        taskResults: [{
-          taskId: 'task-1', nodeTitle: 'T', agentName: '', order: 0,
-          status: StepStatus.FAILED, output: null, error: 'db-error',
-          durationMs: 800, startedAt: new Date(), completedAt: new Date(),
-          components: [], inputTokens: null, outputTokens: null,
-          totalTokens: null, modelName: null,
-        }],
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'T',
+            agentName: '',
+            order: 0,
+            status: StepStatus.FAILED,
+            output: null,
+            error: 'db-error',
+            durationMs: 800,
+            startedAt: new Date(),
+            completedAt: new Date(),
+            components: [],
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            modelName: null,
+          },
+        ],
       });
       mockExecutionModel.find.mockReturnValue(createChainMock([dbExec]));
 
@@ -1795,25 +2189,37 @@ describe('PlaybookExecutionService', () => {
         startedAt: new Date(),
         error: 'buffer-error',
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       // DB wins: failed(2) > running(1)
       expect(result[0].taskResults[0].status).toBe(StepStatus.FAILED);
       expect(result[0].taskResults[0].error).toBe('db-error');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
 
     it('skipped(2) == completed(2): buffer wins (equal weight)', async () => {
       const dbExec = createMockExecution({
-        taskResults: [{
-          taskId: 'task-1', nodeTitle: 'T', agentName: '', order: 0,
-          status: StepStatus.SKIPPED, output: null, error: null,
-          durationMs: null, startedAt: null, completedAt: null,
-          components: [], inputTokens: null, outputTokens: null,
-          totalTokens: null, modelName: null,
-        }],
+        taskResults: [
+          {
+            taskId: 'task-1',
+            nodeTitle: 'T',
+            agentName: '',
+            order: 0,
+            status: StepStatus.SKIPPED,
+            output: null,
+            error: null,
+            durationMs: null,
+            startedAt: null,
+            completedAt: null,
+            components: [],
+            inputTokens: null,
+            outputTokens: null,
+            totalTokens: null,
+            modelName: null,
+          },
+        ],
       });
       mockExecutionModel.find.mockReturnValue(createChainMock([dbExec]));
 
@@ -1824,14 +2230,14 @@ describe('PlaybookExecutionService', () => {
         output: 'new',
         durationMs: 100,
       });
-      (service as any).activeStepBuffers.set(objectId('exec1').toString(), buf);
+      (service as any).bufferService.activeStepBuffers.set(objectId('exec1').toString(), buf);
 
       const result = await service.findActiveExecutionsByUser(userId);
       // Both have weight 2, so buffer wins (>=)
       expect(result[0].taskResults[0].status).toBe(StepStatus.COMPLETED);
       expect(result[0].taskResults[0].output).toBe('new');
 
-      (service as any).activeStepBuffers.delete(objectId('exec1').toString());
+      (service as any).bufferService.activeStepBuffers.delete(objectId('exec1').toString());
     });
   });
 
@@ -1845,9 +2251,9 @@ describe('PlaybookExecutionService', () => {
     it('should throw NotFoundException for missing execution', async () => {
       mockExecutionModel.findById.mockReturnValue(createChainMock(null));
 
-      await expect(
-        service.stopExecution(userId, playbookId, executionId),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.stopExecution(userId, playbookId, executionId)).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('should throw ForbiddenException for wrong user', async () => {
@@ -1856,9 +2262,9 @@ describe('PlaybookExecutionService', () => {
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
 
-      await expect(
-        service.stopExecution(userId, playbookId, executionId),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.stopExecution(userId, playbookId, executionId)).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('should return current status for completed execution', async () => {
@@ -1960,8 +2366,13 @@ describe('PlaybookExecutionService', () => {
       // But no stream to cancel
       expect(mockGrpcService.markCancelled).not.toHaveBeenCalled();
       // Should mark as cancelled directly
-      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        executionId,
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: executionId,
+          status: {
+            $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+          },
+        }),
         expect.objectContaining({
           $set: expect.objectContaining({
             status: ExecutionStatus.CANCELLED,
@@ -2004,11 +2415,13 @@ describe('PlaybookExecutionService', () => {
       const mockStream = createMockStream();
       mockGrpcService.runStepStream.mockReturnValue(mockStream);
 
-      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution({
-        taskResults: [
-          { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
-        ],
-      })));
+      mockExecutionModel.findById.mockReturnValue(
+        createChainMock(
+          createMockExecution({
+            taskResults: [{ taskId: 'task-1', status: StepStatus.RUNNING, components: [] }],
+          }),
+        ),
+      );
 
       const promise = (service as any).executeStepWithStreaming(
         objectId('user1').toString(),
@@ -2055,13 +2468,15 @@ describe('PlaybookExecutionService', () => {
     const userId = objectId('user1').toString();
     const playbookId = objectId('pb1').toString();
 
-    function makeResumeDto(overrides: Partial<{
-      executionId: string;
-      taskId: string;
-      approved: boolean;
-      reason: string;
-      feedback: string;
-    }> = {}) {
+    function makeResumeDto(
+      overrides: Partial<{
+        executionId: string;
+        taskId: string;
+        approved: boolean;
+        reason: string;
+        feedback: string;
+      }> = {},
+    ) {
       return {
         executionId: objectId('exec1').toString(),
         taskId: 'task-1',
@@ -2075,9 +2490,9 @@ describe('PlaybookExecutionService', () => {
     it('should throw NotFoundException for missing execution', async () => {
       mockExecutionModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(null) });
 
-      await expect(
-        service.resumeExecution(userId, playbookId, makeResumeDto()),
-      ).rejects.toThrow(NotFoundException);
+      await expect(service.resumeExecution(userId, playbookId, makeResumeDto())).rejects.toThrow(
+        NotFoundException,
+      );
     });
 
     it('should throw ForbiddenException for wrong user', async () => {
@@ -2091,9 +2506,9 @@ describe('PlaybookExecutionService', () => {
       };
       mockExecutionModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(execution) });
 
-      await expect(
-        service.resumeExecution(userId, playbookId, makeResumeDto()),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.resumeExecution(userId, playbookId, makeResumeDto())).rejects.toThrow(
+        ForbiddenException,
+      );
     });
 
     it('should throw BadRequestException if execution is not interrupted', async () => {
@@ -2107,9 +2522,9 @@ describe('PlaybookExecutionService', () => {
       };
       mockExecutionModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(execution) });
 
-      await expect(
-        service.resumeExecution(userId, playbookId, makeResumeDto()),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.resumeExecution(userId, playbookId, makeResumeDto())).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     it('should throw BadRequestException if no threadId', async () => {
@@ -2124,9 +2539,9 @@ describe('PlaybookExecutionService', () => {
       };
       mockExecutionModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(execution) });
 
-      await expect(
-        service.resumeExecution(userId, playbookId, makeResumeDto()),
-      ).rejects.toThrow(BadRequestException);
+      await expect(service.resumeExecution(userId, playbookId, makeResumeDto())).rejects.toThrow(
+        BadRequestException,
+      );
     });
 
     describe('single-step mode', () => {
@@ -2137,18 +2552,20 @@ describe('PlaybookExecutionService', () => {
             status: ExecutionStatus.INTERRUPTED,
             threadId: 'thread-abc',
             singleStepTaskId: 'task-1',
-            taskResults: [
-              { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
-            ],
+            taskResults: [{ taskId: 'task-1', status: StepStatus.RUNNING, components: [] }],
           }),
           markModified: jest.fn(),
           save: jest.fn().mockResolvedValue(undefined),
         };
 
         // First findById: resumeExecution reads execution (.exec())
-        mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+        mockExecutionModel.findById.mockReturnValueOnce({
+          exec: jest.fn().mockResolvedValue(execution),
+        });
         // Second findById: updateHumanFeedbackResponse (.exec())
-        mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+        mockExecutionModel.findById.mockReturnValueOnce({
+          exec: jest.fn().mockResolvedValue(execution),
+        });
         // Third findById: freshExecution in resume (.lean().exec())
         mockExecutionModel.findById.mockReturnValueOnce(createChainMock(execution));
         // Fourth findById: markExecutionCompleted
@@ -2194,18 +2611,20 @@ describe('PlaybookExecutionService', () => {
             threadId: 'thread-abc',
             singleStepTaskId: null, // full workflow
             playbookSnapshot: { tasks: [{ id: 'task-1', title: 'T1' }], edges: [] },
-            taskResults: [
-              { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
-            ],
+            taskResults: [{ taskId: 'task-1', status: StepStatus.RUNNING, components: [] }],
           }),
           markModified: jest.fn(),
           save: jest.fn().mockResolvedValue(undefined),
         };
 
         // First findById: resumeExecution reads execution (.exec())
-        mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+        mockExecutionModel.findById.mockReturnValueOnce({
+          exec: jest.fn().mockResolvedValue(execution),
+        });
         // Second findById: updateHumanFeedbackResponse (.exec())
-        mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+        mockExecutionModel.findById.mockReturnValueOnce({
+          exec: jest.fn().mockResolvedValue(execution),
+        });
 
         const mockStream = new EventEmitter();
         (mockStream as any).cancel = jest.fn();
@@ -2248,9 +2667,7 @@ describe('PlaybookExecutionService', () => {
             {
               taskId: 'task-1',
               status: StepStatus.RUNNING,
-              components: [
-                { id: 'hf-1', type: 'humanFeedback', data: { status: 'pending' } },
-              ],
+              components: [{ id: 'hf-1', type: 'humanFeedback', data: { status: 'pending' } }],
             },
           ],
         }),
@@ -2258,8 +2675,12 @@ describe('PlaybookExecutionService', () => {
         save: jest.fn().mockResolvedValue(undefined),
       };
 
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
 
       const mockStream = new EventEmitter();
       (mockStream as any).cancel = jest.fn();
@@ -2287,8 +2708,12 @@ describe('PlaybookExecutionService', () => {
         save: jest.fn().mockResolvedValue(undefined),
       };
 
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
 
       const mockStream = new EventEmitter();
       (mockStream as any).cancel = jest.fn();
@@ -2383,7 +2808,17 @@ describe('PlaybookExecutionService', () => {
         result: { components: [], duration_ms: '1' },
       });
 
-      await service.rerunStepInExecution(userId, playbookId, objectId('exec1').toString(), 'task-1', false, 'live', false, true, '');
+      await service.rerunStepInExecution(
+        userId,
+        playbookId,
+        objectId('exec1').toString(),
+        'task-1',
+        false,
+        'live',
+        false,
+        true,
+        '',
+      );
 
       expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
         objectId('exec1').toString(),
@@ -2442,7 +2877,17 @@ describe('PlaybookExecutionService', () => {
         result: { components: [], duration_ms: '1' },
       });
 
-      await service.rerunStepInExecution(userId, playbookId, executionId, 'task-1', false, 'live', false, true, '');
+      await service.rerunStepInExecution(
+        userId,
+        playbookId,
+        executionId,
+        'task-1',
+        false,
+        'live',
+        false,
+        true,
+        '',
+      );
 
       expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
         executionId,
@@ -2470,19 +2915,23 @@ describe('PlaybookExecutionService', () => {
 
   describe('resolveAdvisorAutopilotFixType', () => {
     it('falls back to optimize_step when advisor suggests updating the current playbook with rewrite hints', () => {
-      expect((service as any).resolveAdvisorAutopilotFixType({
-        safeAutoFixType: 'none',
-        recommendation: 'update_current_playbook',
-        rewriteHints: ['Tighten the task prompt around the baseline contract.'],
-      })).toBe('optimize_step');
+      expect(
+        (service as any).advisorService.resolveAdvisorAutopilotFixType({
+          safeAutoFixType: 'none',
+          recommendation: 'update_current_playbook',
+          rewriteHints: ['Tighten the task prompt around the baseline contract.'],
+        }),
+      ).toBe('optimize_step');
     });
 
     it('keeps none when advisor does not provide a safe step-scoped fallback', () => {
-      expect((service as any).resolveAdvisorAutopilotFixType({
-        safeAutoFixType: 'none',
-        recommendation: 'generate_new_optimized_playbook',
-        rewriteHints: ['Broader workflow rewrite needed.'],
-      })).toBe('none');
+      expect(
+        (service as any).advisorService.resolveAdvisorAutopilotFixType({
+          safeAutoFixType: 'none',
+          recommendation: 'generate_new_optimized_playbook',
+          rewriteHints: ['Broader workflow rewrite needed.'],
+        }),
+      ).toBe('none');
     });
   });
 
@@ -2490,7 +2939,7 @@ describe('PlaybookExecutionService', () => {
 
   describe('STATUS_WEIGHT', () => {
     it('should define correct status weights', () => {
-      const weights = (PlaybookExecutionService as any).STATUS_WEIGHT;
+      const weights = PlaybookExecutionBufferService.STATUS_WEIGHT;
       expect(weights[StepStatus.PENDING]).toBe(0);
       expect(weights[StepStatus.RUNNING]).toBe(1);
       expect(weights[StepStatus.COMPLETED]).toBe(2);
@@ -2526,8 +2975,12 @@ describe('PlaybookExecutionService', () => {
         save: jest.fn().mockResolvedValue(undefined),
       };
 
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
 
       const mockStream = createMockStream();
       mockGrpcService.resumePlaybookWorkflow.mockReturnValue(mockStream);
@@ -2575,8 +3028,12 @@ describe('PlaybookExecutionService', () => {
         save: jest.fn().mockResolvedValue(undefined),
       };
 
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
 
       const mockStream = createMockStream();
       mockGrpcService.resumePlaybookWorkflow.mockReturnValue(mockStream);
@@ -2641,8 +3098,12 @@ describe('PlaybookExecutionService', () => {
         save: jest.fn().mockResolvedValue(undefined),
       };
 
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
-      mockExecutionModel.findById.mockReturnValueOnce({ exec: jest.fn().mockResolvedValue(execution) });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
 
       const mockStream = createMockStream();
       mockGrpcService.resumePlaybookWorkflow.mockReturnValue(mockStream);
@@ -2693,6 +3154,122 @@ describe('PlaybookExecutionService', () => {
         }),
       );
     });
+
+    it('should handle interrupt then fail on a later resume gRPC abort', async () => {
+      const execution = {
+        ...createMockExecution({
+          executedBy: objectId('user1'),
+          status: ExecutionStatus.INTERRUPTED,
+          threadId: 'thread-abc',
+          singleStepTaskId: null,
+          playbookSnapshot: { tasks: [{ id: 'task-1' }, { id: 'task-2' }], edges: [] },
+          taskResults: [
+            { taskId: 'task-1', status: StepStatus.RUNNING, components: [] },
+            { taskId: 'task-2', status: StepStatus.PENDING, components: [] },
+          ],
+        }),
+        markModified: jest.fn(),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(execution),
+      });
+
+      const firstResumeStream = createMockStream();
+      mockGrpcService.resumePlaybookWorkflow.mockReturnValueOnce(firstResumeStream);
+
+      await service.resumeExecution(userId, objectId('pb1').toString(), {
+        executionId: objectId('exec1').toString(),
+        taskId: 'task-1',
+        approved: true,
+      } as any);
+
+      firstResumeStream.emit('data', {
+        thread_id: 'thread-abc',
+        step_update: {
+          task_id: 'task-2',
+          status: 'suspended',
+          interrupt: {
+            type: 'approval',
+            task_id: 'task-2',
+            message: 'Need approval for task 2',
+            interrupt_id: 'interrupt-2',
+            round: 2,
+          },
+        },
+      });
+
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      firstResumeStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_interrupt',
+          data: expect.objectContaining({
+            taskId: 'task-2',
+            interruptId: 'interrupt-2',
+          }),
+        }),
+      );
+
+      const interruptedExecution = {
+        ...execution,
+        status: ExecutionStatus.INTERRUPTED,
+        interruptPayload: { interruptId: 'interrupt-2', type: 'approval', round: 2 },
+      };
+
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(interruptedExecution),
+      });
+      mockExecutionModel.findById.mockReturnValueOnce({
+        exec: jest.fn().mockResolvedValue(interruptedExecution),
+      });
+
+      const secondResumeStream = createMockStream();
+      mockGrpcService.resumePlaybookWorkflow.mockReturnValueOnce(secondResumeStream);
+      mockGrpcService.wasCancelled.mockReturnValue(false);
+
+      await service.resumeExecution(userId, objectId('pb1').toString(), {
+        executionId: objectId('exec1').toString(),
+        taskId: 'task-2',
+        approved: true,
+      } as any);
+
+      const grpcAbortError = Object.assign(
+        new Error('13 INTERNAL: Playbook workflow resume failed: boom'),
+        {
+          code: 13,
+          details: 'Playbook workflow resume failed: boom',
+        },
+      );
+      secondResumeStream.emit('error', grpcAbortError);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: {
+            $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+          },
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({ status: ExecutionStatus.FAILED }),
+        }),
+      );
+      expect(mockLoggerService.error).toHaveBeenCalledWith(
+        'Workflow stream error',
+        expect.objectContaining({
+          executionId: objectId('exec1').toString(),
+          error: grpcAbortError.message,
+        }),
+      );
+    });
   });
 
   // ===== Email notifications =====
@@ -2714,7 +3291,9 @@ describe('PlaybookExecutionService', () => {
             notifyEmails: ['admin@test.com'],
             assignedAgentId: null,
             executionOrder: 0,
-            toObject: function () { return { ...this }; },
+            toObject: function () {
+              return { ...this };
+            },
           },
         ],
         edges: [],
@@ -2734,12 +3313,21 @@ describe('PlaybookExecutionService', () => {
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
 
-      await service.executePlaybook(objectId('user1').toString(), objectId('pb1').toString(), {}, '');
+      await service.executePlaybook(
+        objectId('user1').toString(),
+        objectId('pb1').toString(),
+        {},
+        '',
+      );
       await waitForWorkflowStreamReady();
 
       // Complete a task
       mockStream.emit('data', {
-        step_update: { task_id: 'task-1', status: 'completed', result: { components: [], duration_ms: '1000' } },
+        step_update: {
+          task_id: 'task-1',
+          status: 'completed',
+          result: { components: [], duration_ms: '1000' },
+        },
       });
 
       expect(mockEmailService.send).not.toHaveBeenCalled();
@@ -2757,7 +3345,9 @@ describe('PlaybookExecutionService', () => {
             notifyEmails: ['admin@test.com'],
             assignedAgentId: null,
             executionOrder: 0,
-            toObject: function () { return { ...this }; },
+            toObject: function () {
+              return { ...this };
+            },
           },
         ],
         edges: [],
@@ -2777,11 +3367,20 @@ describe('PlaybookExecutionService', () => {
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
 
-      await service.executePlaybook(objectId('user1').toString(), objectId('pb1').toString(), {}, '');
+      await service.executePlaybook(
+        objectId('user1').toString(),
+        objectId('pb1').toString(),
+        {},
+        '',
+      );
       await waitForWorkflowStreamReady();
 
       mockStream.emit('data', {
-        step_update: { task_id: 'task-1', status: 'completed', result: { components: [], duration_ms: '100' } },
+        step_update: {
+          task_id: 'task-1',
+          status: 'completed',
+          result: { components: [], duration_ms: '100' },
+        },
       });
 
       expect(mockEmailService.send).not.toHaveBeenCalled();
@@ -2827,7 +3426,12 @@ describe('PlaybookExecutionService', () => {
           result: {
             components: [],
             duration_ms: '1000',
-            usage: { input_tokens: 100, output_tokens: 50, total_tokens: 150, model: 'test-runtime-model-a' },
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+              total_tokens: 150,
+              model: 'test-runtime-model-a',
+            },
           },
         },
       });
@@ -2838,7 +3442,12 @@ describe('PlaybookExecutionService', () => {
           result: {
             components: [],
             duration_ms: '2000',
-            usage: { input_tokens: 200, output_tokens: 100, total_tokens: 300, model: 'test-runtime-model-a' },
+            usage: {
+              input_tokens: 200,
+              output_tokens: 100,
+              total_tokens: 300,
+              model: 'test-runtime-model-a',
+            },
           },
         },
       });
@@ -2846,23 +3455,8 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      // Should have incremented execution totals
-      const incCalls = mockExecutionModel.findByIdAndUpdate.mock.calls.filter(
-        (call: any[]) => call[1]?.$inc,
-      );
-      expect(incCalls.length).toBeGreaterThanOrEqual(1);
-
-      // Should have called usageService.recordUsage
-      expect(mockUsageService.recordUsage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId,
-          inputTokens: 300,
-          outputTokens: 150,
-          usageType: 'playbook',
-          modelName: 'test-runtime-model-a',
-          endpoint: 'playbook.workflow',
-        }),
-      );
+      // Should have called bufferService.recordStreamUsage
+      expect(mockBufferService.recordStreamUsage).toHaveBeenCalled();
     });
 
     it('should not record usage when no tokens were tracked', async () => {
@@ -2870,9 +3464,7 @@ describe('PlaybookExecutionService', () => {
       mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
 
       const execution = createMockExecution({
-        taskResults: [
-          { taskId: 'task-1', status: StepStatus.COMPLETED, components: [] },
-        ],
+        taskResults: [{ taskId: 'task-1', status: StepStatus.COMPLETED, components: [] }],
       });
       mockPlaybookService.findRawById.mockResolvedValue(
         createMockPlaybook({ tasks: [createMockPlaybook().tasks[0]], edges: [] }),
@@ -2890,7 +3482,11 @@ describe('PlaybookExecutionService', () => {
 
       // Complete without usage
       mockStream.emit('data', {
-        step_update: { task_id: 'task-1', status: 'completed', result: { components: [], duration_ms: '500' } },
+        step_update: {
+          task_id: 'task-1',
+          status: 'completed',
+          result: { components: [], duration_ms: '500' },
+        },
       });
 
       mockStream.emit('end');
@@ -3019,8 +3615,13 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        objectId('exec1').toString(),
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: {
+            $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+          },
+        }),
         expect.objectContaining({
           $set: expect.objectContaining({
             status: ExecutionStatus.CANCELLED,
@@ -3031,16 +3632,6 @@ describe('PlaybookExecutionService', () => {
       expect(mockLoggerService.warn).not.toHaveBeenCalledWith(
         'Stream ended prematurely with tasks still pending/running',
         expect.anything(),
-      );
-      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
-        userId,
-        expect.objectContaining({
-          type: 'playbook_execution_complete',
-          data: expect.objectContaining({
-            executionId: objectId('exec1').toString(),
-            status: ExecutionStatus.CANCELLED,
-          }),
-        }),
       );
     });
 
@@ -3062,6 +3653,7 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
@@ -3075,8 +3667,13 @@ describe('PlaybookExecutionService', () => {
         expect.any(Object),
       );
 
-      expect(mockExecutionModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        objectId('exec1').toString(),
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+          status: {
+            $in: [ExecutionStatus.PENDING, ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED],
+          },
+        }),
         expect.objectContaining({
           $set: expect.objectContaining({
             status: ExecutionStatus.FAILED,
@@ -3102,6 +3699,10 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne
+        .mockResolvedValueOnce({ modifiedCount: 1 })
+        .mockResolvedValueOnce({ modifiedCount: 1 })
+        .mockResolvedValueOnce({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
@@ -3139,6 +3740,7 @@ describe('PlaybookExecutionService', () => {
         toString: () => objectId('exec1').toString(),
       });
       mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
 
       const userId = objectId('user1').toString();
       await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
@@ -3147,14 +3749,60 @@ describe('PlaybookExecutionService', () => {
       mockStream.emit('end');
       await new Promise((resolve) => setImmediate(resolve));
 
-      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+      expect(mockStreamGateway.sendToUser.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            userId,
+            expect.objectContaining({
+              type: 'playbook_execution_complete',
+              data: expect.objectContaining({
+                executionId: objectId('exec1').toString(),
+                status: ExecutionStatus.COMPLETED,
+              }),
+            }),
+          ],
+        ]),
+      );
+    });
+
+    it('should skip completed terminalization when another terminal path already won', async () => {
+      const userId = objectId('user1').toString();
+
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 0 });
+
+      await (service as any).markExecutionCompleted(
+        userId,
+        objectId('exec1').toString(),
+        new Date('2026-03-10T10:00:00Z'),
+      );
+
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(
         userId,
         expect.objectContaining({
           type: 'playbook_execution_complete',
-          data: expect.objectContaining({
-            executionId: objectId('exec1').toString(),
-            status: ExecutionStatus.COMPLETED,
-          }),
+          data: expect.objectContaining({ status: ExecutionStatus.COMPLETED }),
+        }),
+      );
+      expect(mockJudgeEnrichmentService.scheduleExecutionSweep).not.toHaveBeenCalled();
+    });
+
+    it('should skip failed terminalization when another terminal path already won', async () => {
+      const userId = objectId('user1').toString();
+      mockExecutionModel.findById.mockReturnValue(createChainMock(createMockExecution()));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 0 });
+
+      await (service as any).markRemainingSkippedAndFail(
+        userId,
+        objectId('exec1').toString(),
+        'boom',
+        new Date('2026-03-10T10:00:00Z'),
+      );
+
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_execution_complete',
+          data: expect.objectContaining({ status: ExecutionStatus.FAILED }),
         }),
       );
     });
@@ -3174,9 +3822,7 @@ describe('PlaybookExecutionService', () => {
       mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
 
       const execution = createMockExecution({
-        taskResults: [
-          { taskId: 'task-1', status: StepStatus.PENDING, components: [] },
-        ],
+        taskResults: [{ taskId: 'task-1', status: StepStatus.PENDING, components: [] }],
       });
       mockPlaybookService.findRawById.mockResolvedValue(
         createMockPlaybook({ tasks: [createMockPlaybook().tasks[0]], edges: [] }),

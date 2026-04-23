@@ -13,10 +13,14 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
     this.logger.setContext(M365TransferAdapter.name);
   }
 
-  async downloadItem(
-    itemRef: Record<string, unknown>,
-    authHeaders: Record<string, string>,
-  ): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
+  private buildHeaders(authHeaders: Record<string, string>): Record<string, string> {
+    return {
+      Authorization: authHeaders['Authorization'] || '',
+      ...authHeaders,
+    };
+  }
+
+  private buildItemPath(itemRef: Record<string, unknown>): string {
     const driveId = itemRef.driveId as string;
     const itemId = itemRef.itemId as string;
     const path = itemRef.path as string | undefined;
@@ -25,20 +29,106 @@ export class M365TransferAdapter implements ConnectorTransferAdapter {
       throw new Error('itemRef must contain driveId');
     }
 
-    let itemPath: string;
     if (itemId) {
-      itemPath = `/drives/${driveId}/items/${itemId}`;
-    } else if (path) {
-      const encoded = encodeURIComponent(path.replace(/^\//, ''));
-      itemPath = `/drives/${driveId}/root:/${encoded}`;
-    } else {
-      throw new Error('itemRef must contain itemId or path');
+      return `/drives/${driveId}/items/${itemId}`;
     }
 
-    const headers = {
-      Authorization: authHeaders['Authorization'] || '',
-      ...authHeaders,
-    };
+    if (path) {
+      const encoded = encodeURIComponent(path.replace(/^\//, ''));
+      return `/drives/${driveId}/root:/${encoded}`;
+    }
+
+    throw new Error('itemRef must contain itemId or path');
+  }
+
+  async resolveImportCandidates(
+    itemRef: Record<string, unknown>,
+    authHeaders: Record<string, string>,
+    options?: { recursive?: boolean },
+  ): Promise<Array<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }>> {
+    const recursive = options?.recursive ?? true;
+    const headers = this.buildHeaders(authHeaders);
+    const itemPath = this.buildItemPath(itemRef);
+    const driveId = itemRef.driveId as string;
+
+    const metaResp = await fetch(`${GRAPH_BASE}${itemPath}?$select=id,name,file,folder,parentReference`, {
+      headers,
+    });
+
+    if (!metaResp.ok) {
+      const text = await metaResp.text();
+      throw new Error(`Failed to fetch item metadata: ${metaResp.status} ${text}`);
+    }
+
+    const meta = (await metaResp.json()) as Record<string, unknown>;
+    const parentReference = (meta.parentReference as Record<string, unknown> | undefined) || {};
+    const parentPath = ((parentReference.path as string) || '').replace(/^\/drives\/[^/]+\/root:?/, '');
+    const itemName = (meta.name as string) || 'unknown';
+    const sourcePath = `${parentPath}/${itemName}`.replace(/\/+/g, '/');
+
+    if (!meta.folder) {
+      const file = meta.file as Record<string, unknown> | undefined;
+      return [{
+        itemRef: { driveId, itemId: meta.id as string },
+        filename: itemName,
+        mimeType: (file?.mimeType as string) || 'application/octet-stream',
+        sourcePath,
+      }];
+    }
+
+    const queue: Array<{ itemId: string; prefix: string }> = [{
+      itemId: meta.id as string,
+      prefix: sourcePath.replace(/^\//, ''),
+    }];
+    const files: Array<{ itemRef: Record<string, unknown>; filename: string; mimeType: string; sourcePath: string }> = [];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      if (!current) {
+        continue;
+      }
+
+      let nextUrl = `${GRAPH_BASE}/drives/${driveId}/items/${current.itemId}/children?$select=id,name,file,folder,parentReference`;
+      while (nextUrl) {
+        const childrenResp = await fetch(nextUrl, { headers });
+        if (!childrenResp.ok) {
+          const text = await childrenResp.text();
+          throw new Error(`Failed to list folder children: ${childrenResp.status} ${text}`);
+        }
+
+        const payload = (await childrenResp.json()) as { value?: Array<Record<string, unknown>>; '@odata.nextLink'?: string };
+        for (const child of payload.value || []) {
+          const childName = (child.name as string) || 'unknown';
+          const childSourcePath = `/${current.prefix}/${childName}`.replace(/\/+/g, '/');
+          if (child.folder) {
+            if (recursive) {
+              queue.push({ itemId: child.id as string, prefix: childSourcePath.replace(/^\//, '') });
+            }
+            continue;
+          }
+
+          const file = child.file as Record<string, unknown> | undefined;
+          files.push({
+            itemRef: { driveId, itemId: child.id as string },
+            filename: childName,
+            mimeType: (file?.mimeType as string) || 'application/octet-stream',
+            sourcePath: childSourcePath,
+          });
+        }
+
+        nextUrl = payload['@odata.nextLink'] || '';
+      }
+    }
+
+    return files;
+  }
+
+  async downloadItem(
+    itemRef: Record<string, unknown>,
+    authHeaders: Record<string, string>,
+  ): Promise<{ buffer: Buffer; filename: string; mimeType: string }> {
+    const itemPath = this.buildItemPath(itemRef);
+    const headers = this.buildHeaders(authHeaders);
 
     const metaResp = await fetch(`${GRAPH_BASE}${itemPath}?$select=id,name,file,folder`, {
       headers,

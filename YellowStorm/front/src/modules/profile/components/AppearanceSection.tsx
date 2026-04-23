@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 import { ThemeProviderContext, COLOR_THEMES, type ColorTheme } from '@/contexts/ThemeContext';
 import { useLocalization, useModuleTranslation } from '@/modules/localization';
 import type { Language, ModuleTranslationKey } from '@/modules/localization';
+import { updateAppearance } from '../api';
+import { useAuth } from '@/modules/auth';
 
 type ThemeOption = 'light' | 'dark' | 'system';
 
@@ -34,9 +36,9 @@ function ThemeCard({ label, icon, selected, onClick }: ThemeCardProps) {
 
 const COLOR_THEME_SWATCHES: Record<ColorTheme, string> = {
   default: 'bg-neutral-500',
-  yellowsys: 'bg-amber-500',
-  claude: 'bg-orange-700',
-  kpmg: 'bg-blue-600',
+  yellow: 'bg-amber-500',
+  orange: 'bg-orange-700',
+  blue: 'bg-blue-600',
 };
 
 interface ColorThemeCardProps {
@@ -62,8 +64,10 @@ const LANGUAGE_KEYS: Record<Language, ModuleTranslationKey<'profile'>> = {
 
 export function AppearanceSection() {
   const { theme, setTheme, colorTheme, setColorTheme } = React.useContext(ThemeProviderContext);
+  const { user } = useAuth();
   const { language, availableLanguages, changeLanguage } = useLocalization();
   const { t } = useModuleTranslation('profile');
+  const lastUserColorTheme = React.useRef<ColorTheme | undefined>(user?.appearance?.colorTheme);
 
   const themeOptions: { value: ThemeOption; label: string; icon: React.ReactNode }[] = [
     { value: 'light', label: t('appearance.theme.light'), icon: <Sun className='h-5 w-5' /> },
@@ -73,12 +77,26 @@ export function AppearanceSection() {
 
   const colorThemeLabels: Record<ColorTheme, string> = {
     default: t('appearance.colorTheme.default'),
-    yellowsys: t('appearance.colorTheme.yellowsys'),
-    claude: t('appearance.colorTheme.claude'),
-    kpmg: t('appearance.colorTheme.kpmg'),
+    yellow: t('appearance.colorTheme.yellow'),
+    orange: t('appearance.colorTheme.orange'),
+    blue: t('appearance.colorTheme.blue'),
   };
 
   const languageLabel = (code: Language) => t(LANGUAGE_KEYS[code]);
+
+  React.useEffect(() => {
+    if (!user?.appearance?.colorTheme) return;
+
+    if (user.appearance.colorTheme !== lastUserColorTheme.current) {
+      lastUserColorTheme.current = user.appearance.colorTheme;
+      setColorTheme(user.appearance.colorTheme);
+    }
+  }, [user?.appearance?.colorTheme, setColorTheme]);
+
+  const handleColorThemeChange = async (nextColorTheme: ColorTheme) => {
+    setColorTheme(nextColorTheme);
+    await updateAppearance(nextColorTheme);
+  };
 
   return (
     <div className='space-y-6'>
@@ -134,7 +152,7 @@ export function AppearanceSection() {
 
         <div className='grid grid-cols-3 gap-4 pt-2'>
           {COLOR_THEMES.map((ct) => (
-            <ColorThemeCard key={ct.value} value={ct.value} label={colorThemeLabels[ct.value]} selected={colorTheme === ct.value} onClick={() => setColorTheme(ct.value)} />
+            <ColorThemeCard key={ct.value} value={ct.value} label={colorThemeLabels[ct.value]} selected={colorTheme === ct.value} onClick={() => handleColorThemeChange(ct.value)} />
           ))}
         </div>
       </div>
