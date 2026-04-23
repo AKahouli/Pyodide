@@ -1,7 +1,7 @@
 ---
 description: Debug and test agent. Reproduces failures, isolates root causes, and writes tests. Invoked before editing on bug reports and after reviewer flags test gaps.
 mode: subagent
-model: LiteLLM/gpt-5.4
+model: litellm/gpt-5.4
 tools:
   write: true
   edit: true

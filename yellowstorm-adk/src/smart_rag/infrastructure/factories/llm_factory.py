@@ -37,10 +37,12 @@ class LLMFactory:
     """
     @staticmethod
     def create_parallel_tool_calls_llm(model_name: str, temperature=None,max_completion_tokens=20000) -> 'LiteLlm':
-        """Create an LLM instance with parallel tool calls disabled.
+        """Create an LLM instance with parallel tool calls enabled.
 
-        Creates a language model configured for sequential tool execution,
-        which is necessary for complex agent agentic_workflows where tool order matters.
+        Creates a language model configured for parallel tool execution,
+        allowing the LLM to return multiple tool calls in a single response
+        that are executed concurrently for faster agent workflows.
+
         Args:
             model_name (str): Name or identifier of the language model to create.
                 Can also accept a dictionary with 'provider' key.
@@ -48,9 +50,7 @@ class LLMFactory:
             temperature (float, optional): Temperature setting for the model.
         Returns:
             LiteLlm: Configured LLM instance with streaming enabled and parallel
-                tool calls disabled for sequential execution.
-
-                tool calls enabled for faster execution.
+                tool calls enabled for concurrent execution.
         Raises:
             Exception: If LLM creation fails due to configuration or connection issues.
         """
@@ -78,7 +78,7 @@ class LLMFactory:
                     model=model_name,
                     api_base=app_settings.LITELLM_API_BASE_URL,
                     api_key=app_settings.LITELLM_API_SECRET_KEY,
-                    parallel_tool_calls=False,
+                    parallel_tool_calls=True,
                     stream=True,
                     user=get_user(),
                     temperature=temperature if temperature is not None else 0.0,

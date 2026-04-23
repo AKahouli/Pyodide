@@ -6,6 +6,7 @@ in workflow_service.py / graph_builder.py — this module no longer
 creates its own mini StateGraph.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -65,9 +66,13 @@ def _task_requires_structured_output_synthesis(task: Dict[str, Any]) -> bool:
     kind_counts = Counter(
         kind for kind in (_output_port_kind(port) for port in output_ports) if kind
     )
-    return any(
-        kind in {"text", "code"} and count > 1 for kind, count in kind_counts.items()
-    )
+    return any(count > 1 for count in kind_counts.values())
+
+
+def _determine_output_mode(task: Dict[str, Any]) -> str:
+    if _task_requires_structured_output_synthesis(task):
+        return "structured_final_response"
+    return "plain"
 
 
 def _collect_generated_artifacts(
@@ -289,120 +294,105 @@ def _validate_declared_output_ports(
             )
 
 
-async def _synthesize_structured_outputs(
-    settings,
-    model_name: str,
+def _parse_structured_final_response(response_text: str) -> Dict[str, Any]:
+    payload = _extract_json_object(response_text)
+    display_text = str(payload.get("display_text") or "").strip()
+    if not display_text:
+        raise ValueError("Structured final response must include display_text")
+    outputs = payload.get("outputs")
+    if not isinstance(outputs, list):
+        raise ValueError("Structured final response must include an outputs list")
+    return {
+        "display_text": display_text,
+        "outputs": [item for item in outputs if isinstance(item, dict)],
+    }
+
+
+def _build_plain_text_artifact(
+    task: Dict[str, Any], response_text: str
+) -> Optional[Dict[str, Any]]:
+    content = str(response_text or "").strip()
+    if not content:
+        return None
+
+    text_ports = [
+        port for port in _get_output_ports(task) if _output_port_kind(port) in {"text", "code"}
+    ]
+    if len(text_ports) != 1:
+        return None
+
+    port = text_ports[0]
+    return {
+        "port_id": str(port.get("id") or "default").strip() or "default",
+        "artifact_kind": _output_port_kind(port) or "text",
+        "content": content,
+    }
+
+
+def _build_plain_file_artifacts(
+    task: Dict[str, Any], generated_artifacts: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    file_ports = [
+        port for port in _get_output_ports(task) if _output_port_kind(port) not in {"text", "code"}
+    ]
+    if not file_ports or not generated_artifacts:
+        return []
+
+    artifacts: List[Dict[str, Any]] = []
+    used_port_ids: set[str] = set()
+    for generated_artifact in generated_artifacts:
+        compatible_ports = [
+            port
+            for port in file_ports
+            if str(port.get("id") or "default") not in used_port_ids
+            and (
+                not _output_port_kind(port)
+                or _output_port_kind(port)
+                == str(generated_artifact.get("artifact_kind") or "").strip()
+            )
+        ]
+        if len(compatible_ports) != 1:
+            continue
+
+        port = compatible_ports[0]
+        used_port_ids.add(str(port.get("id") or "default"))
+        artifacts.append(
+            {
+                "port_id": str(port.get("id") or "default").strip() or "default",
+                "artifact_kind": _output_port_kind(port)
+                or str(generated_artifact.get("artifact_kind") or "document"),
+                "url": str(generated_artifact.get("file_path") or ""),
+                "filename": str(generated_artifact.get("filename") or ""),
+                "mime_type": str(generated_artifact.get("mime_type") or ""),
+            }
+        )
+    return artifacts
+
+
+def _finalize_task_outputs(
     task: Dict[str, Any],
     response_text: str,
     components: List[Dict[str, Any]],
-    prompt_trace: Optional[List[Dict[str, Any]]] = None,
-    prompt_overrides: Optional[Dict[str, str]] = None,
-) -> List[Dict[str, Any]]:
-    prompt_registry = load_prompt_registry(prompt_overrides)
-    output_ports = _get_output_ports(task)
+    output_mode: str,
+) -> tuple[str, List[Dict[str, Any]]]:
     generated_artifacts = _collect_generated_artifacts(components)
-    if not output_ports:
-        return []
-
-    ports_payload = [
-        {
-            "id": str(port.get("id") or "default"),
-            "name": str(port.get("name") or port.get("id") or "default"),
-            "artifact_kind": _output_port_kind(port),
-            "description": str(port.get("description") or ""),
-        }
-        for port in output_ports
-    ]
-    artifacts_payload = [
-        {
-            "filename": artifact.get("filename") or "",
-            "file_path": artifact.get("file_path") or "",
-            "artifact_kind": artifact.get("artifact_kind") or "",
-            "mime_type": artifact.get("mime_type") or "",
-        }
-        for artifact in generated_artifacts
-    ]
-
-    system_prompt = resolve_prompt_template(
-        prompt_registry,
-        "output_routing.synthesis",
-        field="systemTemplate",
-        fallback=(
-            "You map a completed playbook task result into declared output ports. "
-            "The user already saw the live streamed draft, so this pass is only for final downstream routing. "
-            "Use output port names and descriptions semantically, especially when multiple ports share the same artifact kind. "
-            "Return JSON only."
-        ),
-    )
-    user_prompt_template = resolve_prompt_template(
-        prompt_registry,
-        "output_routing.synthesis",
-        field="userTemplate",
-        fallback=(
-            "Task title: {{taskTitle}}\nTask description: {{taskDescription}}\n\n"
-            "Declared output ports JSON:\n{{outputPortsJson}}\n\n"
-            "Final freeform response text:\n{{responseText}}\n\n"
-            "Generated artifact candidates JSON:\n{{artifactsJson}}\n\n"
-            'Return JSON with this exact shape:\n{\n  "outputs": [\n    {\n      "output_port_id": "declared-port-id",\n      "artifact_kind": "text|code|document|image|data|dashboard",\n      "content": "required for text/code outputs",\n      "filename": "required for generated file outputs",\n      "file_path": "optional exact file path when needed"\n    }\n  ]\n}\n\n'
-            "Rules:\n- Use only declared output_port_id values.\n- Use the semantic meaning of each port name and description to decide the target.\n- For text/code outputs, include only final downstream content, not the whole streamed draft unless that is the intended port output.\n- For file outputs, assign generated artifacts by filename or file_path.\n- Do not invent files that are not in the generated artifact candidates list.\n- If no structured downstream output should be produced for a port, omit it.\n- Return JSON only."
-        ),
-    )
-    user_prompt = (
-        user_prompt_template.replace("{{taskTitle}}", str(task.get("title", "")))
-        .replace("{{taskDescription}}", str(task.get("description", "")))
-        .replace(
-            "{{outputPortsJson}}",
-            json.dumps(ports_payload, ensure_ascii=True, indent=2),
+    if output_mode == "structured_final_response":
+        parsed = _parse_structured_final_response(response_text)
+        _validate_declared_output_ports(task, parsed["outputs"])
+        return (
+            parsed["display_text"],
+            _build_task_artifacts_from_structured_outputs(
+                task,
+                parsed["outputs"],
+                generated_artifacts,
+            ),
         )
-        .replace("{{responseText}}", str(response_text or ""))
-        .replace(
-            "{{artifactsJson}}",
-            json.dumps(artifacts_payload, ensure_ascii=True, indent=2),
-        )
-    )
 
-    synthesis_text, _usage = await _llm_call(
-        settings,
-        model_name,
-        system_prompt,
-        user_prompt,
-        temperature=0.1,
-        prompt_trace=prompt_trace,
-        stage="playbook_output_routing",
-        on_progress=None,
-    )
-    payload = _extract_json_object(synthesis_text)
-    outputs = payload.get("outputs") or []
-    if not isinstance(outputs, list):
-        raise ValueError("Structured output synthesis returned an invalid outputs list")
-    filtered_outputs = [item for item in outputs if isinstance(item, dict)]
-
-    try:
-        _validate_declared_output_ports(task, filtered_outputs)
-    except ValueError as first_error:
-        repair_prompt = (
-            user_prompt
-            + f"\n\nPrevious attempt failed validation with error:\n{first_error}\n"
-            "Please fix the JSON so every output uses a declared output_port_id."
-        )
-        synthesis_text, _usage = await _llm_call(
-            settings,
-            model_name,
-            system_prompt,
-            repair_prompt,
-            temperature=0.1,
-            prompt_trace=prompt_trace,
-            stage="playbook_output_routing_repair",
-            on_progress=None,
-        )
-        payload = _extract_json_object(synthesis_text)
-        outputs = payload.get("outputs") or []
-        if not isinstance(outputs, list):
-            raise ValueError("Structured output repair returned an invalid outputs list")
-        filtered_outputs = [item for item in outputs if isinstance(item, dict)]
-        _validate_declared_output_ports(task, filtered_outputs)
-
-    return filtered_outputs
+    artifacts = _build_plain_file_artifacts(task, generated_artifacts)
+    text_artifact = _build_plain_text_artifact(task, response_text)
+    if text_artifact is not None:
+        artifacts.insert(0, text_artifact)
+    return response_text, artifacts
 
 
 def _serialize_prompt_messages(messages: List[Dict[str, str]]) -> str:
@@ -682,6 +672,7 @@ async def _execute_step_direct(
     model_name = agent.get("model") or "gpt-4.1"
     agent_params = agent.get("agent_params") or {}
     temperature = float(agent_params.get("temperature", 0.7))
+    output_mode = _determine_output_mode(task)
 
     upstream_results_map = {
         str(item.get("task_id") or "").strip(): item
@@ -747,6 +738,7 @@ async def _execute_step_direct(
         workspace_file_hint=workspace_file_hint,
         trigger_context=trigger_context,
         prompt_overrides=prompt_overrides or (task or {}).get("prompt_overrides") or {},
+        output_mode=output_mode,
     )
     llm_prompt_trace: List[Dict[str, Any]] = []
 
@@ -862,7 +854,7 @@ async def _execute_step_direct(
                     temperature=temperature,
                     prompt_trace=llm_prompt_trace,
                     stage="replay_final_synthesis",
-                    on_progress=on_progress,
+                    on_progress=on_progress if output_mode == "plain" else None,
                 )
             else:
                 response = strict_response
@@ -894,6 +886,7 @@ async def _execute_step_direct(
                 collector=collector,
                 temperature=temperature,
                 on_progress=on_progress,
+                stream_final_output=output_mode == "plain",
             )
         else:
             response, usage = await _llm_call(
@@ -904,7 +897,7 @@ async def _execute_step_direct(
                 temperature=temperature,
                 prompt_trace=llm_prompt_trace,
                 stage="task_direct_completion",
-                on_progress=on_progress,
+                on_progress=on_progress if output_mode == "plain" else None,
             )
             components = []
             tool_trace = []
@@ -925,30 +918,14 @@ async def _execute_step_direct(
                 },
             )
 
-        artifacts: List[Dict[str, Any]] = []
-        run_synthesis = bool(_get_declared_output_ports(task)) or _task_requires_structured_output_synthesis(task)
-        if run_synthesis:
-            structured_outputs = await _synthesize_structured_outputs(
-                settings,
-                model_name,
-                task,
-                response,
-                components,
-                prompt_trace=llm_prompt_trace,
-                prompt_overrides=prompt_overrides or task.get("prompt_overrides") or {},
-            )
-            if not structured_outputs and (
-                str(response or "").strip() or _collect_generated_artifacts(components)
-            ):
-                logger.warning(
-                    f"[{task_id}] Structured output synthesis returned empty; no artifacts will be emitted on declared ports",
-                )
-                structured_outputs = []
-            artifacts = _build_task_artifacts_from_structured_outputs(
-                task,
-                structured_outputs,
-                _collect_generated_artifacts(components),
-            )
+        response, artifacts = _finalize_task_outputs(
+            task,
+            response,
+            components,
+            output_mode,
+        )
+        if output_mode == "structured_final_response" and on_progress is not None:
+            await on_progress({"output": response, "components": list(components)})
 
         duration_ms = int((time.time() - start_time) * 1000)
         semantic_match = None
@@ -1021,6 +998,7 @@ async def _execute_with_tools(
     collector=None,
     temperature: float = 0.7,
     on_progress: Optional[StepProgressCallback] = None,
+    stream_final_output: bool = True,
 ) -> tuple:
     from langchain_openai import ChatOpenAI
     from langchain_core.messages import SystemMessage, HumanMessage, ToolMessage
@@ -1062,7 +1040,7 @@ async def _execute_with_tools(
                 for message in messages
             ],
         )
-        if on_progress is not None:
+        if on_progress is not None and stream_final_output:
             response = await _stream_chat_response(
                 llm_with_tools, messages, on_progress
             )
@@ -1091,25 +1069,11 @@ async def _execute_with_tools(
             "Tool calls in iteration",
             iteration=iteration,
             calls=[tc["name"] for tc in response.tool_calls],
+            parallel=len(response.tool_calls) > 1,
         )
 
-        for tool_call in response.tool_calls:
+        async def _execute_single_tool(tool_call):
             tool = tool_map.get(tool_call["name"])
-            pending_tool_trace = tool_trace + [
-                {
-                    "call_index": len(tool_trace) + 1,
-                    "tool_name": tool_call["name"],
-                    "args": tool_call.get("args", {}),
-                    "output_summary": "Running...",
-                }
-            ]
-            if on_progress is not None:
-                await on_progress(
-                    {
-                        "tool_trace": pending_tool_trace,
-                        "components": list(all_components),
-                    }
-                )
             if tool:
                 try:
                     result = await tool.ainvoke(tool_call["args"])
@@ -1121,7 +1085,33 @@ async def _execute_with_tools(
             else:
                 result = f"Unknown tool: {tool_call['name']}"
                 logger.warning("Unknown tool called", tool=tool_call["name"])
+            return tool_call, result
 
+        pending_tool_trace = tool_trace + [
+            {
+                "call_index": len(tool_trace) + idx + 1,
+                "tool_name": tc["name"],
+                "args": tc.get("args", {}),
+                "output_summary": "Running...",
+            }
+            for idx, tc in enumerate(response.tool_calls)
+        ]
+        if on_progress is not None:
+            await on_progress(
+                {
+                    "tool_trace": pending_tool_trace,
+                    "components": list(all_components),
+                }
+            )
+
+        if len(response.tool_calls) > 1:
+            results = await asyncio.gather(
+                *[_execute_single_tool(tc) for tc in response.tool_calls]
+            )
+        else:
+            results = [await _execute_single_tool(response.tool_calls[0])]
+
+        for tool_call, result in results:
             messages.append(
                 ToolMessage(
                     content=str(result),
@@ -1155,13 +1145,13 @@ async def _execute_with_tools(
                         len(citation_components),
                         citation_components,
                     )
-            if on_progress is not None:
-                await on_progress(
-                    {
-                        "tool_trace": list(tool_trace),
-                        "components": list(all_components),
-                    }
-                )
+        if on_progress is not None:
+            await on_progress(
+                {
+                    "tool_trace": list(tool_trace),
+                    "components": list(all_components),
+                }
+            )
 
     logger.warning("Max tool iterations reached", max=MAX_TOOL_ITERATIONS)
     last_content = messages[-1].content if hasattr(messages[-1], "content") else ""

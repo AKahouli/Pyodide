@@ -417,19 +417,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     (tr) => tr.taskId === selectedStepId,
   ) || null;
   const selectedTask = playbook?.tasks.find((task) => task.id === selectedResult?.taskId) || null;
-  const selectedResultRenderKey = [
-    execution?.id || 'no-exec',
-    selectedResult?.taskId || 'no-step',
-    selectedResult?.status || 'no-status',
-    selectedResult?.completedAt || 'no-completed-at',
-    selectedResult?.output || '',
-    selectedResult?.error || '',
-    selectedResult?.components?.length || 0,
-    selectedResult?.toolTrace?.length || 0,
-    selectedResult?.llmPromptTrace?.length || 0,
-    selectedResult?.semanticMatch?.matchScore ?? 'no-semantic-match',
-  ].join('|');
-
   useEffect(() => {
     let cancelled = false;
 
@@ -595,7 +582,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           pageMode={pageMode}
         />
         <ExecutionStepDetail
-          key={selectedResultRenderKey}
           step={selectedResult}
           execution={execution}
           pageMode={pageMode}

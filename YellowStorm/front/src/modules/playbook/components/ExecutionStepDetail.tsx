@@ -655,26 +655,26 @@ export function ExecutionStepDetail({
               </span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
-                <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
-                <Select
-                  value={currentTask?.stepReplayMode ?? 'live'}
-                  onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
-                >
-                  <SelectTrigger className="h-7 w-[130px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
-                    <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
-                    <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
-                    <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
-                  </SelectContent>
-                </Select>
-                {!hasReplayBaseline && (
-                  <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
-                    {t('detail.noBaseline')}
-                  </span>
-                )}
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
+              <Select
+                value={currentTask?.stepReplayMode ?? 'live'}
+                onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
+              >
+                <SelectTrigger className="h-7 w-[130px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
+                  <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
+                  <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
+                  <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
+                </SelectContent>
+              </Select>
+              {!hasReplayBaseline && (
+                <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
+                  {t('detail.noBaseline')}
+                </span>
+              )}
               {stepExecutions.length > 0 && (
                 <>
                   <span className="mx-1 h-4 w-px bg-border" />
@@ -821,6 +821,19 @@ export function ExecutionStepDetail({
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
+            {canDownload && (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
+                  <FileText className="mr-1 h-4 w-4" />
+                  {t('detail.actions.downloadHtml')}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
+                  <Download className="mr-1 h-4 w-4" />
+                  {t('detail.actions.downloadPdf')}
+                </Button>
+              </div>
+            )}
+
             {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
@@ -838,7 +851,7 @@ export function ExecutionStepDetail({
                   )}
                 </div>
               </div>
-            ) : selectedStepExecution?.output ? (
+            ) : selectedStepExecution?.output && (!selectedStepExecution.components || selectedStepExecution.components.length === 0) ? (
               <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
                 {selectedStepExecution.output}
               </div>
@@ -1124,6 +1137,19 @@ export function ExecutionStepDetail({
           </TabsContent>
 
           <TabsContent value="judge" className="space-y-4">
+            {execution && (
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onRequestRunEvaluation?.(step.taskId)}
+                  disabled={isRunningEvaluation}
+                >
+                  {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
+                </Button>
+              </div>
+            )}
+
             {advisorAutopilotActive && (
               <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -1638,11 +1664,37 @@ function IssueSection({
  * Groups consecutive non-humanFeedback components and renders them
  * via AIMessageContent, while humanFeedback gets its own inline widget.
  */
-export function StepComponents({ components, taskId }: { components: PlaybookComponent[]; taskId: string }) {
+function dedupeMirroredTextComponents(components: PlaybookComponent[]): PlaybookComponent[] {
+  const syntheticTexts = components.filter(
+    (c) =>
+      c.type === 'text' &&
+      String((c as any).id || '').startsWith('playbook-final-text-'),
+  );
+  if (syntheticTexts.length === 0) return components;
+
+  const syntheticContents = new Set(
+    syntheticTexts.map((c) => String((c.data as any)?.content || '').trim()),
+  );
+
+  return components.filter((c) => {
+    if (c.type !== 'text') return true;
+    if (String((c as any).id || '').startsWith('playbook-final-text-')) return true;
+    return !syntheticContents.has(String((c.data as any)?.content || '').trim());
+  });
+}
+
+export function StepComponents({
+  components,
+  taskId,
+}: {
+  components: PlaybookComponent[];
+  taskId: string;
+}) {
+  const visibleComponents = dedupeMirroredTextComponents(components);
   const groups: Array<{ type: 'ai'; items: MessageComponent[] } | { type: 'hf'; data: HumanFeedbackData }> = [];
 
   let currentAiGroup: MessageComponent[] = [];
-  for (const comp of components) {
+  for (const comp of visibleComponents) {
     if (comp.type === 'humanFeedback') {
       if (currentAiGroup.length > 0) {
         groups.push({ type: 'ai', items: currentAiGroup });
