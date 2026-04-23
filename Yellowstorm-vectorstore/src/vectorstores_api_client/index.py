@@ -2,7 +2,7 @@ import asyncio
 import os
 import redis
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from celery import chain, chord, group
@@ -28,6 +28,7 @@ from worker import (
     convert_to_pdf_task,
     create_document_object,
     create_single_image_document_task,
+    delete_temp_folder,
     delete_images_and_tables_task,
     download_from_azure_datalake_task,
     filter_images,
@@ -38,6 +39,9 @@ from worker import (
     index_in_redis_task,
     language_detect_task,
     load_split_document_task,
+    parse_document_logical_and_return_file_path_task,
+    parse_document_logical_in_chain_task,
+    parse_document_logical_with_local_file_task,
     post_process_segmentation_results,
     run_image_through_yolo,
     skip_indexation_for_structured_excel_task,
@@ -109,6 +113,53 @@ IMAGE_INDEXATION_QUEUE = "image-indexation"
 DEFAULT_QUEUE = "default"
 LOW_PRIO_QUEUE = "qdrant-index.low-priority"
 REDIS_INDEX_QUEUE = "redis-index"
+
+
+def build_logical_in_chain_signature(
+        file_path: str,
+        external_id: str,
+        brain_id: str,
+        source: str = None,
+) -> Tuple[str, Any]:
+    logical_task_id = str(uuid4())
+    return logical_task_id, parse_document_logical_in_chain_task.s(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        source=source,
+    ).set(queue="logical-indexing", task_id=logical_task_id)
+
+
+def build_logical_with_local_file_signature(
+        file_path: str,
+        external_id: str,
+        brain_id: str,
+        local_file_path: str,
+        source: str = None,
+) -> Tuple[str, Any]:
+    logical_task_id = str(uuid4())
+    return logical_task_id, parse_document_logical_with_local_file_task.s(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        local_file_path=local_file_path,
+        source=source,
+    ).set(queue="logical-indexing", task_id=logical_task_id)
+
+
+def build_logical_return_file_path_signature(
+        file_path: str,
+        external_id: str,
+        brain_id: str,
+        source: str = None,
+) -> Tuple[str, Any]:
+    logical_task_id = str(uuid4())
+    return logical_task_id, parse_document_logical_and_return_file_path_task.s(
+        file_path=file_path,
+        external_id=external_id,
+        brain_id=brain_id,
+        source=source,
+    ).set(queue="logical-indexing", task_id=logical_task_id)
 
 async def async_index_documents_from_azure_datalake(
         collection_name: str,
@@ -236,16 +287,24 @@ async def async_index_documents_from_azure_datalake(
         logger.info(f"Set IMPORTED status for {external_id} in brain {brain_id}")
 
     chain_tasks = []
+    logical_task_id = None
     try:
         if brain_type == "doc":
             file_extension = os.path.splitext(file_path)[-1].lower()
 
             # Image file pipeline - bypasses PDF conversion for direct image indexing
             if is_image_file(file_path):
+                logical_task_id, logical_signature = build_logical_in_chain_signature(
+                    file_path=file_path,
+                    external_id=external_id,
+                    brain_id=brain_id,
+                    source=metadata.get("source"),
+                )
                 image_chain = chain(
                     download_from_azure_datalake_task.s(file_path, temp_folder=temp_folder).set(
                         queue=IMAGE_INDEXATION_QUEUE
                     ),
+                    logical_signature,
                     get_single_image_description_task.s(file_path, metadata, user_id).set(
                         queue=IMAGE_INDEXATION_QUEUE
                     ),
@@ -260,9 +319,17 @@ async def async_index_documents_from_azure_datalake(
                         webhook_url=webhook_url,
                         webhook_metadata=webhook_metadata,
                     ).set(queue=LOW_PRIO_QUEUE),
+                    delete_temp_folder.s(temp_folder=temp_folder).set(queue=DEFAULT_QUEUE),
                 )
                 result = image_chain.delay() # execute task asynch
-                return TaskIDS(id=result.task_id, id_image=None, id_classification=None, temp_folder=temp_folder)
+
+                return TaskIDS(
+                    id=result.task_id,
+                    id_image=None,
+                    id_classification=None,
+                    temp_folder=temp_folder,
+                    logical_task_id=logical_task_id
+                )
 
             # PHAC LIST functionality not available in vectorstores-api
             # if brain_id in [settings.BRAIN_PHAC_CHAT,settings.BRAIN_RM_PHAC] and file_extension == ".xlsx":
@@ -279,45 +346,50 @@ async def async_index_documents_from_azure_datalake(
             #     )
 
             # Smart chunking sans indexation image
-            if enable_style_aware_chunking:
+            if enable_style_aware_chunking and not enable_extract_images:
                 assert chunk_styles is not None
                 chunk_styles = [chunk_style.dict() for chunk_style in chunk_styles]
-                if not enable_extract_images:
-                    chain_tasks.extend(
-                        [
-                            style_aware_split_pdf_from_azure_datalake_task.s(
-                                file_path,
-                                chunk_styles,
-                                metadata,
-                                correlation_id=correlation_id,
-                            ).set(queue=SMART_CHUNKING_QUEUE),
-                            split_documents_task.s(
-                                chunk_size,
-                                chunk_overlap,
-                                separators,
-                                keep_separator,
-                                enable_style_aware_chunking,
-                            ).set(queue=SMART_CHUNKING_QUEUE),
-                            # can remove it cuz we smart chunking is deprecated
-                            index_in_redis_task.s().set(queue=REDIS_INDEX_QUEUE),
-                            language_detect_task.s(webhook_url, webhook_metadata).set(
-                                queue=SMART_CHUNKING_QUEUE
-                            ),
-                            add_documents_task.s(
-                                collection_name=collection_name,
-                                external_id=external_id,
-                                user_id=user_id,
-                                include_images=False,
-                                webhook_url=webhook_url,
-                                webhook_metadata=webhook_metadata,
-                            ).set(queue=LOW_PRIO_QUEUE),
-                            verify_qdrant_and_delete_from_redis.s(
-                                brain_id=brain_id,
-                                external_id=external_id,
-                                collection_name=collection_name
-                            ).set(queue=LOW_PRIO_QUEUE)
-                        ]
-                    )
+                logical_task_id, logical_signature = build_logical_return_file_path_signature(
+                    file_path=file_path,
+                    external_id=external_id,
+                    brain_id=brain_id,
+                    source=metadata.get("source"),
+                )
+                chain_tasks.extend(
+                    [
+                        logical_signature,
+                        style_aware_split_pdf_from_azure_datalake_task.s(
+                            file_path,
+                            chunk_styles,
+                            metadata,
+                            correlation_id=correlation_id,
+                        ).set(queue=SMART_CHUNKING_QUEUE),
+                        split_documents_task.s(
+                            chunk_size,
+                            chunk_overlap,
+                            separators,
+                            keep_separator,
+                            enable_style_aware_chunking,
+                        ).set(queue=SMART_CHUNKING_QUEUE),
+                        index_in_redis_task.s().set(queue=REDIS_INDEX_QUEUE),
+                        language_detect_task.s(webhook_url, webhook_metadata).set(
+                            queue=SMART_CHUNKING_QUEUE
+                        ),
+                        add_documents_task.s(
+                            collection_name=collection_name,
+                            external_id=external_id,
+                            user_id=user_id,
+                            include_images=False,
+                            webhook_url=webhook_url,
+                            webhook_metadata=webhook_metadata,
+                        ).set(queue=LOW_PRIO_QUEUE),
+                        verify_qdrant_and_delete_from_redis.s(
+                            brain_id=brain_id,
+                            external_id=external_id,
+                            collection_name=collection_name
+                        ).set(queue=LOW_PRIO_QUEUE)
+                    ]
+                )
 
             # Indexation lorsque indexation image disabled - text only
             if (
@@ -329,6 +401,12 @@ async def async_index_documents_from_azure_datalake(
                 # Check if file needs conversion
                 if needs_conversion(file_path):
                     # File needs conversion: download -> convert -> process
+                    logical_task_id, logical_signature = build_logical_in_chain_signature(
+                        file_path=file_path,
+                        external_id=external_id,
+                        brain_id=brain_id,
+                        source=metadata.get("source"),
+                    )
                     chain_tasks.extend(
                         [
                             download_from_azure_datalake_task.s(
@@ -336,6 +414,7 @@ async def async_index_documents_from_azure_datalake(
                             ).set(queue=DEFAULT_QUEUE),
                             convert_to_pdf_task.s(original_file_path=file_path, temp_folder=temp_folder).set(
                                 queue="conversion"),
+                            logical_signature,
                             load_split_document_task.s(
                                 metadata,
                                 chunk_size=chunk_size,
@@ -377,23 +456,38 @@ async def async_index_documents_from_azure_datalake(
                                 detection_result.get("classification"),
                                 temp_folder
                             )
-                            result = dummy_task.apply_async()
-
-                            # Start webhook listener
-                            if webhook_url:
-                                # Note: webhook listener should be started by the caller (router)
-                                pass
+                            logical_task_id, logical_signature = build_logical_with_local_file_signature(
+                                file_path=file_path,
+                                external_id=external_id,
+                                brain_id=brain_id,
+                                local_file_path=downloaded_path,
+                                source=metadata.get("source"),
+                            )
+                            result = chain(
+                                dummy_task,
+                                logical_signature,
+                                delete_temp_folder.s(temp_folder=temp_folder).set(queue=DEFAULT_QUEUE),
+                            ).delay()
 
                             return TaskIDS(
                                 id=result.id,
                                 id_image=None,
                                 id_classification=None,
-                                temp_folder=temp_folder
+                                temp_folder=temp_folder,
+                                logical_task_id=logical_task_id
                             )
 
                         # Unstructured Excel - build normal chain
+                        logical_task_id, logical_signature = build_logical_with_local_file_signature(
+                            file_path=file_path,
+                            external_id=external_id,
+                            brain_id=brain_id,
+                            local_file_path=downloaded_path,
+                            source=metadata.get("source"),
+                        )
                         chain_tasks.extend(
                             [
+                                logical_signature,
                                 convert_pdf_to_images_task.s(image=False,file_path=downloaded_path).set(queue=DEFAULT_QUEUE),
                                 load_split_document_task.s(
                                     metadata,
@@ -421,11 +515,18 @@ async def async_index_documents_from_azure_datalake(
                         )
                     else:
                         # Non-Excel files - normal flow with download task
+                        logical_task_id, logical_signature = build_logical_in_chain_signature(
+                            file_path=file_path,
+                            external_id=external_id,
+                            brain_id=brain_id,
+                            source=metadata.get("source"),
+                        )
                         chain_tasks.extend(
                             [
                                 download_from_azure_datalake_task.s(
                                     file_path, temp_folder=temp_folder
                                 ).set(queue=DEFAULT_QUEUE),
+                                logical_signature,
                                 convert_pdf_to_images_task.s(image=False).set(queue=DEFAULT_QUEUE),
                                 load_split_document_task.s(
                                     metadata,
@@ -453,7 +554,6 @@ async def async_index_documents_from_azure_datalake(
                         )
             # Indexation image enabled
             if enable_extract_images:
-                # Local imports for image-enabled pipeline
                 document_path = file_path
                 datalake_directory = "/".join(file_path.split("/")[:-1])
                 temp_file_path = os.path.join(temp_folder, os.path.basename(file_path))
@@ -462,68 +562,32 @@ async def async_index_documents_from_azure_datalake(
                     assert chunk_styles is not None
                     chunk_styles = [chunk_style.dict() for chunk_style in chunk_styles]
 
-                # === PARALLEL CHAINS: redis_group and yolo_group ===
+                logical_task_id, logical_signature = build_logical_in_chain_signature(
+                    file_path=file_path,
+                    external_id=external_id,
+                    brain_id=brain_id,
+                    source=metadata.get("source"),
+                )
 
-                # CHAIN 1: Redis pipeline (independent, no YOLO)
-                # Runs in parallel, loads and indexes in Redis for BM25 search
+                # === SHARED FIRST STEP: download + optional PDF conversion (runs once) ===
                 if needs_conversion(file_path):
-                    redis_group = chain(
+                    shared_step = chain(
                         download_from_azure_datalake_task.s(document_path, temp_folder).set(
                             queue=TEXT_INDEXATION_QUEUE),
                         convert_to_pdf_task.s(original_file_path=document_path, temp_folder=temp_folder).set(
                             queue="conversion"),
-                        load_split_document_task.s(
-                            metadata,
-                            chunk_size=chunk_size,
-                            chunk_overlap=chunk_size // 5,
-                            sheet_name=sheet_name,
-                            brain_id=brain_id,
-                            external_id=external_id,
-                        ).set(queue=TEXT_INDEXATION_QUEUE),
-                        index_in_redis_task.s().set(queue=REDIS_INDEX_QUEUE)
                     )
                 else:
-                    redis_group = chain(
+                    shared_step = chain(
                         download_from_azure_datalake_task.s(document_path, temp_folder).set(
                             queue=TEXT_INDEXATION_QUEUE),
-                        load_split_document_task.s(
-                            metadata,
-                            chunk_size=chunk_size,
-                            chunk_overlap=chunk_size // 5,
-                            sheet_name=sheet_name,
-                            brain_id=brain_id,
-                            external_id=external_id,
-                        ).set(queue=TEXT_INDEXATION_QUEUE),
-                        index_in_redis_task.s().set(queue=REDIS_INDEX_QUEUE)
                     )
 
-                # CHAIN 2: YOLO pipeline (convert_to_images → YOLO, output diverges to img_group and text_group)
-                # Runs in PARALLEL with redis_group
-                if needs_conversion(file_path):
-                    yolo_group = chain(
-                        download_from_azure_datalake_task.s(document_path, temp_folder).set(
-                            queue=TEXT_INDEXATION_QUEUE),
-                        convert_to_pdf_task.s(original_file_path=document_path, temp_folder=temp_folder).set(
-                            queue="conversion"),
-                        convert_pdf_to_images_task.s(image=True).set(queue=TEXT_INDEXATION_QUEUE),
-                        run_image_through_yolo.s().set(queue=TEXT_INDEXATION_QUEUE)
-                    )
-                else:
-                    yolo_group = chain(
-                        download_from_azure_datalake_task.s(document_path, temp_folder).set(
-                            queue=TEXT_INDEXATION_QUEUE),
-                        convert_pdf_to_images_task.s(image=True).set(queue=TEXT_INDEXATION_QUEUE),
-                        run_image_through_yolo.s().set(queue=TEXT_INDEXATION_QUEUE)
-                    )
-
-                # === YOLO OUTPUT DIVERGES INTO img_group and text_group ===
-                # Both receive (yolo_result, file_path) from yolo_group and run in parallel
-
-                # img_group: processes images → add_documents
+                # === img_group: processes images → add_documents ===
                 img_group = chain(
                     post_process_segmentation_results.s().set(
                         queue=IMAGE_INDEXATION_QUEUE
-                    ),  # Step 4: Post-process segmentation
+                    ),
                     extract_sub_images.s().set(
                         queue=IMAGE_INDEXATION_QUEUE
                     ),
@@ -539,12 +603,12 @@ async def async_index_documents_from_azure_datalake(
                     upload_compressed_images_task.s(destination_path=datalake_directory).set(
                         queue=IMAGE_INDEXATION_QUEUE
                     ),
-                    get_image_description.s(datalake_directory, metadata=metadata,user_id=user_id).set(
+                    get_image_description.s(datalake_directory, metadata=metadata, user_id=user_id).set(
                         queue=IMAGE_INDEXATION_QUEUE
                     ),
                     create_document_object.s(metadata=metadata).set(
                         queue=IMAGE_INDEXATION_QUEUE
-                    ),  # Step 9: Create document object
+                    ),
                     language_detect_task.s(file_path=temp_file_path).set(queue=IMAGE_INDEXATION_QUEUE),
                     add_documents_task.s(
                         collection_name=collection_name,
@@ -556,7 +620,7 @@ async def async_index_documents_from_azure_datalake(
                     ).set(queue=LOW_PRIO_QUEUE)
                 )
 
-                # text_group: processes text → add_documents
+                # === text_group: processes text → add_documents ===
                 if enable_style_aware_chunking:
                     text_group = chain(
                         delete_images_and_tables_task.s(temp_folder=temp_folder).set(queue=SMART_CHUNKING_QUEUE),
@@ -606,39 +670,53 @@ async def async_index_documents_from_azure_datalake(
                         ).set(queue=LOW_PRIO_QUEUE)
                     )
 
-                # === PARALLEL EXECUTION WORKFLOW ===
-                # Structure: redis_group runs independently, yolo_group → (img_group + text_group) → verify
+                # === BRANCH 1: Redis BM25 text indexing ===
+                redis_branch = chain(
+                    load_split_document_task.s(
+                        metadata,
+                        chunk_size=chunk_size,
+                        chunk_overlap=chunk_size // 5,
+                        sheet_name=sheet_name,
+                        brain_id=brain_id,
+                        external_id=external_id,
+                    ).set(queue=TEXT_INDEXATION_QUEUE),
+                    index_in_redis_task.s().set(queue=REDIS_INDEX_QUEUE),
+                )
 
-                # Step 1: Execute redis_group independently for Redis BM25 indexing
-                redis_result = redis_group.delay()
-
-                # Step 2: Execute yolo_group → chord(img_group || text_group) → verify
-                # yolo_group runs and returns (yolo_result, file_path)
-                # Then img_group and text_group run in parallel, receiving yolo output
-                # Finally verify_qdrant_and_delete_from_redis is called with both results
-                yolo_verify_workflow = chain(
-                    yolo_group,
+                # === BRANCH 2: YOLO → img + text → Qdrant → verify ===
+                yolo_branch = chain(
+                    logical_signature,
+                    convert_pdf_to_images_task.s(image=True).set(queue=TEXT_INDEXATION_QUEUE),
+                    run_image_through_yolo.s().set(queue=TEXT_INDEXATION_QUEUE),
                     chord(
                         group(img_group, text_group),
                         verify_qdrant_and_delete_from_redis.s(
                             brain_id=brain_id,
                             external_id=external_id,
-                            collection_name=collection_name
-                        ).set(queue=TEXT_INDEXATION_QUEUE)
-                    )
+                            collection_name=collection_name,
+                        ).set(queue=TEXT_INDEXATION_QUEUE),
+                    ),
                 )
-                qdrant_verify_result = yolo_verify_workflow.delay()
+
+                # === COMBINED: shared step → parallel branches ===
+                workflow = chain(
+                    shared_step,
+                    group(redis_branch, yolo_branch),
+                    delete_temp_folder.s(temp_folder=temp_folder).set(queue=DEFAULT_QUEUE),
+                )
+                result = workflow.delay()
 
                 logger.info(
-                    f"Parallel workflow started: redis_group (delay={redis_result.id}) || (yolo → img+text → verify (delay={qdrant_verify_result.id})). Task ID: {qdrant_verify_result.id}")
+                    f"Image-enabled workflow started: shared(download{'+convert' if needs_conversion(file_path) else ''}) "
+                    f"→ group(redis_branch || yolo_branch). Task ID: {result.id}"
+                )
 
-                # Return task IDs for tracking
                 return TaskIDS(
-                    id=qdrant_verify_result.id,  # Main task ID (verification)
+                    id=result.id,
                     id_image=None,
                     id_classification=None,
-                    id_redis=redis_result.id,  # Redis group task ID
-                    temp_folder=temp_folder
+                    temp_folder=temp_folder,
+                    logical_task_id=logical_task_id
                 )
 
         else:
@@ -648,23 +726,37 @@ async def async_index_documents_from_azure_datalake(
             # Check if file needs conversion for graph generation
             if needs_conversion(file_path):
                 # File needs conversion: download -> convert -> process
+                logical_task_id, logical_signature = build_logical_in_chain_signature(
+                    file_path=file_path,
+                    external_id=external_id,
+                    brain_id=brain_id,
+                    source=metadata.get("source"),
+                )
                 chain_tasks.extend(
                     [
                         download_from_azure_datalake_task.s(file_path, temp_folder).set(
                             queue=DEFAULT_QUEUE
                         ),
                         convert_to_pdf_task.s(file_path, temp_folder).set(queue="conversion"),
+                        logical_signature,
                         convert_pdf_to_txt_task.s().set(queue=DEFAULT_QUEUE),
                         generation_graph_task.s(os.path.join(settings.SHARED_VOLUME_PREFIX, TEMP_DIR_NAME, f"graph_{brain_id}_index"),3072,datalake_directory,user_id=user_id).set(queue=DEFAULT_QUEUE),
                     ]
                 )
             else:
                 # File doesn't need conversion: direct download -> process
+                logical_task_id, logical_signature = build_logical_in_chain_signature(
+                    file_path=file_path,
+                    external_id=external_id,
+                    brain_id=brain_id,
+                    source=metadata.get("source"),
+                )
                 chain_tasks.extend(
                     [
                         download_from_azure_datalake_task.s(file_path, temp_folder).set(
                             queue=DEFAULT_QUEUE
                         ),
+                        logical_signature,
                         convert_pdf_to_txt_task.s().set(queue=DEFAULT_QUEUE),
                         generation_graph_task.s(os.path.join(settings.SHARED_VOLUME_PREFIX, TEMP_DIR_NAME, f"graph_{brain_id}_index"),3072,datalake_directory,user_id=user_id).set(queue=DEFAULT_QUEUE),
                     ]
@@ -673,9 +765,19 @@ async def async_index_documents_from_azure_datalake(
         # Execute the chain for non-image-enabled workflows
         # (image-enabled workflows return inline)
         if chain_tasks:
+            chain_tasks.append(
+                delete_temp_folder.s(temp_folder=temp_folder).set(queue=DEFAULT_QUEUE)
+            )
             tasks_chain = chain(*chain_tasks)
             result = tasks_chain.delay()
-            return TaskIDS(id=result.task_id, id_image=None, id_classification=None, temp_folder=temp_folder)
+
+            return TaskIDS(
+                id=result.task_id,
+                id_image=None,
+                id_classification=None,
+                temp_folder=temp_folder,
+                logical_task_id=logical_task_id
+            )
 
         # If we get here, something went wrong (no chain_tasks and no image workflow)
         logger.error("No workflow was configured for the given parameters")

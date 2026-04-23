@@ -19,8 +19,13 @@ WORKDIR /vectorstore-api
 
 COPY requirements.txt /vectorstore-api/requirements.txt
 
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir pytest-cov 
+# ==========================================
+# 🚀 UV OPTIMIZATION ADDED HERE
+# ==========================================
+RUN pip install --no-cache-dir uv \
+    && uv pip install --system --no-cache -r requirements.txt \
+    && uv pip install --system --no-cache pytest-cov 
+# ==========================================
 
 COPY src src
 COPY main.py worker.py .

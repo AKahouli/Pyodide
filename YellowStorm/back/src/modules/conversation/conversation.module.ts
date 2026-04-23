@@ -17,6 +17,7 @@ import { StreamController } from './controllers/stream.controller';
 import { ShareController } from './controllers/share.controller';
 import { ReportController } from './controllers/report.controller';
 import { ConversationFileController } from './controllers/conversation-file.controller';
+import { ComposerSuggestionsController } from './controllers/composer-suggestions.controller';
 
 // Services
 import { ConversationService } from './services/conversation.service';
@@ -25,6 +26,7 @@ import { StreamService } from './services/stream.service';
 import { StreamGatewayService } from './services/stream-gateway.service';
 import { ShareService } from './services/share.service';
 import { ReportService } from './services/report.service';
+import { ComposerSuggestionsService } from './services/composer-suggestions.service';
 
 // Guards
 import { ConversationOwnerGuard } from './guards/conversation-owner.guard';
@@ -38,6 +40,7 @@ import { ModelsModule } from '../models/models.module';
 import { LoggerModule } from '../logger';
 import { UsageModule } from '../usage';
 import { AgentModule } from '../agent/agent.module';
+import { AgentTypeModule } from '../agent-type/agent-type.module';
 import { EmailModule } from '../email/email.module';
 import conversationConfig from '../../config/conversation.config';
 
@@ -59,10 +62,12 @@ import conversationConfig from '../../config/conversation.config';
     LoggerModule,
     UsageModule,
     AgentModule,
+    AgentTypeModule,
     EmailModule,
   ],
   controllers: [
     StreamController,  // Must be before ConversationController to avoid route conflict with :id param
+    ComposerSuggestionsController,
     ConversationController,
     MessageController,
     ShareController,
@@ -76,6 +81,7 @@ import conversationConfig from '../../config/conversation.config';
     StreamGatewayService,
     ShareService,
     ReportService,
+    ComposerSuggestionsService,
     ConversationOwnerGuard,
     SseAuthGuard,
   ],

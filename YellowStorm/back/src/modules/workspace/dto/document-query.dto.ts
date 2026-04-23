@@ -38,4 +38,9 @@ export class DocumentQueryDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortOrder?: 'asc' | 'desc' = 'desc';
+
+  @ApiPropertyOptional({ description: 'Filter by parent folder ID (null for root)' })
+  @IsOptional()
+  @IsString()
+  parentId?: string | null;
 }

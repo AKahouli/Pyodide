@@ -87,6 +87,8 @@ class DocumentStatusRedis:
             Returns None if not found
         """
         key = self._make_key(brain_id, external_id)
+        if self.r is None:
+            return None
         try:
             data = await self.r.get(key)
             if data:

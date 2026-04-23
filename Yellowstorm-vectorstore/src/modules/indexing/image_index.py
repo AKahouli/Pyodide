@@ -83,6 +83,9 @@ def overlaps(box_a, box_b):
 
 
 def merge_boxes(boxes):
+    if isinstance(boxes, dict):
+        boxes = boxes.get("detections", [])
+
     merged_boxes = []
     skip_indices = set()
 
@@ -94,20 +97,18 @@ def merge_boxes(boxes):
             if overlaps(box_a, box_b):
                 skip_indices.add(j)
                 new_box = {
-                    "x1": min(box_a['x1'], box_b['x1']),
-                    "y1": min(box_a['y1'], box_b['y1']),
-                    "x2": max(box_a['x2'], box_b['x2']),
-                    "y2": max(box_a['y2'], box_b['y2']),
-                    "name": box_a['name'] if calculate_area(box_a) > calculate_area(box_b) else box_b['name'],
-                    "confidence": max(box_a['confidence'], box_b['confidence'])  # Keeping the highest score
+                    "x1": min(box_a["x1"], box_b["x1"]),
+                    "y1": min(box_a["y1"], box_b["y1"]),
+                    "x2": max(box_a["x2"], box_b["x2"]),
+                    "y2": max(box_a["y2"], box_b["y2"]),
+                    "name": box_a["name"] if calculate_area(box_a) > calculate_area(box_b) else box_b["name"],
+                    "confidence": max(box_a["confidence"], box_b["confidence"]),
                 }
-                box_a = new_box  # Update box_a to the new merged box in case it overlaps with multiple boxes
+                box_a = new_box
 
-        if i not in skip_indices:
-            merged_boxes.append(box_a)
+        merged_boxes.append(box_a)
 
     return merged_boxes
-
 
 def is_close_enough(text, image, max_distance=100):
     """Check if the text is within a maximum distance from the image in both x and y axes."""
@@ -204,7 +205,7 @@ def delete_images_and_tables(pdf_path, layout_result, temp_folder):
 
         rects_to_redact = []
 
-        for result in res:
+        for result in res["detections"]:
 
             label = result["name"].lower().replace("-", "_")
 

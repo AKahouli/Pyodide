@@ -44,6 +44,9 @@ export interface CreateUserData {
 
 export interface UpdateUserData {
   profile?: Partial<IUserProfile>;
+  appearance?: {
+    colorTheme?: 'default' | 'yellow' | 'orange' | 'blue';
+  };
   consents?: Partial<IUserConsents>;
 }
 
@@ -60,6 +63,9 @@ export interface UserResponse {
   email: string;
   emailVerified: boolean;
   profileComplete: boolean;
+  appearance?: {
+    colorTheme: 'default' | 'yellow' | 'orange' | 'blue';
+  };
   profile: IUserProfile;
   status: UserStatus;
   consents: IUserConsents;

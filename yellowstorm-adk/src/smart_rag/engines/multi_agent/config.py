@@ -9,18 +9,38 @@ Includes constants, tool descriptions, and the AgentTeamConfig dataclass.
 from dataclasses import dataclass
 from typing import Optional, List
 from src.config.settings import get_settings
-from langfuse import Langfuse
+# Langfuse initialization (Lazy-loaded to avoid hangs if host is unreachable)
+_langfuse_instance = None
 
+def get_langfuse_client():
+    global _langfuse_instance
+    if _langfuse_instance is not None:
+        return _langfuse_instance
+    
+    try:
+        from langfuse import Langfuse
+        _langfuse_instance = Langfuse(
+            public_key=app_settings.LANGFUSE_PUBLIC_KEY,
+            secret_key=app_settings.LANGFUSE_SECRET_KEY,
+            host=app_settings.LANGFUSE_HOST,
+        )
+    except Exception as e:
+        # Use a mock if initialization fails
+        class MockLangfuse:
+            def trace(self, **kwargs): return self
+            def span(self, **kwargs): return self
+            def event(self, **kwargs): return self
+            def update(self, **kwargs): return self
+            def flush(self, **kwargs): pass
+            def __getattr__(self, name): return lambda *args, **kwargs: self
+        _langfuse_instance = MockLangfuse()
+    return _langfuse_instance
 
+class LangfuseProxy:
+    def __getattr__(self, name):
+        return getattr(get_langfuse_client(), name)
 
-
-app_settings = get_settings()
-
-langfuse_client = Langfuse(
-    public_key=app_settings.LANGFUSE_PUBLIC_KEY,
-    secret_key=app_settings.LANGFUSE_SECRET_KEY,
-    host=app_settings.LANGFUSE_HOST,
-)
+langfuse_client = LangfuseProxy()
 
 # Constants
 DEFAULT_AGENT_NAME = "agent"

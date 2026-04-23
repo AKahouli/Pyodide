@@ -106,6 +106,26 @@ class Settings(BaseSettings):
 
     LLM_CLASSIFICATION_MODEL: str
 
+    # ═══════════════════════════════════════════════════════════════
+    # PostgreSQL Configuration (for logical indexing storage)
+    # ═══════════════════════════════════════════════════════════════
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/yellowstorm"
+
+    # ═══════════════════════════════════════════════════════════════
+    # MCP Server Configuration
+    # ═══════════════════════════════════════════════════════════════
+    BRAIN_ID: str = Field(
+        default="default",
+        description="The brain/workspace ID for MCP server operations"
+    )
+
+    # ═══════════════════════════════════════════════════════════════
+    # Logical Indexing Configuration
+    # ═══════════════════════════════════════════════════════════════
+    INTERNAL_LAYOUT_GRPC_ADDRESS: str = "173.208.208.93:50052"
+    LOGICAL_INDEXING_DEVICE: str = "gpu"  # or "cpu"
+    TMP_DIRECTORY: str = "./tmp"  # Directory for temporary files
+
     # Webhook Authentication
     WEBHOOK_API_KEY: Optional[str] = Field(
         default="",
@@ -130,6 +150,24 @@ class Settings(BaseSettings):
         """Validate that REDIS_PORT is within valid range"""
         if not 1 <= v <= 65535:
             raise ValueError(f'REDIS_PORT must be between 1 and 65535, got {v}')
+        return v
+
+    @field_validator('DATABASE_URL')
+    @classmethod
+    def validate_database_url(cls, v):
+        """Validate that DATABASE_URL has a valid format"""
+        if not v or len(v.strip()) == 0:
+            raise ValueError('DATABASE_URL cannot be empty')
+        if not v.startswith(('postgresql://', 'postgresql+asyncpg://')):
+            raise ValueError('DATABASE_URL must start with postgresql:// or postgresql+asyncpg://')
+        return v
+
+    @field_validator('LOGICAL_INDEXING_DEVICE')
+    @classmethod
+    def validate_logical_indexing_device(cls, v):
+        """Validate that LOGICAL_INDEXING_DEVICE is either 'gpu' or 'cpu'"""
+        if v not in ('gpu', 'cpu'):
+            raise ValueError(f'LOGICAL_INDEXING_DEVICE must be "gpu" or "cpu", got {v}')
         return v
 
     @field_validator('REDIS_DB')

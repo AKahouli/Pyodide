@@ -44,6 +44,7 @@ export const API_ENDPOINTS = {
   system: {
     maintenance: '/experimental/system/maintenance',
     registration: '/experimental/system/registration',
+    appearance: '/experimental/system/appearance',
   },
   usage: {
     status: '/usage/status',
@@ -120,6 +121,7 @@ export const API_ENDPOINTS = {
     fileDelete: (convId: string, docId: string) => `/conversations/${convId}/files/${docId}`,
     stream: '/conversations/stream',
     artifactUrl: '/conversations/artifact-url',
+    composerSuggestions: '/conversations/suggestions',
     // Share endpoints
     shares: (id: string) => `/conversations/${id}/shares`,
     share: (id: string) => `/conversations/${id}/share`,
@@ -283,5 +285,17 @@ export const API_ENDPOINTS = {
     clearDefault: (id: string) => `/admin/models/${id}/clear-default`,
     sync: '/admin/models/sync',
     default: '/admin/models/default',
-  }
+  },
+  evaluation: {
+    datasets: '/evaluation/datasets',
+    datasetById: (id: string) => `/evaluation/datasets/${id}`,
+    launch: '/evaluation/launch',
+    run: '/evaluation/run',
+    finalize: (id: string) => `/evaluation/results/${id}/finalize`,
+    results: (agentId: string) => `/evaluation/results/${agentId}`,
+    resultById: (id: string) => `/evaluation/results/${id}`,
+    scenarios: '/evaluation/scenarios',
+    scenariosByAgent: (agentId: string) => `/evaluation/scenarios/agent/${agentId}`,
+    scenarioById: (id: string) => `/evaluation/scenarios/${id}`,
+  },
 } as const;

@@ -821,6 +821,19 @@ export function ExecutionStepDetail({
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
               </div>
+            ) : ((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) ? (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="font-medium">{t('detail.provenance.title')}</div>
+                <div className="mt-2 space-y-1 text-muted-foreground">
+                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode, t)}</div>
+                  {replaySource && (
+                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
+                  )}
+                  {baselineReplay?.preserveOutputFormat && (
+                    <div>{t('detail.provenance.outputFormat')}</div>
+                  )}
+                </div>
+              </div>
             ) : selectedStepExecution?.output ? (
               <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
                 {selectedStepExecution.output}
@@ -843,20 +856,6 @@ export function ExecutionStepDetail({
                 <pre className="max-h-80 overflow-y-auto rounded bg-destructive/5 p-3 font-mono text-sm whitespace-pre-wrap break-words text-destructive/90">
                   {selectedStepExecution.error}
                 </pre>
-              </div>
-            )}
-
-            {replaySource && (
-              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
-                <div className="font-medium">{t('detail.provenance.title')}</div>
-                <div className="mt-2 space-y-1 text-muted-foreground">
-                  {replaySource && (
-                    <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
-                  )}
-                  {baselineReplay?.preserveOutputFormat && (
-                    <div>{t('detail.provenance.outputFormat')}</div>
-                  )}
-                </div>
               </div>
             )}
 

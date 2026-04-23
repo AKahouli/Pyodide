@@ -2,6 +2,7 @@ import os
 import uvicorn
 from fastapi import FastAPI
 from src.routers import vectorstores
+from src.mcp_sever.router import mcp_starlette_app
 from src.middleware.middleware import add_middleware
 from logging import WARNING, getLogger
 from azure.monitor.opentelemetry import configure_azure_monitor
@@ -29,23 +30,24 @@ config_path = app_settings.APPLICATION_INSIGHTS_LOG_CONFIG_PATH if app_settings.
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting vectorstores API (UP)...")
-    if app_settings.APPLICATION_INSIGHTS_LOG:
-        # logging in application insights
-        configure_logging()
-        logger.addFilter(CorrelationIdFilter())
-        configure_azure_monitor(
-            connection_string=app_settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
-            logger_name="vectorstores-api.main"
-        )
-        getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(WARNING)
-        getLogger('azure.monitor.opentelemetry.exporter.export._base').setLevel(WARNING)
-    else:
-        # logging in elastic search or locally
-        LOG_JSON_FORMAT = TypeAdapter(bool).validate_python(getenv("LOG_JSON_FORMAT", False))
-        COLOR_LOGS = TypeAdapter(bool).validate_python(getenv("COLOR_LOGS", True))
-        LOG_LEVEL = getenv("LOG_LEVEL", "INFO")
-        setup_logging(json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS)
-    yield
+    async with mcp_starlette_app.router.lifespan_context(mcp_starlette_app):
+        if app_settings.APPLICATION_INSIGHTS_LOG:
+            # logging in application insights
+            configure_logging()
+            logger.addFilter(CorrelationIdFilter())
+            configure_azure_monitor(
+                connection_string=app_settings.APPLICATIONINSIGHTS_CONNECTION_STRING,
+                logger_name="vectorstores-api.main"
+            )
+            getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(WARNING)
+            getLogger('azure.monitor.opentelemetry.exporter.export._base').setLevel(WARNING)
+        else:
+            # logging in elastic search or locally
+            LOG_JSON_FORMAT = TypeAdapter(bool).validate_python(getenv("LOG_JSON_FORMAT", False))
+            COLOR_LOGS = TypeAdapter(bool).validate_python(getenv("COLOR_LOGS", True))
+            LOG_LEVEL = getenv("LOG_LEVEL", "INFO")
+            setup_logging(json_logs=LOG_JSON_FORMAT, log_level=LOG_LEVEL, color_logs=COLOR_LOGS)
+        yield
     logger.info("Finished vectorstores API (DOWN)")
     logger.info("Exiting...")
 
@@ -71,6 +73,7 @@ add_middleware(app, app_settings)
 
 # Include routers
 app.include_router(vectorstores.router)
+app.mount("/mcp", mcp_starlette_app)  # MCP info + transport endpoints at /mcp
 
 # Add health check endpoint
 @app.get("/health")

@@ -18,3 +18,4 @@ class TaskIDS(BaseModel):
     id_image : Optional[str]
     id_classification : Optional[str]
     id_redis: Optional[str] = None  # task ID for redis_group (independent pipeline)
+    logical_task_id: Optional[str] = None  # task ID for logical indexing (parallel pipeline)

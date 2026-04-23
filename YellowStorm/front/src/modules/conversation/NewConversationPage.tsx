@@ -1,15 +1,22 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
 import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
-import { useConversationStore, useSelectedWorkspaceIds, useResetSelectedWorkspaceIds } from './store';
+import {
+  useConversationStore,
+  useInputDisabled,
+  useSelectedWorkspaceIds,
+  useResetSelectedWorkspaceIds,
+} from './store';
 import { useConversationFileUpload } from './hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { useUsage } from '@/modules/usage';
 import { GroupChatButton } from './components/GroupChatButton';
+import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
  
 export function NewConversationPage() {
@@ -22,6 +29,23 @@ export function NewConversationPage() {
   const [isSending, setIsSending] = useState(false);
   const [silentConvId, setSilentConvId] = useState<string | null>(null);
   const { t } = useModuleTranslation('conversation');
+  const inputDisabled = useInputDisabled();
+  const { status: usageStatus } = useUsage();
+  const isLimitExceeded = usageStatus?.isLimitExceeded ?? false;
+
+  const limitPlaceholder = useMemo(() => {
+    if (!isLimitExceeded) return undefined;
+    if (!usageStatus?.resetsAt) return t('input.limitReached');
+    const now = new Date();
+    const reset = new Date(usageStatus.resetsAt);
+    const diffMs = reset.getTime() - now.getTime();
+    const hours = Math.floor(diffMs / (1000 * 60 * 60));
+    const minutes = Math.max(0, Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60)));
+    if (hours > 0) {
+      return t('input.limitCountdownHours', { hours, minutes });
+    }
+    return t('input.limitCountdownMinutes', { minutes });
+  }, [isLimitExceeded, usageStatus?.resetsAt, t]);
 
   const createConversationForUpload = useCallback(async () => {
     // Create conversation with currently selected workspaces if any
@@ -116,7 +140,24 @@ export function NewConversationPage() {
           </Shimmer>
         </div>
         <div className='w-full max-w-3xl px-4'>
-          <Input onSubmit={handleSubmit} status={isSending ? 'submitted' : 'ready'} disabled={isSending} submitDisabled={isUploading} onFilesAdded={handleFilesAdded} onFileRemoved={handleFileRemoved} uploadingFiles={uploadFiles} accept={ACCEPT_EXTENSIONS} maxFiles={5} showWorkspaceSelect={true} />
+          <Input
+            onSubmit={handleSubmit}
+            status={isSending ? 'submitted' : 'ready'}
+            disabled={isSending || inputDisabled || isLimitExceeded}
+            submitDisabled={isUploading || isSending}
+            placeholder={limitPlaceholder}
+            onFilesAdded={handleFilesAdded}
+            onFileRemoved={handleFileRemoved}
+            uploadingFiles={uploadFiles}
+            accept={ACCEPT_EXTENSIONS}
+            maxFiles={5}
+            showWorkspaceSelect={true}
+            belowTextarea={
+              <ComposerSuggestionChips
+                fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}
+              />
+            }
+          />
           <GroupChatButton />
           <PlaybooksCarousel />
         </div>

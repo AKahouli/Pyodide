@@ -100,7 +100,7 @@ def create_traced_span(name: str, service: str = "api-metachatbot-adk", resource
 
     Example:
         ```python
-        with create_traced_span("llm.call", model="gpt-4", user_id="123"):
+        with create_traced_span("llm.call", model="gpt-5.4-mini", user_id="123"):
             response = await llm.generate()
             # All logs here have the span context
         ```

@@ -146,6 +146,9 @@ export class UserService {
     if (data.profile) {
       user.profile = { ...user.profile, ...data.profile };
     }
+    if (data.appearance) {
+      user.appearance = { ...user.appearance, ...data.appearance };
+    }
     if (data.consents) {
       const now = new Date();
       if (data.consents.privacyPolicy !== undefined) {

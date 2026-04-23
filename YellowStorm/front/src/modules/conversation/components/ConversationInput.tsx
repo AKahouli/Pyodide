@@ -10,6 +10,7 @@ import { useConversationFileUpload } from '../hooks/useConversationFileUpload';
 import { ACCEPT_EXTENSIONS } from '@/modules/workspace/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAuth } from '@/modules/auth/useAuth';
+import { ComposerSuggestionChips } from './ComposerSuggestionChips';
 
 interface ConversationInputProps {
   conversationId: string;
@@ -186,6 +187,13 @@ export function ConversationInput({ conversationId, onWorkspaceUpdate }: Convers
         members={membersToTag}
         autoMention={autoMention}
         showWorkspaceSelect={false}
+        belowTextarea={
+          <ComposerSuggestionChips
+            fetchDisabled={
+              inputDisabled || isLimitExceeded || isStreaming || isAwaitingFirstChunk || isUploading
+            }
+          />
+        }
       />
     </div>
   );

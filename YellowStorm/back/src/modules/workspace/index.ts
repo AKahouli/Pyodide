@@ -2,6 +2,7 @@ export * from './workspace.module';
 export * from './workspace.service';
 export * from './workspace-setting.service';
 export * from './workspace-document.service';
+export * from './workspace-initializer.service';
 export * from './schemas/workspace.schema';
 export * from './schemas/workspace-document.schema';
 export * from './schemas/workspace-setting.schema';

@@ -6,11 +6,11 @@ export interface IndexDocumentRequest {
   // Document data
   documentId: string;
   workspaceId: string;
-  filename: string;
+  filename?: string;
   mimeType: string;
-  path: string;      // blob path in Azure
+  path?: string;      // blob path in Azure (optional for folders)
   size: number;
-  blobUrl: string;   // full blob URL without SAS token (for "source" field)
+  blobUrl?: string;   // full blob URL without SAS token (for "source" field)
 
   // Workspace settings
   chunkSize: number;          // from workspace settings `chunks` (default 4000)

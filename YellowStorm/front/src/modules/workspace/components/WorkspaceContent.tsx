@@ -1,252 +1,279 @@
 /**
  * Workspace Content
- * Main content area showing documents table for the selected workspace
+ * Main content area showing documents table with Drive-like folder navigation
  */
 
-import { useMemo, useState, useCallback } from 'react';
-import { Search, MoreHorizontal, Pencil, Settings, FileX, Trash2, Layers, ChevronLeft } from 'lucide-react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
+import { Search, Layers, Plus, UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading } from '../store';
-import { useModalCloseEffect, useDebouncedSearch, useIndexingNotifications } from '../hooks';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllFolders } from '../store';
+import { useDocumentDragDrop } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
-import { UploadDropZone } from './UploadDropZone';
+import { CreateFolderDialog } from './CreateFolderDialog';
 import { UploadButton } from './UploadButton';
-import { ConfirmDialog, RenameDialog } from './dialogs';
-import { Progress } from '@/components/ui/progress';
+import { UploadDropZone } from './UploadDropZone';
+import { FolderTreeSidebar } from './FolderTreeSidebar';
+import { FolderNavigation, BreadcrumbItem } from './FolderNavigation';
 import { useModuleTranslation } from '@/modules/localization';
 
 export function WorkspaceContent() {
   const { t } = useModuleTranslation('workspace');
-  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isDeleteDocsDialogOpen, setIsDeleteDocsDialogOpen] = useState(false);
-
-  // Subscribe to indexing notifications for real-time status updates
-  useIndexingNotifications();
-
   const selectedWorkspace = useSelectedWorkspace();
-  const { isDeleting, isLoadingWorkspaces } = useWorkspaceLoading();
-  const totalWorkspaces = useWorkspaceStore((state) => state.totalWorkspaces);
+  const { isLoadingWorkspaces } = useWorkspaceLoading();
+  const { documents } = useDocuments();
+  const allFolders = useAllFolders();
+  const renameFolder = useWorkspaceStore((state) => state.renameFolder);
+  const deleteFolder = useWorkspaceStore((state) => state.deleteFolder);
+  const fetchDocuments = useWorkspaceStore((state) => state.fetchDocuments);
+  const fetchAllFolders = useWorkspaceStore((state) => state.fetchAllFolders);
+  const setCurrentFolderId = useWorkspaceStore((state) => state.setCurrentFolderId);
+  const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
+  const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
+  const isPersonalWorkspace = selectedWorkspace?.isPersonal ?? false;
 
-  const searchDocuments = useWorkspaceStore((state) => state.searchDocuments);
-  const renameWorkspace = useWorkspaceStore((state) => state.renameWorkspace);
-  const deleteWorkspace = useWorkspaceStore((state) => state.deleteWorkspace);
-  const deleteAllDocuments = useWorkspaceStore((state) => state.deleteAllDocuments);
-  const openSettingsModal = useWorkspaceStore((state) => state.openSettingsModal);
-  const toggleMobileSidebar = useWorkspaceStore((state) => state.toggleMobileSidebar);
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [createFolderParentId, setCreateFolderParentId] = useState<string | undefined>(undefined);
 
-  // Debounced search
-  const { value: searchInput, onChange: handleSearchChange, reset: resetSearch } = useDebouncedSearch(useCallback((value: string) => searchDocuments(value), [searchDocuments]));
+  // Dialog states
+  const [isRenameDialogOpen, setIsRenameDialogOpen] = useState(false);
+  const [renameFolderId, setRenameFolderId] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
 
-  // Close all nested dialogs when parent modal closes
-  useModalCloseEffect(
-    useCallback(() => {
+  // Drag and drop hook
+  const { isDragging, draggedItems, handleDropOnRoot } = useDocumentDragDrop();
+
+  // Wrapper for drop on root with current workspace
+  const handleDropOnRootWithWorkspace = useCallback(async (e: React.DragEvent) => {
+    if (selectedWorkspaceId) {
+      await handleDropOnRoot(e, selectedWorkspaceId);
+    }
+  }, [handleDropOnRoot, selectedWorkspaceId]);
+
+  // Fetch documents when folder changes
+  useEffect(() => {
+    if (selectedWorkspaceId) {
+      fetchDocuments(selectedWorkspaceId, 1);
+    }
+  }, [currentFolderId, selectedWorkspaceId, fetchDocuments]);
+
+  // Build breadcrumbs
+  const breadcrumbs = useMemo(() => {
+    const items: BreadcrumbItem[] = [];
+    let currentId = currentFolderId;
+
+    while (currentId) {
+      const folder = allFolders.find((d) => d.id === currentId && d.isFolder);
+      if (folder) {
+        items.unshift({
+          id: folder.id,
+          name: folder.folderName || folder.originalName,
+        });
+        currentId = folder.parentId || null;
+      } else {
+        break;
+      }
+    }
+
+    return items;
+  }, [currentFolderId, allFolders]);
+
+  // Handle folder navigation
+  const handleNavigate = useCallback((folderId: string | null) => {
+    setCurrentFolderId(folderId);
+    if (selectedWorkspaceId) {
+      const store = useWorkspaceStore.getState();
+      store.fetchDocuments(selectedWorkspaceId, 1);
+    }
+  }, [setCurrentFolderId]);
+
+  const handleOpenCreateFolder = useCallback((parentId?: string) => {
+    if (!isPersonalWorkspace) {
+      return;
+    }
+    setCreateFolderParentId(parentId);
+    setIsCreateFolderOpen(true);
+  }, [isPersonalWorkspace]);
+
+  // Handle rename folder
+  const handleRenameFolder = useCallback((folderId: string) => {
+    const folder = allFolders.find((d) => d.id === folderId && d.isFolder);
+    if (folder) {
+      setRenameFolderId(folderId);
+      setNewFolderName(folder.folderName || folder.originalName);
+      setIsRenameDialogOpen(true);
+    }
+  }, [allFolders]);
+
+  const handleConfirmRename = useCallback(async () => {
+    if (renameFolderId && selectedWorkspaceId && newFolderName.trim()) {
+      const folderId = renameFolderId;
+      const folderName = newFolderName;
+
       setIsRenameDialogOpen(false);
-      setIsDeleteDialogOpen(false);
-      setIsDeleteDocsDialogOpen(false);
-      resetSearch();
-    }, [resetSearch]),
-  );
+      setRenameFolderId(null);
+      setNewFolderName('');
 
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    handleSearchChange(e.target.value);
-  };
+      try {
+        await renameFolder(selectedWorkspaceId, folderId, { name: folderName });
 
-  const handleRename = async (newName: string) => {
-    if (selectedWorkspace) {
-      await renameWorkspace(selectedWorkspace.id, newName);
+        const store = useWorkspaceStore.getState();
+        await Promise.all([store.fetchAllFolders(selectedWorkspaceId), store.fetchDocuments(selectedWorkspaceId, 1)]);
+      } catch (error) {
+        console.error('Failed to rename folder:', error);
+        setIsRenameDialogOpen(true);
+        setRenameFolderId(folderId);
+        setNewFolderName(folderName);
+      }
     }
-  };
+  }, [renameFolderId, selectedWorkspaceId, newFolderName, renameFolder]);
 
-  const handleDelete = async () => {
-    if (selectedWorkspace) {
-      await deleteWorkspace(selectedWorkspace.id);
+  // Handle delete folder
+  const handleDeleteFolder = useCallback(async (folderId: string) => {
+    if (selectedWorkspaceId && confirm(t('folder.deleteConfirm'))) {
+      try {
+        await deleteFolder(selectedWorkspaceId, folderId);
+        const store = useWorkspaceStore.getState();
+        await Promise.all([fetchAllFolders(selectedWorkspaceId), store.fetchDocuments(selectedWorkspaceId, 1)]);
+      } catch (error) {
+        console.error('Failed to delete folder:', error);
+      }
     }
-    setIsDeleteDialogOpen(false);
-  };
-
-  const handleDeleteAllDocs = async () => {
-    if (selectedWorkspace) {
-      await deleteAllDocuments(selectedWorkspace.id);
-    }
-    setIsDeleteDocsDialogOpen(false);
-  };
-
-  const countsLabel = useMemo(() => {
-    if (!selectedWorkspace) return '';
-    return t('content.counts', {
-      count: selectedWorkspace.documentCount,
-      used: formatFileSize(selectedWorkspace.usedStorage),
-      allocated: formatFileSize(selectedWorkspace.allocatedStorage),
-    });
-  }, [t, selectedWorkspace]);
-  const menuLabels = useMemo(
-    () => ({
-      rename: t('item.menu.rename'),
-      settings: t('item.menu.settings'),
-      deleteDocs: t('content.menu.deleteDocs'),
-      deleteWorkspace: t('content.menu.deleteWorkspace'),
-    }),
-    [t],
-  );
-  const deleteWorkspaceLabels = useMemo(
-    () => ({
-      title: t('item.dialogs.deleteWorkspace.title'),
-      description: t('item.dialogs.deleteWorkspace.description', {
-        name: selectedWorkspace?.name ?? '',
-        count: selectedWorkspace?.documentCount ?? 0,
-      }),
-      confirm: t('item.dialogs.deleteWorkspace.confirm'),
-      deleting: t('item.dialogs.deleteWorkspace.deleting'),
-    }),
-    [t, selectedWorkspace?.name, selectedWorkspace?.documentCount],
-  );
-  const deleteDocumentsLabels = useMemo(
-    () => ({
-      title: t('item.dialogs.deleteDocuments.title'),
-      description: t('item.dialogs.deleteDocuments.description', {
-        name: selectedWorkspace?.name ?? '',
-        count: selectedWorkspace?.documentCount ?? 0,
-      }),
-      confirm: t('item.dialogs.deleteDocuments.confirm'),
-      deleting: t('item.dialogs.deleteDocuments.deleting'),
-    }),
-    [t, selectedWorkspace?.name, selectedWorkspace?.documentCount],
-  );
-
-  // No workspace selected - show placeholder
-  if (!selectedWorkspace) {
-    const showCreateWorkspaceMessage = !isLoadingWorkspaces && totalWorkspaces === 0;
-    return (
-      <div className='flex-1 flex flex-col items-center justify-center text-center p-8 bg-muted/10'>
-        {/* Mobile: show back button */}
-        <Button variant='ghost' size='sm' className='md:hidden absolute top-4 left-4' onClick={toggleMobileSidebar}>
-          <ChevronLeft className='h-4 w-4 mr-1' />
-          {t('content.empty.back')}
-        </Button>
-        <Layers className='h-16 w-16 text-muted-foreground/50 mb-4' />
-        <h3 className='text-lg font-medium text-muted-foreground'>{t(showCreateWorkspaceMessage ? 'content.empty.createTitle' : 'content.empty.title')}</h3>
-        <p className='text-sm text-muted-foreground mt-1'>{t(showCreateWorkspaceMessage ? 'content.empty.createDescription' : 'content.empty.description')}</p>
-      </div>
-    );
-  }
+  }, [selectedWorkspaceId, deleteFolder, fetchAllFolders, fetchDocuments, t]);
 
   return (
-    <UploadDropZone>
-      {/* Header */}
-      <div className='p-3 md:p-4 border-b shrink-0'>
-        {/* Mobile layout */}
-        <div className='md:hidden space-y-2'>
-          {/* Row 1: back button, title, actions */}
-          <div className='flex items-center gap-2'>
-            <Button variant='ghost' size='icon' className='shrink-0 h-8 w-8' onClick={toggleMobileSidebar}>
-              <ChevronLeft className='h-4 w-4' />
-            </Button>
-            <h2 className='text-base font-semibold truncate flex-1 min-w-0'>{selectedWorkspace.name}</h2>
-            <div className='flex items-center gap-1 shrink-0'>
-              <UploadButton />
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant='ghost' size='icon' className='h-8 w-8'>
-                    <MoreHorizontal className='h-4 w-4' />
+    <div className="flex-1 min-w-0 h-full overflow-hidden bg-background flex flex-col">
+      {!selectedWorkspace ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-muted/10">
+          <div className="w-16 h-16 text-muted-foreground/30 mb-4">
+            <Layers className="h-8 w-8" />
+          </div>
+          <p className="text-sm text-muted-foreground">{t('content.noWorkspace')}</p>
+        </div>
+      ) : (
+        <UploadDropZone onDrop={handleDropOnRootWithWorkspace}>
+          {/* Header */}
+          <div className="p-3 md:p-4 border-b shrink-0 bg-card">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <h2 className="text-lg font-semibold">{selectedWorkspace.name}</h2>
+                <span className="text-sm text-muted-foreground">
+                  {documents.filter(d => !d.isFolder).length} {t('content.documents')}
+                </span>
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
+                </div>
+                {isPersonalWorkspace && <UploadButton folderId={currentFolderId ?? undefined} />}
+                {isPersonalWorkspace && (
+                  <Button variant="outline" size="sm" onClick={() => handleOpenCreateFolder(currentFolderId || undefined)} className="gap-2">
+                    <Plus className="h-4 w-4" />
+                    {t('content.createFolder')}
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align='end'>
-                  <DropdownMenuItem onClick={() => setIsRenameDialogOpen(true)} className='cursor-pointer'>
-                    <Pencil className='mr-2 h-4 w-4' />
-                    {menuLabels.rename}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openSettingsModal()} className='cursor-pointer'>
-                    <Settings className='mr-2 h-4 w-4' />
-                    {menuLabels.settings}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setIsDeleteDocsDialogOpen(true)} className='cursor-pointer' disabled={selectedWorkspace.documentCount === 0}>
-                    <FileX className='mr-2 h-4 w-4' />
-                    {menuLabels.deleteDocs}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsDeleteDialogOpen(true)} className='cursor-pointer text-destructive focus:text-destructive'>
-                    <Trash2 className='mr-2 h-4 w-4' />
-                    {menuLabels.deleteWorkspace}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                )}
+              </div>
+            </div>
+
+            {/* Storage info */}
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <span>{formatFileSize(selectedWorkspace.usedStorage)}</span>
+              <span>/</span>
+              <span>{formatFileSize(selectedWorkspace.allocatedStorage)}</span>
             </div>
           </div>
-          {/* Row 2: storage info + progress */}
-          <div className='space-y-1'>
-            <p className='text-xs text-muted-foreground'>{countsLabel}</p>
-            <Progress value={(selectedWorkspace.usedStorage / selectedWorkspace.allocatedStorage) * 100} className='h-1.5' />
-          </div>
-          {/* Row 3: search */}
-          <div className='relative w-full'>
-            <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-            <Input placeholder={t('content.searchPlaceholder')} value={searchInput} onChange={handleSearch} className='pl-9 h-9' />
-          </div>
-        </div>
 
-        {/* Desktop layout */}
-        <div className='hidden md:flex items-center gap-4'>
-          {/* Title and info */}
-          <div className='min-w-0 flex-1'>
-            <h2 className='text-lg font-semibold truncate'>{selectedWorkspace.name}</h2>
-            <p className='text-sm text-muted-foreground truncate'>{countsLabel}</p>
-            <Progress value={(selectedWorkspace.usedStorage / selectedWorkspace.allocatedStorage) * 100} className='mt-1' />
+          {/* Main content area with sidebar and content */}
+          <div className="flex-1 flex min-h-0">
+            {/* Left Sidebar - Folder Tree */}
+            {isPersonalWorkspace && (
+              <div className="w-64 shrink-0 hidden md:flex border-r bg-muted/30">
+                <FolderTreeSidebar
+                  documents={allFolders}
+                  currentFolderId={currentFolderId}
+                  onFolderSelect={handleNavigate}
+                  onCreateFolder={handleOpenCreateFolder}
+                  onDeleteFolder={handleDeleteFolder}
+                  onRenameFolder={handleRenameFolder}
+                />
+              </div>
+            )}
+
+            {/* Main Content Area */}
+            <div className="flex-1 flex flex-col min-w-0">
+              {/* Folder Navigation (Breadcrumbs) */}
+              <FolderNavigation breadcrumbs={breadcrumbs} onNavigate={handleNavigate} />
+
+              {/* Content */}
+              <ScrollArea className="flex-1 bg-background">
+                <div className="p-4">
+                  {/* Documents table for current folder */}
+                  <DocumentsTable onFolderDoubleClick={handleNavigate} />
+                </div>
+              </ScrollArea>
+            </div>
           </div>
 
-          {/* Search bar */}
-          <div className='relative w-64'>
-            <Search className='absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground' />
-            <Input placeholder={t('content.searchPlaceholder')} value={searchInput} onChange={handleSearch} className='pl-9 h-9' />
-          </div>
+          {isPersonalWorkspace && (
+            <CreateFolderDialog
+              open={isCreateFolderOpen}
+              onOpenChange={setIsCreateFolderOpen}
+              workspaceId={selectedWorkspaceId ?? undefined}
+              parentFolderId={createFolderParentId}
+            />
+          )}
 
-          {/* Actions */}
-          <div className='flex items-center gap-2 shrink-0'>
-            <UploadButton />
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant='ghost' size='icon' className='h-9 w-9'>
-                  <MoreHorizontal className='h-4 w-4' />
+          {/* Rename Folder Dialog */}
+          <Dialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>{t('folder.renameTitle')}</DialogTitle>
+              </DialogHeader>
+              <Input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder={t('folder.namePlaceholder')}
+                autoFocus
+              />
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsRenameDialogOpen(false)}>
+                  {t('folder.cancel')}
                 </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align='end'>
-                <DropdownMenuItem onClick={() => setIsRenameDialogOpen(true)} className='cursor-pointer'>
-                  <Pencil className='mr-2 h-4 w-4' />
-                  {menuLabels.rename}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => openSettingsModal()} className='cursor-pointer'>
-                  <Settings className='mr-2 h-4 w-4' />
-                  {menuLabels.settings}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setIsDeleteDocsDialogOpen(true)} className='cursor-pointer' disabled={selectedWorkspace.documentCount === 0}>
-                  <FileX className='mr-2 h-4 w-4' />
-                  {menuLabels.deleteDocs}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setIsDeleteDialogOpen(true)} className='cursor-pointer text-destructive focus:text-destructive'>
-                  <Trash2 className='mr-2 h-4 w-4' />
-                  {menuLabels.deleteWorkspace}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </div>
+                <Button onClick={handleConfirmRename} disabled={!newFolderName.trim()}>
+                  {t('folder.rename')}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
-      {/* Documents table */}
-      <ScrollArea className='flex-1'>
-        <DocumentsTable />
-      </ScrollArea>
-
-      <RenameDialog open={isRenameDialogOpen} onOpenChange={setIsRenameDialogOpen} currentName={selectedWorkspace.name} entityType='workspace' onRename={handleRename} />
-
-      <ConfirmDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen} title={deleteWorkspaceLabels.title} description={deleteWorkspaceLabels.description} confirmLabel={isDeleting ? deleteWorkspaceLabels.deleting : deleteWorkspaceLabels.confirm} variant='destructive' isLoading={isDeleting} onConfirm={handleDelete} />
-
-      <ConfirmDialog open={isDeleteDocsDialogOpen} onOpenChange={setIsDeleteDocsDialogOpen} title={deleteDocumentsLabels.title} description={deleteDocumentsLabels.description} confirmLabel={isDeleting ? deleteDocumentsLabels.deleting : deleteDocumentsLabels.confirm} variant='destructive' isLoading={isDeleting} onConfirm={handleDeleteAllDocs} />
-    </UploadDropZone>
+          {/* Drag overlay indicator */}
+          {isDragging && (
+            <div className="fixed inset-0 z-50 bg-black/5 flex items-center justify-center pointer-events-none">
+              <div className="bg-white rounded-lg p-6 shadow-xl">
+                <p className="text-sm text-muted-foreground">
+                  {draggedItems.length > 0 ? (
+                    <>
+                      <span className="h-5 w-5 text-blue-500 mr-2 inline-block">📁</span>
+                      {t('folder.draggingMultiple', { count: draggedItems.length })}
+                    </>
+                  ) : (
+                    <>
+                      <span className="h-5 w-5 text-blue-500 mr-2 inline-block">📄</span>
+                      {t('folder.draggingSingle')}
+                    </>
+                  )}
+                </p>
+              </div>
+            </div>
+          )}
+        </UploadDropZone>
+      )}
+    </div>
   );
 }

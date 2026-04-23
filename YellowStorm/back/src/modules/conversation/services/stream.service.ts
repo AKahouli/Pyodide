@@ -236,7 +236,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
             filename: doc.originalName,
-            filepath: doc.path,
+            filepath: doc.path || '',
             in_memory: false,
             language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200,
@@ -282,7 +282,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           workspace_documents: result.documents.map((doc) => ({
             _id: doc.id,
             filename: doc.originalName,
-            filepath: doc.path,
+            filepath: doc.path || '',
             in_memory: false,
             language: doc.detected_language || 'fr',
             indexing_token: doc.chunk_size || 1200,
@@ -358,17 +358,17 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         if (isImage) {
           return {
             type: 'image',
-            image: { filepath: doc.path, createdAt: doc.createdAt },
+            image: { filepath: doc.path || '', createdAt: doc.createdAt },
           };
         }
         return {
           type: 'document',
           document: {
-            filepath: doc.path,
+            filepath: doc.path || '',
             filename: doc.originalName,
             external_id: doc.id,
             workspace_id: doc.workspaceId,
-            source: doc.path,
+            source: doc.path || '',
             brain_type: 'doc',
             lang_code: 'fr',
             chunk_size: 4000,
@@ -430,7 +430,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       return previousDocs.map((doc) => ({
         _id: doc.id,
         filename: doc.originalName,
-        filepath: doc.path,
+        filepath: doc.path || '',
         in_memory: false,
         language: doc.detected_language || 'fr',
         indexing_token: doc.chunk_size || 1200,

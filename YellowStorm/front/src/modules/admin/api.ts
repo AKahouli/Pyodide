@@ -27,6 +27,7 @@ import type {
   SetMaintenanceRequest,
   RegistrationStatus,
   SetRegistrationRequest,
+  AppearanceSettings,
   PlanResponse,
   CreatePlanRequest,
   UpdatePlanRequest,
@@ -164,6 +165,21 @@ export async function setRegistrationStatus(
 ): Promise<RegistrationStatus> {
   const response = await apiClient.post<ApiResponse<RegistrationStatus>>(
     API_ENDPOINTS.system.registration,
+    data
+  );
+  return response.data.data;
+}
+
+export async function getAppearanceSettings(): Promise<AppearanceSettings> {
+  const response = await apiClient.get<ApiResponse<AppearanceSettings>>(
+    `${API_ENDPOINTS.system.maintenance.replace('/maintenance', '/appearance')}`
+  );
+  return response.data.data;
+}
+
+export async function setAppearanceSettings(data: AppearanceSettings): Promise<AppearanceSettings> {
+  const response = await apiClient.post<ApiResponse<AppearanceSettings>>(
+    `${API_ENDPOINTS.system.maintenance.replace('/maintenance', '/appearance')}`,
     data
   );
   return response.data.data;

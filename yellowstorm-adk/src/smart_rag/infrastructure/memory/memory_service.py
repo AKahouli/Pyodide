@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
 
-from mem0 import AsyncMemory
+# Lazy import of AsyncMemory inside methods
 
 from src.config.settings import get_settings
 from src.logger.logging import get_logger
@@ -89,7 +89,7 @@ class MemoryService:
             return {}
 
     @property
-    def memory(self) -> Optional[AsyncMemory]:
+    def memory(self) -> Optional[Any]:
         """Get AsyncMemory instance for the current event loop (synchronous property).
 
         Returns:
@@ -143,6 +143,7 @@ class MemoryService:
         self._set_environment_variables()
 
         try:
+            from mem0 import AsyncMemory
             memory_instance = await AsyncMemory.from_config(self._config)
             MemoryService._loop_memories[loop] = memory_instance
             self._logger.info(f"MemoryService initialized successfully for event loop {id(loop)} with model: {self._settings.MEMORY_MODEL}")

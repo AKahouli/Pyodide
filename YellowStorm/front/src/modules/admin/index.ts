@@ -16,6 +16,7 @@ export {
   PlansPage,
   AnalyticsPage,
   SystemPage,
+  AppearancePage,
   ReportsPage,
   ModelsPage,
   ToolsPage,
