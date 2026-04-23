@@ -1,7 +1,7 @@
+import { forwardRef, type ComponentProps } from 'react';
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { Handle, Position } from '@xyflow/react';
-import type { ComponentProps } from 'react';
 
 export type NodeProps = ComponentProps<typeof Card> & {
   handles: {
@@ -10,13 +10,20 @@ export type NodeProps = ComponentProps<typeof Card> & {
   } | false;
 };
 
-export const Node = ({ handles, className, ...props }: NodeProps) => (
-  <Card className={cn('node-container relative w-sm gap-0 rounded-md p-0', className)} style={{ position: 'relative', height: '100%' }} {...props}>
+export const Node = forwardRef<HTMLDivElement, NodeProps>(({ handles, className, ...props }, ref) => (
+  <Card
+    ref={ref}
+    className={cn('node-container relative w-sm gap-0 rounded-md p-0', className)}
+    style={{ position: 'relative', height: '100%' }}
+    {...props}
+  >
     {handles && handles.target && <Handle position={Position.Left} type='target' />}
     {handles && handles.source && <Handle position={Position.Right} type='source' />}
     {props.children}
   </Card>
-);
+));
+
+Node.displayName = 'Node';
 
 export type NodeHeaderProps = ComponentProps<typeof CardHeader>;
 

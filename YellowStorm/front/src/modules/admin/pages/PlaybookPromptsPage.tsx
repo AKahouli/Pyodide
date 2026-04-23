@@ -16,6 +16,8 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SearchableSelect } from '@/components/ui/searchable-select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { useAgents, useAgentStore } from '@/modules/agent/store';
+import apiClient from '@/lib/api/client';
 import {
   getPlaybookPrompts,
   updatePlaybookPrompt,
@@ -23,10 +25,8 @@ import {
   createPlaybookNodeTemplate,
   updatePlaybookNodeTemplate,
   deletePlaybookNodeTemplate,
-  getAdminAgents,
-  getTools,
 } from '../api';
-import type { PlaybookPromptResponse, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort, AgentResponse, ToolResponse } from '../types';
+import type { PlaybookPromptResponse, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
 import { usePlaybookStore } from '@/modules/playbook';
 import * as Icons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
@@ -115,6 +115,8 @@ function slugify(text: string): string {
 export function PlaybookPromptsPage() {
   const { t } = useModuleTranslation('admin');
   const invalidateNodeTemplates = usePlaybookStore((s) => s.invalidateNodeTemplates);
+  const agents = useAgents();
+  const fetchAgents = useAgentStore((s) => s.fetchAgents);
   // ===== Prompts State =====
   const [promptLoading, setPromptLoading] = useState(true);
   const [promptSaving, setPromptSaving] = useState(false);
@@ -132,10 +134,8 @@ export function PlaybookPromptsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   
   // Data for selects
-  const [agents, setAgents] = useState<AgentResponse[]>([]);
-  const [tools, setTools] = useState<ToolResponse[]>([]);
-  const [agentsLoading, setAgentsLoading] = useState(false);
-  const [toolsLoading, setToolsLoading] = useState(false);
+  const [connectors, setConnectors] = useState<Array<{ id: string; slug: string; name: string }>>([]);
+  const [connectorsLoading, setConnectorsLoading] = useState(false);
 
   const selectedPrompt = useMemo(() => promptItems.find((item) => item.key === selectedPromptKey) || null, [promptItems, selectedPromptKey]);
   const selectedTemplate = useMemo(() => templateItems.find((item) => item.id === selectedTemplateId) || null, [templateItems, selectedTemplateId]);
@@ -192,35 +192,24 @@ export function PlaybookPromptsPage() {
     }
   };
 
-  const fetchAgents = async () => {
-    setAgentsLoading(true);
+  const fetchConnectors = async () => {
+    setConnectorsLoading(true);
     try {
-      const data = await getAdminAgents({ limit: 1000 });
-      setAgents(data.data || []);
+      const response = await apiClient.get('/connectors');
+      const data = response.data?.data ?? [];
+      setConnectors(data.map((c: { id: string; slug: string; name: string }) => ({ id: c.id, slug: c.slug, name: c.name })));
     } catch {
-      // Silent fail - agents are optional
+      // Silent fail - connectors are optional
     } finally {
-      setAgentsLoading(false);
-    }
-  };
-
-  const fetchTools = async () => {
-    setToolsLoading(true);
-    try {
-      const data = await getTools({ limit: 1000 });
-      setTools(data.data || []);
-    } catch {
-      // Silent fail - tools are optional
-    } finally {
-      setToolsLoading(false);
+      setConnectorsLoading(false);
     }
   };
 
   useEffect(() => {
     void fetchPrompts();
     void fetchTemplates();
-    void fetchAgents();
-    void fetchTools();
+    fetchAgents();
+    void fetchConnectors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -257,25 +246,25 @@ export function PlaybookPromptsPage() {
   };
 
   const handleSaveTemplate = async () => {
-    if (!templateDraft.key || !templateDraft.type || !templateDraft.title) {
+    if (!templateDraft.key || !templateDraft.title) {
       toast.error(t('playbook.templates.toasts.validationError'));
       return;
     }
+    const type = templateDraft.type || templateDraft.key;
     setTemplateSaving(true);
     try {
       if (isCreatingTemplate) {
         const created = await createPlaybookNodeTemplate({
           key: templateDraft.key,
-          type: templateDraft.type,
+          type,
           title: templateDraft.title,
           description: templateDraft.description,
           icon: templateDraft.icon,
           color: templateDraft.color,
           category: templateDraft.category,
-          inputPorts: templateDraft.inputPorts,
-          outputPorts: templateDraft.outputPorts,
+          inputPorts: stripPortIds(templateDraft.inputPorts),
+          outputPorts: stripPortIds(templateDraft.outputPorts),
           promptTemplate: templateDraft.promptTemplate,
-          recommendedAgentTypeSlug: templateDraft.recommendedAgentTypeSlug,
           requiredToolNames: templateDraft.requiredToolNames,
           executionMode: templateDraft.executionMode,
           assignedAgentId: templateDraft.assignedAgentId,
@@ -290,16 +279,15 @@ export function PlaybookPromptsPage() {
       } else if (templateDraft.id) {
         const updated = await updatePlaybookNodeTemplate(templateDraft.id, {
           key: templateDraft.key,
-          type: templateDraft.type,
+          type,
           title: templateDraft.title,
           description: templateDraft.description,
           icon: templateDraft.icon,
           color: templateDraft.color,
           category: templateDraft.category,
-          inputPorts: templateDraft.inputPorts,
-          outputPorts: templateDraft.outputPorts,
+          inputPorts: stripPortIds(templateDraft.inputPorts),
+          outputPorts: stripPortIds(templateDraft.outputPorts),
           promptTemplate: templateDraft.promptTemplate,
-          recommendedAgentTypeSlug: templateDraft.recommendedAgentTypeSlug,
           requiredToolNames: templateDraft.requiredToolNames,
           executionMode: templateDraft.executionMode,
           assignedAgentId: templateDraft.assignedAgentId,
@@ -350,18 +338,18 @@ export function PlaybookPromptsPage() {
     syncTemplateDraft(first);
   };
 
-  // Auto-generate key from title
+  // Auto-generate key from title (always)
   const handleTitleChange = (title: string) => {
-    setTemplateDraft((current) => {
-      const newKey = isCreatingTemplate && !current.key ? slugify(title) : current.key;
-      return { ...current, title, key: newKey };
-    });
+    setTemplateDraft((current) => ({
+      ...current,
+      title,
+      key: isCreatingTemplate ? slugify(title) : current.key,
+      type: isCreatingTemplate ? slugify(title) : current.type,
+    }));
   };
 
-  // Auto-generate type from title (if not manually set)
-  const handleTypeChange = (type: string) => {
-    setTemplateDraft((current) => ({ ...current, type }));
-  };
+  const stripPortIds = (ports: PlaybookNodeTemplatePort[]): PlaybookNodeTemplatePort[] =>
+    ports.map(({ _id, ...rest }: any) => rest);
 
   const addInputPort = () => {
     setTemplateDraft((current) => ({
@@ -658,41 +646,30 @@ export function PlaybookPromptsPage() {
                     <div className="space-y-2">
                       <label className="text-sm font-medium flex items-center gap-2">
                         {t('playbook.templates.fields.key')}
-                        {isCreatingTemplate && templateDraft.key && (
-                          <Badge variant="outline" className="text-xs">{t('playbook.templates.fields.keyAuto')}</Badge>
-                        )}
+                        <Badge variant="outline" className="text-xs">{t('playbook.templates.fields.keyAuto')}</Badge>
                       </label>
                       <Input
                         value={templateDraft.key}
-                        onChange={(e) => setTemplateDraft((current) => ({ ...current, key: e.target.value }))}
-                        placeholder="unique-key"
+                        disabled
+                        placeholder="auto-generated-from-title"
+                        className="bg-muted/50"
                       />
                     </div>
                   </div>
 
-                  {/* Type & Category */}
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('playbook.templates.fields.type')}</label>
-                      <Input
-                        value={templateDraft.type}
-                        onChange={(e) => handleTypeChange(e.target.value)}
-                        placeholder={t('playbook.templates.fields.typePlaceholder')}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('playbook.templates.fields.category')}</label>
-                      <div className="flex gap-2">
-                        <select
-                          value={templateDraft.category}
-                          onChange={(e) => setTemplateDraft((current) => ({ ...current, category: e.target.value }))}
-                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {CATEGORIES.map((cat) => (
-                            <option key={cat} value={cat}>{cat}</option>
-                          ))}
-                        </select>
-                      </div>
+                  {/* Category */}
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">{t('playbook.templates.fields.category')}</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={templateDraft.category}
+                        onChange={(e) => setTemplateDraft((current) => ({ ...current, category: e.target.value }))}
+                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {CATEGORIES.map((cat) => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
 
@@ -801,7 +778,7 @@ export function PlaybookPromptsPage() {
                         options={agents.map((a) => ({ value: a.id, label: a.name }))}
                         value={templateDraft.assignedAgentId || ''}
                         onValueChange={(value) => setTemplateDraft((current) => ({ ...current, assignedAgentId: value || null }))}
-                        placeholder={agentsLoading ? 'Loading agents...' : t('playbook.templates.fields.agentPlaceholder')}
+                        placeholder={t('playbook.templates.fields.agentPlaceholder')}
                         emptyText={t('playbook.templates.fields.noAgents')}
                       />
                     </div>
@@ -939,18 +916,18 @@ export function PlaybookPromptsPage() {
                   <div className="space-y-2">
                     <label className="text-sm font-medium">{t('playbook.templates.fields.requiredTools')}</label>
                     <div className="flex flex-wrap gap-2">
-                      {toolsLoading ? (
+                      {connectorsLoading ? (
                         <span className="text-sm text-muted-foreground">{t('playbook.templates.fields.requiredToolsLoading')}</span>
-                      ) : tools.length === 0 ? (
+                      ) : connectors.length === 0 ? (
                         <span className="text-sm text-muted-foreground">{t('playbook.templates.fields.noTools')}</span>
                       ) : (
-                        tools.map((tool) => {
-                          const isSelected = templateDraft.requiredToolNames.includes(tool.name);
+                        connectors.map((connector) => {
+                          const isSelected = templateDraft.requiredToolNames.includes(connector.slug);
                           return (
                             <button
-                              key={tool.id}
+                              key={connector.id}
                               type="button"
-                              onClick={() => toggleTool(tool.name)}
+                              onClick={() => toggleTool(connector.slug)}
                               className={cn(
                                 'inline-flex items-center gap-1 rounded-full border px-3 py-1 text-sm transition-colors',
                                 isSelected
@@ -959,23 +936,12 @@ export function PlaybookPromptsPage() {
                               )}
                             >
                               {isSelected && <Check className="h-3 w-3" />}
-                              {tool.name}
+                              {connector.name}
                             </button>
                           );
                         })
                       )}
                     </div>
-                  </div>
-
-                  {/* Legacy Agent Type (for backward compatibility) */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-muted-foreground">{t('playbook.templates.fields.recommendedAgentType')}</label>
-                    <Input
-                      value={templateDraft.recommendedAgentTypeSlug || ''}
-                      onChange={(e) => setTemplateDraft((current) => ({ ...current, recommendedAgentTypeSlug: e.target.value || null }))}
-                      placeholder="researcher"
-                      className="bg-muted/50"
-                    />
                   </div>
 
                   <div className="flex justify-between">
@@ -992,7 +958,7 @@ export function PlaybookPromptsPage() {
                     <div className="flex gap-2">
                       <Button
                         onClick={() => void handleSaveTemplate()}
-                        disabled={templateSaving || !templateDraft.key || !templateDraft.type || !templateDraft.title}
+                        disabled={templateSaving || !templateDraft.key || !templateDraft.title}
                       >
                         {templateSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                         {isCreatingTemplate ? t('playbook.templates.actions.createTemplate') : t('playbook.templates.actions.saveTemplate')}

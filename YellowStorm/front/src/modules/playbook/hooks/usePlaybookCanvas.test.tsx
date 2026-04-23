@@ -7,6 +7,7 @@ const storeFns = vi.hoisted(() => ({
   updateTasks: vi.fn(),
   updateEdges: vi.fn(),
   captureSnapshot: vi.fn(),
+  selectStep: vi.fn(),
   canvasSyncVersion: 0,
 }));
 
@@ -23,7 +24,12 @@ vi.mock('@xyflow/react', () => ({
   addEdge: (edge: any, edges: any[]) => [...edges, edge],
   applyNodeChanges: (changes: any[], nodes: any[]) => {
     const removeIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
-    return nodes.filter((n) => !removeIds.has(n.id));
+    return nodes
+      .filter((n) => !removeIds.has(n.id))
+      .map((node) => {
+        const selectChange = changes.find((c) => c.type === 'select' && c.id === node.id);
+        return selectChange ? { ...node, selected: selectChange.selected } : node;
+      });
   },
   applyEdgeChanges: (changes: any[], edges: any[]) => {
     const removeIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
@@ -103,6 +109,16 @@ describe('usePlaybookCanvas', () => {
     });
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
+  });
+
+  it('syncs react-flow selection changes back to the store', () => {
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onNodesChange([{ id: 'task-1', type: 'select', selected: true }] as any);
+    });
+
+    expect(storeFns.selectStep).toHaveBeenCalledWith('task-1');
   });
 
   it('allows multiple port-to-port edges between the same two nodes', () => {

@@ -1,5 +1,41 @@
 # Changelog
 
+## [2026-04-23 00:00 UTC] — Add webapp backend guidelines documentation
+
+- **Feature:** `webapp-backend`
+- **Type:** `docs`
+- **Changed:** Added a new backend-guidelines feature README derived from `YellowStorm/back/BACKEND_GUIDELINES.md`, and registered the new slug in the documentation index.
+- **Why:** The repository needed a dedicated maintainer-owned documentation entry for the backend coding guidelines so the backend contract and conventions are easy to find.
+- **Impact:** `docs/webapp-backend/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/webapp-backend/README.md`
+
+## [2026-04-22 00:00 UTC] — Add backend developer OpenCode agent
+
+- **Feature:** `opencode-agents`
+- **Type:** `feat`
+- **Changed:** Replaced the placeholder backend guidelines file with a proper project-local `backend-developer` subagent, allowed `build` to delegate to it in `opencode.json`, and updated repository workflow documentation to describe the new backend implementation role.
+- **Why:** Backend-heavy tasks in `YellowStorm/back` needed a dedicated implementation specialist that stays distinct from diagnostics, review, and cross-service coordination handled by `build`.
+- **Impact:** `.opencode/agents/backend-developer.md`, `opencode.json`, `AGENTS.md`, `docs/opencode-agents/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/opencode-agents/README.md`
+
+## [2026-04-22 00:00 UTC] — Add node template library
+
+- **Feature:** `node-template-library`
+- **Type:** `feat`
+- **Changed:** Added a DB-backed playbook node template library with lazy-seeded built-in templates, admin CRUD endpoints, a public enabled-only runtime endpoint, frontend runtime template loading, and admin UI management.
+- **Why:** Replace the hardcoded static template registry with a configurable data source that can be managed in Admin > Playbook and consumed by the canvas at runtime.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook-node-template.schema.ts`, `YellowStorm/back/src/modules/playbook/interfaces/playbook-node-template.interface.ts`, `YellowStorm/back/src/modules/playbook/dto/create-playbook-node-template.dto.ts`, `YellowStorm/back/src/modules/playbook/dto/update-playbook-node-template.dto.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-node-template.service.ts`, `YellowStorm/back/src/modules/playbook/controllers/admin-playbook-node-templates.controller.ts`, `YellowStorm/back/src/modules/playbook/controllers/playbook-node-templates.controller.ts`, `YellowStorm/back/src/modules/playbook/playbook.module.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/api.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasFloatingToolbar.tsx`, `YellowStorm/front/src/modules/playbook/components/PlaybookCanvasPage.tsx`, `YellowStorm/front/src/modules/admin/pages/PlaybookPromptsPage.tsx`, `YellowStorm/front/src/modules/admin/types.ts`, `YellowStorm/front/src/modules/admin/api.ts`, `YellowStorm/front/src/lib/api/config.ts`, `YellowStorm/front/src/modules/admin/locales/en.json`, `YellowStorm/front/src/modules/admin/locales/fr.json`
+- **Readme:** `/docs/node-template-library/README.md`
+
+## [2026-04-22 00:00 UTC] — Harden backend CORS origin parsing
+
+- **Feature:** `connectors`
+- **Type:** `fix`
+- **Changed:** Normalized backend `CORS_ORIGIN` parsing in `YellowStorm/back/src/main.ts` to trim comma-separated origins and discard empty values before passing them to NestJS CORS configuration.
+- **Why:** Prevent malformed runtime CORS origin lists from producing inconsistent credentialed cross-origin responses during frontend auth requests.
+- **Impact:** `YellowStorm/back/src/main.ts`
+- **Readme:** `/docs/connectors/README_2026-04-14_23-00-00.md`
+
 ## [2026-04-22 00:00 UTC] — Harden chart payload parsing
 
 - **Feature:** `conversation`
@@ -1112,3 +1148,13 @@
 - **Why:** Users can now see at a glance what artifacts a completed step produced (on the node badge) and inspect/download them in the step detail panel, completing the visual artifact lifecycle.
 - **Impact:** `types.ts`, `store.ts`, `ArtifactBadge.tsx` (new), `PlaybookNode.tsx`, `ExecutionStepDetail.tsx`, `index.ts`, `en.json`, `fr.json`
 - **Doc:** created `/docs/task-toolbar/README_2026-04-01_16-45-00.md`
+# Changelog
+
+## [2026-04-23 00:00 UTC] — Add webapp frontend guidelines documentation
+
+- **Feature:** `webapp-frontend`
+- **Type:** `docs`
+- **Changed:** Added a new frontend-guidelines feature README derived from `YellowStorm/front/FRONTEND_GUIDELINES.md`, and registered the new slug in the documentation index.
+- **Why:** The repository needed a dedicated maintainer-owned documentation entry for the frontend coding guidelines so the frontend stack, conventions, and review rules are easy to find.
+- **Impact:** `docs/webapp-frontend/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/webapp-frontend/README.md`

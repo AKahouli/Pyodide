@@ -449,7 +449,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
   return (
     <ContextMenu>
-      <ContextMenuTrigger>
+      <ContextMenuTrigger asChild>
         <Node
           handles={false}
           className={cn(

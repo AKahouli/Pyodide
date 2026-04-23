@@ -79,6 +79,7 @@
         },
         "task": {
           "*": "deny",
+          "backend-developer": "allow",
           "general": "allow",
           "explore": "allow",
           "frontend-developer": "allow",

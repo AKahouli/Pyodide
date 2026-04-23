@@ -60,7 +60,7 @@ User task
 └─────────────┘
 ```
 
-`diagnostics`, `frontend-developer`, and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+`diagnostics`, `backend-developer`, `frontend-developer`, and `frontend-qa` are called **on demand** by `build` when the situation requires them.
 
 `contract` and `integration` are workflow roles described here, but they are not currently implemented as project-local OpenCode subagents in `.opencode/agents/`.
 
@@ -106,6 +106,7 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 
 **Delegation triggers during implementation:**
 - Unclear failure or vague bug → `diagnostics` before editing
+- Backend-only implementation slice in `YellowStorm/back` → `backend-developer` for scoped NestJS work
 - Frontend-only implementation slice in `YellowStorm/front` → `frontend-developer` for scoped UI work
 - Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
 - Proto/API change or cross-service modification → perform explicit contract validation after editing; if a dedicated `contract` agent is added later, use it
@@ -159,6 +160,20 @@ Single-pass review across three lenses:
 - Validates fixes by running relevant test suite
 
 **Output:** Root cause analysis + test files. Hands back to `build` for code changes beyond tests.
+
+---
+
+#### `backend-developer` — Backend Implementation
+
+**Invoke when:** A task is mostly contained within `YellowStorm/back` and `build` wants a specialist to implement a backend slice while retaining overall task ownership.
+
+**Does:**
+- Implements NestJS, Mongoose, DTO, validation, and backend test changes in `YellowStorm/back`
+- Preserves repo backend patterns for modules, config, exceptions, and structured logging
+- Adds or updates backend tests when the surrounding area already uses them and behavior changes materially
+- Hands implementation details back to `build` for review, contract/integration handling when needed, and task closure
+
+**Output:** Changed files, verification run, and any follow-up risks for `build`.
 
 ---
 
@@ -294,6 +309,7 @@ See the `maintainer` agent file for the full documentation procedure.
 |--------|--------|
 | Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
 | Vague bug or unclear failure | `diagnostics` first |
+| Backend-only implementation slice | `backend-developer` during implementation |
 | Frontend-only implementation slice | `frontend-developer` during implementation |
 | Any code change | `reviewer` after (mandatory, blocking) |
 | Frontend UI/interaction change | `frontend-qa` after |

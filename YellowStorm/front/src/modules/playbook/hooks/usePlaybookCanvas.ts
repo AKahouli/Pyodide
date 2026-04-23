@@ -134,6 +134,7 @@ export function usePlaybookCanvas() {
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
+  const selectStep = usePlaybookStore((s) => s.selectStep);
   const canvasSyncVersion = usePlaybookStore((s) => s.canvasSyncVersion);
 
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -210,9 +211,13 @@ export function usePlaybookCanvas() {
   // Store sync happens in onNodeDragStop.
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
+      const selectedNodeChange = changes.find((change) => change.type === 'select' && 'selected' in change);
+      if (selectedNodeChange && selectedNodeChange.id !== TRIGGER_NODE_ID) {
+        selectStep(selectedNodeChange.selected ? selectedNodeChange.id : null);
+      }
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [],
+    [selectStep],
   );
 
   // Sync positions to store only when drag ends.

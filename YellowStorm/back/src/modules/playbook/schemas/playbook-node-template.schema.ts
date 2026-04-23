@@ -29,6 +29,7 @@ export class PlaybookNodeTemplate extends Document {
   @Prop({
     type: [
       {
+        _id: false,
         id: { type: String, required: true, trim: true },
         name: { type: String, required: true, trim: true },
         artifactKind: { type: String, required: true, trim: true },
@@ -49,6 +50,7 @@ export class PlaybookNodeTemplate extends Document {
   @Prop({
     type: [
       {
+        _id: false,
         id: { type: String, required: true, trim: true },
         name: { type: String, required: true, trim: true },
         artifactKind: { type: String, required: true, trim: true },

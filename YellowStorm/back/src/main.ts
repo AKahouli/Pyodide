@@ -55,7 +55,10 @@ async function bootstrap() {
     logger.warn('Failed to parse runtime database configuration', { mongoUri });
   }
   const corsOrigins = configService.get<string>('CORS_ORIGIN', 'http://localhost:5173');
-  const allowedOrigins = corsOrigins.split(',').map((origin) => origin.trim());
+  const allowedOrigins = corsOrigins
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
   const corsOrigin = allowedOrigins.length === 1 ? allowedOrigins[0] : allowedOrigins;
 
   // CORS - use NestJS built-in for proper integration

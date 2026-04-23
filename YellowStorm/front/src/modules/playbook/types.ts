@@ -50,6 +50,9 @@ export interface TaskTemplate {
   promptTemplate: string;
   recommendedAgentTypeSlug: string | null;
   requiredToolNames: string[];
+  executionMode?: TaskExecutionMode;
+  assignedAgentId?: string | null;
+  selectedAction?: SelectedAction;
 }
 
 // ===== Domain Entities =====

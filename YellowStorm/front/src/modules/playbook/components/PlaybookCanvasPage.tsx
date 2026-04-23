@@ -495,9 +495,9 @@ function PlaybookCanvasInner() {
         id: taskId,
         title: `${template.title} ${existingCount + 1}`,
         description: template.description,
-        assignedAgentId: null,
-        executionMode: 'agent',
-        selectedAction: undefined,
+        assignedAgentId: template.executionMode === 'agent' ? (template.assignedAgentId ?? null) : null,
+        executionMode: (template.executionMode as PlaybookTask['executionMode']) ?? 'agent',
+        selectedAction: template.executionMode === 'action' ? (template.selectedAction ?? undefined) : undefined,
         executionOrder: existingCount,
         positionX: center.x,
         positionY: center.y,
@@ -1000,19 +1000,12 @@ function PlaybookCanvasInner() {
       }
 
       if (pageMode === 'design') {
-        const taskFromPlaybook = playbook?.tasks.find((t) => t.id === node.id) ?? null;
-        const targetNode = nodes.find((candidate) => candidate.id === node.id);
-        if (taskFromPlaybook || targetNode) {
-          setEditingTask((taskFromPlaybook || targetNode?.data) as unknown as PlaybookTask);
-          setEditorOpen(true);
-          setDesignerOpen(false);
-        }
         return;
       }
 
       setExecutionPanelOpen(true);
     },
-    [currentExecution, execution, id, nodes, pageMode, selectStep, setDesignerOpen, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
+    [currentExecution, execution, id, pageMode, selectStep, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
   );
 
   const handleEdgeDoubleClick = useCallback(
@@ -1238,7 +1231,7 @@ function PlaybookCanvasInner() {
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}
-                  panOnDrag
+                  panOnDrag={false}
                   panOnScroll={false}
                   zoomOnScroll
                   fitView
