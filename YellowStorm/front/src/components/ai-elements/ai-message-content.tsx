@@ -22,7 +22,9 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { PlayIcon, CheckCircle2, Circle, ListTodo, AlertTriangle, Loader2, Bot, Eye, Download, FileText, XCircle, Maximize, Minimize } from 'lucide-react';
 import type { BundledLanguage } from 'shiki';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ComposedChart, Label, Line, LineChart, Pie, PieChart, ResponsiveContainer, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts';
-import { ChartConfig, ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import type { ChartConfig } from '@/components/ui/chart';
+import type { ChartComponentData } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 import { isViewableFilename } from '@/modules/file-viewer/renderers';
 import { Separator } from '../ui/separator';
@@ -99,22 +101,8 @@ export interface CheckpointPart {
   label: string;
 }
 
-export interface ChartPart {
+export interface ChartPart extends ChartComponentData {
   type: 'chart';
-  title?: string;
-  kind: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed';
-  data: Record<string, any>[];
-  config: ChartConfig;
-  xAxisKey: string;
-  yAxisKey?: string;
-  nameKey?: string;
-  zAxisKey?: string;
-  stacked?: boolean;
-  layout?: 'horizontal' | 'vertical';
-  innerRadius?: number;
-  showLegend?: boolean;
-  showGrid?: boolean;
-  series: { dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }[];
 }
 
 export interface TaskPart {
@@ -665,7 +653,7 @@ const SourcesPartRenderer = ({ sources }: { sources: SourceItemData[] }) => (
 );
 
 // Chart Part
-const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, nameKey, zAxisKey, stacked = false, layout = 'horizontal', innerRadius = 0, showLegend = true, showGrid = true, series }: { title?: string; kind: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed'; data: Record<string, any>[]; config: ChartConfig; xAxisKey: string; yAxisKey?: string; nameKey?: string; zAxisKey?: string; stacked?: boolean; layout?: 'horizontal' | 'vertical'; innerRadius?: number; showLegend?: boolean; showGrid?: boolean; series: { dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }[] }) => {
+const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, nameKey, zAxisKey, stacked = false, layout = 'horizontal', innerRadius = 0, showLegend = true, showGrid = true, series }: ChartPart) => {
   const { t: tCommon } = useModuleTranslation('common');
   const hasData = data.length > 0;
 

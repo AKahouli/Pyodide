@@ -254,6 +254,25 @@ function buildTaskChunk(componentId, title, items, options = {}) {
 }
 
 /**
+ * Builds a single chunk for a chart component.
+ * Charts are sent fully formed in one chunk.
+ */
+function buildChartChunk(componentId, chart, options = {}) {
+  const { delay = 100, metadata } = options;
+  return {
+    delay,
+    chunk: {
+      action: 'add',
+      component: {
+        id: componentId,
+        chart,
+      },
+      metadata,
+    },
+  };
+}
+
+/**
  * Builds a single chunk for a sources component.
  * Sources arrive fully formed in one chunk.
  */
@@ -851,6 +870,135 @@ console.log(fibonacci(10)); // 55`;
     { metadata },
   );
 
+  const chartLineChunk = buildChartChunk(
+    chartLineId,
+    {
+      title: 'Revenue trend',
+      data: [
+        { month: 'Jan', revenue: 32 },
+        { month: 'Feb', revenue: 48 },
+        { month: 'Mar', revenue: 39 },
+      ],
+      config: { revenue: { label: 'Revenue', color: '#2563eb' } },
+      xAxisKey: 'month',
+      yAxisKey: 'revenue',
+      series: [{ dataKey: 'revenue', label: 'Revenue' }],
+      kind: 'line',
+      showLegend: true,
+      showGrid: true,
+    },
+    { metadata },
+  );
+
+  const chartBarChunk = buildChartChunk(
+    chartBarId,
+    {
+      title: 'Task volume',
+      data: [
+        { label: 'Plan', value: 12 },
+        { label: 'Review', value: 18 },
+        { label: 'Ship', value: 8 },
+      ],
+      config: { value: { label: 'Value', color: '#16a34a' } },
+      xAxisKey: 'label',
+      yAxisKey: 'value',
+      series: [{ dataKey: 'value', label: 'Value' }],
+      kind: 'bar',
+      layout: 'vertical',
+      showLegend: true,
+      showGrid: true,
+    },
+    { metadata },
+  );
+
+  const chartAreaChunk = buildChartChunk(
+    chartAreaId,
+    {
+      title: 'Usage over time',
+      data: [
+        { month: 'Jan', usage: 14 },
+        { month: 'Feb', usage: 27 },
+        { month: 'Mar', usage: 21 },
+      ],
+      config: { usage: { label: 'Usage', color: '#a855f7' } },
+      xAxisKey: 'month',
+      yAxisKey: 'usage',
+      series: [{ dataKey: 'usage', label: 'Usage' }],
+      kind: 'area',
+      showLegend: true,
+      showGrid: true,
+    },
+    { metadata },
+  );
+
+  const chartPieChunk = buildChartChunk(
+    chartPieId,
+    {
+      title: 'Traffic split',
+      data: [
+        { name: 'Desktop', value: 42, fill: '#f97316' },
+        { name: 'Mobile', value: 58, fill: '#06b6d4' },
+      ],
+      config: { value: { label: 'Share', color: '#f97316' } },
+      xAxisKey: 'name',
+      nameKey: 'name',
+      series: [{ dataKey: 'value', label: 'Share' }],
+      kind: 'pie',
+      innerRadius: 48,
+      showLegend: true,
+    },
+    { metadata },
+  );
+
+  const chartScatterChunk = buildChartChunk(
+    chartScatterId,
+    {
+      title: 'Correlation sample',
+      data: [
+        { x: 5, y: 12, z: 10 },
+        { x: 12, y: 18, z: 22 },
+        { x: 18, y: 9, z: 14 },
+      ],
+      config: { y: { label: 'Y', color: '#ef4444' } },
+      xAxisKey: 'x',
+      yAxisKey: 'y',
+      zAxisKey: 'z',
+      series: [{ dataKey: 'y', label: 'Series' }],
+      kind: 'scatter',
+      showLegend: true,
+      showGrid: true,
+    },
+    { metadata },
+  );
+
+  const chartComposedChunk = buildChartChunk(
+    chartComposedId,
+    {
+      title: 'Revenue vs Cost',
+      data: [
+        { month: 'Jan', revenue: 22, cost: 14, target: 24 },
+        { month: 'Feb', revenue: 31, cost: 16, target: 28 },
+        { month: 'Mar', revenue: 28, cost: 18, target: 30 },
+      ],
+      config: {
+        revenue: { label: 'Revenue', color: '#0f766e' },
+        cost: { label: 'Cost', color: '#dc2626' },
+        target: { label: 'Target', color: '#f59e0b' },
+      },
+      xAxisKey: 'month',
+      yAxisKey: 'value',
+      series: [
+        { dataKey: 'revenue', label: 'Revenue', kind: 'bar' },
+        { dataKey: 'cost', label: 'Cost', kind: 'line' },
+        { dataKey: 'target', label: 'Target', kind: 'area' },
+      ],
+      kind: 'composed',
+      showLegend: true,
+      showGrid: true,
+    },
+    { metadata },
+  );
+
   const followUpChunks = buildTextChunks(text2Id, followUpTokens, { metadata });
 
   // --- Citation components (referencing the main text component) ---
@@ -943,6 +1091,13 @@ console.log(fibonacci(10)); // 55`;
     webPreviewChunk,
     { delay: 1, chunk: null },
     artifactChunk,
+    { delay: 1, chunk: null },
+    chartLineChunk,
+    chartBarChunk,
+    chartAreaChunk,
+    chartPieChunk,
+    chartScatterChunk,
+    chartComposedChunk,
     { delay: 1, chunk: null },
     planUpdate3,
     checkpoint2,

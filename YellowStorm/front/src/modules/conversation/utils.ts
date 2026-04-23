@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { ChatMessage } from '@/components/ai-elements/chat-conversation';
 import type { MessageContentPart } from '@/components/ai-elements/ai-message-content';
 import type { ModuleTranslationKey } from '@/modules/localization';
-import type { Message, MessageComponent } from './types';
+import type { ChartComponentData, ChartKind, ChartLayout, Message, MessageComponent } from './types';
 import { translateConversation } from './translation';
 
 const chartKindSchema = z.enum(['line', 'bar', 'area', 'pie', 'scatter', 'composed']);
@@ -16,6 +16,7 @@ const chartSeriesSchema = z.object({
 const chartConfigSchema = z.record(z.object({ label: z.string().optional(), color: z.string().optional() }));
 const chartPayloadSchema = z.object({
   title: z.string().optional().catch(''),
+  data: z.union([z.string(), z.array(z.record(z.unknown()))]).optional().catch([]),
   chartData: z.union([z.string(), z.array(z.record(z.unknown()))]).catch([]),
   config: z.union([z.string(), chartConfigSchema]).catch({}),
   xAxisKey: z.string().catch(''),
@@ -30,6 +31,23 @@ const chartPayloadSchema = z.object({
   showLegend: z.boolean().optional().catch(true),
   showGrid: z.boolean().optional().catch(true),
   error: z.string().optional(),
+});
+
+const chartComponentSchema = z.object({
+  title: z.string().optional(),
+  data: z.array(z.record(z.unknown())),
+  config: chartConfigSchema,
+  xAxisKey: z.string(),
+  yAxisKey: z.string().optional(),
+  nameKey: z.string().optional(),
+  zAxisKey: z.string().optional(),
+  series: z.array(chartSeriesSchema),
+  kind: chartKindSchema,
+  stacked: z.boolean().optional(),
+  layout: chartLayoutSchema.optional(),
+  innerRadius: z.number().optional(),
+  showLegend: z.boolean().optional(),
+  showGrid: z.boolean().optional(),
 });
 
 /**
@@ -329,7 +347,7 @@ function mapChartComponent(data: Record<string, unknown>) {
   return {
     type: 'chart' as const,
     title: payload.title || '',
-    data: parseChartData(payload.chartData),
+    data: parseChartData(payload.data ?? payload.chartData),
     config: parseJsonValue<Record<string, { label?: string; color?: string }>>(payload.config, {}),
     xAxisKey: payload.xAxisKey || '',
     yAxisKey: payload.yAxisKey || '',
@@ -342,6 +360,33 @@ function mapChartComponent(data: Record<string, unknown>) {
     innerRadius: payload.innerRadius,
     showLegend: payload.showLegend,
     showGrid: payload.showGrid,
+  };
+}
+
+export function normalizeChartComponentData(data: unknown): ChartComponentData | null {
+  if (!data || typeof data !== 'object') return null;
+
+  const result = chartComponentSchema.safeParse(data);
+  if (result.success) return result.data;
+
+  const mapped = mapChartComponent(data as Record<string, unknown>);
+  if (mapped.type !== 'chart') return null;
+
+  return {
+    title: mapped.title,
+    data: mapped.data,
+    config: mapped.config,
+    xAxisKey: mapped.xAxisKey,
+    yAxisKey: mapped.yAxisKey,
+    nameKey: mapped.nameKey,
+    zAxisKey: mapped.zAxisKey,
+    series: mapped.series,
+    kind: mapped.kind,
+    stacked: mapped.stacked,
+    layout: mapped.layout,
+    innerRadius: mapped.innerRadius,
+    showLegend: mapped.showLegend,
+    showGrid: mapped.showGrid,
   };
 }
 

@@ -172,7 +172,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'chart':
     case 'error':
     case 'citation':
-      // These arrive fully formed - replace with incoming data
+      // Charts and other structured components replace the full payload on update.
       return { ...incoming };
     case 'sandbox':
       // Sandbox: merge code from first chunk with output/error from update

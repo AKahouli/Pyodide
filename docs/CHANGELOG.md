@@ -1158,3 +1158,11 @@
 - **Why:** The repository needed a dedicated maintainer-owned documentation entry for the frontend coding guidelines so the frontend stack, conventions, and review rules are easy to find.
 - **Impact:** `docs/webapp-frontend/README.md`, `docs/DOC_INDEX.md`
 - **Readme:** `/docs/webapp-frontend/README.md`
+## [2026-04-23 00:00 UTC] — Normalize conversation chart streaming contract
+
+- **Feature:** `conversation-charts`
+- **Type:** `feat`
+- **Changed:** Added a stable inline chart contract for streamed assistant responses, normalized chart component handling in the backend mapper, and aligned the frontend conversation message types and rendering flow for `bar`, `line`, `area`, `pie`, `scatter`, and `composed` charts. The backend now emits chart chunks as `action: add` events with a stable `component_id`, and the frontend chart payload parser accepts both camelCase and legacy snake_case field variants.
+- **Why:** The conversation UI needs a predictable chart payload so streamed chart chunks render reliably inside assistant bubbles without depending on ad-hoc proto shapes or field-name drift between backend and frontend.
+- **Impact:** `YellowStorm/back/src/modules/conversation/utils/component-mapper.ts`, `YellowStorm/back/src/modules/conversation/utils/component-mapper.spec.ts`, `YellowStorm/front/src/modules/conversation/types.ts`, `YellowStorm/front/src/modules/conversation/utils.ts`, `YellowStorm/front/src/modules/conversation/store.ts`, `YellowStorm/front/src/components/ai-elements/ai-message-content.tsx`, `yellowstorm-adk/src/smart_rag/engines/multi_agent/streaming_processor.py`, `docs/conversation-charts/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/conversation-charts/README.md`

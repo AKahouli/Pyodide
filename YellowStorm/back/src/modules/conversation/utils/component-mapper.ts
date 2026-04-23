@@ -94,6 +94,7 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
         type,
         data: {
           title: chart.title || '',
+          data: chart.data || chart.chartData || [],
           chartData: chart.data || chart.chartData || '',
           config: chart.config || '',
           xAxisKey: chart.xAxisKey || chart.x_axis_key || '',
