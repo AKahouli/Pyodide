@@ -1,50 +1,34 @@
 # Conversation Charts
 
-> **Slug:** `conversation-charts` | **Status:** 🚧 draft | **Last Updated:** 2026-04-19 00:00 UTC
+> **Slug:** `conversation-charts` | **Status:** 🚧 draft | **Last Updated:** 2026-04-23 00:00 UTC
 
 ## Purpose
-Render structured analytical charts inline inside assistant responses while the answer is streaming.
+Support inline analytical charts in assistant messages using a stable chart component contract streamed from the ADK through the backend SSE layer into the chat UI.
 
 ## Scope
-- Conversation streaming chart components
-- Recharts-based inline rendering in chat
-- ADK `render_chart` tool contract
-- gRPC/SSE transport of chart payloads
+- Included: chart component normalization, gRPC-to-SSE streaming, React rendering in assistant bubbles, and chart-specific tests.
+- Excluded: non-chat analytics pages, playbook chart rendering, and chart authoring tools.
 
 ## Architecture
-```mermaid
-sequenceDiagram
-  participant Agent as ADK Manager Agent
-  participant GRPC as Python gRPC Server
-  participant Back as NestJS Stream Service
-  participant FE as React Conversation UI
-
-  Agent->>Agent: render_chart(kind, data, series...)
-  Agent->>GRPC: StreamChunk(chart add/update)
-  GRPC->>Back: gRPC server stream
-  Back->>FE: SSE stream_chunk event
-  FE->>FE: mapComponentsToContentParts
-  FE->>FE: AIMessageContent -> ChartPartRenderer
-```
+- ADK emits `Component.chart` payloads in `StreamChunk` messages.
+- Backend normalizes chart chunks and forwards them as SSE `stream_chunk` events with `action: add` and a stable `component_id` derived from the tool call id when available.
+- Frontend maps chart chunks into a stable internal chart model and renders them with `recharts` through the existing shadcn chart wrapper.
 
 ## Requirements
-- As a user, I want analytical answers to include charts inline so I can understand trends quickly.
-- As a user, I want charts to appear between explanation paragraphs while the model is still responding.
-- [ ] Support `line`, `bar`, `area`, `pie`, `scatter`, and `composed` charts.
-- [ ] Preserve backward compatibility for legacy bar-only chart payloads.
+- As an assistant user, I want streamed chart chunks to render inline inside the conversation bubble so that insights are visible without leaving the chat.
+- [ ] Support `bar`, `line`, `area`, `pie`, `scatter`, and `composed` charts.
+- [ ] Preserve chart updates during streaming without leaving stale state behind.
 
 ## API / Interfaces
-- `ChartComponent` in `YellowStorm/back/src/modules/conversation/proto/chatbot.proto`
-- `render_chart` tool in `yellowstorm-adk/src/smart_rag/tools/utilities/render_chart.py`
-- `ChartPart` in `YellowStorm/front/src/components/ai-elements/ai-message-content.tsx`
+- Stream chunk payloads use `action`, `component`, `metadata`, and `usage`.
+- Chart components are normalized with `title`, `chartData`, `config`, `xAxisKey`, `yAxisKey`, `nameKey`, `zAxisKey`, `series`, `kind`, `stacked`, `layout`, `innerRadius`, `showLegend`, and `showGrid`.
+- The frontend accepts chart payload fields in both camelCase and legacy snake_case variants where present in backend-adjacent code paths.
 
 ## Design Decisions
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|
-| Keep typed chart components instead of embedding chart tags in markdown | Preserves ordering, persistence, and transport typing across Python, NestJS, and React | Streamdown custom tags |
-| Reuse `recharts` | Already shipped in frontend and wrapped by `ChartContainer` | ECharts, Plotly |
-| Default unspecified chart kinds to bar | Maintains compatibility for old producers | Hard fail on missing kind |
+| Use `recharts` via the existing shadcn chart wrapper | Already installed, already integrated with the message UI, and supports the chart kinds currently handled in the frontend | Switching to Chart.js would require a second rendering abstraction and a new payload model |
+| Treat chart updates as full payload replacements | Avoids partial merge bugs and stale axes/series/config state | Deep merge semantics are harder to reason about and easy to break |
 
 ## Related Features
-- [`connectors`](/docs/connectors/README_2026-04-14_23-00-00.md)
-- [`import-to-workspace`](/docs/import-to-workspace/README.md)
+- [`conversation`](/docs/conversation/README.md)

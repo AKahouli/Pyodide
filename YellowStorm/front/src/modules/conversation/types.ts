@@ -79,9 +79,44 @@ export interface Message {
   createdAt: string;
 }
 
+export type ChartKind = 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed';
+
+export type ChartLayout = 'horizontal' | 'vertical';
+
+export interface ChartSeriesConfig {
+  dataKey: string;
+  color?: string;
+  label?: string;
+  kind?: ChartKind;
+}
+
+export interface ChartConfigEntry {
+  label?: string;
+  color?: string;
+}
+
+export type ChartConfigMap = Record<string, ChartConfigEntry>;
+
+export interface ChartComponentData {
+  title?: string;
+  data: Record<string, unknown>[];
+  config: ChartConfigMap;
+  xAxisKey: string;
+  yAxisKey?: string;
+  nameKey?: string;
+  zAxisKey?: string;
+  series: ChartSeriesConfig[];
+  kind: ChartKind;
+  stacked?: boolean;
+  layout?: ChartLayout;
+  innerRadius?: number;
+  showLegend?: boolean;
+  showGrid?: boolean;
+}
+
 export interface MessageComponent {
   type: 'text' | 'code' | 'reasoning' | 'plan' | 'queue' | 'checkpoint' | 'chart' | 'task' | 'error' | 'sources' | 'sandbox' | 'webPreview' | 'artifact' | 'citation';
-  data: Record<string, unknown>;
+  data: Record<string, unknown> | ChartComponentData;
 }
 
 export interface StreamingComponent extends MessageComponent {
