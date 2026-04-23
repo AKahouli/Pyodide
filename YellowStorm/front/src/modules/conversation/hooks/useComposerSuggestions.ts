@@ -56,7 +56,6 @@ export function useComposerSuggestions({
           id: a.id,
           name: a.name,
           agentTypeName: a.agentType.name,
-          agentTypeSlug: a.agentType.slug,
           isDefault: a.isDefault,
         })));
 
@@ -77,7 +76,7 @@ export function useComposerSuggestions({
         // Priority 3: Try to find by agentType.slug === 'composer-suggestions'
         if (!composerAgent) {
           composerAgent = agents.find(
-            (a) => a.agentType.slug === 'composer-suggestions' && a.isDefault
+            (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
           );
           console.log('[ComposerSuggestions] Tried finding by agentType.slug (priority 3), composerAgent:', composerAgent?.name);
         }
@@ -87,7 +86,6 @@ export function useComposerSuggestions({
             id: composerAgent.id,
             name: composerAgent.name,
             agentType: composerAgent.agentType.name,
-            agentTypeSlug: composerAgent.agentType.slug,
             isDefault: composerAgent.isDefault,
           });
           setResolvedAgentId(composerAgent.id);

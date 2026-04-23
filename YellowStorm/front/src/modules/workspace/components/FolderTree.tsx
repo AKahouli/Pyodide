@@ -317,6 +317,8 @@ interface FolderTreeItemProps {
   onSelectDocument?: (documentId: string) => void;
   onRenameFolder?: (folderId: string) => void;
   onDeleteFolder?: (folderId: string) => void;
+  onRenameDocument?: (documentId: string) => void;
+  onDeleteDocument?: (documentId: string) => void;
   onDownloadDocument?: (documentId: string) => void;
   onCreateFolder?: (parentId?: string) => void;
   onCreateDocument?: (folderId?: string) => void;
@@ -332,6 +334,8 @@ function FolderTreeItem({
   onSelectDocument,
   onRenameFolder,
   onDeleteFolder,
+  onRenameDocument,
+  onDeleteDocument,
   onDownloadDocument,
   onCreateFolder,
   onCreateDocument,
