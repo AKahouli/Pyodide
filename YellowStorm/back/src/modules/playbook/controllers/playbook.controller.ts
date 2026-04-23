@@ -509,6 +509,15 @@ export class PlaybookController {
     return this.outputFormatService.updateActiveTemplate(id, taskId, dto);
   }
 
+  @Delete(':id/tasks/:taskId/output-format-template')
+  @UseGuards(PlaybookOwnerGuard)
+  async removeActiveOutputFormatTemplate(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+  ) {
+    return this.outputFormatService.removeActiveTemplate(id, taskId);
+  }
+
   @Post(':id/stop')
   @UseGuards(PlaybookOwnerGuard)
   async stop(

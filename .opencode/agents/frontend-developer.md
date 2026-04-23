@@ -1,7 +1,6 @@
 ---
 description: Frontend implementation agent. Builds and updates React UI code within the project design system and repo frontend constraints.
 mode: subagent
-model: LiteLLM/gpt-5.4
 tools:
   write: true
   edit: true

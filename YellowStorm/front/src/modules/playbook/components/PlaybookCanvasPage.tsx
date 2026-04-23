@@ -171,6 +171,7 @@ function PlaybookCanvasInner() {
   const redo = usePlaybookStore((s) => s.redo);
   const fetchOutputFormatTemplate = usePlaybookStore((s) => s.fetchOutputFormatTemplate);
   const updateOutputFormatTemplate = usePlaybookStore((s) => s.updateOutputFormatTemplate);
+  const deleteOutputFormatTemplate = usePlaybookStore((s) => s.deleteOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
@@ -741,6 +742,19 @@ function PlaybookCanvasInner() {
     }
   }, [editingOutputFormatTaskId, id, outputFormatDraft, updateOutputFormatTemplate]);
 
+  const handleRemoveOutputFormat = useCallback(async () => {
+    if (!id || !editingOutputFormatTaskId) return;
+    setOutputFormatSaving(true);
+    try {
+      await deleteOutputFormatTemplate(id, editingOutputFormatTaskId);
+      setEditingOutputFormatTaskId(null);
+      setEditingOutputFormatVersion(null);
+      setOutputFormatDraft('');
+    } finally {
+      setOutputFormatSaving(false);
+    }
+  }, [deleteOutputFormatTemplate, editingOutputFormatTaskId, id]);
+
   const handleSkipStep = useCallback(
     async (nodeId: string) => {
       if (!id || !currentExecution || currentExecution.playbookId !== id) return;
@@ -1231,7 +1245,7 @@ function PlaybookCanvasInner() {
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}
-                  panOnDrag={false}
+                  panOnDrag
                   panOnScroll={false}
                   zoomOnScroll
                   fitView
@@ -1338,6 +1352,13 @@ function PlaybookCanvasInner() {
             />
           </div>
           <DialogFooter>
+            <Button
+              variant="destructive"
+              onClick={() => void handleRemoveOutputFormat()}
+              disabled={outputFormatLoading || outputFormatSaving || !editingOutputFormatVersion}
+            >
+              Remove
+            </Button>
             <Button
               variant="outline"
               onClick={() => closeOutputFormatDialog(false)}

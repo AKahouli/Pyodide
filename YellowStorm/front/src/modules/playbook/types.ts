@@ -1104,6 +1104,7 @@ export interface PlaybookActions {
     taskId: string,
     data: UpdateOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
+  deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
   updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;

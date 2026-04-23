@@ -1324,6 +1324,39 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      deleteOutputFormatTemplate: async (playbookId, taskId) => {
+        try {
+          const result = await api.deleteOutputFormatTemplate(playbookId, taskId);
+          if (result.removed) {
+            set((state) => ({
+              currentPlaybook: state.currentPlaybook?.id === playbookId
+                ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) =>
+                    task.id === taskId
+                      ? {
+                        ...task,
+                        hasOutputFormatTemplate: false,
+                        activeOutputFormatTemplateId: null,
+                        activeOutputFormatTemplateVersion: null,
+                        activeOutputFormatStatus: null,
+                        activeOutputFormatError: null,
+                        isCapturingOutputFormat: false,
+                      }
+                      : task,
+                  ),
+                }
+                : state.currentPlaybook,
+            }));
+            toast.success('Output format template removed');
+          }
+          return result;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       updatePlaybookFromJudge: async (playbookId, executionId) => {
         try {
           const updated = await api.updatePlaybookFromJudge(playbookId, executionId);
@@ -2043,24 +2076,25 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onOutputFormatTemplateUpdated: (data: PlaybookOutputFormatTemplateUpdatedEvent) => {
+        const isActive = data.template.status === 'active';
         set((state) => ({
           currentPlaybook: state.currentPlaybook?.id === data.playbookId
             ? {
-              ...state.currentPlaybook,
-              tasks: state.currentPlaybook.tasks.map((task) =>
-                task.id === data.taskId
-                  ? {
-                    ...task,
-                    hasOutputFormatTemplate: true,
-                    activeOutputFormatTemplateId: data.template.id,
-                    activeOutputFormatTemplateVersion: data.template.templateVersion,
-                    activeOutputFormatStatus: data.template.generationStatus,
-                    activeOutputFormatError: data.template.generationError || null,
-                    isCapturingOutputFormat: data.template.generationStatus === 'pending',
-                  }
-                  : task,
-              ),
-            }
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === data.taskId
+                    ? {
+                        ...task,
+                        hasOutputFormatTemplate: isActive,
+                        activeOutputFormatTemplateId: isActive ? data.template.id : null,
+                        activeOutputFormatTemplateVersion: isActive ? data.template.templateVersion : null,
+                        activeOutputFormatStatus: isActive ? data.template.generationStatus : null,
+                        activeOutputFormatError: isActive ? (data.template.generationError || null) : null,
+                        isCapturingOutputFormat: isActive ? data.template.generationStatus === 'pending' : false,
+                      }
+                    : task,
+                ),
+              }
             : state.currentPlaybook,
         }));
       },

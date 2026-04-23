@@ -413,6 +413,16 @@ export async function updateOutputFormatTemplate(
   return response.data.data;
 }
 
+export async function deleteOutputFormatTemplate(
+  playbookId: string,
+  taskId: string,
+): Promise<{ removed: boolean }> {
+  const response = await apiClient.delete<ApiResponse<{ removed: boolean }>>(
+    API_ENDPOINTS.playbooks.outputFormatTemplate(playbookId, taskId),
+  );
+  return response.data.data;
+}
+
 export async function designPlaybook(
   id: string,
   data: DesignPlaybookData,

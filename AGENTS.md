@@ -93,9 +93,10 @@ User task
 Primary coding agent. Has bash permissions, skill access, and delegation authority.
 
 **Before writing code:**
+0. check the `/docs/webapp-frontend/` and `/docs/webapp-backend/` for existing documentation.
 1. Check if `plan` is required (see criteria above). If yes, delegate and wait.
 2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs. >> Must say to the user (I'm reading the existing doc ...)
-3. Read the top 15 lines of `/docs/CHANGELOG.md`.
+3. Read the top 40 lines of `/docs/CHANGELOG.md`.
 4. For each related slug, read its `Latest Doc Path`. Note architecture decisions, API contracts, and recent changes.
 5. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
 
@@ -433,13 +434,12 @@ npx ctx7@latest docs <libraryId> "<question>"
 
 ## Development Workflow
 
-1. Branch from `main`
-2. Use Context7 when the task depends on current library or framework documentation
-3. `plan` if criteria met → action plan
-4. `build` implements (pre-coding protocol mandatory)
-5. Run relevant verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`, `poetry run pytest` in `yellowstorm-adk`
-6. `reviewer` validates → **must PASS**
-7. `diagnostics` if test gaps; `frontend-qa` if UI affected
+1. Must always Use Context7 when the task depends on current library or framework documentation
+2. `plan` if criteria met → action plan
+3. `build` implements (pre-coding protocol mandatory)
+4. Run relevant verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`, `poetry run pytest` in `yellowstorm-adk`
+5. `reviewer` validates → **must PASS**
+6. `diagnostics` if test gaps; `frontend-qa` if UI affected
 8. `maintainer` syncs docs per tier
 
 

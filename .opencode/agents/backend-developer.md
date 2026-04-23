@@ -1,7 +1,6 @@
 ---
 description: Backend implementation agent. Builds and updates NestJS backend code within the project service, DTO, schema, and contract constraints.
 mode: subagent
-model: LiteLLM/gpt-5.4
 tools:
   write: true
   edit: true
