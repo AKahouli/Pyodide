@@ -218,7 +218,7 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
         seriesLength: Array.isArray(part.series) ? part.series.length : 'not array',
         configKeys: part.config && typeof part.config === 'object' ? Object.keys(part.config) : [],
       });
-      return <ChartPartRenderer kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
+      return <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;
     case 'error':
@@ -348,14 +348,8 @@ const TextPartRenderer = ({ content, showCursor, citations }: { content: string;
   }, [hasInline]);
 
   return (
-    <div className={cn(
-      showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom",
-      hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0',
-    )}>
-      <ReactMarkdown
-        remarkPlugins={remarkPlugins}
-        rehypePlugins={hasInline ? rehypeCitationPlugins : undefined}
-        components={componentsWithCite}>
+    <div className={cn(showCursor && "[&>*:last-child]:after:content-[''] [&>*:last-child]:after:inline-block [&>*:last-child]:after:w-[3px] [&>*:last-child]:after:h-4 [&>*:last-child]:after:bg-foreground [&>*:last-child]:after:ml-0.5 [&>*:last-child]:after:animate-pulse [&>*:last-child]:after:align-text-bottom", hasTrailing && '[&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):inline [&>*:nth-last-child(2)]:not(:where(ul, ol, pre)):mb-0')}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={hasInline ? rehypeCitationPlugins : undefined} components={componentsWithCite}>
         {content}
       </ReactMarkdown>
       {hasTrailing && <CitationsInline citations={trailingCitations} />}
@@ -635,16 +629,16 @@ const ErrorPartRenderer = ({ title, content }: { title: string; content: string 
   const resolvedContent = content.startsWith('ai.') ? tCommon(content as any) : content;
 
   return (
-  <div className='my-2 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4'>
-    <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10'>
-      <AlertTriangle className='h-4 w-4 text-destructive' />
-    </div>
+    <div className='my-2 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-4'>
+      <div className='flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-destructive/10'>
+        <AlertTriangle className='h-4 w-4 text-destructive' />
+      </div>
       <div className='flex min-w-0 flex-col gap-1'>
         {resolvedTitle && <p className='text-sm font-medium text-destructive'>{resolvedTitle}</p>}
         {resolvedContent && <p className='text-sm text-muted-foreground'>{resolvedContent}</p>}
+      </div>
     </div>
-  </div>
-);
+  );
 };
 
 // Sources Part
@@ -677,11 +671,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
   });
 
   if (!hasData) {
-  return (
-      <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>
-        {tCommon('ai.chart.noData')}
-      </div>
-    );
+    return <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>{tCommon('ai.chart.noData')}</div>;
   }
 
   const showPieLegend = showLegend && kind === 'pie';
@@ -696,7 +686,6 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
       <div className='p-4'>
         <ChartContainer config={config} className='aspect-auto h-[250px] w-full min-w-0'>
           <ResponsiveContainer width='100%' height='100%'>
-            {console.log('[ChartPartRenderer] Rendering charts, kind:', kind, 'data:', data)}
             {kind === 'line' && (
               <LineChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
@@ -704,18 +693,22 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-                {series.map((s) => <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />)}
+                {series.map((s) => (
+                  <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />
+                ))}
               </LineChart>
-              )}
-              {kind === 'bar' && (
+            )}
+            {kind === 'bar' && (
               <BarChart accessibilityLayer data={data} layout={layout}>
                 {showGrid && <CartesianGrid vertical={layout !== 'vertical'} horizontal={layout === 'vertical'} />}
                 {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />}
                 {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis dataKey={yAxisKey} />}
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-                {series.map((s) => <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />)}
-          </BarChart>
+                {series.map((s) => (
+                  <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />
+                ))}
+              </BarChart>
             )}
             {kind === 'area' && (
               <AreaChart accessibilityLayer data={data}>
@@ -724,7 +717,9 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
-                {series.map((s) => <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} stackId={stacked ? 'stack' : undefined} />)}
+                {series.map((s) => (
+                  <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} stackId={stacked ? 'stack' : undefined} />
+                ))}
               </AreaChart>
             )}
             {kind === 'pie' && (
@@ -733,7 +728,8 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 {showPieLegend && <ChartLegend content={<ChartLegendContent />} />}
                 <Pie data={data} dataKey={series[0]?.dataKey || yAxisKey || 'value'} nameKey={nameKey || xAxisKey} innerRadius={innerRadius} outerRadius={90}>
                   {data.map((entry, index) => {
-                    const fill = entry.fill || `var(--chart-${(index % 5) + 1})`;
+                    const colorIndex = (index % 5) + 1;
+                    const fill = (entry as any).fill || `var(--chart-${colorIndex})`;
                     return <Cell key={`slice-${index}`} fill={fill} />;
                   })}
                   {innerRadius > 0 && <Label position='center'>{title || tCommon('ai.chart.donutLabel')}</Label>}
@@ -769,12 +765,8 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                   return <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} />;
                 })}
               </ComposedChart>
-              )}
-              {!kind || !['line', 'bar', 'area', 'pie', 'scatter', 'composed'].includes(kind) && (
-                <div className="flex items-center justify-center h-full text-destructive text-sm">
-                  Unknown chart kind: {kind}
-                </div>
-              )}
+            )}
+            {!kind || (!['line', 'bar', 'area', 'pie', 'scatter', 'composed'].includes(kind) && <div className='flex items-center justify-center h-full text-destructive text-sm'>Unknown chart kind: {kind}</div>)}
           </ResponsiveContainer>
         </ChartContainer>
       </div>
