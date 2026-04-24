@@ -10,9 +10,9 @@ import ast
 import json
 import math
 import operator
+from concurrent.futures import ThreadPoolExecutor
+
 from src.logger.logging import get_logger
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import ThreadPoolExecutor
 
 logger = get_logger("api.smart_rag.tools.calculator")
 
@@ -28,10 +28,40 @@ _OPERATORS = {
 }
 
 
+def _safe_round(args):
+    if len(args) == 1:
+        return round(args[0])
+    if len(args) == 2:
+        ndigits = args[1]
+        if not isinstance(ndigits, int):
+            raise ValueError("round() ndigits must be an integer")
+        return round(args[0], ndigits)
+    raise ValueError("round() expects 1 or 2 arguments")
+
+
+def _safe_sqrt(args):
+    if len(args) != 1:
+        raise ValueError("sqrt() expects 1 argument")
+    return math.sqrt(args[0])
+
+
+def _safe_abs(args):
+    if len(args) != 1:
+        raise ValueError("abs() expects 1 argument")
+    return abs(args[0])
+
+
+_FUNCTIONS = {
+    "sqrt": _safe_sqrt,
+    "abs": _safe_abs,
+    "round": _safe_round,
+}
+
+
 def _safe_eval(node):
     """
-    Recursively evaluate an AST node, allowing only basic math operations and sqrt function.
-    Supports numeric literals, binary and unary operations, and sqrt(x).
+    Recursively evaluate an AST node with a small allowlist of math helpers.
+    Supports numeric literals, binary and unary operations, and safe helper calls.
     
     Args:
         node: AST node to evaluate
@@ -48,11 +78,13 @@ def _safe_eval(node):
     # Legacy numeric literal
     if isinstance(node, ast.Num):
         return node.n
-    # Handle function calls like sqrt(x)
+    # Handle a small allowlist of safe math helpers.
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Name) and node.func.id == 'sqrt' and len(node.args) == 1:
-            value = _safe_eval(node.args[0])
-            return math.sqrt(value)
+        if isinstance(node.func, ast.Name):
+            function = _FUNCTIONS.get(node.func.id)
+            if function is not None:
+                values = [_safe_eval(arg) for arg in node.args]
+                return function(values)
         raise ValueError(f"Unsupported function call: {ast.dump(node)}")
     # Binary operations
     if isinstance(node, ast.BinOp):
@@ -78,7 +110,7 @@ async def calculator(expression: str) -> str:
 
     This function is optimized for parallel execution - call multiple times for different calculations.
 
-    Supported operations: +, -, *, /, **, %, unary -, and sqrt(x).
+    Supported operations: +, -, *, /, **, %, unary -, sqrt(x), abs(x), and round(x[, ndigits]).
 
     Args:
         expression (str): The math expression to evaluate.
@@ -141,11 +173,12 @@ def get_supported_operations() -> dict:
     """
     return {
         "arithmetic": ["addition (+)", "subtraction (-)", "multiplication (*)", "division (/)"],
-        "advanced": ["exponentiation (**)", "modulo (%)", "square root (sqrt())"],
+        "advanced": ["exponentiation (**)", "modulo (%)", "square root (sqrt())", "absolute value (abs())", "rounding (round())"],
         "unary": ["negation (-)"],
         "examples": [
             "2 + 3 * 4",
             "sqrt(16)",
+            "round(100*150000/461000, 4)",
             "2 ** 3 % 5",
             "-(10 / 2)"
         ]

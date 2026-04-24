@@ -682,6 +682,7 @@ def test_build_task_prompt_context_returns_structured_prompt_ready_inputs() -> N
     )
 
     assert prompt_context["task"]["id"] == "downstream"
+    assert prompt_context["metadata"]["default_workspace_id"] == ""
     assert prompt_context["has_port_sources"] is True
     assert prompt_context["has_trigger_port_inputs"] is True
     assert prompt_context["resolved_inputs"][0]["input_port_id"] == "mail_in"
@@ -695,6 +696,32 @@ def test_build_task_prompt_context_returns_structured_prompt_ready_inputs() -> N
         "subject": "FW: Yellowsys.ai",
         "bodyText": "Mail body",
     }
+
+
+def test_build_task_prompt_context_includes_default_workspace_metadata() -> None:
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {},
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "ws-default",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+    )
+
+    assert prompt_context["metadata"]["default_workspace_id"] == "ws-default"
 
 
 def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_section() -> (

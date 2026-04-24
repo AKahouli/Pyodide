@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
@@ -188,7 +188,7 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateNewOptimizedPlaybook' }));
+    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' }));
 
     expect(storeState.generatePlaybookFromJudge).toHaveBeenCalledWith('p1', 'exec-1');
     expect(navigateMock).toHaveBeenCalledWith('/playbooks/p2');
@@ -509,7 +509,46 @@ describe('ExecutionStepDetail', () => {
   });
 
   it('runs evaluation manually from the evaluation pane', async () => {
-    const onRequestRunEvaluation = vi.fn();
+    const onRequestRunAdvisorEvaluation = vi.fn();
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'completed',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [baseStep],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:00:05.200Z',
+      singleStepTaskId: null,
+      playbookSnapshot: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(
+        <ExecutionStepDetail
+          step={baseStep}
+          execution={execution}
+          onRequestRunAdvisorEvaluation={onRequestRunAdvisorEvaluation}
+        />,
+      );
+
+    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
+    await userEvent.click(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]);
+    expect(onRequestRunAdvisorEvaluation).toHaveBeenCalledWith('t1');
+  });
+
+  it('runs advisor evaluation from the advisor pane CTA', async () => {
+    const onRequestRunAdvisorEvaluation = vi.fn();
     const execution: PlaybookExecution = {
       id: 'e1',
       playbookId: 'p1',
@@ -538,12 +577,13 @@ describe('ExecutionStepDetail', () => {
       <ExecutionStepDetail
         step={baseStep}
         execution={execution}
-        onRequestRunEvaluation={onRequestRunEvaluation}
+        onRequestRunAdvisorEvaluation={onRequestRunAdvisorEvaluation}
       />,
     );
 
-    await userEvent.click(screen.getAllByText('detail.actions.runEvaluation')[0]);
-    expect(onRequestRunEvaluation).toHaveBeenCalledWith('t1');
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
+    await userEvent.click(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]);
+    expect(onRequestRunAdvisorEvaluation).toHaveBeenCalledWith('t1');
   });
 
   it('renders persisted evaluation history metadata', () => {

@@ -31,7 +31,7 @@ You are tasked with extracting and reproducing **only the output structure and f
 - Maintain the **same section order and hierarchy**.
 - Use **markdown formatting consistently**:
   - Section headings (\`##\`, \`###\`)
-  - Tables
+  - Tables (Structure [Header, Totals column/Rows (if exists)] )
   - Bullet points
   - Paragraph spacing
 - Keep **column structures and labels**, but leave all cell values empty or as placeholders.
@@ -66,7 +66,7 @@ Each section may contain a table with:
 | Column 1 | Column 2 | Column 3 | Column 4 |
 |----------|----------|----------|----------|
 |          |          |          |          |
-|          |          |          |          |
+
 \`\`\`
 
 - Preserve:

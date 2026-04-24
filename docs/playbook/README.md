@@ -1,7 +1,7 @@
 
 # Playbook Architecture
 
-> **Slug:** `playbook` | **Status:** 🚧 draft | **Last Updated:** 2026-04-22 00:00 UTC
+> **Slug:** `playbook` | **Status:** 🚧 draft | **Last Updated:** 2026-04-23 00:00 UTC
 
 This folder documents the current playbook system and the integration points an AI coding agent needs to extend it safely.
 
@@ -52,6 +52,32 @@ The frontend renders and edits the graph. The NestJS backend persists the playbo
   - single-step execution logic
 - `yellowstorm-adk/src/langgraph_engine/port_resolution.py`
   - resolves port-bound inputs, validates routing, stages artifacts
+
+## Output Routing Architecture
+
+The playbook output-routing refactor split step execution into two explicit output modes:
+
+### `plain`
+
+- Used when the model response should stream normally.
+- The executor keeps the standard streaming path.
+- Final artifacts are emitted deterministically as normalized `artifacts[]`.
+- This path does not require structured fields from the model response.
+
+### `structured_final_response`
+
+- Used when the task requires a structured final answer.
+- The primary model response must include both `display_text` and `outputs`.
+- The executor no longer performs a second synthesis inference pass.
+- The structured payload is parsed directly from the primary response.
+
+The mode decision now lives in `yellowstorm-adk/src/langgraph_engine/step_executor.py` and must stay aligned with graph construction and port resolution in `graph_builder.py` and `port_resolution.py`.
+
+### Prompt catalog implications
+
+- `task.output_ports.structured_response` is now a required built-in prompt key.
+- `output_routing.synthesis` is obsolete and should not remain in built-in defaults.
+- `task.output_ports.note` should reflect the current output-routing behavior and wording.
 
 ## Data Model
 
@@ -198,6 +224,18 @@ ADK step stream events:
 - `skipped`
 - `suspended`
 
+### Parallel tool progress
+
+- `step_executor.py` now emits incremental `tool_trace` snapshots as each parallel tool call completes.
+- The payload shape is unchanged.
+- This lets the UI surface tool progress in realtime while slower parallel tool calls are still running.
+
+## Rendering Notes
+
+- The execution step detail view now deduplicates mirrored synthetic text components before rendering the answer.
+- The remaining component-backed answer preserves clickable inline citations.
+- This prevents duplicate assistant text when structured and synthetic answer fragments overlap.
+
 The backend expects every terminal task to emit a terminal step update. If the ADK returns a terminal graph state without a step update, the backend may think the stream ended prematurely.
 
 ## Known Gotchas
@@ -213,6 +251,9 @@ The backend expects every terminal task to emit a terminal step update. If the A
 - `playbook_execution.service.ts` is the place to inspect if the UI says the stream ended early.
 - `graph_builder.py` is the place to inspect if a task never emits a terminal step update.
 - `port_resolution.py` is the place to inspect if a graph is rejected before execution.
+- `step_executor.py` is the place to inspect output-mode selection, structured parsing, and plain artifact normalization.
+- `playbook_tool_factory.py` now sets connector MCP `X-Brain-ID` from the selected default playbook workspace id (`output_workspace_id`) instead of agent brain ids.
+- `calculator.py` now safely allowlists `abs(x)` and `round(x[, ndigits])` so playbook tool execution does not loop on calculator errors for rounded expressions.
 - `PlaybookNode.tsx` and `usePlaybookCanvas.ts` are the places to inspect if a link attaches to the wrong port.
 
 ## Suggested Follow-up Work

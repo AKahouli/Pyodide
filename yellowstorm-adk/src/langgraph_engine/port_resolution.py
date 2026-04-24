@@ -834,6 +834,7 @@ def build_task_prompt_context(
 ) -> Dict[str, Any]:
     ports = resolved_inputs.get("ports") or {}
     output_ports = list(task_config.get("output_ports") or [])
+    default_workspace_id = select_output_workspace_id(resolved_inputs)
 
     prompt_inputs: List[Dict[str, Any]] = []
     for port_id, port_state in ports.items():
@@ -855,6 +856,7 @@ def build_task_prompt_context(
                 "input_port_id": port_id,
                 "name": str(input_port.get("name") or port_id),
                 "expected_kind": str(input_port.get("artifact_kind") or ""),
+                "default_workspace_id": str(default_workspace_id or ""),           
                 "sources": [
                     {
                         "source_task_id": str(
@@ -912,6 +914,9 @@ def build_task_prompt_context(
             "title": str(task_config.get("title") or ""),
             "description": str(task_config.get("description") or ""),
         },
+        "metadata": {
+            "default_workspace_id": default_workspace_id,
+        },
         "resolved_inputs": prompt_inputs,
         "declared_output_ports": [
             {
@@ -951,6 +956,7 @@ def build_task_prompt(
     workspace_file_hint: str = "",
     trigger_context: Optional[Dict[str, Any]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
+    output_mode: str = "plain",
 ) -> str:
     """Build a consistent task prompt from resolved inputs."""
 
@@ -981,12 +987,41 @@ def build_task_prompt(
     output_ports = list(task_config.get("output_ports") or [])
     if output_ports:
         output_lines = []
-        output_ports_intro = resolve_prompt_template(
-            prompt_registry,
-            "task.output_ports.note",
-            field="userTemplate",
-            fallback="Declared output ports are semantic targets. When multiple ports share a kind, use the port name and description to decide the right target. If you produce structured outputs, set `output_port_id` to a declared id.",
-        )
+        if output_mode == "structured_final_response":
+            output_ports_intro = resolve_prompt_template(
+                prompt_registry,
+                "task.output_ports.structured_response",
+                field="userTemplate",
+                fallback=(
+                    "Return JSON only with this exact shape:\n"
+                    "{\n"
+                    '  "display_text": "user-visible final answer",\n'
+                    '  "outputs": [\n'
+                    "    {\n"
+                    '      "output_port_id": "declared-port-id",\n'
+                    '      "artifact_kind": "text|code|document|image|data|dashboard",\n'
+                    '      "content": "required for text/code outputs",\n'
+                    '      "filename": "required for generated file outputs",\n'
+                    '      "file_path": "optional exact file path when needed"\n'
+                    "    }\n"
+                    "  ]\n"
+                    "}\n\n"
+                    "Rules:\n"
+                    "- `display_text` is the final user-visible answer.\n"
+                    "- Use only declared `output_port_id` values.\n"
+                    "- For text/code outputs, include final downstream content in `content`.\n"
+                    "- For file outputs, reference only files you actually generated.\n"
+                    "- If no routed output should be produced for a port, omit it.\n"
+                    "- Return JSON only and no markdown fences."
+                ),
+            )
+        else:
+            output_ports_intro = resolve_prompt_template(
+                prompt_registry,
+                "task.output_ports.note",
+                field="userTemplate",
+                fallback="Declared output ports are semantic targets. Answer normally for the user. The runtime will route deterministic outputs automatically.",
+            )
         for output_port in output_ports:
             port_id = str(output_port.get("id") or "default").strip() or "default"
             port_name = str(output_port.get("name") or port_id).strip() or port_id

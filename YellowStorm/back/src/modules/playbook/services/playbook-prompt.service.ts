@@ -75,16 +75,6 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     isBuiltIn: true,
   },
   {
-    key: 'output_routing.synthesis',
-    title: 'Output routing synthesis',
-    category: 'routing',
-    description: 'Final synthesis pass for semantically ambiguous outputs.',
-    systemTemplate: 'You map a completed playbook task result into declared output ports. The user already saw the live streamed draft, so this pass is only for final downstream routing. Use output port names and descriptions semantically, especially when multiple ports share the same artifact kind. Return JSON only.',
-    userTemplate: 'Task title: {{taskTitle}}\nTask description: {{taskDescription}}\n\nDeclared output ports JSON:\n{{outputPortsJson}}\n\nFinal freeform response text:\n{{responseText}}\n\nGenerated artifact candidates JSON:\n{{artifactsJson}}\n\nReturn JSON with this exact shape:\n{\n  "outputs": [\n    {\n      "output_port_id": "declared-port-id",\n      "artifact_kind": "text|code|document|image|data|dashboard",\n      "content": "required for text/code outputs",\n      "filename": "required for generated file outputs",\n      "file_path": "optional exact file path when needed"\n    }\n  ]\n}\n\nRules:\n- Use only declared output_port_id values.\n- Use the semantic meaning of each port name and description to decide the target.\n- For text/code outputs, include only final downstream content unless the streamed draft is the intended port output.\n- For file outputs, assign generated artifacts by filename or file_path.\n- Do not invent files that are not in the generated artifact candidates list.\n- If no structured downstream output should be produced for a port, omit it.\n- Return JSON only.',
-    enabled: true,
-    isBuiltIn: true,
-  },
-  {
     key: 'replay.final_synthesis',
     title: 'Replay final synthesis',
     category: 'replay',

@@ -32,10 +32,8 @@ from src.langgraph_engine.step_executor import (
     extract_interrupt_message,
     extract_follow_up_question,
     _attach_result_text_for_citations,
-    _task_requires_structured_output_synthesis,
-    _synthesize_structured_outputs,
-    _build_task_artifacts_from_structured_outputs,
-    _collect_generated_artifacts,
+    _determine_output_mode,
+    _finalize_task_outputs,
 )
 from src.langgraph_engine.port_resolution import (
     resolve_task_inputs,
@@ -1077,6 +1075,7 @@ class DynamicGraphBuilder:
                 def _build_user_prompt(
                     current_task_for_execution: Dict[str, Any],
                 ) -> str:
+                    output_mode = _determine_output_mode(current_task_for_execution)
                     return build_task_prompt(
                         current_task_for_execution,
                         resolved_inputs,
@@ -1085,6 +1084,7 @@ class DynamicGraphBuilder:
                         workspace_file_hint=workspace_file_hint,
                         trigger_context=state.get("trigger_context"),
                         prompt_overrides=state.get("prompt_overrides") or {},
+                        output_mode=output_mode,
                     )
 
                 agent_instructions = inject_skill_catalog(
@@ -1138,6 +1138,7 @@ class DynamicGraphBuilder:
                     nonlocal components, tool_trace, llm_prompt_trace
                     agent_params = agent.get("agent_params") or {}
                     temperature = float(agent_params.get("temperature", 0.7))
+                    output_mode = _determine_output_mode(current_task_for_execution)
                     components = []
                     tool_trace = []
                     llm_prompt_trace = []
@@ -1345,7 +1346,7 @@ class DynamicGraphBuilder:
                                 temperature=temperature,
                                 prompt_trace=llm_prompt_trace,
                                 stage="replay_final_synthesis",
-                                on_progress=_on_execution_progress,
+                                on_progress=_on_execution_progress if output_mode == "plain" else None,
                             )
                         else:
                             response = strict_response
@@ -1377,6 +1378,7 @@ class DynamicGraphBuilder:
                             collector=collector,
                             temperature=temperature,
                             on_progress=_on_execution_progress,
+                            stream_final_output=output_mode == "plain",
                         )
                     else:
                         response, usage = await self._llm_direct_call(
@@ -1387,7 +1389,7 @@ class DynamicGraphBuilder:
                             temperature=temperature,
                             prompt_trace=llm_prompt_trace,
                             stage="task_direct_completion",
-                            on_progress=_on_execution_progress,
+                            on_progress=_on_execution_progress if output_mode == "plain" else None,
                         )
                         components = []
                         tool_trace = []
@@ -1411,30 +1413,15 @@ class DynamicGraphBuilder:
                             },
                         )
 
-                    artifacts: List[Dict[str, Any]] = []
-                    if _task_requires_structured_output_synthesis(
-                        current_task_for_execution
-                    ):
-                        structured_outputs = await _synthesize_structured_outputs(
-                            settings,
-                            model_name,
-                            current_task_for_execution,
-                            response,
-                            components,
-                            prompt_trace=llm_prompt_trace,
-                            prompt_overrides=state.get("prompt_overrides") or {},
-                        )
-                        generated_artifacts = _collect_generated_artifacts(components)
-                        if not structured_outputs and (
-                            str(response or "").strip() or generated_artifacts
-                        ):
-                            raise ValueError(
-                                f"Task '{task_id}' completed without structured output mappings for semantically ambiguous output ports"
-                            )
-                        artifacts = _build_task_artifacts_from_structured_outputs(
-                            current_task_for_execution,
-                            structured_outputs,
-                            generated_artifacts,
+                    response, artifacts = _finalize_task_outputs(
+                        current_task_for_execution,
+                        response,
+                        components,
+                        output_mode,
+                    )
+                    if output_mode == "structured_final_response":
+                        await _on_execution_progress(
+                            {"output": response, "components": list(components)}
                         )
 
                     return (

@@ -1,5 +1,59 @@
 # Changelog
 
+## [2026-04-24 00:00 UTC] — Route playbook MCP brain header from default workspace
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Playbook connector MCP calls now set `X-Brain-ID` from the selected default playbook workspace id (`output_workspace_id`) instead of inferring it from agent brain ids.
+- **Why:** MCP connector requests must be scoped to the playbook's selected default workspace/brain.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/playbook_tool_factory.py`, `yellowstorm-adk/tests/langgraph_engine/test_playbook_tool_factory.py`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-23 00:00 UTC] — Stream parallel playbook tool progress
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Documented that `step_executor.py` now emits incremental `tool_trace` snapshots as each parallel tool call completes, instead of only before the batch starts and after the full batch finishes.
+- **Why:** Users should see realtime tool progress while slow parallel tool calls are still running.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `yellowstorm-adk/tests/langgraph_engine/test_step_executor.py`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-23 00:00 UTC] — Allow safe calculator round and abs calls
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Documented that the calculator utility allowlists safe `abs(x)` and `round(x[, ndigits])` calls, including regression coverage for both expressions.
+- **Why:** Playbook tool execution was looping after calculator errors on rounded expressions such as `round(100*150000/461000, 4)`.
+- **Impact:** `yellowstorm-adk/src/smart_rag/tools/utilities/calculator.py`, `yellowstorm-adk/tests/test_tools/test_utilities/test_calculator.py`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-23 00:00 UTC] — Include default workspace metadata in playbook task prompts
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** `build_task_prompt_context()` now always includes the playbook-selected default workspace id at `metadata.default_workspace_id` in the task prompt input context.
+- **Why:** The playbook task prompt context needs the selected default workspace identifier available consistently for downstream prompt consumers.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/port_resolution.py`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-23 00:00 UTC] — Update playbook output routing architecture
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Documented the output-routing refactor that removes the second synthesis pass, introduces explicit `plain` vs `structured_final_response` execution modes, requires structured responses to carry `display_text` and `outputs`, notes the plain-mode normalized `artifacts[]` path, and records the frontend duplicate-answer dedupe fix plus prompt catalog updates.
+- **Why:** The playbook execution flow now routes outputs deterministically from the primary model response and the docs need to reflect the new runtime contract and UI rendering behavior.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/src/langgraph_engine/port_resolution.py`, `front/src/modules/playbook/components/ExecutionStepDetail.tsx`, prompt catalog defaults
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-23 00:00 UTC] — Remove backend and frontend implementation agents
+
+- **Feature:** `opencode-agents`
+- **Type:** `refactor`
+- **Changed:** Removed the project-local `backend-developer` and `frontend-developer` subagents, deleted their `build` task-permission entries, and updated the repository workflow docs to reflect a smaller local agent roster.
+- **Why:** The implementation specialist agents were no longer needed, and the OpenCode workflow was simplified so `build` handles backend and frontend implementation directly.
+- **Impact:** `.opencode/agents/backend-developer.md`, `.opencode/agents/frontend-developer.md`, `opencode.json`, `AGENTS.md`, `docs/opencode-agents/README.md`, `docs/DOC_INDEX.md`
+- **Readme:** `/docs/opencode-agents/README.md`
+
 ## [2026-04-23 00:00 UTC] — Normalize playbook mail attachment nullable fields
 
 - **Feature:** `playbook`

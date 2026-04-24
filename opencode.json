@@ -5,7 +5,7 @@
       "npm": "@ai-sdk/openai-compatible",
       "name": "LiteLLM",
       "options": {
-        "baseURL": "http://142.132.131.111:3014",
+        "baseURL": "https://dev.litellm.yellowmind.ai",
         "apiKey": "sk-3996237592156101257"
       },
       "models": {
@@ -79,10 +79,8 @@
         },
         "task": {
           "*": "deny",
-          "backend-developer": "allow",
           "general": "allow",
           "explore": "allow",
-          "frontend-developer": "allow",
           "plan": "allow",
           "reviewer": "allow",
           "diagnostics": "allow",
