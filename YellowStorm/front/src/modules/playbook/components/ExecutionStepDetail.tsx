@@ -188,10 +188,10 @@ function formatOptimizationValue(value: unknown): string {
 }
 
 function getScoreTone(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return 'border bg-muted/30';
-  if (value >= 80) return 'border-emerald-200 bg-emerald-50';
-  if (value >= 60) return 'border-amber-200 bg-amber-50';
-  return 'border-rose-200 bg-rose-50';
+  if (value === null || value === undefined || Number.isNaN(value)) return 'border-border/60 bg-muted/20';
+  if (value >= 80) return 'border-emerald-500/30 bg-emerald-500/10';
+  if (value >= 60) return 'border-amber-500/30 bg-amber-500/10';
+  return 'border-rose-500/30 bg-rose-500/10';
 }
 
 function normalizePercentValue(value: number | null | undefined): number | null {
@@ -767,7 +767,7 @@ export function ExecutionStepDetail({
                 {execution && (
                   <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
                     <FileText className="mr-2 h-4 w-4" />
-                    {t('detail.actions.runEvaluation')}
+                    {t('detail.actions.runReplayEvaluation')}
                   </DropdownMenuItem>
                 )}
                 {execution && step.status === 'completed' && !!step.output && (
@@ -930,7 +930,7 @@ export function ExecutionStepDetail({
                     disabled={isRunningEvaluation}
                     className="shrink-0"
                   >
-                    {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
+                    {isRunningEvaluation ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
                   </Button>
                 )}
               </div>
@@ -1149,10 +1149,10 @@ export function ExecutionStepDetail({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onRequestRunEvaluation?.(step.taskId)}
+                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
                   disabled={isRunningEvaluation}
                 >
-                  {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
+                  {isRunningEvaluation ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
                 </Button>
               </div>
             )}
@@ -1289,38 +1289,41 @@ export function ExecutionStepDetail({
             {stepJudgeResult ? (
               <div className="space-y-4">
                 <div className="rounded-lg border bg-muted/20 p-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className={cn('rounded border p-2', getScoreTone(stepJudgeResult.overallScore))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(stepJudgeResult.overallScore))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
                       <div className="mt-1 text-lg font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
                     </div>
-                    <div className={cn('rounded border p-2', getScoreTone(stepJudgeResult.toolUsageScore))}>
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(stepJudgeResult.toolUsageScore))}>
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageScore')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatPercent(stepJudgeResult.toolUsageScore)}</div>
                     </div>
-                    <div className={cn('rounded border p-2', getScoreTone(normalizePercentValue(stepJudgeResult.confidence)))}>
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(stepJudgeResult.confidence)))}>
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatConfidence(stepJudgeResult.confidence)}</div>
                     </div>
-                    <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                    <div className="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
                       {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
                     </div>
-                    <div className="ml-auto flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.updateCurrentPlaybook')}
+                  </div>
+                  <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
+                        {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.generateOptimizedPlaybook')}
                       </Button>
                       <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.optimizeThisStep')}
                       </Button>
-                      <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                      <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.generateNewOptimizedPlaybook')}
+                        {t('detail.judge.updateCurrentPlaybook')}
                       </Button>
                     </div>
                   </div>
-                  <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
 
                   <AdvisorChangeReviewDialog
                     open={remediationDialogOpen}
@@ -1335,7 +1338,10 @@ export function ExecutionStepDetail({
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+                      <span>{t('detail.judge.remediationSuggestions')}</span>
+                      <span>{t('detail.judge.countSummary', { count: stepJudgeResult.rewriteHints.length })}</span>
+                    </div>
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2 space-y-2 text-sm data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
@@ -1351,7 +1357,10 @@ export function ExecutionStepDetail({
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.issueSections')}</div>
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+                      <span>{t('detail.judge.issueSections')}</span>
+                      <span>{t('detail.judge.countSummary', { count: issueSections.reduce((sum, section) => sum + section.items.length, 0) })}</span>
+                    </div>
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
@@ -1368,12 +1377,17 @@ export function ExecutionStepDetail({
                   </CollapsibleContent>
                 </Collapsible>
 
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
-                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
-                    {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
-                  </p>
-                </div>
+                <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
+                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="mt-2 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+                      {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
+                    </p>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             ) : stepJudgeStatus === 'failed' ? (
               <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
@@ -1395,34 +1409,37 @@ export function ExecutionStepDetail({
 
             {judgeSummary && !stepJudgeResult && (
               <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className={cn('rounded border p-2', getScoreTone(judgeSummary.overallScore))}>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
+                <div className="flex flex-wrap items-start gap-2">
+                  <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeSummary.overallScore))}>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
                     <div className="mt-1 text-lg font-semibold">{Math.round(judgeSummary.overallScore)}%</div>
                   </div>
-                  <div className={cn('rounded border p-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
+                  <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeSummary.confidence)}</div>
                   </div>
-                  <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
+                  <div className="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
                     {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
                   </div>
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.updateCurrentPlaybook')}
+                </div>
+                <div className="rounded-lg border border-border/60 bg-background/60 p-4">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
+                  <p className="mt-2 whitespace-pre-wrap">{judgeSummary.reason || t('detail.judge.noReason')}</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
+                      {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                      {t('detail.judge.generateOptimizedPlaybook')}
                     </Button>
                     <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
                       {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                       {t('detail.judge.optimizeThisStep')}
                     </Button>
-                    <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
+                    <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
                       {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.generateNewOptimizedPlaybook')}
+                      {t('detail.judge.updateCurrentPlaybook')}
                     </Button>
                   </div>
                 </div>
-                <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
 
                 <AdvisorChangeReviewDialog
                   open={remediationDialogOpen}
