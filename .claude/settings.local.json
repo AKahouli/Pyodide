@@ -15,7 +15,13 @@
       "Bash(pkill -f \"mock-grpc-server.js\")",
       "Bash(node mock-grpc-server.js)",
       "Bash(pkill -f \"nest start\")",
-      "Bash(npm start *)"
+      "Bash(npm start *)",
+      "Bash(pkill *)",
+      "Bash(lsof -i:50051)",
+      "Bash(xargs kill *)",
+      "Bash(lsof -i:50051 -nP -t)",
+      "Bash(lsof -tiTCP -i:50051 -sTCP:LISTEN -n)",
+      "Bash(awk '{print $2}')"
     ]
   }
 }

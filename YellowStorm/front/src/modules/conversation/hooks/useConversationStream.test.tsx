@@ -100,9 +100,11 @@ describe('useConversationStream', () => {
       expect.objectContaining({
         component: expect.objectContaining({
           type: 'chart',
-          data: expect.objectContaining({
-            data: [{ month: 'Jan', revenue: 42 }],
-            chartData: [{ month: 'Jan', revenue: 42 }],
+            data: expect.objectContaining({
+              data: [{ month: 'Jan', revenue: 42 }],
+              chartData: [{ month: 'Jan', revenue: 42 }],
+            kind: 'line',
+            layout: 'horizontal',
           }),
         }),
       }),

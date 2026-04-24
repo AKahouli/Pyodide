@@ -259,6 +259,29 @@ function buildTaskChunk(componentId, title, items, options = {}) {
  */
 function buildChartChunk(componentId, chart, options = {}) {
   const { delay = 100, metadata } = options;
+
+  // Map chart kind strings to enum values (matching proto enum)
+  const kindMap = {
+    bar: 'CHART_KIND_BAR',    // = 1
+    line: 'CHART_KIND_LINE',    // = 2
+    area: 'CHART_KIND_AREA',    // = 3
+    pie: 'CHART_KIND_PIE',    // = 4
+    scatter: 'CHART_KIND_SCATTER', // = 5
+    composed: 'CHART_KIND_COMPOSED', // = 6
+  };
+
+  // Map layout strings to enum values (matching proto enum)
+  const layoutMap = {
+    horizontal: 'CHART_LAYOUT_HORIZONTAL', // = 1
+    vertical: 'CHART_LAYOUT_VERTICAL',    // = 2
+  };
+
+  // Use enum string names for proto compatibility with enums: String setting
+  const kindString = String(chart.kind || 'bar').toLowerCase();
+  const kindValue = kindMap[kindString] ?? 'CHART_KIND_BAR';
+  const layoutString = String(chart.layout || 'horizontal').toLowerCase();
+  const layoutValue = layoutMap[layoutString] ?? 'CHART_LAYOUT_HORIZONTAL';
+
   return {
     delay,
     chunk: {
@@ -266,12 +289,20 @@ function buildChartChunk(componentId, chart, options = {}) {
       component: {
         id: componentId,
         chart: {
-          ...chart,
-          kind: String(chart.kind || 'bar').toLowerCase(),
-          layout: String(chart.layout || 'horizontal').toLowerCase(),
+          title: chart.title,
           data: JSON.stringify(chart.data ?? []),
           config: JSON.stringify(chart.config ?? {}),
+          xAxisKey: chart.xAxisKey,
           series: JSON.stringify(chart.series ?? []),
+          kind: kindValue,
+          yAxisKey: chart.yAxisKey,
+          stacked: !!chart.stacked,
+          layout: layoutValue,
+          innerRadius: chart.innerRadius ?? 0,
+          showLegend: chart.showLegend ?? true,
+          showGrid: chart.showGrid ?? true,
+          nameKey: chart.nameKey || '',
+          zAxisKey: chart.zAxisKey || '',
         },
       },
       metadata,

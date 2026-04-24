@@ -215,8 +215,6 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
         title: part.title,
         kind: part.kind,
         dataLength: Array.isArray(part.data) ? part.data.length : 'not array',
-        dataType: typeof part.data,
-        dataKeys: part.data && typeof part.data === 'object' ? Object.keys(part.data as Record<string, unknown>) : [],
         seriesLength: Array.isArray(part.series) ? part.series.length : 'not array',
         configKeys: part.config && typeof part.config === 'object' ? Object.keys(part.config) : [],
       });
@@ -664,7 +662,19 @@ const SourcesPartRenderer = ({ sources }: { sources: SourceItemData[] }) => (
 // Chart Part
 const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, nameKey, zAxisKey, stacked = false, layout = 'horizontal', innerRadius = 0, showLegend = true, showGrid = true, series }: ChartPart) => {
   const { t: tCommon } = useModuleTranslation('common');
-  const hasData = data.length > 0;
+  const hasData = Array.isArray(data) && data.length > 0;
+
+  console.log('[ChartPartRenderer] Props:', {
+    title,
+    kind,
+    kindType: typeof kind,
+    hasData,
+    dataLength: data?.length,
+    xAxisKey,
+    yAxisKey,
+    config,
+    series,
+  });
 
   if (!hasData) {
   return (
@@ -686,12 +696,12 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
       <div className='p-4'>
         <ChartContainer config={config} className='aspect-auto h-[250px] w-full min-w-0'>
           <ResponsiveContainer width='100%' height='100%'>
-            <>
-              {kind === 'line' && (
+            {console.log('[ChartPartRenderer] Rendering charts, kind:', kind, 'data:', data)}
+            {kind === 'line' && (
               <LineChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
                 <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
-                <YAxis />
+                <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => <Line key={s.dataKey} type='monotone' dataKey={s.dataKey} stroke={`var(--color-${s.dataKey})`} dot={false} />)}
@@ -701,7 +711,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
               <BarChart accessibilityLayer data={data} layout={layout}>
                 {showGrid && <CartesianGrid vertical={layout !== 'vertical'} horizontal={layout === 'vertical'} />}
                 {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />}
-                {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis />}
+                {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis dataKey={yAxisKey} />}
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => <Bar key={s.dataKey} dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} radius={4} minPointSize={2} stackId={stacked ? 'stack' : undefined} />)}
@@ -711,7 +721,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
               <AreaChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
                 <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
-                <YAxis />
+                <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => <Area key={s.dataKey} type='monotone' dataKey={s.dataKey} fill={`var(--color-${s.dataKey})`} stroke={`var(--color-${s.dataKey})`} stackId={stacked ? 'stack' : undefined} />)}
@@ -745,7 +755,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
               <ComposedChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
                 <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
-                <YAxis />
+                <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
                 {series.map((s) => {
@@ -760,7 +770,11 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
                 })}
               </ComposedChart>
               )}
-            </>
+              {!kind || !['line', 'bar', 'area', 'pie', 'scatter', 'composed'].includes(kind) && (
+                <div className="flex items-center justify-center h-full text-destructive text-sm">
+                  Unknown chart kind: {kind}
+                </div>
+              )}
           </ResponsiveContainer>
         </ChartContainer>
       </div>

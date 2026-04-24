@@ -288,6 +288,8 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
         ...incoming,
         data: chartDataObj,
         chartData: finalChartData,
+        kind: (incoming.kind as string) || (existing.kind as string) || 'bar',
+        layout: (incoming.layout as string) || (existing.layout as string) || 'horizontal',
       };
     }
     case 'sandbox':

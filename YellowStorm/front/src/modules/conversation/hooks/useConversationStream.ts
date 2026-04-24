@@ -42,8 +42,44 @@ function normalizeChartComponent(component: unknown): unknown {
       chartData: normalizeArray(data.chartData),
       config: safeJsonParse(data.config),
       series: normalizeArray(data.series),
+      kind: normalizeChartKind(data.kind),
+      layout: normalizeChartLayout(data.layout),
     },
   };
+}
+
+function normalizeChartKind(kind: unknown): 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' {
+  if (typeof kind === 'number') {
+    const numericKindMap: Record<number, 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed'> = {
+      1: 'bar',
+      2: 'line',
+      3: 'area',
+      4: 'pie',
+      5: 'scatter',
+      6: 'composed',
+    };
+    return numericKindMap[kind] || 'bar';
+  }
+
+  const normalized = typeof kind === 'string' ? kind.toLowerCase().replace('chart_kind_', '') : '';
+  if (normalized === 'line' || normalized === 'bar' || normalized === 'area' || normalized === 'pie' || normalized === 'scatter' || normalized === 'composed') {
+    return normalized;
+  }
+
+  return 'bar';
+}
+
+function normalizeChartLayout(layout: unknown): 'horizontal' | 'vertical' {
+  if (typeof layout === 'number') {
+    const numericLayoutMap: Record<number, 'horizontal' | 'vertical'> = {
+      1: 'horizontal',
+      2: 'vertical',
+    };
+    return numericLayoutMap[layout] || 'horizontal';
+  }
+
+  const normalized = typeof layout === 'string' ? layout.toLowerCase().replace('chart_layout_', '') : '';
+  return normalized === 'vertical' ? 'vertical' : 'horizontal';
 }
 
 /**
