@@ -3,7 +3,8 @@ import { conversationStreamService } from '../stream';
 import { useConversationStore } from '../store';
 import { useAuth } from '@/modules/auth';
 import { useUsage } from '@/modules/usage';
-import type { StreamSSEEvent } from '../types';
+import { normalizeChartComponentData } from '../utils';
+import type { StreamSSEEvent, StreamingComponent } from '../types';
 
 /**
  * Hook that connects the ConversationStreamService to the Zustand store.
@@ -33,6 +34,30 @@ export function useConversationStream() {
           store.onStreamStart(event.data);
           break;
         case 'stream_chunk':
+          if (event.data?.component?.type === 'chart') {
+            const normalizedData = normalizeChartComponentData(event.data.component.data);
+            if (normalizedData) {
+              event.data = {
+                ...event.data,
+                component: {
+                  ...event.data.component,
+                  data: normalizedData,
+                } as StreamingComponent,
+              };
+            }
+            console.debug('[useConversationStream][stream_chunk][chart]', {
+              action: event.data.action,
+              id: event.data.component?.id,
+              componentKeys: Object.keys(event.data.component || {}),
+              data: event.data.component?.data,
+              dataType: typeof event.data.component?.data,
+              dataKeys: event.data.component?.data ? Object.keys(event.data.component.data) : [],
+              chartData: event.data.component?.data?.chartData,
+              chartDataLength: Array.isArray(event.data.component?.data?.chartData) ? event.data.component.data.chartData.length : 'not array',
+              dataData: event.data.component?.data?.data,
+              dataDataLength: Array.isArray(event.data.component?.data?.data) ? event.data.component.data.data.length : 'not array',
+            });
+          }
           store.onStreamChunk(event.data);
           break;
         case 'stream_complete':
