@@ -317,11 +317,12 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     }
     return map;
   }, [inputFiles]);
-  const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
-  const isActionMode = data.executionMode === 'action';
-  const isConfigured = isActionMode ? !!data.selectedAction : !!data.assignedAgentId;
-  const selectedActionLabel = data.selectedAction
-    ? `${String(data.selectedAction).charAt(0).toUpperCase()}${String(data.selectedAction).slice(1)}`
+  const effectiveTask = currentTask || data;
+  const agent = effectiveTask.assignedAgentId ? getAgentById(effectiveTask.assignedAgentId) : null;
+  const isActionMode = effectiveTask.executionMode === 'action';
+  const isConfigured = isActionMode ? !!effectiveTask.selectedAction : !!effectiveTask.assignedAgentId;
+  const selectedActionLabel = effectiveTask.selectedAction
+    ? `${String(effectiveTask.selectedAction).charAt(0).toUpperCase()}${String(effectiveTask.selectedAction).slice(1)}`
     : null;
   const status = data.stepStatus as StepStatus | undefined;
   const semanticMatch = data.stepSemanticMatch;

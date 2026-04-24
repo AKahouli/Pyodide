@@ -1072,7 +1072,7 @@ async def _execute_with_tools(
             parallel=len(response.tool_calls) > 1,
         )
 
-        async def _execute_single_tool(tool_call):
+        async def _execute_single_tool(call_index: int, tool_call):
             tool = tool_map.get(tool_call["name"])
             if tool:
                 try:
@@ -1085,9 +1085,12 @@ async def _execute_with_tools(
             else:
                 result = f"Unknown tool: {tool_call['name']}"
                 logger.warning("Unknown tool called", tool=tool_call["name"])
-            return tool_call, result
+            return call_index, tool_call, result
 
-        pending_tool_trace = tool_trace + [
+        def _snapshot_tool_trace(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            return [dict(entry) for entry in entries]
+
+        current_tool_entries = [
             {
                 "call_index": len(tool_trace) + idx + 1,
                 "tool_name": tc["name"],
@@ -1099,34 +1102,22 @@ async def _execute_with_tools(
         if on_progress is not None:
             await on_progress(
                 {
-                    "tool_trace": pending_tool_trace,
+                    "tool_trace": _snapshot_tool_trace(tool_trace)
+                    + _snapshot_tool_trace(current_tool_entries),
                     "components": list(all_components),
                 }
             )
 
-        if len(response.tool_calls) > 1:
-            results = await asyncio.gather(
-                *[_execute_single_tool(tc) for tc in response.tool_calls]
-            )
-        else:
-            results = [await _execute_single_tool(response.tool_calls[0])]
+        results_by_index: Dict[int, tuple[Dict[str, Any], Any]] = {}
+        tasks = [
+            asyncio.create_task(_execute_single_tool(idx, tc))
+            for idx, tc in enumerate(response.tool_calls)
+        ]
 
-        for tool_call, result in results:
-            messages.append(
-                ToolMessage(
-                    content=str(result),
-                    tool_call_id=tool_call["id"],
-                )
-            )
-
-            tool_trace.append(
-                {
-                    "call_index": len(tool_trace) + 1,
-                    "tool_name": tool_call["name"],
-                    "args": tool_call.get("args", {}),
-                    "output_summary": _summarize_tool_result(result),
-                }
-            )
+        for completed in asyncio.as_completed(tasks):
+            idx, tool_call, result = await completed
+            results_by_index[idx] = (tool_call, result)
+            current_tool_entries[idx]["output_summary"] = _summarize_tool_result(result)
 
             if collector:
                 new_components = collector.get_and_clear()
@@ -1145,13 +1136,26 @@ async def _execute_with_tools(
                         len(citation_components),
                         citation_components,
                     )
-        if on_progress is not None:
-            await on_progress(
-                {
-                    "tool_trace": list(tool_trace),
-                    "components": list(all_components),
-                }
+
+            if on_progress is not None:
+                await on_progress(
+                    {
+                        "tool_trace": _snapshot_tool_trace(tool_trace)
+                        + _snapshot_tool_trace(current_tool_entries),
+                        "components": list(all_components),
+                    }
+                )
+
+        for idx in range(len(response.tool_calls)):
+            tool_call, result = results_by_index[idx]
+            messages.append(
+                ToolMessage(
+                    content=str(result),
+                    tool_call_id=tool_call["id"],
+                )
             )
+
+        tool_trace.extend(_snapshot_tool_trace(current_tool_entries))
 
     logger.warning("Max tool iterations reached", max=MAX_TOOL_ITERATIONS)
     last_content = messages[-1].content if hasattr(messages[-1], "content") else ""

@@ -134,6 +134,7 @@ interface Props {
   onBackToRunMode?: () => void;
   onRequestValidateReplay?: (taskId: string) => void;
   onRequestRunEvaluation?: (taskId: string) => void;
+  onRequestRunAdvisorEvaluation?: (taskId: string) => void;
   onRequestGrabOutputFormat?: (taskId: string) => void;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onStepReplayModeChange?: (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => void;
@@ -263,6 +264,7 @@ export function ExecutionStepDetail({
   onBackToRunMode,
   onRequestValidateReplay,
   onRequestRunEvaluation,
+  onRequestRunAdvisorEvaluation,
   onRequestGrabOutputFormat,
   onOpenOutputFormatEditor,
   onStepReplayModeChange,
@@ -730,6 +732,11 @@ export function ExecutionStepDetail({
                                   if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
                                     return;
                                   }
+                                  setSelectedStepExecutionId((current) => {
+                                    if (current !== entry.id) return current;
+                                    const remaining = stepExecutions.filter((candidate) => candidate.id !== entry.id);
+                                    return remaining[0]?.id ?? null;
+                                  });
                                   await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
                                 }}
                               >
@@ -919,7 +926,7 @@ export function ExecutionStepDetail({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => onRequestRunEvaluation?.(step.taskId)}
+                    onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
                     disabled={isRunningEvaluation}
                     className="shrink-0"
                   >

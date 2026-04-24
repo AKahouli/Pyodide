@@ -410,6 +410,27 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     [execution, playbook, rerunStepInExecution],
   );
 
+  const handleRunAdvisorEvaluation = useCallback(
+    async (taskId: string) => {
+      if (!execution || !playbook) return;
+      setActiveDetailTab('judge');
+      const task = playbook.tasks.find((candidate) => candidate.id === taskId);
+      await rerunStepInExecution(
+        execution.playbookId,
+        execution.id,
+        taskId,
+        false,
+        task?.stepReplayMode || 'live',
+        false,
+        true,
+        execution.advisorAutopilotEnabled === true,
+        execution.advisorAutopilotTargetScore,
+        execution.advisorAutopilotMaxTurns,
+      );
+    },
+    [execution, playbook, rerunStepInExecution],
+  );
+
   const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
   const canDeleteCurrentExecution = Boolean(execution && visibleExecutionStatus !== 'running' && visibleExecutionStatus !== 'interrupted');
 
@@ -589,6 +610,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
             void handleValidateStep(taskId, { preserveOutputFormat: false });
           }}
           onRequestRunEvaluation={handleRunEvaluation}
+          onRequestRunAdvisorEvaluation={handleRunAdvisorEvaluation}
           onRequestGrabOutputFormat={handleGrabOutputFormat}
           onOpenOutputFormatEditor={onOpenOutputFormatEditor}
           onStepReplayModeChange={handleStepReplayModeChange}

@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-04-24 00:00 UTC] — Route playbook MCP brain header from default workspace
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Playbook connector MCP calls now set `X-Brain-ID` from the selected default playbook workspace id (`output_workspace_id`) instead of inferring it from agent brain ids.
+- **Why:** MCP connector requests must be scoped to the playbook's selected default workspace/brain.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/playbook_tool_factory.py`, `yellowstorm-adk/tests/langgraph_engine/test_playbook_tool_factory.py`
+- **Readme:** `/docs/playbook/README.md`
+
+## [2026-04-23 00:00 UTC] — Stream parallel playbook tool progress
+
+- **Feature:** `playbook`
+- **Type:** `refactor`
+- **Changed:** Documented that `step_executor.py` now emits incremental `tool_trace` snapshots as each parallel tool call completes, instead of only before the batch starts and after the full batch finishes.
+- **Why:** Users should see realtime tool progress while slow parallel tool calls are still running.
+- **Impact:** `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `yellowstorm-adk/tests/langgraph_engine/test_step_executor.py`
+- **Readme:** `/docs/playbook/README.md`
+
 ## [2026-04-23 00:00 UTC] — Allow safe calculator round and abs calls
 
 - **Feature:** `playbook`

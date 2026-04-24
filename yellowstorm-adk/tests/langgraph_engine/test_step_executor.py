@@ -1,6 +1,11 @@
+import asyncio
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from src.langgraph_engine.step_executor import (
+    _execute_with_tools,
     _attach_result_text_for_citations,
     _build_plain_file_artifacts,
     _build_plain_text_artifact,
@@ -11,6 +16,110 @@ from src.langgraph_engine.step_executor import (
     _task_requires_structured_output_synthesis,
     _validate_declared_output_ports,
 )
+
+
+@pytest.mark.asyncio
+async def test_execute_with_tools_streams_parallel_tool_progress_in_call_order(
+    monkeypatch,
+) -> None:
+    class FakeTool:
+        def __init__(self, name: str, delay: float, result: str) -> None:
+            self.name = name
+            self.delay = delay
+            self.result = result
+
+        async def ainvoke(self, args):
+            await asyncio.sleep(self.delay)
+            return f"{self.result}:{args['value']}"
+
+    class FakeBoundLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def ainvoke(self, messages):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    content="",
+                    tool_calls=[
+                        {"id": "call-1", "name": "slow_tool", "args": {"value": "A"}},
+                        {"id": "call-2", "name": "fast_tool", "args": {"value": "B"}},
+                    ],
+                    response_metadata={},
+                )
+            return SimpleNamespace(
+                content="done",
+                tool_calls=[],
+                response_metadata={},
+            )
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def bind_tools(self, tools):
+            return FakeBoundLLM()
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        SimpleNamespace(ChatOpenAI=FakeChatOpenAI),
+    )
+
+    progress_events = []
+
+    async def on_progress(payload):
+        progress_events.append(payload)
+
+    response, _, _, tool_trace, _ = await _execute_with_tools(
+        settings=SimpleNamespace(
+            LITELLM_API_BASE_URL="http://example.test",
+            LITELLM_API_SECRET_KEY="secret",
+        ),
+        model_name="fake-model",
+        system_prompt="system",
+        user_prompt="user",
+        tools=[
+            FakeTool("slow_tool", delay=0.03, result="slow"),
+            FakeTool("fast_tool", delay=0.01, result="fast"),
+        ],
+        on_progress=on_progress,
+        stream_final_output=False,
+    )
+
+    assert response == "done"
+    assert len(progress_events) == 3
+
+    initial_trace = progress_events[0]["tool_trace"]
+    intermediate_trace = progress_events[1]["tool_trace"]
+    final_trace = progress_events[2]["tool_trace"]
+
+    assert [item["call_index"] for item in initial_trace] == [1, 2]
+    assert [item["tool_name"] for item in initial_trace] == ["slow_tool", "fast_tool"]
+    assert [item["output_summary"] for item in initial_trace] == ["Running...", "Running..."]
+
+    assert [item["call_index"] for item in intermediate_trace] == [1, 2]
+    assert intermediate_trace[0]["tool_name"] == "slow_tool"
+    assert intermediate_trace[0]["output_summary"] == "Running..."
+    assert intermediate_trace[1]["tool_name"] == "fast_tool"
+    assert intermediate_trace[1]["output_summary"] == "fast:B"
+
+    assert final_trace == [
+        {
+            "call_index": 1,
+            "tool_name": "slow_tool",
+            "args": {"value": "A"},
+            "output_summary": "slow:A",
+        },
+        {
+            "call_index": 2,
+            "tool_name": "fast_tool",
+            "args": {"value": "B"},
+            "output_summary": "fast:B",
+        },
+    ]
+    assert tool_trace == final_trace
+    assert [item["output_summary"] for item in initial_trace] == ["Running...", "Running..."]
 
 
 def test_task_requires_structured_output_synthesis_for_duplicate_kinds() -> None:

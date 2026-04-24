@@ -224,6 +224,12 @@ ADK step stream events:
 - `skipped`
 - `suspended`
 
+### Parallel tool progress
+
+- `step_executor.py` now emits incremental `tool_trace` snapshots as each parallel tool call completes.
+- The payload shape is unchanged.
+- This lets the UI surface tool progress in realtime while slower parallel tool calls are still running.
+
 ## Rendering Notes
 
 - The execution step detail view now deduplicates mirrored synthetic text components before rendering the answer.
@@ -246,6 +252,7 @@ The backend expects every terminal task to emit a terminal step update. If the A
 - `graph_builder.py` is the place to inspect if a task never emits a terminal step update.
 - `port_resolution.py` is the place to inspect if a graph is rejected before execution.
 - `step_executor.py` is the place to inspect output-mode selection, structured parsing, and plain artifact normalization.
+- `playbook_tool_factory.py` now sets connector MCP `X-Brain-ID` from the selected default playbook workspace id (`output_workspace_id`) instead of agent brain ids.
 - `calculator.py` now safely allowlists `abs(x)` and `round(x[, ndigits])` so playbook tool execution does not loop on calculator errors for rounded expressions.
 - `PlaybookNode.tsx` and `usePlaybookCanvas.ts` are the places to inspect if a link attaches to the wrong port.
 

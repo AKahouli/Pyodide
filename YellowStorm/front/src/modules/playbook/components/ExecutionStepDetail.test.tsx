@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ExecutionStepDetail } from './ExecutionStepDetail';
@@ -542,7 +542,8 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    await userEvent.click(screen.getAllByText('detail.actions.runEvaluation')[0]);
+    const replayEvaluationTab = screen.getByText('detail.tabs.evaluation').closest('div') ?? document.body;
+    await userEvent.click(within(replayEvaluationTab).getByText('detail.actions.runEvaluation'));
     expect(onRequestRunEvaluation).toHaveBeenCalledWith('t1');
   });
 

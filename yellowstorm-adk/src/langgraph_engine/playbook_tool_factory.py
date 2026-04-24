@@ -1297,8 +1297,8 @@ def _create_connector_mcp_tools(
         return []
 
     brain_header: Dict[str, str] = {}
-    if brain_ids:
-        brain_header["X-Brain-ID"] = ",".join(brain_ids)
+    if output_workspace_id:
+        brain_header["X-Brain-ID"] = str(output_workspace_id)
     if external_ids:
         brain_header["X-External-ID"] = ",".join(external_ids)
 
