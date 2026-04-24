@@ -700,7 +700,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
             {kind === 'line' && (
               <LineChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
-                <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
+                <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
                 <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
@@ -710,7 +710,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
               {kind === 'bar' && (
               <BarChart accessibilityLayer data={data} layout={layout}>
                 {showGrid && <CartesianGrid vertical={layout !== 'vertical'} horizontal={layout === 'vertical'} />}
-                {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />}
+                {layout === 'vertical' ? <XAxis type='number' tickLine={false} axisLine={false} /> : <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />}
                 {layout === 'vertical' ? <YAxis type='category' dataKey={xAxisKey} tickLine={false} axisLine={false} width={90} /> : <YAxis dataKey={yAxisKey} />}
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
@@ -720,7 +720,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
             {kind === 'area' && (
               <AreaChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
-                <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
+                <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
                 <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
@@ -754,7 +754,7 @@ const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, name
             {kind === 'composed' && (
               <ComposedChart accessibilityLayer data={data}>
                 {showGrid && <CartesianGrid vertical={false} />}
-                <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} axisLine={false} />
+                <XAxis dataKey={xAxisKey} tickLine={false} tickMargin={10} />
                 <YAxis dataKey={yAxisKey} />
                 <ChartTooltip content={<ChartTooltipContent hideLabel />} />
                 {showLegend && <ChartLegend content={<ChartLegendContent />} />}
