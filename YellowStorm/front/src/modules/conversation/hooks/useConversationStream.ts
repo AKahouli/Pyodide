@@ -3,7 +3,8 @@ import { conversationStreamService } from '../stream';
 import { useConversationStore } from '../store';
 import { useAuth } from '@/modules/auth';
 import { useUsage } from '@/modules/usage';
-import type { StreamSSEEvent } from '../types';
+import { normalizeChartComponentData } from '../utils';
+import type { StreamSSEEvent, StreamingComponent } from '../types';
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -111,10 +112,16 @@ export function useConversationStream() {
           break;
         case 'stream_chunk':
           if (event.data?.component?.type === 'chart') {
-            event.data = {
-              ...event.data,
-              component: normalizeChartComponent(event.data.component),
-            };
+            const normalizedData = normalizeChartComponentData(event.data.component.data);
+            if (normalizedData) {
+              event.data = {
+                ...event.data,
+                component: {
+                  ...event.data.component,
+                  data: normalizedData,
+                } as StreamingComponent,
+              };
+            }
             console.debug('[useConversationStream][stream_chunk][chart]', {
               action: event.data.action,
               id: event.data.component?.id,

@@ -97,7 +97,7 @@ export interface ChartConfigEntry {
 
 export type ChartConfigMap = Record<string, ChartConfigEntry>;
 
-export interface ChartComponentData {
+export interface ChartComponentData extends Record<string, unknown> {
   title?: string;
   data: Record<string, unknown>[];
   config: ChartConfigMap;
