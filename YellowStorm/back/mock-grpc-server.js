@@ -986,7 +986,7 @@ console.log(fibonacci(10)); // 55`;
         target: { label: 'Target', color: '#f59e0b' },
       },
       xAxisKey: 'month',
-      yAxisKey: 'value',
+      yAxisKey: 'revenue', // Use a valid data key instead of 'value'
       series: [
         { dataKey: 'revenue', label: 'Revenue', kind: 'bar' },
         { dataKey: 'cost', label: 'Cost', kind: 'line' },
