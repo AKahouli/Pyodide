@@ -111,4 +111,55 @@ describe('AIMessageContent charts', () => {
       series: [],
     });
   });
+
+  it('keeps backend-normalized chart data available after streaming merge', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        id: 'chart-normalized',
+        type: 'chart',
+        data: {
+          title: 'Normalized chart',
+          data: [{ month: 'Jan', revenue: 42 }],
+          chartData: [{ month: 'Jan', revenue: 42 }],
+          config: { revenue: { label: 'Revenue', color: '#123456' } },
+          xAxisKey: 'month',
+          yAxisKey: 'revenue',
+          series: [{ dataKey: 'revenue', label: 'Revenue' }],
+          kind: 'line',
+          showLegend: true,
+          showGrid: true,
+        },
+      },
+    ] as any);
+
+    expect(parts[0]).toMatchObject({
+      type: 'chart',
+      title: 'Normalized chart',
+      data: [{ month: 'Jan', revenue: 42 }],
+      kind: 'line',
+    });
+  });
+
+  it('drops chart payload strings produced by object concatenation', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        id: 'chart-bad',
+        type: 'chart',
+        data: {
+          title: 'Broken chart',
+          chartData: '[object Object],[object Object],[object Object]',
+          config: {},
+          xAxisKey: 'month',
+          yAxisKey: 'revenue',
+          series: [],
+          kind: 'line',
+        },
+      },
+    ] as any);
+
+    expect(parts[0]).toMatchObject({
+      type: 'chart',
+      data: [],
+    });
+  });
 });

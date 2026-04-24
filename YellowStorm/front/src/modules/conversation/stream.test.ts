@@ -105,6 +105,61 @@ describe('conversationStreamService', () => {
     unsubscribe();
   });
 
+  it('keeps chart data arrays when chart payload arrives as JSON strings', () => {
+    localStorage.setItem('accessToken', 'token-123');
+    const listener = vi.fn();
+    const unsubscribe = conversationStreamService.subscribe(listener);
+
+    conversationStreamService.connect();
+
+    const source = MockEventSource.instances[0];
+    expect(source).toBeDefined();
+
+    source.emitMessage({
+      type: 'stream_chunk',
+      data: {
+        conversationId: 'c1',
+        action: 'add',
+        component: {
+          id: 'chart-1',
+          type: 'chart',
+          data: {
+            title: 'Revenue trend',
+            data: '[{"month":"Jan","revenue":42},{"month":"Feb","revenue":84}]',
+            chartData: '[{"month":"Jan","revenue":42},{"month":"Feb","revenue":84}]',
+            config: '{"revenue":{"label":"Revenue"}}',
+            xAxisKey: 'month',
+            series: '[{"dataKey":"revenue","label":"Revenue"}]',
+            kind: 'CHART_KIND_LINE',
+          },
+        },
+      },
+    });
+
+    expect(listener).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'stream_chunk',
+        data: expect.objectContaining({
+          component: expect.objectContaining({
+            type: 'chart',
+            data: expect.objectContaining({
+              data: [
+                { month: 'Jan', revenue: 42 },
+                { month: 'Feb', revenue: 84 },
+              ],
+              chartData: [
+                { month: 'Jan', revenue: 42 },
+                { month: 'Feb', revenue: 84 },
+              ],
+            }),
+          }),
+        }),
+      }),
+    );
+
+    unsubscribe();
+  });
+
   it('emits rejected connection_failed when socket closes before connected', () => {
     localStorage.setItem('accessToken', 'token-abc');
     const listener = vi.fn();

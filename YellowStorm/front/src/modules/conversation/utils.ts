@@ -153,6 +153,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         label: (data.label as string) || (data.content as string) || '',
       };
     case 'chart':
+      console.debug('[mapSingleComponent] chart component:', { data, dataKeys: Object.keys(data) });
       return mapChartComponent(data);
     case 'task':
       return {
@@ -258,7 +259,8 @@ function parseChartData(data: unknown): Record<string, unknown>[] {
   if (Array.isArray(data)) return data;
   if (typeof data === 'string') {
     try {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -326,8 +328,17 @@ function normalizeChartLayout(layout: unknown): 'horizontal' | 'vertical' {
 }
 
 function mapChartComponent(data: Record<string, unknown>) {
+  console.debug('[mapChartComponent] Input data:', {
+    hasData: 'data' in data,
+    hasChartData: 'chartData' in data,
+    dataValue: data.data,
+    chartDataValue: data.chartData,
+    keys: Object.keys(data),
+  });
+
   const parsed = chartPayloadSchema.safeParse(data);
   if (!parsed.success) {
+    console.error('[mapChartComponent] Schema validation failed:', parsed.error);
     return {
       type: 'error' as const,
       title: '',
@@ -337,6 +348,7 @@ function mapChartComponent(data: Record<string, unknown>) {
 
   const payload = parsed.data;
   if (payload.error) {
+    console.error('[mapChartComponent] Payload has error:', payload.error);
     return {
       type: 'error' as const,
       title: payload.title || '',
@@ -344,16 +356,31 @@ function mapChartComponent(data: Record<string, unknown>) {
     };
   }
 
+  const chartData = parseChartData(payload.data ?? payload.chartData);
+  const config = parseJsonValue<Record<string, { label?: string; color?: string }>>(payload.config, {});
+  const series = parseJsonArrayValue<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>(payload.series);
+  console.debug('[mapChartComponent] Parsed chart:', {
+    title: payload.title,
+    dataLength: chartData.length,
+    kind: payload.kind,
+    xAxisKey: payload.xAxisKey,
+    yAxisKey: payload.yAxisKey,
+  });
+
+  if (!chartData.length && typeof payload.data === 'string' && payload.data.includes('[object Object]')) {
+    console.warn('[mapChartComponent] Dropping non-JSON chart payload string');
+  }
+
   return {
     type: 'chart' as const,
     title: payload.title || '',
-    data: parseChartData(payload.data ?? payload.chartData),
-    config: parseJsonValue<Record<string, { label?: string; color?: string }>>(payload.config, {}),
+    data: chartData,
+    config,
     xAxisKey: payload.xAxisKey || '',
     yAxisKey: payload.yAxisKey || '',
     nameKey: payload.nameKey || '',
     zAxisKey: payload.zAxisKey || '',
-    series: parseJsonArrayValue<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>(payload.series),
+    series,
     kind: normalizeChartKind(payload.kind),
     stacked: payload.stacked,
     layout: normalizeChartLayout(payload.layout),

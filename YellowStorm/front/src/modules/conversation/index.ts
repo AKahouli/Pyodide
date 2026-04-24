@@ -13,7 +13,6 @@ export { ConversationInput } from './components/ConversationInput';
 export { NotFound as ConversationNotFound } from './components/NotFound';
 export { ShareDialog } from './components/ShareDialog';
 export { JoinConversationLanding } from './components/JoinConversationLanding';
-export { ConversationChartsPreviewPage } from './components/ConversationChartsPreviewPage';
 
 // Store
 export { useConversationStore } from './store';
