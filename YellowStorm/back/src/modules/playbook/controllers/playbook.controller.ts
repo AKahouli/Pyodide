@@ -21,6 +21,7 @@ import { PlaybookDesignService } from '../services/playbook-design.service';
 import { PlaybookJudgeEnrichmentService } from '../services/playbook-judge-enrichment.service';
 import { PlaybookReplayService } from '../services/playbook-replay.service';
 import { PlaybookOutputFormatService } from '../services/playbook-output-format.service';
+import { PlaybookEvaluationService } from '../services/playbook-evaluation.service';
 import { PlaybookStreamGatewayService } from '../services/playbook-stream-gateway.service';
 import { PlaybookOwnerGuard } from '../guards/playbook-owner.guard';
 import { UserService } from '../../user/user.service';
@@ -51,6 +52,10 @@ import { RerunStepDto } from '../dto/rerun-step.dto';
 import { GetAdvisorRemediationsDto, ApplyAdvisorRemediationsDto } from '../dto/advisor-remediation.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
 import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
+import {
+  CreateEvaluationBaselineFromCurrentExecutionDto,
+  CreateEvaluationBaselineFromExecutionDto,
+} from '../dto/evaluation-baseline.dto';
 import type { Response } from 'express';
 import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.decorator';
 import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
@@ -68,12 +73,53 @@ export class PlaybookController {
     private readonly judgeService: PlaybookJudgeEnrichmentService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly evaluationService: PlaybookEvaluationService,
     private readonly mailTriggerTestEventService: PlaybookMailTriggerTestEventService,
     private readonly mailGraphClientService: PlaybookMailGraphClientService,
     private readonly streamGateway: PlaybookStreamGatewayService,
     private readonly userService: UserService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  @Get(':id/evaluations')
+  @UseGuards(PlaybookOwnerGuard)
+  async listEvaluationExecutions(@Param('id') id: string, @Query('taskId') taskId?: string) {
+    return this.evaluationService.listEvaluationExecutions(id, taskId);
+  }
+
+  @Get(':id/evaluation-tasks/:taskId/baseline')
+  @UseGuards(PlaybookOwnerGuard)
+  async getEvaluationBaseline(@Param('id') id: string, @Param('taskId') taskId: string) {
+    return this.evaluationService.getActiveBaseline(id, taskId);
+  }
+
+  @Post(':id/evaluation-tasks/:taskId/baseline/from-execution')
+  @UseGuards(PlaybookOwnerGuard)
+  async createEvaluationBaselineFromExecution(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: CreateEvaluationBaselineFromExecutionDto,
+  ) {
+    return this.evaluationService.replaceBaselineFromExecution(id, taskId, dto.executionId, user._id.toString());
+  }
+
+  @Post(':id/evaluation-tasks/:taskId/baseline/from-current-execution')
+  @UseGuards(PlaybookOwnerGuard)
+  async createEvaluationBaselineFromCurrentExecution(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: CreateEvaluationBaselineFromCurrentExecutionDto,
+  ) {
+    return this.evaluationService.replaceBaselineFromCurrentEvaluationExecution(
+      id,
+      taskId,
+      dto.executionId,
+      dto.evaluationExecutionId,
+      user._id.toString(),
+    );
+  }
 
   @Post()
   async create(

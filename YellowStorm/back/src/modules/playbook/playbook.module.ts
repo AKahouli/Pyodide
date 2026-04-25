@@ -33,6 +33,14 @@ import {
   PlaybookMailEventLedger,
   PlaybookMailEventLedgerSchema,
 } from './schemas/playbook-mail-event-ledger.schema';
+import {
+  PlaybookEvaluationBaseline,
+  PlaybookEvaluationBaselineSchema,
+} from './schemas/playbook-evaluation-baseline.schema';
+import {
+  PlaybookEvaluationExecution,
+  PlaybookEvaluationExecutionSchema,
+} from './schemas/playbook-evaluation-execution.schema';
 import { Connector, ConnectorSchema } from '../connector/schemas/connector.schema';
 import { Workspace, WorkspaceSchema } from '../workspace/schemas/workspace.schema';
 import {
@@ -107,6 +115,8 @@ import playbookConfig from './config/playbook.config';
       { name: PlaybookPromptTemplate.name, schema: PlaybookPromptTemplateSchema },
       { name: PlaybookNodeTemplate.name, schema: PlaybookNodeTemplateSchema },
       { name: PlaybookMailEventLedger.name, schema: PlaybookMailEventLedgerSchema },
+      { name: PlaybookEvaluationBaseline.name, schema: PlaybookEvaluationBaselineSchema },
+      { name: PlaybookEvaluationExecution.name, schema: PlaybookEvaluationExecutionSchema },
       { name: Connector.name, schema: ConnectorSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },

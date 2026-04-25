@@ -399,6 +399,90 @@ describe('PlaybookExecutionGraphService', () => {
       expect(result.upstreamResults[0].task_id).toBe('t1');
     });
 
+    it('synthesizes a default text artifact from prior output when artifacts are missing', () => {
+      const execution = {
+        taskResults: [
+          {
+            taskId: 't1',
+            status: StepStatus.COMPLETED,
+            isStale: false,
+            error: '',
+            durationMs: 100,
+            output: 'previous result',
+            artifacts: [],
+          },
+        ],
+      };
+      const snapshot = {
+        edges: [{ sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'default' }],
+      };
+
+      const result = service.buildRunStepRoutingState(execution, snapshot, 't2');
+
+      expect(result.upstreamResults).toHaveLength(1);
+      expect(result.upstreamResults[0].artifacts).toEqual([
+        expect.objectContaining({
+          port_id: 'default',
+          artifact_kind: 'text',
+          content: 'previous result',
+        }),
+      ]);
+    });
+
+    it('does not synthesize artifacts for blank output', () => {
+      const execution = {
+        taskResults: [
+          {
+            taskId: 't1',
+            status: StepStatus.COMPLETED,
+            isStale: false,
+            error: '',
+            durationMs: 100,
+            output: '   ',
+            artifacts: [],
+          },
+        ],
+      };
+      const snapshot = {
+        edges: [{ sourceId: 't1', targetId: 't2' }],
+      };
+
+      const result = service.buildRunStepRoutingState(execution, snapshot, 't2');
+
+      expect(result.upstreamResults).toHaveLength(1);
+      expect(result.upstreamResults[0].artifacts).toEqual([]);
+    });
+
+    it('preserves existing artifacts without adding synthetic duplicates', () => {
+      const execution = {
+        taskResults: [
+          {
+            taskId: 't1',
+            status: StepStatus.COMPLETED,
+            isStale: false,
+            error: '',
+            durationMs: 100,
+            output: 'previous result',
+            artifacts: [{ portId: 'default', artifactKind: 'text', content: 'artifact result' }],
+          },
+        ],
+      };
+      const snapshot = {
+        edges: [{ sourceId: 't1', targetId: 't2' }],
+      };
+
+      const result = service.buildRunStepRoutingState(execution, snapshot, 't2');
+
+      expect(result.upstreamResults).toHaveLength(1);
+      expect(result.upstreamResults[0].artifacts).toEqual([
+        expect.objectContaining({
+          port_id: 'default',
+          artifact_kind: 'text',
+          content: 'artifact result',
+        }),
+      ]);
+    });
+
     it('excludes stale upstream results', () => {
       const execution = {
         taskResults: [

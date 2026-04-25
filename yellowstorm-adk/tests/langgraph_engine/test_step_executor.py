@@ -7,10 +7,12 @@ import pytest
 from src.langgraph_engine.step_executor import (
     _execute_with_tools,
     _attach_result_text_for_citations,
+    _execute_evaluation_task,
     _build_plain_file_artifacts,
     _build_plain_text_artifact,
     _build_task_artifacts_from_structured_outputs,
     _determine_output_mode,
+    _execute_replay_tool_calls,
     _finalize_task_outputs,
     _parse_structured_final_response,
     _task_requires_structured_output_synthesis,
@@ -120,6 +122,128 @@ async def test_execute_with_tools_streams_parallel_tool_progress_in_call_order(
     ]
     assert tool_trace == final_trace
     assert [item["output_summary"] for item in initial_trace] == ["Running...", "Running..."]
+
+
+@pytest.mark.asyncio
+async def test_replay_tool_calls_resolve_filtered_search_aliases() -> None:
+    class FakeTool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def ainvoke(self, args):
+            return f"ok:{self.name}:{args['query']}"
+
+    response, _components, tool_trace, synthesis_context = await _execute_replay_tool_calls(
+        tools=[FakeTool("perform_standard_search")],
+        collector=None,
+        validated_replay={
+            "replay_id": "r1",
+            "task_id": "t1",
+            "reference_output": "baseline",
+            "tool_calls": [
+                {
+                    "call_index": 1,
+                    "tool_name": "perform_filtered_search",
+                    "args": {"query": "revenue"},
+                }
+            ],
+        },
+    )
+
+    assert response == "baseline"
+    assert tool_trace[0]["tool_name"] == "perform_filtered_search"
+    assert "perform_filtered_search" in synthesis_context
+
+
+@pytest.mark.asyncio
+async def test_replay_tool_calls_resolve_connector_action_key_suffix() -> None:
+    class FakeTool:
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+        async def ainvoke(self, args):
+            return f"ok:{self.name}:{args['query']}"
+
+    response, _components, tool_trace, synthesis_context = await _execute_replay_tool_calls(
+        tools=[FakeTool("sharepoint_perform_filtered_search")],
+        collector=None,
+        validated_replay={
+            "replay_id": "r2",
+            "task_id": "t2",
+            "reference_output": "baseline",
+            "tool_calls": [
+                {
+                    "call_index": 1,
+                    "tool_name": "perform_filtered_search",
+                    "args": {"query": "forecast"},
+                }
+            ],
+        },
+    )
+
+    assert response == "baseline"
+    assert tool_trace[0]["tool_name"] == "perform_filtered_search"
+    assert "forecast" in synthesis_context
+
+
+@pytest.mark.asyncio
+async def test_execute_evaluation_task_uses_prompt_registry_and_emits_data_artifact(
+    monkeypatch,
+) -> None:
+    from src.langgraph_engine import step_executor as module
+
+    async def fake_llm_call(
+        settings,
+        model_name,
+        system_prompt,
+        user_prompt,
+        temperature=0.7,
+        prompt_trace=None,
+        stage="",
+        on_progress=None,
+    ):
+        assert system_prompt == "SYSTEM"
+        assert "Expected result:" in user_prompt
+        assert "Revenue and Costs by product" in user_prompt
+        return (
+            '{"score": 88, "verdict": "pass", "summary": "Looks good.", "semanticScore": 90, "referenceScore": 80, "artifactScore": 85, "formatScore": 84, "evidenceScore": 92, "executionHealthScore": 75, "findings": [{"severity": "info", "category": "semantic", "sourceTaskId": "source-a", "message": "ok"}] }',
+            {"input_tokens": 1, "output_tokens": 2, "total_tokens": 3, "model": model_name},
+        )
+
+    monkeypatch.setattr(module, "_llm_call", fake_llm_call)
+
+    result = await _execute_evaluation_task(
+        task={
+            "id": "eval-1",
+            "title": "Financial Evaluation",
+            "description": "Check final finance outputs",
+            "output_ports": [{"id": "evaluation", "artifact_kind": "data"}],
+            "evaluation_config": {
+                "expectation": "Revenue and Costs by product",
+                "reference_baseline_id": "baseline-1",
+                "pass_threshold": 80,
+                "warning_threshold": 60,
+                "weights": {"semanticMatch": 40},
+            },
+        },
+        resolved_inputs={
+            "resolved_inputs": {"evidence": "sample"},
+            "upstream_bindings": {"evidence": [{"source_task_id": "source-a"}]},
+            "artifacts_by_port": {"source-a:out": [{"artifact_kind": "text", "content": "sample"}]},
+        },
+        prompt_registry={
+            "evaluation.task.system": {"systemTemplate": "SYSTEM"},
+            "evaluation.task.user": {"userTemplate": "Expected result:\n{{expectation}}\n\nReference baseline:\n{{baselineSummary}}\n\nConnected inputs JSON:\n{{inputsJson}}\n\nRubric JSON:\n{{rubricJson}}"},
+        },
+        settings=SimpleNamespace(),
+        model_name="test-model",
+        temperature=0.2,
+    )
+
+    assert result["output"] == "Looks good."
+    assert result["artifacts"][0]["artifact_kind"] == "data"
+    assert result["artifacts"][0]["data"]["type"] == "playbook_evaluation_result"
+    assert result["artifacts"][0]["data"]["score"] == 88
 
 
 def test_task_requires_structured_output_synthesis_for_duplicate_kinds() -> None:

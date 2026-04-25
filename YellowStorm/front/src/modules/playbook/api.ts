@@ -33,6 +33,8 @@ import type {
   OutputFormatTemplate,
   AdvisorRemediationItem,
   ApplyRemediationsData,
+  PlaybookEvaluationBaseline,
+  PlaybookEvaluationExecution,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -92,6 +94,17 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
+      evaluationConfig: task.evaluationConfig
+        ? {
+            expectation: task.evaluationConfig.expectation,
+            referenceBaselineId: task.evaluationConfig.referenceBaselineId ?? null,
+            passThreshold: task.evaluationConfig.passThreshold,
+            warningThreshold: task.evaluationConfig.warningThreshold,
+            weight: task.evaluationConfig.weight,
+            rubricVersion: task.evaluationConfig.rubricVersion,
+            weights: { ...task.evaluationConfig.weights },
+          }
+        : null,
     })),
   };
 }
@@ -409,6 +422,42 @@ export async function updateOutputFormatTemplate(
   const response = await apiClient.patch<ApiResponse<OutputFormatTemplate>>(
     API_ENDPOINTS.playbooks.outputFormatTemplate(playbookId, taskId),
     data,
+  );
+  return response.data.data;
+}
+
+export async function getEvaluationExecutions(playbookId: string, taskId?: string): Promise<PlaybookEvaluationExecution[]> {
+  const response = await apiClient.get<ApiResponse<PlaybookEvaluationExecution[]>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluations`,
+    { params: taskId ? { taskId } : {} },
+  );
+  return response.data.data;
+}
+
+export async function getEvaluationBaseline(playbookId: string, taskId: string): Promise<PlaybookEvaluationBaseline | null> {
+  const response = await apiClient.get<ApiResponse<PlaybookEvaluationBaseline | null>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluation-tasks/${taskId}/baseline`,
+  );
+  return response.data.data;
+}
+
+export async function createEvaluationBaselineFromExecution(playbookId: string, taskId: string, executionId: string): Promise<PlaybookEvaluationBaseline> {
+  const response = await apiClient.post<ApiResponse<PlaybookEvaluationBaseline>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluation-tasks/${taskId}/baseline/from-execution`,
+    { executionId },
+  );
+  return response.data.data;
+}
+
+export async function createEvaluationBaselineFromCurrentExecution(
+  playbookId: string,
+  taskId: string,
+  executionId: string,
+  evaluationExecutionId: string,
+): Promise<PlaybookEvaluationBaseline> {
+  const response = await apiClient.post<ApiResponse<PlaybookEvaluationBaseline>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluation-tasks/${taskId}/baseline/from-current-execution`,
+    { executionId, evaluationExecutionId },
   );
   return response.data.data;
 }

@@ -44,7 +44,7 @@ export interface TaskTemplate {
   description: string;
   icon: string;
   color: string;
-  category: 'content' | 'generation' | 'analysis' | 'code';
+  category: 'content' | 'generation' | 'analysis' | 'code' | 'evaluation';
   inputPorts: TaskInputPort[];
   outputPorts: TaskOutputPort[];
   promptTemplate: string;
@@ -76,6 +76,81 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
+
+export interface PlaybookEvaluationRubricWeights {
+  semanticMatch: number;
+  referenceMatch: number;
+  artifactRequirements: number;
+  formatCompliance: number;
+  evidenceConsistency: number;
+  executionHealth: number;
+}
+
+export interface PlaybookEvaluationConfig {
+  expectation: string;
+  referenceBaselineId?: string | null;
+  passThreshold: number;
+  warningThreshold: number;
+  weight: number;
+  rubricVersion: string;
+  weights: PlaybookEvaluationRubricWeights;
+}
+
+export interface PlaybookEvaluationBaselineArtifactSnapshot {
+  id?: string | null;
+  kind: ArtifactKind;
+  name?: string | null;
+  mimeType?: string | null;
+  uri?: string | null;
+  textPreview?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface PlaybookEvaluationBaselineInputSnapshot {
+  sourceTaskId: string;
+  sourceOutputPortId?: string | null;
+  targetInputPortId?: string | null;
+  output?: string | null;
+  artifacts: PlaybookEvaluationBaselineArtifactSnapshot[];
+}
+
+export interface PlaybookEvaluationBaseline {
+  id: string;
+  playbookId: string;
+  evaluationTaskId: string;
+  sourceExecutionId: string;
+  sourceMode: 'selected_execution' | 'current_inputs';
+  inputSnapshots: PlaybookEvaluationBaselineInputSnapshot[];
+  createdAt: string;
+  updatedAt: string;
+  replacedAt?: string | null;
+}
+
+export interface PlaybookEvaluationExecutionFinding {
+  severity: 'info' | 'warning' | 'error';
+  category: 'semantic' | 'reference' | 'artifact' | 'format' | 'evidence' | 'execution';
+  sourceTaskId?: string | null;
+  message: string;
+}
+
+export interface PlaybookEvaluationExecution {
+  id: string;
+  playbookId: string;
+  executionId: string;
+  evaluationTaskId: string;
+  evaluationTaskTitle: string;
+  baselineId?: string | null;
+  mode: 'semantic' | 'reference' | 'hybrid';
+  status: 'running' | 'completed' | 'failed';
+  score?: number | null;
+  verdict?: 'pass' | 'warning' | 'fail' | null;
+  expectation?: string;
+  summary?: string | null;
+  findings: PlaybookEvaluationExecutionFinding[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
 
 export interface PlaybookTask {
   id: string;
@@ -118,6 +193,7 @@ export interface PlaybookTask {
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
+  evaluationConfig?: PlaybookEvaluationConfig | null;
 }
 
 export interface ToolBindingAction {
@@ -1034,6 +1110,8 @@ export interface PlaybookState {
   nodeTemplates: TaskTemplate[];
   nodeTemplatesLoading: boolean;
   nodeTemplatesLoadedAt: number;
+  evaluationExecutionsByTask: Record<string, PlaybookEvaluationExecution[]>;
+  evaluationBaselinesByTask: Record<string, PlaybookEvaluationBaseline | null>;
 }
 
 export interface PlaybookActions {
@@ -1097,6 +1175,10 @@ export interface PlaybookActions {
   ) => Promise<ValidatedTaskReplay>;
   fetchTaskReplays: (playbookId: string, taskId: string) => Promise<ValidatedTaskReplay[]>;
   activateTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<ValidatedTaskReplay>;
+  fetchEvaluationExecutions: (playbookId: string, taskId?: string) => Promise<PlaybookEvaluationExecution[]>;
+  fetchEvaluationBaseline: (playbookId: string, taskId: string) => Promise<PlaybookEvaluationBaseline | null>;
+  createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
+  createEvaluationBaselineFromCurrentExecution: (playbookId: string, taskId: string, executionId: string, evaluationExecutionId: string) => Promise<PlaybookEvaluationBaseline>;
   grabOutputFormatTemplate: (
     playbookId: string,
     taskId: string,

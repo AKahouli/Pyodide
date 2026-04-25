@@ -395,6 +395,127 @@ def _finalize_task_outputs(
     return response_text, artifacts
 
 
+def _build_evaluation_artifact(
+    task: Dict[str, Any],
+    payload: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    output_ports = _get_output_ports(task)
+    target_port = "evaluation"
+    for port in output_ports:
+        if _output_port_kind(port) == "data":
+            target_port = str(port.get("id") or "evaluation").strip() or "evaluation"
+            break
+    return [{"port_id": target_port, "artifact_kind": "data", "data": payload}]
+
+
+async def _execute_evaluation_task(
+    task: Dict[str, Any],
+    resolved_inputs: Dict[str, Any],
+    prompt_registry: Dict[str, Dict[str, Any]],
+    settings: Any,
+    model_name: str,
+    temperature: float,
+    on_progress: Optional[StepProgressCallback] = None,
+) -> Dict[str, Any]:
+    config = task.get("evaluation_config") or {}
+    expectation = str(config.get("expectation") or "").strip()
+    baseline_id = str(config.get("reference_baseline_id") or "").strip()
+    mode = "hybrid" if expectation and baseline_id else "reference" if baseline_id else "semantic"
+    llm_prompt_trace: List[Dict[str, Any]] = []
+    system_prompt = resolve_prompt_template(
+        prompt_registry,
+        "evaluation.task.system",
+        field="systemTemplate",
+        fallback="You are a strict playbook evaluation judge. Evaluate only the evidence provided through connected inputs and the configured expectation/baseline. Return strict JSON only.",
+    )
+    user_prompt = resolve_prompt_template(
+        prompt_registry,
+        "evaluation.task.user",
+        field="userTemplate",
+        fallback="Evaluation task title: {{taskTitle}}\nExpected result:\n{{expectation}}\n\nReference baseline:\n{{baselineSummary}}\n\nConnected inputs JSON:\n{{inputsJson}}\n\nRubric JSON:\n{{rubricJson}}",
+    )
+    user_prompt = (
+        user_prompt.replace("{{taskTitle}}", str(task.get("title") or ""))
+        .replace("{{taskDescription}}", str(task.get("description") or ""))
+        .replace("{{expectation}}", expectation or "No semantic expectation configured.")
+        .replace("{{baselineSummary}}", baseline_id or "No reference baseline configured.")
+        .replace(
+            "{{inputsJson}}",
+            json.dumps(
+                {
+                    "resolvedInputs": resolved_inputs.get("resolved_inputs") or {},
+                    "upstreamBindings": resolved_inputs.get("upstream_bindings") or {},
+                    "artifactsByPort": resolved_inputs.get("artifacts_by_port") or {},
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+        .replace(
+            "{{rubricJson}}",
+            json.dumps(
+                {
+                    "mode": mode,
+                    "passThreshold": config.get("pass_threshold", 80),
+                    "warningThreshold": config.get("warning_threshold", 60),
+                    "weights": config.get("weights") or {},
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        )
+    )
+    response, usage = await _llm_call(
+        settings,
+        model_name,
+        system_prompt,
+        user_prompt,
+        temperature=temperature,
+        prompt_trace=llm_prompt_trace,
+        stage="evaluation_task",
+        on_progress=on_progress,
+    )
+    parsed = json.loads(response)
+    if not isinstance(parsed, dict):
+        raise ValueError("Evaluation task returned a non-object JSON payload")
+    payload = {
+        "type": "playbook_evaluation_result",
+        "mode": mode,
+        "score": float(parsed.get("score") or 0),
+        "verdict": str(parsed.get("verdict") or "fail"),
+        "summary": str(parsed.get("summary") or ""),
+        "semanticScore": parsed.get("semanticScore"),
+        "referenceScore": parsed.get("referenceScore"),
+        "artifactScore": parsed.get("artifactScore"),
+        "formatScore": parsed.get("formatScore"),
+        "evidenceScore": parsed.get("evidenceScore"),
+        "executionHealthScore": parsed.get("executionHealthScore"),
+        "findings": parsed.get("findings") if isinstance(parsed.get("findings"), list) else [],
+        "expectation": expectation,
+        "referenceBaselineId": baseline_id or None,
+    }
+    return {
+        "output": payload["summary"],
+        "components": [
+            {
+                "type": "task",
+                "data": {
+                    "title": str(task.get("title") or "Evaluation"),
+                    "items": [
+                        {"text": f"Verdict: {payload['verdict']}"},
+                        {"text": f"Score: {payload['score']}"},
+                        {"text": payload["summary"] or "No summary provided."},
+                    ],
+                    "status": str(payload["verdict"]),
+                },
+            }
+        ],
+        "usage": usage,
+        "llm_prompt_trace": llm_prompt_trace,
+        "artifacts": _build_evaluation_artifact(task, payload),
+    }
+
+
 def _serialize_prompt_messages(messages: List[Dict[str, str]]) -> str:
     blocks: List[str] = []
     for message in messages:
@@ -741,6 +862,36 @@ async def _execute_step_direct(
         output_mode=output_mode,
     )
     llm_prompt_trace: List[Dict[str, Any]] = []
+
+    if str(task.get("task_type") or "") == "evaluation":
+        evaluation_result = await _execute_evaluation_task(
+            task,
+            resolved_inputs,
+            prompt_registry,
+            settings,
+            model_name,
+            temperature,
+            on_progress=on_progress,
+        )
+        duration_ms = int((time.time() - start_time) * 1000)
+        return {
+            "status": "completed",
+            "result": {
+                "task_id": task_id,
+                "status": "completed",
+                "output": evaluation_result["output"],
+                "error": "",
+                "duration_ms": duration_ms,
+                "components": evaluation_result["components"],
+                "usage": evaluation_result["usage"],
+                "tool_trace": [],
+                "llm_prompt_trace": evaluation_result["llm_prompt_trace"],
+                "semantic_match": None,
+                "artifacts": evaluation_result["artifacts"],
+            },
+            "interrupt": None,
+            "thread_id": "",
+        }
 
     try:
         from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
@@ -1200,7 +1351,7 @@ async def _execute_replay_tool_calls(
         tool_name = recorded_call.get("tool_name") or ""
         tool_args = recorded_call.get("args") or {}
         call_index = int(recorded_call.get("call_index", len(tool_trace) + 1))
-        tool = tool_map.get(tool_name)
+        tool = _resolve_replay_tool(tool_name, tool_args, tool_map)
         if tool is None:
             logger.error(
                 "[replay_executor] EXECUTE_REPLAY_TOOL_CALLS_UNKNOWN_TOOL",
@@ -1284,6 +1435,42 @@ async def _execute_replay_tool_calls(
         tool_trace,
         "\n\n".join(synthesis_entries),
     )
+
+
+def _resolve_replay_tool(
+    recorded_tool_name: str,
+    recorded_tool_args: Dict[str, Any],
+    tool_map: Dict[str, Any],
+):
+    exact = tool_map.get(recorded_tool_name)
+    if exact is not None:
+        return exact
+
+    # Backward-compatible aliases for native search tools whose availability can
+    # vary with current input scoping but still represent the same replay intent.
+    if recorded_tool_name in {
+        "perform_filtered_search",
+        "perform_document_search",
+        "perform_standard_search",
+    }:
+        query_value = recorded_tool_args.get("query")
+        for alias in (
+            "perform_filtered_search",
+            "perform_document_search",
+            "perform_standard_search",
+        ):
+            tool = tool_map.get(alias)
+            if tool is not None and isinstance(query_value, str):
+                return tool
+
+    # Connector MCP tools are generated dynamically as {connector_slug}_{action_key}.
+    # Allow replay records that stored only the action key to resolve the current tool.
+    suffix = f"_{recorded_tool_name}"
+    matches = [tool for name, tool in tool_map.items() if name.endswith(suffix)]
+    if len(matches) == 1:
+        return matches[0]
+
+    return None
 
 
 def _extract_json_object(text: str) -> Dict[str, Any]:

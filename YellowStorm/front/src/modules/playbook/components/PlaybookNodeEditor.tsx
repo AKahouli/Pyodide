@@ -24,7 +24,16 @@ import { Loader2, X, Plus, Trash2 } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
-import type { PlaybookTask, ValidatedTaskReplay, TaskInputPort, TaskOutputPort, ArtifactKind, TaskExecutionMode, SelectedAction } from '../types';
+import type {
+  PlaybookTask,
+  ValidatedTaskReplay,
+  TaskInputPort,
+  TaskOutputPort,
+  ArtifactKind,
+  TaskExecutionMode,
+  SelectedAction,
+  PlaybookEvaluationConfig,
+} from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
 import { getPortColor } from '../utils/port-colors';
@@ -45,6 +54,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const activateTaskReplay = usePlaybookStore((s) => s.activateTaskReplay);
   const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
+  const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const { user } = useAuth();
   const { t } = useModuleTranslation('playbook');
 
@@ -80,6 +90,11 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
   const [inputPorts, setInputPorts] = useState<TaskInputPort[]>([]);
   const [outputPorts, setOutputPorts] = useState<TaskOutputPort[]>([]);
+  const [evaluationConfig, setEvaluationConfig] = useState<PlaybookEvaluationConfig | null>(null);
+  const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
+  const [creatingEvaluationBaseline, setCreatingEvaluationBaseline] = useState(false);
+
+  const isEvaluationTask = task?.taskType === 'evaluation';
 
   const persistDraft = useCallback((overrides?: Partial<PlaybookTask>) => {
     if (!task) return;
@@ -97,6 +112,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       notifyEmails: notifyOnComplete ? notifyEmails : [],
       inputPorts: [...inputPorts],
       outputPorts: [...outputPorts],
+      evaluationConfig,
       ...overrides,
     });
   }, [
@@ -105,6 +121,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     description,
     enabled,
     executionMode,
+    evaluationConfig,
     inputPorts,
     interruptAfter,
     interruptBefore,
@@ -135,6 +152,22 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       setHasInitializedDraft(false);
       setInputPorts(task.inputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }]);
       setOutputPorts(task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }]);
+      setEvaluationConfig(task.evaluationConfig ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } } : {
+        expectation: '',
+        referenceBaselineId: null,
+        passThreshold: 80,
+        warningThreshold: 60,
+        weight: 1,
+        rubricVersion: 'evaluation-node-v1',
+        weights: {
+          semanticMatch: 40,
+          referenceMatch: 20,
+          artifactRequirements: 20,
+          formatCompliance: 10,
+          evidenceConsistency: 5,
+          executionHealth: 5,
+        },
+      });
     }
   }, [task]);
 
@@ -194,6 +227,28 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       cancelled = true;
     };
   }, [open, task, playbookId, fetchTaskReplays]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEvaluationBaseline = async () => {
+      setEvaluationBaselineMeta(null);
+      if (!open || !task || !playbookId || task?.taskType !== 'evaluation') return;
+      try {
+        const baseline = await fetchEvaluationBaseline(playbookId, task.id);
+        if (!cancelled) {
+          setEvaluationBaselineMeta(
+            baseline
+              ? { id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt }
+              : null,
+          );
+        }
+      } catch {
+        if (!cancelled) setEvaluationBaselineMeta(null);
+      }
+    };
+    void loadEvaluationBaseline();
+    return () => { cancelled = true; };
+  }, [open, task, playbookId, fetchEvaluationBaseline]);
 
   useEffect(() => {
     if (!open || !task || !playbookId) return;
@@ -324,6 +379,72 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             </div>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
           </div>
+
+          {isEvaluationTask && evaluationConfig && (
+            <div className="space-y-4 rounded-md border p-3">
+              <div className="space-y-2">
+                <Label>{t('nodeEditor.evaluationExpectation')}</Label>
+                <Textarea
+                  value={evaluationConfig.expectation}
+                  onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, expectation: e.target.value } : prev)}
+                  placeholder={t('nodeEditor.evaluationExpectationPlaceholder')}
+                  rows={5}
+                  maxLength={10000}
+                />
+                <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationExpectationHint')}</p>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.evaluationPassThreshold')}</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={evaluationConfig.passThreshold}
+                    onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, passThreshold: Number(e.target.value || 0) } : prev)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.evaluationWarningThreshold')}</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={evaluationConfig.warningThreshold}
+                    onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, warningThreshold: Number(e.target.value || 0) } : prev)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.evaluationWeight')}</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    value={evaluationConfig.weight}
+                    onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, weight: Number(e.target.value || 0) } : prev)}
+                  />
+                </div>
+              </div>
+              <div className="rounded-md border border-dashed p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium">{t('nodeEditor.evaluationBaselineTitle')}</div>
+                    <div className="text-xs text-muted-foreground">{t('nodeEditor.evaluationBaselineHint')}</div>
+                  </div>
+                  {evaluationBaselineMeta ? (
+                    <Badge variant="outline" className="text-amber-700 border-amber-600/30">
+                      {t('nodeEditor.evaluationBaselineActive')}
+                    </Badge>
+                  ) : null}
+                </div>
+                <div className="mt-3 text-xs text-muted-foreground">
+                  {evaluationBaselineMeta
+                    ? `${t('nodeEditor.evaluationBaselineExecution')} ${evaluationBaselineMeta.sourceExecutionId} • ${new Date(evaluationBaselineMeta.createdAt).toLocaleString()}`
+                    : t('nodeEditor.evaluationBaselineEmpty')}
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">

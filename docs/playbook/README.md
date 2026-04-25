@@ -138,6 +138,12 @@ Do not collapse edge identity to node ids only. Multiple edges between the same 
 2. Backend builds a `RunStep` request for one task
 3. ADK runs only that step and returns a unary response
 
+- Frontend optimistic state now treats replay-mode single-step reruns (`replay_strict`, `replay_flex`, `replay_adaptive`) differently from resume/live reruns.
+- Replay-mode reruns clear only the targeted task back to `running` and preserve the rest of the workflow's prior task results in the execution panel.
+- The ADK single-step graph path preserves `node_inputs_by_port` from the gRPC request so replay-mode steps can resolve input-port artifacts from previous workflow results before port validation runs.
+- Backend rerun-step routing now synthesizes a default text artifact from a completed upstream step's persisted `output` when older executions do not have explicit `artifacts[]` recorded yet.
+- `resume-from-step` and live reruns still clear downstream task state because they are expected to recompute the remaining workflow.
+
 ## Backend Endpoints
 
 ### Playbook CRUD

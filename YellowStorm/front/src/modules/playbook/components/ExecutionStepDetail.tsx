@@ -127,6 +127,26 @@ import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
 import { downloadStepResultHtml, downloadStepResultPdf } from '../utils/renderStepResultHtml';
 
+interface EvaluationArtifactPayload {
+  type: 'playbook_evaluation_result';
+  mode?: 'semantic' | 'reference' | 'hybrid';
+  score?: number;
+  verdict?: 'pass' | 'warning' | 'fail';
+  summary?: string;
+  semanticScore?: number | null;
+  referenceScore?: number | null;
+  artifactScore?: number | null;
+  formatScore?: number | null;
+  evidenceScore?: number | null;
+  executionHealthScore?: number | null;
+  findings?: Array<{
+    severity?: 'info' | 'warning' | 'error';
+    category?: string;
+    sourceTaskId?: string | null;
+    message?: string;
+  }>;
+}
+
 interface Props {
   step: TaskResult | null;
   execution?: PlaybookExecution | null;
@@ -197,6 +217,21 @@ function getScoreTone(value: number | null | undefined): string {
 function normalizePercentValue(value: number | null | undefined): number | null {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
   return value <= 1 ? value * 100 : value;
+}
+
+function getEvaluationArtifactPayload(step: TaskResult | null): EvaluationArtifactPayload | null {
+  if (!step?.artifacts?.length) return null;
+  for (const artifact of step.artifacts) {
+    const payload = artifact.metadata?.data as EvaluationArtifactPayload | undefined;
+    if (payload?.type === 'playbook_evaluation_result') {
+      return payload;
+    }
+    const directPayload = (artifact as any).data as EvaluationArtifactPayload | undefined;
+    if (directPayload?.type === 'playbook_evaluation_result') {
+      return directPayload;
+    }
+  }
+  return null;
 }
 
 function formatToolArgs(args: Record<string, unknown> | undefined): string {
@@ -285,8 +320,15 @@ export function ExecutionStepDetail({
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
   const applyAdvisorRemediations = usePlaybookStore((s) => s.applyAdvisorRemediations);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
+  const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
+  const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
+  const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
+  const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
+  const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
+  const [isSavingEvaluationBaseline, setIsSavingEvaluationBaseline] = useState(false);
   const [selectedStepExecutionId, setSelectedStepExecutionId] = useState<string | null>(null);
+  const [stepReplayModeValue, setStepReplayModeValue] = useState<'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>('live');
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
   const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
@@ -301,7 +343,10 @@ export function ExecutionStepDetail({
     return tasks.find((task) => task.id === step?.taskId) || null;
   }, [execution?.playbookSnapshot, step?.taskId]);
   const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
-  const currentTask = (executionSnapshotTask || playbookTask || null) as any;
+  const currentTask = (playbookTask || executionSnapshotTask || null) as any;
+  useEffect(() => {
+    setStepReplayModeValue(currentTask?.stepReplayMode ?? 'live');
+  }, [currentTask?.id, currentTask?.stepReplayMode]);
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
@@ -441,6 +486,29 @@ export function ExecutionStepDetail({
     currentTask?.activeReplayFormatGuideError,
     fetchTaskReplays,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEvaluationExecutions() {
+      if (!execution?.playbookId || !step?.taskId || currentTask?.taskType !== 'evaluation') {
+        if (!cancelled) setEvaluationExecutions([]);
+        return;
+      }
+
+      try {
+        const entries = await fetchEvaluationExecutions(execution.playbookId, step.taskId);
+        if (!cancelled) setEvaluationExecutions(entries);
+      } catch {
+        if (!cancelled) setEvaluationExecutions([]);
+      }
+    }
+
+    void loadEvaluationExecutions();
+    return () => {
+      cancelled = true;
+    };
+  }, [execution?.playbookId, step?.taskId, currentTask?.taskType, fetchEvaluationExecutions]);
 
   const isBaselineExecution = !!(execution?.id && baselineReplay?.referenceExecutionId && execution.id === baselineReplay.referenceExecutionId);
   const replayBadgeVersion = currentTask?.activeReplayVersion ?? replaySource?.validationVersion ?? baselineReplay?.validationVersion ?? null;
@@ -602,6 +670,17 @@ export function ExecutionStepDetail({
     });
   }, [judgeHistory, step?.taskId]);
 
+  const handleSaveEvaluationBaseline = useCallback(async () => {
+    if (!execution || !step) return;
+    setIsSavingEvaluationBaseline(true);
+    try {
+      const baseline = await createEvaluationBaselineFromExecution(execution.playbookId, step.taskId, execution.id);
+      setEvaluationBaseline({ id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt });
+    } finally {
+      setIsSavingEvaluationBaseline(false);
+    }
+  }, [createEvaluationBaselineFromExecution, execution, step]);
+
   if (!step) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -616,8 +695,10 @@ export function ExecutionStepDetail({
   const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
   const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step.semanticMatch || null;
   const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
+  const evaluationArtifact = getEvaluationArtifactPayload(step);
   const isEvaluationPending = isRunningEvaluation || step.status === 'running';
   const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
+  const latestDedicatedEvaluation = evaluationExecutions[0] || null;
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -659,8 +740,12 @@ export function ExecutionStepDetail({
             <div className="ml-auto flex items-center gap-1.5">
               <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
               <Select
-                value={currentTask?.stepReplayMode ?? 'live'}
-                onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
+                value={stepReplayModeValue}
+                onValueChange={(v) => {
+                  const nextMode = v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+                  setStepReplayModeValue(nextMode);
+                  onStepReplayModeChange?.(step.taskId, nextMode);
+                }}
               >
                 <SelectTrigger className="h-7 w-[130px] text-xs">
                   <SelectValue />
@@ -923,15 +1008,50 @@ export function ExecutionStepDetail({
                   </div>
                 )}
                 {execution && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
-                    disabled={isRunningEvaluation}
-                    className="shrink-0"
-                  >
-                    {isRunningEvaluation ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onRequestRunEvaluation?.(step.taskId)}
+                      disabled={isRunningEvaluation}
+                      className="shrink-0"
+                    >
+                      {isRunningEvaluation ? t('execution.running') : t('detail.actions.runReplayEvaluation')}
+                    </Button>
+                    {currentTask?.taskType === 'evaluation' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSaveEvaluationBaseline}
+                        disabled={isSavingEvaluationBaseline}
+                        className="shrink-0"
+                      >
+                        {isSavingEvaluationBaseline ? t('execution.running') : t('detail.actions.saveEvaluationBaseline')}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentTask?.taskType === 'evaluation' && (
+              <div className="rounded-lg border bg-muted/10 p-4 text-sm">
+                <div className="font-medium">{t('detail.evaluation.baselineTitle')}</div>
+                <div className="mt-1 text-muted-foreground">
+                  {evaluationBaseline
+                    ? `${t('detail.evaluation.baselineExecution')} ${evaluationBaseline.sourceExecutionId} • ${new Date(evaluationBaseline.createdAt).toLocaleString()}`
+                    : t('detail.evaluation.baselineEmpty')}
+                </div>
+                {latestDedicatedEvaluation && (
+                  <div className="mt-3 rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.recorded')}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {new Date(latestDedicatedEvaluation.createdAt).toLocaleString()} • {latestDedicatedEvaluation.verdict || '-'} • {formatPercent(latestDedicatedEvaluation.score ?? null)}
+                    </div>
+                    {latestDedicatedEvaluation.summary && (
+                      <div className="mt-2 text-sm whitespace-pre-wrap">{latestDedicatedEvaluation.summary}</div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -1104,6 +1224,47 @@ export function ExecutionStepDetail({
                     ? t('detail.evaluation.judgeModel', { model: semanticMatchToDisplay.model || '-' })
                     : t('detail.evaluation.embeddingFallback')}
                 </div>
+              </div>
+            ) : evaluationArtifact ? (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium">{t('detail.evaluation.semanticMatch')}</div>
+                  <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    {evaluationArtifact.verdict || '-'} | {formatPercent(evaluationArtifact.score ?? null)}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.score ?? null))}>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.score ?? null)}</div>
+                  </div>
+                  <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.semanticScore ?? null))}>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Semantic</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.semanticScore ?? null)}</div>
+                  </div>
+                  <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.referenceScore ?? null))}>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Reference</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.referenceScore ?? null)}</div>
+                  </div>
+                </div>
+                {evaluationArtifact.summary && (
+                  <div className="mt-3 rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
+                    <div className="mt-1 text-sm whitespace-pre-wrap">{evaluationArtifact.summary}</div>
+                  </div>
+                )}
+                {evaluationArtifact.findings?.length ? (
+                  <div className="mt-3 space-y-2">
+                    {evaluationArtifact.findings.map((finding, index) => (
+                      <div key={`${finding.category || 'finding'}-${index}`} className="rounded bg-background p-3">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {(finding.category || 'evaluation')} · {(finding.severity || 'info')}
+                        </div>
+                        <div className="mt-1 text-sm whitespace-pre-wrap">{finding.message || t('detail.evaluation.none')}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-6 text-sm text-muted-foreground">

@@ -2,6 +2,7 @@ import { PlaybookController } from './playbook.controller';
 import { PlaybookService } from '../services/playbook.service';
 import { PlaybookExecutionService } from '../services/playbook-execution.service';
 import { PlaybookDesignService } from '../services/playbook-design.service';
+import { PlaybookEvaluationService } from '../services/playbook-evaluation.service';
 import { PlaybookStreamGatewayService } from '../services/playbook-stream-gateway.service';
 import { UserService } from '../../user/user.service';
 import { NotificationsService } from '../../notifications/notifications.service';
@@ -42,6 +43,7 @@ describe('PlaybookController', () => {
   >;
   let mailTriggerTestEventService: jest.Mocked<Pick<any, 'processTestEvent'>>;
   let mailGraphClientService: jest.Mocked<Pick<any, 'createInboxSubscription'>>;
+  let evaluationService: jest.Mocked<Pick<PlaybookEvaluationService, 'listEvaluationExecutions' | 'getActiveBaseline' | 'replaceBaselineFromExecution'>>;
   let streamGateway: jest.Mocked<Pick<PlaybookStreamGatewayService, 'sendToUser'>>;
   let userService: jest.Mocked<Pick<UserService, 'findById' | 'findByEmail'>>;
   let notificationsService: jest.Mocked<Pick<NotificationsService, 'sendToUser'>>;
@@ -102,6 +104,12 @@ describe('PlaybookController', () => {
       createInboxSubscription: jest.fn().mockResolvedValue({ id: 'sub-1' }),
     };
 
+    evaluationService = {
+      listEvaluationExecutions: jest.fn().mockResolvedValue([]),
+      getActiveBaseline: jest.fn().mockResolvedValue(null),
+      replaceBaselineFromExecution: jest.fn().mockResolvedValue({ id: 'baseline-1' } as any),
+    };
+
     userService = {
       findById: jest.fn().mockResolvedValue({
         email: 'test@example.com',
@@ -121,6 +129,7 @@ describe('PlaybookController', () => {
       {} as any,
       {} as any,
       {} as any,
+      evaluationService as unknown as PlaybookEvaluationService,
       mailTriggerTestEventService as any,
       mailGraphClientService as any,
       streamGateway as unknown as PlaybookStreamGatewayService,

@@ -324,12 +324,8 @@ export class PlaybookExecutionGraphService {
 
     const upstreamResults = (execution?.taskResults || [])
       .filter((tr: any) => sourceIds.has(tr.taskId) && !tr.isStale)
-      .map((tr: any) => ({
-        task_id: tr.taskId,
-        status: tr.status,
-        error: tr.error || '',
-        duration_ms: tr.durationMs || 0,
-        artifacts: (tr.artifacts || []).map((artifact: any) => ({
+      .map((tr: any) => {
+        const artifacts = (tr.artifacts || []).map((artifact: any) => ({
           port_id: artifact.portId || 'default',
           artifact_kind: artifact.artifactKind || 'text',
           content: artifact.content || '',
@@ -337,8 +333,28 @@ export class PlaybookExecutionGraphService {
           filename: artifact.filename || '',
           mime_type: artifact.mimeType || '',
           size: artifact.size || 0,
-        })),
-      }));
+        }));
+
+        if (artifacts.length === 0 && typeof tr.output === 'string' && tr.output.trim()) {
+          artifacts.push({
+            port_id: 'default',
+            artifact_kind: 'text',
+            content: tr.output,
+            url: '',
+            filename: '',
+            mime_type: 'text/plain',
+            size: tr.output.length,
+          });
+        }
+
+        return {
+          task_id: tr.taskId,
+          status: tr.status,
+          error: tr.error || '',
+          duration_ms: tr.durationMs || 0,
+          artifacts,
+        };
+      });
 
     return {
       edges: incomingEdges

@@ -109,9 +109,31 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
     recommendedAgentTypeSlug: 'researcher',
     requiredToolNames: [],
   },
+  {
+    id: 'evaluation',
+    type: 'evaluation',
+    title: 'Evaluation Task',
+    description: 'Evaluates connected outputs against expected results and optional reference baselines.',
+    icon: 'Scale',
+    color: 'rose',
+    category: 'evaluation',
+    inputPorts: [
+      { id: 'evidence', name: 'Evidence', artifactKind: 'text', required: false },
+      { id: 'documents', name: 'Documents', artifactKind: 'document', required: false },
+      { id: 'data', name: 'Structured Data', artifactKind: 'data', required: false },
+      { id: 'dashboard', name: 'Dashboard', artifactKind: 'dashboard', required: false },
+    ],
+    outputPorts: [
+      { id: 'evaluation', name: 'Evaluation Result', artifactKind: 'data' },
+    ],
+    promptTemplate:
+      'Evaluate the connected workflow outputs against the configured expectation and optional baseline. Return a structured evaluation summary with score, verdict, and findings.',
+    recommendedAgentTypeSlug: 'researcher',
+    requiredToolNames: [],
+  },
 ];
 
-export const TEMPLATE_CATEGORIES = ['content', 'generation', 'analysis', 'code'] as const;
+export const TEMPLATE_CATEGORIES = ['content', 'generation', 'analysis', 'code', 'evaluation'] as const;
 
 export type TemplateCategory = (typeof TEMPLATE_CATEGORIES)[number];
 

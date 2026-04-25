@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026-04-25 00:00 UTC] — Add graph-native playbook evaluation task foundation
+
+- **Feature:** `playbook-evaluation`
+- **Type:** `feat`
+- **Changed:** Added evaluation task configuration on playbook nodes, dedicated `PlaybookEvaluationService` baseline and evaluation-execution persistence, configurable evaluation prompts through Admin playbook prompts (`evaluation.task.system`, `evaluation.task.user`), ADK runtime support for evaluation task execution with structured `playbook_evaluation_result` data artifacts, frontend evaluation task template/config UI, evaluation artifact rendering in execution detail, and the ability to save the current execution as an evaluation baseline.
+- **Why:** Full workflow evaluation needs to be explicit in the graph, persistable over time, and configurable without hardcoded prompts.
+- **Impact:** `YellowStorm/back/src/modules/playbook/schemas/playbook.schema.ts`, `YellowStorm/back/src/modules/playbook/schemas/playbook-evaluation-baseline.schema.ts`, `YellowStorm/back/src/modules/playbook/schemas/playbook-evaluation-execution.schema.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-evaluation.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-prompt.service.ts`, `YellowStorm/front/src/modules/playbook/types.ts`, `YellowStorm/front/src/modules/playbook/api.ts`, `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/utils/task-template-registry.ts`, `YellowStorm/front/src/modules/playbook/components/PlaybookNodeEditor.tsx`, `YellowStorm/front/src/modules/playbook/components/ExecutionStepDetail.tsx`, `yellowstorm-adk/src/langgraph_engine/step_executor.py`, `yellowstorm-adk/tests/langgraph_engine/test_step_executor.py`
+- **Readme:** `/docs/playbook-evaluation/README.md`
+
+## [2026-04-24 00:00 UTC] — Preserve workflow results during replay step reruns
+
+- **Feature:** `playbook`
+- **Type:** `fix`
+- **Changed:** Frontend playbook reruns in `replay_strict`, `replay_flex`, and `replay_adaptive` now preserve previously completed task results for non-targeted steps while only resetting the rerun step's optimistic execution state, the ADK single-step graph path now preserves `node_inputs_by_port` so replay steps can resolve upstream port artifacts from prior results, and backend rerun-step routing now synthesizes default text artifacts from persisted upstream step outputs when older executions do not yet have explicit artifact records.
+- **Why:** Running a single step in replay mode should not wipe the visible results of the rest of the workflow or fail input-port validation before replay execution starts.
+- **Impact:** `YellowStorm/front/src/modules/playbook/store.ts`, `YellowStorm/front/src/modules/playbook/store.test.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution-graph.service.ts`, `YellowStorm/back/src/modules/playbook/services/playbook-execution-graph.service.spec.ts`, `yellowstorm-adk/src/langgraph_engine/workflow_service.py`, `yellowstorm-adk/src/langgraph_engine/state.py`, `yellowstorm-adk/src/langgraph_engine/graph_builder.py`, `yellowstorm-adk/tests/langgraph_engine/test_workflow_service.py`
+- **Readme:** `/docs/playbook/README.md`
+
 ## [2026-04-24 00:00 UTC] — Route playbook MCP brain header from default workspace
 
 - **Feature:** `playbook`

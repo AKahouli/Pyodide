@@ -254,6 +254,7 @@ async def run_playbook(
         "step_execution_modes": step_execution_modes or {},
         "task_outputs": {},
         "artifacts_by_port": {},
+        "node_inputs_by_port": {},
         "prompt_overrides": prompt_overrides or {},
         "clarification_transcripts_by_task": {},
         "task_description_overrides_by_task": {},
@@ -456,6 +457,8 @@ async def run_single_step_graph(
     trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
+    artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
@@ -493,7 +496,9 @@ async def run_single_step_graph(
         for item in (upstream_results or [])
         if isinstance(item, dict) and str(item.get("task_id") or "").strip()
     }
-    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    resolved_artifacts_by_port: Dict[str, List[Dict[str, Any]]] = dict(
+        artifacts_by_port or {}
+    )
     for upstream_task_id, upstream_result in upstream_results_map.items():
         for artifact in upstream_result.get("artifacts") or []:
             if not isinstance(artifact, dict):
@@ -501,9 +506,9 @@ async def run_single_step_graph(
             port_id = _normalize_port_id(
                 artifact.get("port_id") or artifact.get("portId") or "default"
             )
-            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(
-                artifact
-            )
+            resolved_artifacts_by_port.setdefault(
+                f"{upstream_task_id}:{port_id}", []
+            ).append(artifact)
 
     initial_state: ExecutionState = {
         "playbook_id": task_id,
@@ -528,7 +533,8 @@ async def run_single_step_graph(
         else {},
         "step_execution_modes": {},
         "task_outputs": {},
-        "artifacts_by_port": artifacts_by_port,
+        "artifacts_by_port": resolved_artifacts_by_port,
+        "node_inputs_by_port": node_inputs_by_port or {},
         "prompt_overrides": prompt_overrides or {},
         "clarification_transcripts_by_task": {},
         "task_description_overrides_by_task": {},

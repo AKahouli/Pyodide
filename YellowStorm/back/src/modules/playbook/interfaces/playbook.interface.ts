@@ -30,6 +30,25 @@ export interface InputFileData {
   };
 }
 
+export interface PlaybookEvaluationRubricWeightsData {
+  semanticMatch: number;
+  referenceMatch: number;
+  artifactRequirements: number;
+  formatCompliance: number;
+  evidenceConsistency: number;
+  executionHealth: number;
+}
+
+export interface PlaybookEvaluationConfigData {
+  expectation: string;
+  referenceBaselineId?: string | null;
+  passThreshold: number;
+  warningThreshold: number;
+  weight: number;
+  rubricVersion: string;
+  weights: PlaybookEvaluationRubricWeightsData;
+}
+
 export interface PlaybookTaskData {
   id: string;
   title: string;
@@ -67,6 +86,7 @@ export interface PlaybookTaskData {
   inputFiles?: InputFileData[];
   stepReplayMode?: string;
   toolBindings?: ToolBindingData[];
+  evaluationConfig?: PlaybookEvaluationConfigData | null;
 }
 
 export interface PlaybookEdgeData {

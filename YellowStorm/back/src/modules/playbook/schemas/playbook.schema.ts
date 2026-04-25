@@ -140,6 +140,55 @@ export class TaskOutputPortSchema {
 export const TaskOutputPortSchemaDefinition = SchemaFactory.createForClass(TaskOutputPortSchema);
 
 @Schema({ _id: false })
+export class PlaybookEvaluationRubricWeights {
+  @Prop({ type: Number, default: 40 })
+  semanticMatch!: number;
+
+  @Prop({ type: Number, default: 20 })
+  referenceMatch!: number;
+
+  @Prop({ type: Number, default: 20 })
+  artifactRequirements!: number;
+
+  @Prop({ type: Number, default: 10 })
+  formatCompliance!: number;
+
+  @Prop({ type: Number, default: 5 })
+  evidenceConsistency!: number;
+
+  @Prop({ type: Number, default: 5 })
+  executionHealth!: number;
+}
+
+export const PlaybookEvaluationRubricWeightsSchema = SchemaFactory.createForClass(PlaybookEvaluationRubricWeights);
+
+@Schema({ _id: false })
+export class PlaybookEvaluationConfig {
+  @Prop({ type: String, trim: true, maxlength: 10000, default: '' })
+  expectation!: string;
+
+  @Prop({ type: String, default: null })
+  referenceBaselineId!: string | null;
+
+  @Prop({ type: Number, default: 80, min: 0, max: 100 })
+  passThreshold!: number;
+
+  @Prop({ type: Number, default: 60, min: 0, max: 100 })
+  warningThreshold!: number;
+
+  @Prop({ type: Number, default: 1, min: 0 })
+  weight!: number;
+
+  @Prop({ type: String, trim: true, maxlength: 200, default: 'evaluation-node-v1' })
+  rubricVersion!: string;
+
+  @Prop({ type: PlaybookEvaluationRubricWeightsSchema, default: () => ({}) })
+  weights!: PlaybookEvaluationRubricWeights;
+}
+
+export const PlaybookEvaluationConfigSchema = SchemaFactory.createForClass(PlaybookEvaluationConfig);
+
+@Schema({ _id: false })
 export class PlaybookTask {
   @Prop({ type: String, required: true })
   id!: string;
@@ -204,7 +253,7 @@ export class PlaybookTask {
   @Prop({ type: [InputFileItemSchema], default: [], _id: false })
   inputFiles!: InputFileItem[];
 
-  @Prop({ type: String, enum: ['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'], default: 'generic' })
+  @Prop({ type: String, enum: ['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation'], default: 'generic' })
   taskType!: string;
 
   @Prop({ type: [TaskInputPortSchemaDefinition], default: [], _id: false })
@@ -224,6 +273,9 @@ export class PlaybookTask {
 
   @Prop({ type: Number, default: 4 })
   advisorAutopilotMaxTurns!: number;
+
+  @Prop({ type: PlaybookEvaluationConfigSchema, default: null })
+  evaluationConfig!: PlaybookEvaluationConfig | null;
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);

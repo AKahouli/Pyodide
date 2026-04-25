@@ -57,6 +57,7 @@ import { PlaybookExecutionGraphService } from './playbook-execution-graph.servic
 import { PlaybookExecutionNotificationService } from './playbook-execution-notification.service';
 import { PlaybookExecutionBufferService } from './playbook-execution-buffer.service';
 import { PlaybookExecutionAdvisorService } from './playbook-execution-advisor.service';
+import { PlaybookEvaluationService } from './playbook-evaluation.service';
 
 const SKIP_STEP_REASON = '__SKIP_STEP__';
 
@@ -102,6 +103,7 @@ export class PlaybookExecutionService {
     @Inject('ConnectorAuthService')
     private readonly connectorAuthService: ConnectorAuthService,
     private readonly advisorService: PlaybookExecutionAdvisorService,
+    private readonly evaluationService: PlaybookEvaluationService,
     private readonly graphService: PlaybookExecutionGraphService,
     private readonly notificationService: PlaybookExecutionNotificationService,
     private readonly bufferService: PlaybookExecutionBufferService,
@@ -1788,6 +1790,17 @@ export class PlaybookExecutionService {
           taskId,
           status: 'completed',
         });
+        if (completedTask?.taskType === 'evaluation') {
+          void this.evaluationService.persistEvaluationExecution({
+            playbookId,
+            executionId,
+            task: completedTask,
+            artifacts,
+            durationMs,
+            completedAt: new Date(),
+            modelName: usageFields.modelName ?? null,
+          });
+        }
         break;
       }
 

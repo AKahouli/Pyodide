@@ -102,6 +102,63 @@ export class TaskOutputPortDto {
   description?: string;
 }
 
+export class EvaluationRubricWeightsDto {
+  @IsOptional()
+  @IsNumber()
+  semanticMatch?: number;
+
+  @IsOptional()
+  @IsNumber()
+  referenceMatch?: number;
+
+  @IsOptional()
+  @IsNumber()
+  artifactRequirements?: number;
+
+  @IsOptional()
+  @IsNumber()
+  formatCompliance?: number;
+
+  @IsOptional()
+  @IsNumber()
+  evidenceConsistency?: number;
+
+  @IsOptional()
+  @IsNumber()
+  executionHealth?: number;
+}
+
+export class EvaluationConfigDto {
+  @IsOptional()
+  @IsString()
+  expectation?: string;
+
+  @IsOptional()
+  @IsString()
+  referenceBaselineId?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  passThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  warningThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  weight?: number;
+
+  @IsOptional()
+  @IsString()
+  rubricVersion?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EvaluationRubricWeightsDto)
+  weights?: EvaluationRubricWeightsDto;
+}
+
 export class UpdatePlaybookTaskDto {
   @IsString()
   id!: string;
@@ -198,7 +255,7 @@ export class UpdatePlaybookTaskDto {
   inputFiles?: InputFileDto[];
 
   @IsOptional()
-  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'])
+  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation'])
   taskType?: string;
 
   @ApiPropertyOptional({ type: [TaskInputPortDto] })
@@ -227,6 +284,12 @@ export class UpdatePlaybookTaskDto {
     disableAutoSkills?: boolean;
     isEnabled?: boolean;
   }>;
+
+  @ApiPropertyOptional({ type: EvaluationConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EvaluationConfigDto)
+  evaluationConfig?: EvaluationConfigDto | null;
 
 }
 

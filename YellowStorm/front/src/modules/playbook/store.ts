@@ -132,6 +132,8 @@ const initialState: PlaybookState = {
   nodeTemplates: [],
   nodeTemplatesLoading: false,
   nodeTemplatesLoadedAt: 0,
+  evaluationExecutionsByTask: {},
+  evaluationBaselinesByTask: {},
 };
 
 // ===== Stable empty references =====
@@ -395,6 +397,34 @@ function buildResumeFromStepTaskResults(taskResults: PlaybookExecution['taskResu
       judgeHistory: taskResult.judgeHistory || [],
       evaluationHistory: taskResult.evaluationHistory || [],
       stepExecutions: taskResult.stepExecutions || [],
+    };
+  });
+}
+
+function buildRerunStepTaskResults(taskResults: PlaybookExecution['taskResults'], taskId: string) {
+  const now = new Date().toISOString();
+
+  return taskResults.map((taskResult) => {
+    if (taskResult.taskId !== taskId) {
+      return taskResult;
+    }
+
+    return {
+      ...clearTaskResultStaleState(taskResult),
+      status: 'running' as const,
+      output: null,
+      error: null,
+      durationMs: null,
+      startedAt: now,
+      completedAt: null,
+      components: [],
+      toolTrace: [],
+      llmPromptTrace: [],
+      artifacts: [],
+      semanticMatch: null,
+      judgeStatus: 'idle' as const,
+      judgeResult: null,
+      judgeError: null,
     };
   });
 }
@@ -1181,6 +1211,98 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      fetchEvaluationExecutions: async (playbookId, taskId) => {
+        try {
+          const executions = await api.getEvaluationExecutions(playbookId, taskId);
+          if (taskId) {
+            set((state) => ({
+              evaluationExecutionsByTask: {
+                ...state.evaluationExecutionsByTask,
+                [taskId]: executions,
+              },
+            }));
+          }
+          return executions;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchEvaluationBaseline: async (playbookId, taskId) => {
+        try {
+          const baseline = await api.getEvaluationBaseline(playbookId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createEvaluationBaselineFromExecution: async (playbookId, taskId, executionId) => {
+        try {
+          const baseline = await api.createEvaluationBaselineFromExecution(playbookId, taskId, executionId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) => task.id === taskId
+                    ? {
+                        ...task,
+                        evaluationConfig: task.evaluationConfig
+                          ? { ...task.evaluationConfig, referenceBaselineId: baseline.id }
+                          : task.evaluationConfig,
+                      }
+                    : task),
+                }
+              : state.currentPlaybook,
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createEvaluationBaselineFromCurrentExecution: async (playbookId, taskId, executionId, evaluationExecutionId) => {
+        try {
+          const baseline = await api.createEvaluationBaselineFromCurrentExecution(playbookId, taskId, executionId, evaluationExecutionId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) => task.id === taskId
+                    ? {
+                        ...task,
+                        evaluationConfig: task.evaluationConfig
+                          ? { ...task.evaluationConfig, referenceBaselineId: baseline.id }
+                          : task.evaluationConfig,
+                      }
+                    : task),
+                }
+              : state.currentPlaybook,
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       updateTaskReplayFormatGuide: async (playbookId, taskId, replayId, data) => {
         try {
           const replay = await api.updateTaskReplayFormatGuide(playbookId, taskId, replayId, data);
@@ -1515,12 +1637,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
         clearJudgeRefreshTimer(executionId);
         set((state) => {
           const cachedExecution = state.executionCache[executionId];
+          const shouldPreserveOtherTaskResults = executionMode === 'replay_strict'
+            || executionMode === 'replay_flex'
+            || executionMode === 'replay_adaptive';
           const updatedExecution = cachedExecution
             ? {
               ...cachedExecution,
               status: 'running' as const,
               interruptPayload: null,
-              taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
+              taskResults: shouldPreserveOtherTaskResults
+                ? buildRerunStepTaskResults(cachedExecution.taskResults, taskId)
+                : buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
               updatedAt: new Date().toISOString(),
             }
             : null;

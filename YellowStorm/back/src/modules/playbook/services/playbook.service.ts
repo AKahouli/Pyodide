@@ -976,6 +976,24 @@ export class PlaybookService {
         activeOutputFormatError: activeOutputFormats.get(t.id)?.generationError || null,
         stepReplayMode: t.stepReplayMode || 'live',
         toolBindings: t.toolBindings || [],
+        evaluationConfig: t.evaluationConfig
+          ? {
+              expectation: t.evaluationConfig.expectation || '',
+              referenceBaselineId: t.evaluationConfig.referenceBaselineId ?? null,
+              passThreshold: t.evaluationConfig.passThreshold ?? 80,
+              warningThreshold: t.evaluationConfig.warningThreshold ?? 60,
+              weight: t.evaluationConfig.weight ?? 1,
+              rubricVersion: t.evaluationConfig.rubricVersion || 'evaluation-node-v1',
+              weights: {
+                semanticMatch: t.evaluationConfig.weights?.semanticMatch ?? 40,
+                referenceMatch: t.evaluationConfig.weights?.referenceMatch ?? 20,
+                artifactRequirements: t.evaluationConfig.weights?.artifactRequirements ?? 20,
+                formatCompliance: t.evaluationConfig.weights?.formatCompliance ?? 10,
+                evidenceConsistency: t.evaluationConfig.weights?.evidenceConsistency ?? 5,
+                executionHealth: t.evaluationConfig.weights?.executionHealth ?? 5,
+              },
+            }
+          : null,
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,

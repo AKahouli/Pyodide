@@ -841,6 +841,73 @@ describe('playbook store', () => {
     });
   });
 
+  it('preserves previous workflow results when rerunning a step in replay flex mode', async () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        {
+          taskId: 't1',
+          nodeTitle: 'Step 1',
+          agentName: 'A1',
+          order: 1,
+          status: 'completed',
+          output: 'old step 1',
+          error: null,
+          durationMs: 100,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          isStale: false,
+          staleReason: null,
+          invalidatedByTaskId: null,
+        },
+        {
+          taskId: 't2',
+          nodeTitle: 'Step 2',
+          agentName: 'A2',
+          order: 2,
+          status: 'completed',
+          output: 'keep this result',
+          error: null,
+          durationMs: 100,
+          startedAt: '2025-01-01T00:00:02.000Z',
+          completedAt: '2025-01-01T00:00:03.000Z',
+          isStale: false,
+          staleReason: null,
+          invalidatedByTaskId: null,
+        },
+      ],
+    });
+
+    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
+    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
+
+    usePlaybookStore.setState({
+      executionCache: { e1: execution },
+      currentExecution: execution,
+      selectedStepId: null,
+    });
+
+    const promise = usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1', false, 'replay_flex');
+    const state = usePlaybookStore.getState();
+
+    expect(state.currentExecution?.taskResults[0]).toMatchObject({
+      taskId: 't1',
+      status: 'running',
+      output: null,
+    });
+    expect(state.currentExecution?.taskResults[1]).toMatchObject({
+      taskId: 't2',
+      status: 'completed',
+      output: 'keep this result',
+      startedAt: '2025-01-01T00:00:02.000Z',
+      completedAt: '2025-01-01T00:00:03.000Z',
+    });
+
+    await promise;
+  });
+
   it('focuses the rerun execution immediately when the panel is showing an older execution', async () => {
     const rerunTarget = makeExecution({
       id: 'e1',

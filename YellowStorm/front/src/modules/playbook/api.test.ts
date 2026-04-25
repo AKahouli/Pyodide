@@ -122,6 +122,10 @@ describe('playbook api', () => {
         taskType: 'generic',
         inputPorts: [],
         outputPorts: [],
+        executionMode: undefined,
+        selectedAction: undefined,
+        toolBindings: undefined,
+        evaluationConfig: null,
       }],
     });
   });

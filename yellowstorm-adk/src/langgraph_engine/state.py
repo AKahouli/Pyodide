@@ -208,6 +208,7 @@ class ExecutionState(TypedDict):
     prompt_overrides: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
     artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
+    node_inputs_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
     clarification_transcripts_by_task: Annotated[
         Dict[str, List[Dict[str, str]]], merge_clarification_transcripts
     ]

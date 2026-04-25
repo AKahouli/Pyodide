@@ -130,6 +130,75 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
   });
 
+  it('updates the step replay mode selector when the selected task mode changes', () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', stepReplayMode: 'live' }],
+    };
+
+    const { rerender } = render(
+      <ExecutionStepDetail
+        step={baseStep}
+      />,
+    );
+
+    const trigger = screen.getByRole('combobox');
+    expect(trigger).toHaveTextContent('execution.mode.live');
+
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', stepReplayMode: 'replay_strict' }],
+    };
+
+    rerender(
+      <ExecutionStepDetail
+        step={baseStep}
+      />,
+    );
+
+    expect(trigger).toHaveTextContent('execution.mode.replayStrict');
+
+    storeState.currentPlaybook = null;
+  });
+
+  it('prefers the live playbook task replay mode over the stale execution snapshot', () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', stepReplayMode: 'replay_flex' }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={baseStep}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [baseStep],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: { tasks: [{ id: 't1', stepReplayMode: 'live' }] },
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('combobox')).toHaveTextContent('execution.mode.replayFlex');
+
+    storeState.currentPlaybook = null;
+  });
+
   it('navigates to the newly generated playbook from the judge CTA', async () => {
     storeState.currentPlaybook = {
       id: 'p1',
@@ -478,6 +547,63 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Minor wording updates')).toBeInTheDocument();
   });
 
+  it('renders evaluation artifact fallback when semantic match history is absent', async () => {
+    const withEvaluationArtifact: TaskResult = {
+      ...baseStep,
+      artifacts: [{
+        portId: 'evaluation',
+        artifactKind: 'data',
+        metadata: {
+          data: {
+            type: 'playbook_evaluation_result',
+            score: 88,
+            verdict: 'pass',
+            summary: 'Evaluation succeeded.',
+            semanticScore: 90,
+            referenceScore: 80,
+            findings: [{ category: 'semantic', severity: 'info', message: 'ok' }],
+          },
+        },
+      } as any],
+    };
+
+    render(<ExecutionStepDetail step={withEvaluationArtifact} />);
+    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
+    expect(screen.getByText('Evaluation succeeded.')).toBeInTheDocument();
+    expect(screen.getByText(/pass/i)).toBeInTheDocument();
+    expect(screen.getByText('88%')).toBeInTheDocument();
+  });
+
+  it('shows save evaluation baseline action for evaluation tasks', async () => {
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'completed',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [baseStep],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: '2025-01-01T00:00:05.200Z',
+      singleStepTaskId: null,
+      playbookSnapshot: { tasks: [{ id: 't1', taskType: 'evaluation' }], edges: [] } as any,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(<ExecutionStepDetail step={baseStep} execution={execution} />);
+    await userEvent.click(screen.getByText('detail.tabs.evaluation'));
+    expect(screen.getByText('detail.actions.saveEvaluationBaseline')).toBeInTheDocument();
+  });
+
   it('renders replay provenance when execution is replayed', () => {
     const execution: PlaybookExecution = {
       id: 'e1',
@@ -508,8 +634,8 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('detail.provenance.baseline: v3')).toBeInTheDocument();
   });
 
-  it('runs evaluation manually from the evaluation pane', async () => {
-    const onRequestRunAdvisorEvaluation = vi.fn();
+  it('runs replay evaluation manually from the evaluation pane', async () => {
+    const onRequestRunEvaluation = vi.fn();
     const execution: PlaybookExecution = {
       id: 'e1',
       playbookId: 'p1',
@@ -538,13 +664,13 @@ describe('ExecutionStepDetail', () => {
         <ExecutionStepDetail
           step={baseStep}
           execution={execution}
-          onRequestRunAdvisorEvaluation={onRequestRunAdvisorEvaluation}
+          onRequestRunEvaluation={onRequestRunEvaluation}
         />,
       );
 
     await userEvent.click(screen.getByText('detail.tabs.evaluation'));
-    await userEvent.click(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]);
-    expect(onRequestRunAdvisorEvaluation).toHaveBeenCalledWith('t1');
+    await userEvent.click(screen.getByText('detail.actions.runReplayEvaluation'));
+    expect(onRequestRunEvaluation).toHaveBeenCalledWith('t1');
   });
 
   it('runs advisor evaluation from the advisor pane CTA', async () => {

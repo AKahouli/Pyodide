@@ -743,6 +743,7 @@ class DynamicGraphBuilder:
                         (state.get("results") or {}).values()
                     ),
                     artifacts_by_port=state.get("artifacts_by_port"),
+                    node_inputs_by_port=state.get("node_inputs_by_port"),
                     on_progress=_push_step_update,
                 )
 
