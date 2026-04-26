@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
+import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 
@@ -12,6 +12,7 @@ import {
   DialogContent,
   DialogFooter,
   DialogHeader,
+  DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Canvas } from '@/components/ai-elements/canvas';
@@ -57,6 +58,7 @@ import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
+import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
@@ -180,6 +182,9 @@ function PlaybookCanvasInner() {
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
+  const repeatability = usePlaybookStore((s) => s.repeatability);
+  const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
+  const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
   const { refreshUsage } = useUsage();
 
   const isGeneratingRoute = id === 'generating';
@@ -204,10 +209,12 @@ function PlaybookCanvasInner() {
   const { saveNow } = useAutosave();
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
+  const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
+  const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [evaluationDialogOpen, setEvaluationDialogOpen] = useState(false);
   const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
   const [advisorAutopilotEnabled, setAdvisorAutopilotEnabled] = useState(false);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
@@ -229,7 +236,7 @@ function PlaybookCanvasInner() {
   } | null>(null);
 
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
-  const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(false);
+  const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
 
   useEffect(() => {
     if (id && !isGeneratingRoute) {
@@ -242,7 +249,7 @@ function PlaybookCanvasInner() {
         executionHistory: [],
         pageMode: 'design',
       });
-      setExecutionPanelCollapsed(false);
+      setExecutionPanelCollapsed(true);
       fetchPlaybook(id);
       fetchExecutions(id);
     }
@@ -255,6 +262,12 @@ function PlaybookCanvasInner() {
       setTriggersSheetOpen(true);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!evaluationDialogOpen || !id || isGeneratingRoute) return;
+
+    void fetchRepeatability(id);
+  }, [evaluationDialogOpen, id, isGeneratingRoute, fetchRepeatability]);
 
   // Fallback polling while an execution is active. This keeps both the canvas
   // and the detail pane in sync if an SSE step-complete/execution-complete event
@@ -1163,6 +1176,16 @@ function PlaybookCanvasInner() {
           <Button
             variant="ghost"
             size="sm"
+            onClick={() => setEvaluationDialogOpen(true)}
+            title={t('header.evaluation')}
+            aria-label={t('header.evaluation')}
+          >
+            <BarChart3 className="h-4 w-4" />
+            <span className="hidden xl:inline">{t('header.evaluation')}</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={() => void (id && clonePlaybook(id))}
             title={t('header.clonePlaybook')}
             aria-label={t('header.clonePlaybook')}
@@ -1242,6 +1265,7 @@ function PlaybookCanvasInner() {
                   onNodeClick={handleNodeClick}
                   onNodeDoubleClick={handleNodeDoubleClick}
                   onEdgeDoubleClick={handleEdgeDoubleClick}
+                  onPaneClick={() => { if (editorOpen) setEditorOpen(false); }}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}
@@ -1331,6 +1355,18 @@ function PlaybookCanvasInner() {
           playbookId={id}
         />
       )}
+
+      <Dialog open={evaluationDialogOpen} onOpenChange={setEvaluationDialogOpen}>
+        <DialogContent className="flex max-h-[90vh] max-w-6xl grid-rows-[auto_minmax(0,1fr)] flex-col overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{t('evaluationDialog.title')}</DialogTitle>
+            <DialogDescription>{t('evaluationDialog.description')}</DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 overflow-y-auto pr-1">
+            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={!!editingOutputFormatTaskId} onOpenChange={closeOutputFormatDialog}>
         <DialogContent className="max-w-3xl">

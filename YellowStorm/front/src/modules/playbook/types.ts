@@ -1103,6 +1103,7 @@ export interface PlaybookState {
   executionPanelOpen: boolean;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
+  nodeEditorOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
@@ -1239,6 +1240,10 @@ export interface PlaybookActions {
   setCopilotMode: (mode: PlaybookCopilotMode) => void;
   setExecutionPanelOpen: (open: boolean) => void;
   viewExecutionInPanel: (executionId: string) => void;
+
+  // Node Editor
+  nodeEditorOpen: boolean;
+  setNodeEditorOpen: (open: boolean) => void;
 
   // Workspace Explorer
   setWorkspaceExplorerOpen: (open: boolean) => void;

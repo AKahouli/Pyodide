@@ -56,7 +56,7 @@
         "obsidian-mcp-server"
       ],
       "environment": {
-        "OBSIDIAN_API_KEY": "864dd99bf65be82c94f6921e5578b1d27b50e8c4769d9a464b83d9f46dbc11ac",
+        "OBSIDIAN_API_KEY": "3f636a13992a2758e2d08803dbf0546f0a178a049c1c8e0f0bd4ea0c98d8e22d",
         "OBSIDIAN_BASE_URL": "http://127.0.0.1:27123",
         "OBSIDIAN_VERIFY_SSL": "false",
         "OBSIDIAN_ENABLE_CACHE": "true"
@@ -84,7 +84,7 @@
           "pnpm *": "allow",
           "pip *": "allow",
           "poetry *": "allow",
-          "npx ctx7*": "allow",
+          "npx *": "allow",
           "git push*": "ask",
           "git reset*": "ask",
           "git rebase*": "ask",

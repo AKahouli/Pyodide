@@ -3,7 +3,7 @@ description: Blocking quality gate. Reviews code changes for correctness,
   security, and performance in a single pass. Must return PASS before a task can
   close.
 mode: subagent
-model: litellm/glm-5.1
+model: litellm/gpt-5.4
 tools:
   write: false
   edit: false

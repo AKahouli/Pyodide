@@ -186,7 +186,7 @@ export class PlaybookPromptService {
   constructor(
     @InjectModel(PlaybookPromptTemplate.name)
     private readonly promptModel: Model<PlaybookPromptTemplateDocument>,
-  ) {}
+  ) { }
 
   private toResponse(doc: PlaybookPromptTemplateDocument | PlaybookPromptTemplate): PlaybookPromptTemplateResponse {
     return {

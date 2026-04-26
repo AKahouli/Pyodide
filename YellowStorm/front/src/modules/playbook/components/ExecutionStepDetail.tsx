@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
+import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1655,60 +1656,7 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            {repeatability && (
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  {t('repeatability.title')}
-                </div>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className={cn('rounded border p-2', getScoreTone(repeatability.overallScore))}>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('repeatability.overallScore')}</div>
-                    <div className="mt-1 text-lg font-semibold">
-                      {repeatability.overallScore !== null ? `${Math.round(repeatability.overallScore)}%` : '—'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t(`repeatability.verdict.${repeatability.overallVerdict}` as any)}</div>
-                    <Badge variant="outline" className="mt-1">{t(`repeatability.verdict.${repeatability.overallVerdict}` as any)}</Badge>
-                  </div>
-                  <div>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('repeatability.evaluatedTasks')}</div>
-                    <div className="mt-1 font-medium">{repeatability.evaluatedTasks} / {repeatability.totalTasks}</div>
-                  </div>
-                </div>
-                {repeatability.tasks.length > 0 && (
-                  <div className="space-y-2">
-                    {repeatability.tasks.map((rt) => (
-                      <div key={rt.taskId} className="rounded-md border bg-background p-3 space-y-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <div className="font-medium text-xs truncate">{rt.taskTitle || rt.taskId}</div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className="text-xs">{t(`repeatability.verdict.${rt.verdict}` as any)}</Badge>
-                            {rt.repeatabilityScore !== null && (
-                              <span className={cn('text-xs font-semibold', rt.repeatabilityScore >= 75 ? 'text-green-600' : rt.repeatabilityScore >= 50 ? 'text-amber-600' : 'text-red-600')}>
-                                {Math.round(rt.repeatabilityScore)}%
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                          <span>{t(`repeatability.source.${rt.expectedResultSource}` as any)}</span>
-                          <span>·</span>
-                          <span>{rt.comparableCount} comparable</span>
-                        </div>
-                        {rt.findings.length > 0 && (
-                          <ul className="space-y-0.5 text-xs text-muted-foreground">
-                            {rt.findings.map((finding, i) => (
-                              <li key={i}>• {finding}</li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} />
           </TabsContent>
 
           <TabsContent value="traces" className="space-y-4">

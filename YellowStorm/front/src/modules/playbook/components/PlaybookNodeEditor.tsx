@@ -25,7 +25,6 @@ import type {
   TaskInputPort,
   TaskOutputPort,
   ArtifactKind,
-  TaskExecutionMode,
   SelectedAction,
   PlaybookEvaluationConfig,
   PlaybookNodeType,
@@ -37,6 +36,94 @@ import { getPortColor } from '../utils/port-colors';
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 720;
 const DEFAULT_WIDTH = 420;
+
+interface EditorDraft {
+  title: string;
+  description: string;
+  assignedAgentId: string | null;
+  nodeType: PlaybookNodeType;
+  executionMode: string;
+  selectedAction: SelectedAction;
+  interruptBefore: boolean;
+  interruptAfter: boolean;
+  allowClarification: boolean;
+  enabled: boolean;
+  notifyOnComplete: boolean;
+  notifyEmails: string[];
+  inputPorts: TaskInputPort[];
+  outputPorts: TaskOutputPort[];
+  evaluationConfig: PlaybookEvaluationConfig | null;
+  disableAdvisorEvaluation: boolean;
+  expectedResult: string | null;
+}
+
+const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
+  expectation: '',
+  referenceBaselineId: null,
+  passThreshold: 80,
+  warningThreshold: 60,
+  weight: 1,
+  rubricVersion: 'evaluation-node-v1',
+  weights: {
+    semanticMatch: 40,
+    referenceMatch: 20,
+    artifactRequirements: 20,
+    formatCompliance: 10,
+    evidenceConsistency: 5,
+    executionHealth: 5,
+  },
+};
+
+function buildDraftFromTask(task: PlaybookTask): EditorDraft {
+  const nodeType: PlaybookNodeType = task.taskType === 'evaluation'
+    ? 'evaluation'
+    : task.executionMode === 'action'
+      ? 'action'
+      : 'agent';
+  return {
+    title: task.title,
+    description: task.description,
+    assignedAgentId: task.assignedAgentId,
+    nodeType,
+    executionMode: task.executionMode || 'agent',
+    selectedAction: task.selectedAction || 'index',
+    interruptBefore: task.interruptBefore,
+    interruptAfter: task.interruptAfter,
+    allowClarification: task.allowClarification,
+    enabled: task.enabled !== false,
+    notifyOnComplete: task.notifyOnComplete ?? false,
+    notifyEmails: task.notifyEmails ?? [],
+    inputPorts: task.inputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }],
+    outputPorts: task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }],
+    evaluationConfig: task.evaluationConfig
+      ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } }
+      : { ...DEFAULT_EVALUATION_CONFIG, weights: { ...DEFAULT_EVALUATION_CONFIG.weights } },
+    disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
+    expectedResult: task.expectedResult ?? null,
+  };
+}
+
+function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
+  return {
+    title: draft.title,
+    description: draft.description,
+    taskType: draft.nodeType === 'evaluation' ? 'evaluation' : 'generic',
+    assignedAgentId: draft.nodeType === 'action' ? null : draft.assignedAgentId,
+    executionMode: (draft.nodeType === 'evaluation' ? 'agent' : draft.executionMode) as import('../types').TaskExecutionMode | undefined,
+    selectedAction: draft.nodeType === 'action' ? draft.selectedAction : undefined,
+    interruptBefore: draft.interruptBefore,
+    interruptAfter: draft.interruptAfter,
+    allowClarification: draft.allowClarification,
+    enabled: draft.enabled,
+    notifyOnComplete: draft.notifyOnComplete,
+    notifyEmails: draft.notifyOnComplete ? draft.notifyEmails : [],
+    inputPorts: [...draft.inputPorts],
+    outputPorts: [...draft.outputPorts],
+    evaluationConfig: draft.evaluationConfig,
+    disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
+    expectedResult: draft.expectedResult,
+  };
+}
 
 interface Props {
   playbookId: string | null;
@@ -71,18 +158,30 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     [agents],
   );
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [assignedAgentId, setAssignedAgentId] = useState<string | null>(null);
-  const [nodeType, setNodeType] = useState<PlaybookNodeType>('agent');
-  const [executionMode, setExecutionMode] = useState<TaskExecutionMode>('agent');
-  const [selectedAction, setSelectedAction] = useState<SelectedAction>('index');
-  const [interruptBefore, setInterruptBefore] = useState(false);
-  const [interruptAfter, setInterruptAfter] = useState(false);
-  const [allowClarification, setAllowClarification] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const [notifyOnComplete, setNotifyOnComplete] = useState(false);
-  const [notifyEmails, setNotifyEmails] = useState<string[]>([]);
+  const [draft, setDraft] = useState<EditorDraft>({
+    title: '',
+    description: '',
+    assignedAgentId: null,
+    nodeType: 'agent',
+    executionMode: 'agent',
+    selectedAction: 'index',
+    interruptBefore: false,
+    interruptAfter: false,
+    allowClarification: false,
+    enabled: true,
+    notifyOnComplete: false,
+    notifyEmails: [],
+    inputPorts: [],
+    outputPorts: [],
+    evaluationConfig: null,
+    disableAdvisorEvaluation: false,
+    expectedResult: null,
+  });
+
+  const updateDraft = useCallback((patch: Partial<EditorDraft>) => {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  }, []);
+
   const [emailInput, setEmailInput] = useState('');
   const [emailError, setEmailError] = useState('');
   const [replays, setReplays] = useState<ValidatedTaskReplay[]>([]);
@@ -93,11 +192,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [preserveFormatDraft, setPreserveFormatDraft] = useState(false);
   const [savingFormatGuide, setSavingFormatGuide] = useState(false);
   const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
-  const [inputPorts, setInputPorts] = useState<TaskInputPort[]>([]);
-  const [outputPorts, setOutputPorts] = useState<TaskOutputPort[]>([]);
-  const [evaluationConfig, setEvaluationConfig] = useState<PlaybookEvaluationConfig | null>(null);
-  const [disableAdvisorEvaluation, setDisableAdvisorEvaluation] = useState(false);
-  const [expectedResult, setExpectedResult] = useState<string | null>(null);
   const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<Array<{ id: string; executionId: string; createdAt: string; score?: number | null; verdict?: 'pass' | 'warning' | 'fail' | null }>>([]);
   const [selectedBaselineExecutionId, setSelectedBaselineExecutionId] = useState('');
@@ -141,122 +235,25 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     };
   }, []);
 
-  const isEvaluationTask = nodeType === 'evaluation';
-
-  const persistDraft = useCallback((overrides?: Partial<PlaybookTask>) => {
-    if (!task) return;
-    onSave(task.id, {
-      title,
-      description,
-      taskType: nodeType === 'evaluation' ? 'evaluation' : 'generic',
-      assignedAgentId: nodeType === 'action' ? null : assignedAgentId,
-      executionMode: nodeType === 'evaluation' ? 'agent' : executionMode,
-      selectedAction: nodeType === 'action' ? selectedAction : undefined,
-      interruptBefore,
-      interruptAfter,
-      allowClarification,
-      enabled,
-      notifyOnComplete,
-      notifyEmails: notifyOnComplete ? notifyEmails : [],
-      inputPorts: [...inputPorts],
-      outputPorts: [...outputPorts],
-      evaluationConfig,
-      disableAdvisorEvaluation,
-      expectedResult,
-      ...overrides,
-    });
-  }, [
-    allowClarification,
-    assignedAgentId,
-    description,
-    disableAdvisorEvaluation,
-    nodeType,
-    enabled,
-    expectedResult,
-    executionMode,
-    evaluationConfig,
-    inputPorts,
-    interruptAfter,
-    interruptBefore,
-    notifyEmails,
-    notifyOnComplete,
-    onSave,
-    outputPorts,
-    selectedAction,
-    task,
-    title,
-  ]);
+  const isEvaluationTask = draft.nodeType === 'evaluation';
 
   useEffect(() => {
     if (task) {
-      setTitle(task.title);
-      setDescription(task.description);
-      const derivedNodeType: PlaybookNodeType = task.taskType === 'evaluation'
-        ? 'evaluation'
-        : task.executionMode === 'action'
-          ? 'action'
-          : 'agent';
-      setNodeType(derivedNodeType);
-      setAssignedAgentId(task.assignedAgentId);
-      setExecutionMode(task.executionMode || 'agent');
-      setSelectedAction(task.selectedAction || 'index');
-      setInterruptBefore(task.interruptBefore);
-      setInterruptAfter(task.interruptAfter);
-      setAllowClarification(task.allowClarification);
-      setEnabled(task.enabled !== false);
-      setNotifyOnComplete(task.notifyOnComplete ?? false);
-      setNotifyEmails(task.notifyEmails ?? []);
+      setDraft(buildDraftFromTask(task));
       setEmailInput('');
       setEmailError('');
       setHasInitializedDraft(false);
-      setInputPorts(task.inputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }]);
-      setOutputPorts(task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }]);
-      setEvaluationConfig(task.evaluationConfig ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } } : {
-        expectation: '',
-        referenceBaselineId: null,
-        passThreshold: 80,
-        warningThreshold: 60,
-        weight: 1,
-        rubricVersion: 'evaluation-node-v1',
-        weights: {
-          semanticMatch: 40,
-          referenceMatch: 20,
-          artifactRequirements: 20,
-          formatCompliance: 10,
-          evidenceConsistency: 5,
-          executionHealth: 5,
-        },
-      });
-      setDisableAdvisorEvaluation(task.disableAdvisorEvaluation ?? false);
-      setExpectedResult(task.expectedResult ?? null);
     }
   }, [task]);
 
   useEffect(() => {
     if (!open || !task || !hasInitializedDraft) return;
     const timeoutId = window.setTimeout(() => {
-      persistDraft();
+      onSave(task.id, draftToSavePayload(draft));
     }, 350);
 
     return () => window.clearTimeout(timeoutId);
-  }, [
-    allowClarification,
-    assignedAgentId,
-    description,
-    disableAdvisorEvaluation,
-    enabled,
-    executionMode,
-    hasInitializedDraft,
-    inputPorts,
-    interruptAfter,
-    interruptBefore,
-    notifyEmails,
-    notifyOnComplete,
-    outputPorts,
-    persistDraft,
-    open,
-    task,
-  ]);
+  }, [open, task, hasInitializedDraft, draft, onSave]);
 
   useEffect(() => {
     if (!open || !task) return;
@@ -294,7 +291,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     let cancelled = false;
     const loadEvaluationBaseline = async () => {
       setEvaluationBaselineMeta(null);
-      if (!open || !task || !playbookId || nodeType !== 'evaluation') return;
+      if (!open || !task || !playbookId || draft.nodeType !== 'evaluation') return;
       try {
         const baseline = await fetchEvaluationBaseline(playbookId, task.id);
         if (!cancelled) {
@@ -310,14 +307,14 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     };
     void loadEvaluationBaseline();
     return () => { cancelled = true; };
-  }, [open, task, playbookId, fetchEvaluationBaseline, nodeType]);
+  }, [open, task, playbookId, fetchEvaluationBaseline, draft.nodeType]);
 
   useEffect(() => {
     let cancelled = false;
     const loadEvaluationExecutions = async () => {
       setEvaluationExecutions([]);
       setSelectedBaselineExecutionId('');
-      if (!open || !task || !playbookId || nodeType !== 'evaluation') return;
+      if (!open || !task || !playbookId || draft.nodeType !== 'evaluation') return;
       try {
         const entries = await fetchEvaluationExecutions(playbookId, task.id);
         if (!cancelled) {
@@ -337,7 +334,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     };
     void loadEvaluationExecutions();
     return () => { cancelled = true; };
-  }, [open, task, playbookId, fetchEvaluationExecutions, nodeType]);
+  }, [open, task, playbookId, fetchEvaluationExecutions, draft.nodeType]);
 
   useEffect(() => {
     if (!open || !task || !playbookId) return;
@@ -351,11 +348,11 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   }, [open, playbookId, task, replays, fetchTaskReplays]);
 
   const handleNotifyToggle = useCallback((checked: boolean) => {
-    setNotifyOnComplete(checked);
-    if (checked && notifyEmails.length === 0 && user?.email) {
-      setNotifyEmails([user.email]);
+    updateDraft({ notifyOnComplete: checked });
+    if (checked && draft.notifyEmails.length === 0 && user?.email) {
+      updateDraft({ notifyEmails: [user.email] });
     }
-  }, [notifyEmails.length, user?.email]);
+  }, [draft.notifyEmails.length, user?.email, updateDraft]);
 
   const addEmail = useCallback((raw: string) => {
     const email = raw.trim().toLowerCase();
@@ -364,28 +361,30 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       setEmailError(t('nodeEditor.invalidEmail'));
       return;
     }
-    if (notifyEmails.includes(email)) {
-      setEmailError(t('nodeEditor.duplicateEmail'));
-      return;
-    }
-    setNotifyEmails((prev) => [...prev, email]);
-    setEmailInput('');
-    setEmailError('');
-  }, [notifyEmails, t]);
+    setDraft((prev) => {
+      if (prev.notifyEmails.includes(email)) {
+        setEmailError(t('nodeEditor.duplicateEmail'));
+        return prev;
+      }
+      setEmailInput('');
+      setEmailError('');
+      return { ...prev, notifyEmails: [...prev.notifyEmails, email] };
+    });
+  }, [t]);
 
   const removeEmail = useCallback((email: string) => {
-    setNotifyEmails((prev) => prev.filter((e) => e !== email));
+    setDraft((prev) => ({ ...prev, notifyEmails: prev.notifyEmails.filter((e) => e !== email) }));
   }, []);
 
   const handleEmailKeyDown = useCallback((e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' || e.key === ',') {
       e.preventDefault();
       addEmail(emailInput);
-    } else if (e.key === 'Backspace' && !emailInput && notifyEmails.length > 0) {
-      setNotifyEmails((prev) => prev.slice(0, -1));
+    } else if (e.key === 'Backspace' && !emailInput && draft.notifyEmails.length > 0) {
+      setDraft((prev) => ({ ...prev, notifyEmails: prev.notifyEmails.slice(0, -1) }));
     }
     if (emailError) setEmailError('');
-  }, [emailInput, notifyEmails.length, addEmail, emailError]);
+  }, [emailInput, draft.notifyEmails.length, addEmail, emailError]);
 
   const handleEmailBlur = useCallback(() => {
     if (emailInput.trim()) addEmail(emailInput);
@@ -436,7 +435,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     try {
       const baseline = await createEvaluationBaselineFromExecution(playbookId, task.id, selectedBaselineExecutionId);
       setEvaluationBaselineMeta({ id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt });
-      setEvaluationConfig((prev) => prev ? { ...prev, referenceBaselineId: baseline.id } : prev);
+      updateDraft({ evaluationConfig: draft.evaluationConfig ? { ...draft.evaluationConfig, referenceBaselineId: baseline.id } : draft.evaluationConfig });
       setBaselineExecutionDialogOpen(false);
     } finally {
       setCreatingEvaluationBaseline(false);
@@ -451,7 +450,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     try {
       const baseline = await createEvaluationBaselineFromCurrentExecution(playbookId, task.id, latestEvaluationExecution.executionId, latestEvaluationExecution.id);
       setEvaluationBaselineMeta({ id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt });
-      setEvaluationConfig((prev) => prev ? { ...prev, referenceBaselineId: baseline.id } : prev);
+      updateDraft({ evaluationConfig: draft.evaluationConfig ? { ...draft.evaluationConfig, referenceBaselineId: baseline.id } : draft.evaluationConfig });
     } finally {
       setCreatingEvaluationBaseline(false);
     }
@@ -463,7 +462,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     try {
       await deleteEvaluationBaseline(playbookId, task.id);
       setEvaluationBaselineMeta(null);
-      setEvaluationConfig((prev) => prev ? { ...prev, referenceBaselineId: null } : prev);
+      updateDraft({ evaluationConfig: draft.evaluationConfig ? { ...draft.evaluationConfig, referenceBaselineId: null } : draft.evaluationConfig });
       setViewBaselineDialogOpen(false);
     } finally {
       setRemovingEvaluationBaseline(false);
@@ -490,7 +489,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               <Label htmlFor="step-enabled" className="text-xs font-normal text-muted-foreground cursor-pointer">
                 {t('nodeEditor.enabledLabel')}
               </Label>
-              <Switch id="step-enabled" checked={enabled} onCheckedChange={setEnabled} />
+              <Switch id="step-enabled" checked={draft.enabled} onCheckedChange={(v) => updateDraft({ enabled: v })} />
             </div>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
               <X className="h-4 w-4" />
@@ -503,8 +502,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           <div className="space-y-2">
             <Label>{t('nodeEditor.stepTitle')}</Label>
             <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              value={draft.title}
+              onChange={(e) => updateDraft({ title: e.target.value })}
               placeholder={t('nodeEditor.stepTitlePlaceholder')}
               maxLength={200}
             />
@@ -513,18 +512,19 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           <div className="space-y-2">
             <Label>{t('nodeEditor.nodeType')}</Label>
             <select
-              value={nodeType}
+              value={draft.nodeType}
               onChange={(e) => {
                 const nextType = e.target.value as PlaybookNodeType;
-                setNodeType(nextType);
+                const patch: Partial<EditorDraft> = { nodeType: nextType };
                 if (nextType === 'evaluation') {
-                  setExecutionMode('agent');
+                  patch.executionMode = 'agent';
                 } else if (nextType === 'action') {
-                  setExecutionMode('action');
-                  setAssignedAgentId(null);
+                  patch.executionMode = 'action';
+                  patch.assignedAgentId = null;
                 } else {
-                  setExecutionMode('agent');
+                  patch.executionMode = 'agent';
                 }
+                updateDraft(patch);
               }}
               className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
             >
@@ -534,14 +534,14 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             </select>
           </div>
 
-          {nodeType === 'action' ? (
+          {draft.nodeType === 'action' ? (
             <div className="space-y-2">
               <Label>{t('nodeEditor.action') || 'Action'}</Label>
               <select
-                value={selectedAction}
+                value={draft.selectedAction}
                 onChange={(e) => {
                   const nextAction = e.target.value as SelectedAction;
-                  setSelectedAction(nextAction);
+                  updateDraft({ selectedAction: nextAction });
                   onSave(task.id, {
                     executionMode: 'action',
                     assignedAgentId: null,
@@ -555,26 +555,26 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 <option value="read">Read</option>
               </select>
               <p className="text-xs text-muted-foreground">
-                {selectedAction === 'index' && 'Index documents from input ports into the vector store.'}
-                {selectedAction === 'delete' && 'Delete documents from the workspace.'}
-                {selectedAction === 'read' && 'Read document content for downstream processing.'}
+                {draft.selectedAction === 'index' && 'Index documents from input ports into the vector store.'}
+                {draft.selectedAction === 'delete' && 'Delete documents from the workspace.'}
+                {draft.selectedAction === 'read' && 'Read document content for downstream processing.'}
               </p>
             </div>
-          ) : nodeType === 'agent' || nodeType === 'evaluation' ? (
+          ) : draft.nodeType === 'agent' || draft.nodeType === 'evaluation' ? (
             <div className="space-y-2">
               <Label>{t('nodeEditor.agent')}</Label>
               <SearchableSelect
                 options={agentOptions}
-                value={assignedAgentId || ''}
-                onValueChange={(v) => setAssignedAgentId(v)}
+                value={draft.assignedAgentId || ''}
+                onValueChange={(v) => updateDraft({ assignedAgentId: v })}
                 placeholder={t('nodeEditor.selectAgent')}
                 searchPlaceholder={t('nodeEditor.searchAgent')}
                 emptyText={t('nodeEditor.noAgentFound')}
               />
-              {nodeType === 'evaluation' && (
+              {draft.nodeType === 'evaluation' && (
                 <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
               )}
-              {!assignedAgentId && (
+              {!draft.assignedAgentId && (
                 <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
               )}
             </div>
@@ -583,8 +583,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           <div className="space-y-2">
             <Label>{t('nodeEditor.description')}</Label>
             <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              value={draft.description}
+              onChange={(e) => updateDraft({ description: e.target.value })}
               placeholder={t('nodeEditor.descriptionPlaceholder')}
               rows={10}
               maxLength={20000}
@@ -595,8 +595,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             <div className="space-y-2">
               <Label>{t('nodeEditor.expectedResult')}</Label>
               <Textarea
-                value={expectedResult ?? ''}
-                onChange={(e) => setExpectedResult(e.target.value || null)}
+                value={draft.expectedResult ?? ''}
+                onChange={(e) => updateDraft({ expectedResult: e.target.value || null })}
                 placeholder={t('nodeEditor.expectedResultPlaceholder')}
                 rows={4}
                 maxLength={10000}
@@ -605,13 +605,15 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             </div>
           )}
 
-          {isEvaluationTask && evaluationConfig && (
+          {isEvaluationTask && draft.evaluationConfig != null && (() => {
+            const ec = draft.evaluationConfig!;
+            return (
             <div className="space-y-4 rounded-md border p-3">
               <div className="space-y-2">
                 <Label>{t('nodeEditor.evaluationExpectation')}</Label>
                 <Textarea
-                  value={evaluationConfig.expectation}
-                  onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, expectation: e.target.value } : prev)}
+                  value={ec.expectation}
+                  onChange={(e) => updateDraft({ evaluationConfig: { ...ec, expectation: e.target.value } })}
                   placeholder={t('nodeEditor.evaluationExpectationPlaceholder')}
                   rows={5}
                   maxLength={10000}
@@ -625,8 +627,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                     type="number"
                     min={0}
                     max={100}
-                    value={evaluationConfig.passThreshold}
-                    onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, passThreshold: Number(e.target.value || 0) } : prev)}
+                    value={ec.passThreshold}
+                    onChange={(e) => updateDraft({ evaluationConfig: { ...ec, passThreshold: Number(e.target.value || 0) } })}
                   />
                 </div>
                 <div className="space-y-2">
@@ -635,8 +637,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                     type="number"
                     min={0}
                     max={100}
-                    value={evaluationConfig.warningThreshold}
-                    onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, warningThreshold: Number(e.target.value || 0) } : prev)}
+                    value={ec.warningThreshold}
+                    onChange={(e) => updateDraft({ evaluationConfig: { ...ec, warningThreshold: Number(e.target.value || 0) } })}
                   />
                 </div>
                 <div className="space-y-2">
@@ -645,8 +647,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                     type="number"
                     min={0}
                     step="0.1"
-                    value={evaluationConfig.weight}
-                    onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, weight: Number(e.target.value || 0) } : prev)}
+                    value={ec.weight}
+                    onChange={(e) => updateDraft({ evaluationConfig: { ...ec, weight: Number(e.target.value || 0) } })}
                   />
                 </div>
               </div>
@@ -694,7 +696,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 <CollapsibleContent className="space-y-4 pt-2 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
                   <div className="space-y-2">
                     <Label>{t('nodeEditor.evaluationRubricVersion')}</Label>
-                    <Input value={evaluationConfig.rubricVersion} onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, rubricVersion: e.target.value } : prev)} />
+                    <Input value={ec.rubricVersion} onChange={(e) => updateDraft({ evaluationConfig: { ...ec, rubricVersion: e.target.value } })} />
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     {([
@@ -707,16 +709,17 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                     ] as const).map(([key, labelKey]) => (
                       <div key={key} className="space-y-2">
                         <Label>{t(labelKey)}</Label>
-                        <Input type="number" min={0} value={evaluationConfig.weights[key]} onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, weights: { ...prev.weights, [key]: Number(e.target.value || 0) } } : prev)} />
+                        <Input type="number" min={0} value={ec.weights[key]} onChange={(e) => updateDraft({ evaluationConfig: { ...ec, weights: { ...ec.weights, [key]: Number(e.target.value || 0) } } })} />
                       </div>
                     ))}
                   </div>
                 </CollapsibleContent>
               </Collapsible>
             </div>
-          )}
+          );
+          })()}
 
-          {nodeType !== 'evaluation' && (
+          {draft.nodeType !== 'evaluation' && (
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">{t('ports.inputPorts')}</h4>
@@ -727,26 +730,26 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const id = `in-${crypto.randomUUID().slice(0, 8)}`;
-                  setInputPorts((prev) => [...prev, { id, name: 'Input', artifactKind: 'text', required: false }]);
+                  updateDraft({ inputPorts: [...draft.inputPorts, { id, name: 'Input', artifactKind: 'text', required: false }] });
                 }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 {t('ports.addInput')}
               </Button>
             </div>
-            {inputPorts.length === 0 && (
+            {draft.inputPorts.length === 0 && (
               <p className="text-xs text-muted-foreground">No input ports defined.</p>
             )}
-            {inputPorts.map((port, idx) => (
+            {draft.inputPorts.map((port, idx) => (
               <div key={port.id} className="flex items-center gap-2 rounded-md border p-2">
                 <div className={`w-3 h-3 rounded-full shrink-0 ${getPortColor(port.artifactKind)}`} />
                 <input
                   type="text"
                   value={port.name}
                   onChange={(e) => {
-                    const updated = [...inputPorts];
+                    const updated = [...draft.inputPorts];
                     updated[idx] = { ...updated[idx], name: e.target.value };
-                    setInputPorts(updated);
+                    updateDraft({ inputPorts: updated });
                   }}
                   className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-transparent focus:border-primary"
                   placeholder={t('ports.portName')}
@@ -754,9 +757,9 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 <select
                   value={port.artifactKind}
                   onChange={(e) => {
-                    const updated = [...inputPorts];
+                    const updated = [...draft.inputPorts];
                     updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
-                    setInputPorts(updated);
+                    updateDraft({ inputPorts: updated });
                   }}
                   className="h-7 text-xs rounded border bg-background px-1"
                 >
@@ -767,9 +770,9 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 <button
                   type="button"
                   onClick={() => {
-                    const updated = [...inputPorts];
+                    const updated = [...draft.inputPorts];
                     updated[idx] = { ...updated[idx], required: !updated[idx].required };
-                    setInputPorts(updated);
+                    updateDraft({ inputPorts: updated });
                   }}
                   className={`text-xs px-1.5 py-0.5 rounded border ${port.required ? 'bg-primary/10 text-primary border-primary/30' : 'text-muted-foreground border-muted'}`}
                   title={port.required ? t('ports.required') : t('ports.optional')}
@@ -781,7 +784,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => setInputPorts((prev) => prev.filter((_, i) => i !== idx))}
+                  onClick={() => updateDraft({ inputPorts: draft.inputPorts.filter((_, i) => i !== idx) })}
                   title={t('ports.removePort')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -791,7 +794,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           </div>
           )}
 
-          {nodeType !== 'evaluation' && (
+          {draft.nodeType !== 'evaluation' && (
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">{t('ports.outputPorts')}</h4>
@@ -802,26 +805,26 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 className="h-7 px-2 text-xs"
                 onClick={() => {
                   const id = `out-${crypto.randomUUID().slice(0, 8)}`;
-                  setOutputPorts((prev) => [...prev, { id, name: 'Output', artifactKind: 'text' }]);
+                  updateDraft({ outputPorts: [...draft.outputPorts, { id, name: 'Output', artifactKind: 'text' }] });
                 }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 {t('ports.addOutput')}
               </Button>
             </div>
-            {outputPorts.length === 0 && (
+            {draft.outputPorts.length === 0 && (
               <p className="text-xs text-muted-foreground">No output ports defined.</p>
             )}
-            {outputPorts.map((port, idx) => (
+            {draft.outputPorts.map((port, idx) => (
               <div key={port.id} className="flex items-center gap-2 rounded-md border p-2">
                 <div className={`w-3 h-3 rounded-full shrink-0 ${getPortColor(port.artifactKind)}`} />
                 <input
                   type="text"
                   value={port.name}
                   onChange={(e) => {
-                    const updated = [...outputPorts];
+                    const updated = [...draft.outputPorts];
                     updated[idx] = { ...updated[idx], name: e.target.value };
-                    setOutputPorts(updated);
+                    updateDraft({ outputPorts: updated });
                   }}
                   className="flex-1 min-w-0 bg-transparent text-sm outline-none border-b border-transparent focus:border-primary"
                   placeholder={t('ports.portName')}
@@ -829,9 +832,9 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 <select
                   value={port.artifactKind}
                   onChange={(e) => {
-                    const updated = [...outputPorts];
+                    const updated = [...draft.outputPorts];
                     updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
-                    setOutputPorts(updated);
+                    updateDraft({ outputPorts: updated });
                   }}
                   className="h-7 text-xs rounded border bg-background px-1"
                 >
@@ -844,7 +847,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => setOutputPorts((prev) => prev.filter((_, i) => i !== idx))}
+                  onClick={() => updateDraft({ outputPorts: draft.outputPorts.filter((_, i) => i !== idx) })}
                   title={t('ports.removePort')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -999,8 +1002,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </Label>
               <Switch
                 id="interrupt-before"
-                checked={interruptBefore}
-                onCheckedChange={setInterruptBefore}
+                checked={draft.interruptBefore}
+                onCheckedChange={(v) => updateDraft({ interruptBefore: v })}
               />
             </div>
 
@@ -1010,8 +1013,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </Label>
               <Switch
                 id="interrupt-after"
-                checked={interruptAfter}
-                onCheckedChange={setInterruptAfter}
+                checked={draft.interruptAfter}
+                onCheckedChange={(v) => updateDraft({ interruptAfter: v })}
               />
             </div>
 
@@ -1021,8 +1024,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </Label>
               <Switch
                 id="allow-clarification"
-                checked={allowClarification}
-                onCheckedChange={setAllowClarification}
+                checked={draft.allowClarification}
+                onCheckedChange={(v) => updateDraft({ allowClarification: v })}
               />
             </div>
           </div>
@@ -1036,16 +1039,16 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </Label>
               <Switch
                 id="notify-on-complete"
-                checked={notifyOnComplete}
+                checked={draft.notifyOnComplete}
                 onCheckedChange={handleNotifyToggle}
               />
             </div>
 
-            {notifyOnComplete && (
+            {draft.notifyOnComplete && (
               <div className="space-y-2">
                 <Label className="text-sm font-normal">{t('nodeEditor.notifyEmails')}</Label>
                 <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-input bg-background px-2 py-1.5 min-h-[38px]">
-                  {notifyEmails.map((email) => (
+                  {draft.notifyEmails.map((email) => (
                     <span
                       key={email}
                       className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-0.5 text-xs font-medium text-secondary-foreground"
@@ -1069,7 +1072,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                     }}
                     onKeyDown={handleEmailKeyDown}
                     onBlur={handleEmailBlur}
-                    placeholder={notifyEmails.length === 0 ? t('nodeEditor.notifyEmailPlaceholder') : ''}
+                    placeholder={draft.notifyEmails.length === 0 ? t('nodeEditor.notifyEmailPlaceholder') : ''}
                     className="flex-1 min-w-[120px] bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                   />
                 </div>
@@ -1095,8 +1098,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </div>
               <Switch
                 id="disable-advisor"
-                checked={disableAdvisorEvaluation}
-                onCheckedChange={setDisableAdvisorEvaluation}
+                checked={draft.disableAdvisorEvaluation}
+                onCheckedChange={(v) => updateDraft({ disableAdvisorEvaluation: v })}
               />
             </div>
           </div>

@@ -123,6 +123,7 @@ const initialState: PlaybookState = {
   executionPanelOpen: (() => { try { return localStorage.getItem(EXEC_PANEL_KEY) === '1'; } catch { return false; } })(),
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
   connectorSidebarOpen: false,
+  nodeEditorOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
@@ -956,10 +957,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionCache: evictCache({ ...state.executionCache, [result.executionId]: optimisticExecution }),
               selectedStepId: data?.singleStepTaskId || sortedTasks[0]?.id || null,
               executionPanelOpen: true,
+              workspaceExplorerOpen: false,
+              connectorSidebarOpen: false,
+              nodeEditorOpen: false,
               pageMode: 'run',
             };
           });
-          return result.executionId;
         } catch (err) {
           set((state) => ({
             executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== id),
@@ -2491,6 +2494,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             copilotMode: 'interrupt',
             designerOpen: true,
             executionPanelOpen: true,
+            workspaceExplorerOpen: false,
+            connectorSidebarOpen: false,
+            nodeEditorOpen: false,
           };
         });
       },
@@ -2731,7 +2737,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       setCopilotMode: (mode) => set({ copilotMode: mode }),
 
       setExecutionPanelOpen: (open) => {
-        set({ executionPanelOpen: open });
+        if (open) {
+          set({ executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ executionPanelOpen: false });
+        }
         persistPanelOpen(open);
       },
 
@@ -2742,15 +2752,20 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set({
             currentExecution: cached,
             executionPanelOpen: true,
+            workspaceExplorerOpen: false,
+            connectorSidebarOpen: false,
+            nodeEditorOpen: false,
             selectedStepId,
             pageMode: 'run',
           });
         } else {
-          // Fetch from API — need the playbookId
           const playbookId = get().currentPlaybook?.id;
           if (!playbookId) return;
           set({
             executionPanelOpen: true,
+            workspaceExplorerOpen: false,
+            connectorSidebarOpen: false,
+            nodeEditorOpen: false,
             pageMode: 'run',
           });
           get().fetchExecution(playbookId, executionId);
@@ -2760,7 +2775,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Workspace Explorer =====
 
       setWorkspaceExplorerOpen: (open) => {
-        set({ workspaceExplorerOpen: open });
+        if (open) {
+          set({ workspaceExplorerOpen: true, connectorSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ workspaceExplorerOpen: false });
+        }
         persistWorkspaceExplorerOpen(open);
       },
 
@@ -2844,7 +2863,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Connector Sidebar =====
 
       setConnectorSidebarOpen: (open) => {
-        set({ connectorSidebarOpen: open });
+        if (open) {
+          set({ connectorSidebarOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ connectorSidebarOpen: false });
+        }
+      },
+
+      // ===== Node Editor =====
+
+      setNodeEditorOpen: (open) => {
+        if (open) {
+          set({ nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, executionPanelOpen: false });
+        } else {
+          set({ nodeEditorOpen: false });
+        }
       },
 
       // ===== Undo/Redo =====

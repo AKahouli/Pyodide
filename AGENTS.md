@@ -43,7 +43,7 @@ When you encounter a file reference (e.g., `@rules/general.md`), load it on dema
 | `YellowStorm/back/**` | `YellowStorm/back/BACKEND_GUIDELINES.md` |
 | Both `front/` and `back/` | **Both** files, plus cross-boundary contract rules |
 
-This applies to **all** agents: `build`, `plan`, `reviewer`, `diagnostics`. Skipping this step is a hard rule violation regardless of task size.
+This applies to **all** agents: `build`, `plan`, `reviewer`, `diagnostics`, `frontend-qa`. Skipping this step is a hard rule violation regardless of task size.
 
 ---
 
@@ -72,7 +72,7 @@ User task
 └─────────────┘
 ```
 
-`diagnostics` and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+`diagnostics` is called **on demand** by `build` when the situation requires it. `frontend-qa` is a **mandatory blocking browser QA gate** for frontend-visible changes.
 
 `contract` and `integration` are workflow roles described here, but they are not currently implemented as project-local OpenCode subagents in `.opencode/agents/`.
 
@@ -116,13 +116,15 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 6. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
 
 **After writing code:**
-1. Delegate to `reviewer`. **Task is not complete until `reviewer` returns PASS.**
-2. If `reviewer` returns FAIL, fix the findings and re-submit.
-3. Once passed, delegate to `maintainer` only when the memory tier is **Full** or **Light**. Include what changed, why, which feature slugs or modules were affected, and which vault notes should be updated. Skip `maintainer` for **None** tier tasks.
+1. If the change affects frontend UI, layout, styling, interaction, navigation, forms, browser runtime behavior, responsive behavior, or accessibility, delegate to `frontend-qa`. **Task is not complete until `frontend-qa` returns PASS or the user explicitly accepts the risk.**
+2. If `frontend-qa` returns FAIL, fix the findings and re-submit to `frontend-qa` before continuing.
+3. Delegate to `reviewer`. **Task is not complete until `reviewer` returns PASS.**
+4. If `reviewer` returns FAIL, fix the findings and re-submit.
+5. Once passed, delegate to `maintainer` only when the memory tier is **Full** or **Light**. Include what changed, why, which feature slugs or modules were affected, and which vault notes should be updated. Skip `maintainer` for **None** tier tasks.
 
 **Delegation triggers during implementation:**
 - Unclear failure or vague bug → `diagnostics` before editing
-- Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
+- Frontend-visible change affecting UI, layout, styling, interaction, navigation, forms, browser runtime, responsive behavior, or accessibility → `frontend-qa` after editing (mandatory, blocking)
 - Proto/API change or cross-service modification → perform explicit contract validation after editing; if a dedicated `contract` agent is added later, use it
 - Cross-service change needing end-to-end verification → perform explicit integration verification after contract validation; if a dedicated `integration` agent is added later, use it
 - Current external library/framework/API behavior is unclear or being changed → context7 skill (see below)
@@ -180,15 +182,48 @@ Single-pass review across four lenses:
 
 ---
 
-#### `frontend-qa` — Browser Validation
+#### `frontend-qa` — Browser Validation (read-only, BLOCKING)
 
-**Invoke after:** Any frontend change affecting interaction, layout, or browser runtime behavior.
+**Invoke after:** Any frontend-visible change affecting UI, layout, styling, interaction, navigation, forms, browser runtime behavior, responsive behavior, or accessibility.
 
 **Does:**
-- Real-browser validation via `chrome-devtools` and `ai-elements` skills + project MCP browser tooling
-- Visual regression, responsive behavior, interaction quality (focus, keyboard, a11y basics)
+- Real-browser validation via `chrome-devtools` and `ai-elements` skills + project MCP browser tooling.
+- Uses a vision-capable model when configured for screenshots/snapshots and visual state analysis.
+- Checks visual regression, responsive behavior, interaction quality, focus, keyboard navigation, console health, network health, and a11y basics.
+- Never modifies code. Findings go back to `build` for fixes.
 
-**Output:** Pass/fail with evidence. Findings go back to `build`.
+**Output:**
+
+```markdown
+## Frontend QA Verdict: PASS | FAIL
+
+### Browser Coverage
+- Desktop: tested / not tested
+- Mobile: tested / not tested
+- Console errors: none / listed
+- Network errors: none / listed
+
+### Checks Performed
+- Visual correctness
+- Interaction
+- Responsive behavior
+- Console health
+- Network health
+- Accessibility basics
+- Regression coverage
+
+### Findings (if any)
+1. [critical|major|minor] Description with screenshot/snapshot/console evidence
+
+### Required Actions (if FAIL)
+- ...
+```
+
+- **FAIL** on broken primary user flows, visible layout regressions, blocking browser runtime errors, inaccessible critical controls, or unhandled network failures caused by the change.
+- **FAIL** on console errors caused by the change. Console warnings are findings unless they indicate broken behavior, security risk, or a likely regression.
+- **FAIL** on failed requests or unexpected status codes caused by the change unless they are expected, handled, and not user-visible regressions.
+- **PASS with findings** is allowed for non-blocking minor visual, accessibility, console, or network issues.
+- Read-only/browser-only. Never modifies code.
 
 ---
 
@@ -299,7 +334,7 @@ See the `maintainer` agent file for the full memory procedure.
 | Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
 | Vague bug or unclear failure | `diagnostics` first |
 | Any code change | `reviewer` after (mandatory, blocking) |
-| Frontend UI/interaction change | `frontend-qa` after |
+| Frontend-visible UI/layout/interaction/runtime/a11y change | `frontend-qa` after (mandatory, blocking) |
 | Proto/API change or cross-service edit | Run explicit contract validation after implementation |
 | Cross-service change needing E2E verification | Run explicit integration verification after contract validation |
 | Full/Light memory tier and reviewed | `maintainer` last |
@@ -446,7 +481,8 @@ npx ctx7@latest docs <libraryId> "<question>"
 2. `plan` if criteria met → action plan
 3. `build` implements (pre-coding protocol mandatory)
 4. Run relevant verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`, `poetry run pytest` in `yellowstorm-adk`
-5. `reviewer` validates → **must PASS**
-6. `diagnostics` if test gaps; `frontend-qa` if UI affected
+5. `frontend-qa` validates frontend-visible changes → **must PASS**
+6. `reviewer` validates → **must PASS**
+7. `diagnostics` if test gaps
 8. `maintainer` syncs Obsidian vault memory for Full/Light tiers; skip for None tier
 

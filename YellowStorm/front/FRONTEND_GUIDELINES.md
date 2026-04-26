@@ -158,6 +158,10 @@ Cache invalidation is **explicit**: after mutation, update the store entry immed
 
 `react-hook-form` + `zod` + shadcn `<Form>` primitives. Zod schema first, type with `z.infer`. Use `<FormField>` / `<FormMessage>` — don't render errors manually. Use `scrollToFirstError` from `@/lib/form-utils` for long forms on submit failure. Validation messages map to translation keys where user-facing.
 
+**Autosaved editors:** keep editable form data in a single draft object (or a form library state object), not scattered independent `useState` fields. Autosave effects should depend on that single draft object so adding a field cannot be missed in a dependency list. Standalone state is acceptable only for UI-only concerns such as dialog open state, loading flags, selected tabs, or transient search input.
+
+When adding a new editable field to an autosaved editor, update all layers in one change: frontend type, draft initialization, change handler/draft patch, save payload, backend DTO/schema/serializer when persisted, and tests where the editor has coverage.
+
 ---
 
 ## 9. UI & Styling
@@ -279,6 +283,7 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - [ ] No new axios instance, no direct `toast` import, no `new EventSource` in components.
 - [ ] `cn()` for className merging; variants via CVA.
 - [ ] Errors surfaced (toast or inline); error codes from `ErrorCode` enum.
+- [ ] Autosaved editors store editable data in one draft/form state object; no editable field is saved only through an ad-hoc dependency list.
 - [ ] Tests colocated, `vi.mock` for axios client. `npm test` + `npm run build` pass.
 - [ ] Commit: `<type>(<scope>): <subject>` (conventional commit).
 
@@ -293,6 +298,7 @@ Lazy-load route pages. `useShallow` for multi-field Zustand selectors. Memoise e
 - Cross-module imports reaching into internals (`@/modules/playbook/components/Foo/Bar`).
 - New React Context for per-feature state (use Zustand).
 - Global singletons for service state other than the documented SSE services.
+- Autosaved forms split across independent editable `useState` fields that require manually maintained save-effect dependency lists.
 - `console.log` left in production code.
 - Silent error swallowing (`catch {}`).
 - Adding a dependency that overlaps with an existing one (moment vs date-fns, etc.).

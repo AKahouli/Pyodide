@@ -4115,13 +4115,16 @@ export class PlaybookExecutionService {
         }).exec();
 
         if (stepAdvisorEnabled) {
-          await this.executionModel.findByIdAndUpdate(executionId, {
-            $set: {
-              'taskResults.$[elem].judgeStatus': 'evaluating',
-              'taskResults.$[elem].judgeError': null,
+          await this.executionModel.findByIdAndUpdate(
+            executionId,
+            {
+              $set: {
+                'taskResults.$[elem].judgeStatus': 'evaluating',
+                'taskResults.$[elem].judgeError': null,
+              },
             },
-            arrayFilters: [{ 'elem.taskId': taskId }],
-          }).exec();
+            { arrayFilters: [{ 'elem.taskId': taskId }] },
+          ).exec();
 
           try {
             await this.judgeEnrichmentService.evaluateNodeNow(userId, executionId, taskId);
@@ -4132,15 +4135,18 @@ export class PlaybookExecutionService {
               taskId,
               error: error instanceof Error ? error.message : 'Unknown error',
             });
-            await this.executionModel.findByIdAndUpdate(executionId, {
-              $set: {
-                'taskResults.$[elem].judgeStatus': 'failed',
-                'taskResults.$[elem].judgeError': error instanceof Error ? error.message : 'Unknown error',
-                advisorAutopilotStatus: 'failed',
-                advisorAutopilotLastError: error instanceof Error ? error.message : 'Unknown error',
+            await this.executionModel.findByIdAndUpdate(
+              executionId,
+              {
+                $set: {
+                  'taskResults.$[elem].judgeStatus': 'failed',
+                  'taskResults.$[elem].judgeError': error instanceof Error ? error.message : 'Unknown error',
+                  advisorAutopilotStatus: 'failed',
+                  advisorAutopilotLastError: error instanceof Error ? error.message : 'Unknown error',
+                },
               },
-              arrayFilters: [{ 'elem.taskId': taskId }],
-            }).exec();
+              { arrayFilters: [{ 'elem.taskId': taskId }] },
+            ).exec();
             throw error;
           }
 

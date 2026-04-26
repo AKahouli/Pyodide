@@ -107,6 +107,8 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
             weights: { ...task.evaluationConfig.weights },
           }
         : null,
+      expectedResult: task.expectedResult,
+      disableAdvisorEvaluation: task.disableAdvisorEvaluation,
     })),
   };
 }

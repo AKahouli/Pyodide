@@ -96,12 +96,6 @@ export function PlaybookToolbar({
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
         </Button>
       )}
-      {onTriggers && (
-          <Button variant="outline" size="sm" onClick={onTriggers} className="px-2 sm:px-3">
-              <CalendarClock className="h-4 w-4 sm:mr-1" />
-              <span className="hidden sm:inline">{t('toolbar.triggers')}</span>
-          </Button>
-      )}
       <Popover>
         <PopoverTrigger asChild>
           <Button variant="outline" size="sm" className="px-2 sm:px-3" aria-label={t('toolbar.runSettings')} title={t('toolbar.runSettings')}>
@@ -114,6 +108,12 @@ export function PlaybookToolbar({
             <div className="text-sm font-medium">{t('toolbar.runSettings')}</div>
             <div className="text-xs text-muted-foreground">{t('toolbar.runSettingsHint')}</div>
           </div>
+          {onTriggers && (
+            <Button variant="ghost" size="sm" onClick={onTriggers} className="w-full justify-start px-3">
+              <CalendarClock className="h-4 w-4 mr-2" />
+              {t('toolbar.triggers')}
+            </Button>
+          )}
           <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
             <span>{t('toolbar.advisor')}</span>
             <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />

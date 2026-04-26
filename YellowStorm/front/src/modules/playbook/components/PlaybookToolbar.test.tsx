@@ -105,4 +105,18 @@ describe('PlaybookToolbar', () => {
     await userEvent.click(screen.getByText('toolbar.runSettings'));
     expect(screen.getByText('toolbar.advisor')).toBeInTheDocument();
   });
+
+  it('calls onTriggers from inside the run settings popover', async () => {
+    const onTriggers = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} />);
+    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    await userEvent.click(screen.getByText('toolbar.triggers'));
+    expect(onTriggers).toHaveBeenCalledOnce();
+  });
+
+  it('does not show trigger button in popover when onTriggers is not provided', async () => {
+    render(<PlaybookToolbar {...defaultProps} />);
+    await userEvent.click(screen.getByText('toolbar.runSettings'));
+    expect(screen.queryByText('toolbar.triggers')).not.toBeInTheDocument();
+  });
 });

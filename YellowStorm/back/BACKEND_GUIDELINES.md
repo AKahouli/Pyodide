@@ -176,6 +176,8 @@ Query: `?page=1&limit=10` (shared `PaginationDto`). Response wraps items + `pagi
 
 **Queries:** Prefer `.select()` projection over full documents. Use `.lean()` on read-heavy endpoints. Compound indexes for paginated queries. **Never** leak internal Mongo fields through the API.
 
+**Persisted editable fields:** when adding a field users can edit, update every persistence/contract layer in one change: Mongoose schema defaults, create/update DTO validation, service mapping/serialization, public interfaces, frontend types, and any autosaved editor payload. Missing any layer causes silent data loss in autosaved UIs.
+
 ---
 
 ## 10. gRPC & Microservices
@@ -344,6 +346,8 @@ Changes crossing the boundary require paired updates:
 
 **Frozen contracts:** response envelope, error envelope, and pagination shape. Do not alter silently.
 
+For persisted editable fields, treat schema, DTO, response serializer/interface, and frontend type/editor payload as one contract. Do not add a backend field without verifying the frontend can both send and read it when applicable.
+
 ---
 
 ## 24. Pre-PR Checklist
@@ -356,6 +360,7 @@ Changes crossing the boundary require paired updates:
 - [ ] Tests colocated as `*.spec.ts`; `npm test` passes.
 - [ ] Proto changes mirrored in ADK, `postbuild` copies, contract validated.
 - [ ] Frontend contract items synced per §23.
+- [ ] Persisted editable fields are present in schema, DTO, serializer/interface, and frontend type/editor payload.
 - [ ] No `console.log`; structured logs via `LoggerService`.
 - [ ] Public endpoints rate-limited.
 - [ ] Swagger annotations sufficient to reproduce the call from `/docs`.
