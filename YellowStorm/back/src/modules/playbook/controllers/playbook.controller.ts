@@ -121,6 +121,12 @@ export class PlaybookController {
     );
   }
 
+  @Delete(':id/evaluation-tasks/:taskId/baseline')
+  @UseGuards(PlaybookOwnerGuard)
+  async removeEvaluationBaseline(@Param('id') id: string, @Param('taskId') taskId: string) {
+    return this.evaluationService.removeActiveBaseline(id, taskId);
+  }
+
   @Post()
   async create(
     @CurrentUser() user: { _id: string },
@@ -616,6 +622,7 @@ export class PlaybookController {
       dto.advisorAutopilotEnabled === true,
       dto.advisorAutopilotTargetScore,
       dto.advisorAutopilotMaxTurns,
+      dto.skipStepExecution === true,
     );
   }
 

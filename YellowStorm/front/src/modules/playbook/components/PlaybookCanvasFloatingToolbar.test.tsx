@@ -86,7 +86,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
       />,
     );
 
-    await userEvent.click(screen.getByLabelText('toolbar.fromTemplate'));
+    await userEvent.click(screen.getByLabelText('toolbar.tasks'));
     await userEvent.click(screen.getAllByText('taskType.summarizer')[0]);
 
     expect(onAddStepFromTemplate).toHaveBeenCalledWith(expect.objectContaining({ id: 'summarizer' }));

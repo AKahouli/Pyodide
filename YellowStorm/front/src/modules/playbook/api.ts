@@ -112,6 +112,20 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
 function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData {
   return {
     ...data,
+    tasks: data.tasks?.map((task) => ({
+      ...task,
+      evaluationConfig: task.evaluationConfig
+        ? {
+            expectation: task.evaluationConfig.expectation,
+            referenceBaselineId: task.evaluationConfig.referenceBaselineId ?? null,
+            passThreshold: task.evaluationConfig.passThreshold,
+            warningThreshold: task.evaluationConfig.warningThreshold,
+            weight: task.evaluationConfig.weight,
+            rubricVersion: task.evaluationConfig.rubricVersion,
+            weights: { ...task.evaluationConfig.weights },
+          }
+        : null,
+    })),
     reflectionEnabled: data.reflectionEnabled,
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
@@ -678,6 +692,13 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
     selectedAction?: string | null;
   }> }>>(
     API_ENDPOINTS.playbookNodeTemplates.list,
+  );
+  return response.data.data;
+}
+
+export async function deleteEvaluationBaseline(playbookId: string, taskId: string): Promise<{ removed: boolean }> {
+  const response = await apiClient.delete<ApiResponse<{ removed: boolean }>>(
+    API_ENDPOINTS.playbooks.evaluationBaseline(playbookId, taskId),
   );
   return response.data.data;
 }

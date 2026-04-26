@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { render, waitFor } from '@testing-library/react';
+import { render, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import type { PlaybookTask } from '../types';
@@ -173,7 +173,7 @@ describe('PlaybookNodeEditor', () => {
       })
       .mockImplementationOnce(() => new Promise(() => undefined));
 
-    const { rerender, queryByText } = render(
+    const { rerender, container } = render(
       <PlaybookNodeEditor
         playbookId="playbook-1"
         task={baseTask}
@@ -184,7 +184,7 @@ describe('PlaybookNodeEditor', () => {
     );
 
     await waitFor(() => {
-      expect(queryByText(/exec-1/)).toBeInTheDocument();
+      expect(within(container).getAllByText(/exec-1/).length).toBeGreaterThan(0);
     });
 
     rerender(
@@ -198,7 +198,7 @@ describe('PlaybookNodeEditor', () => {
     );
 
     await waitFor(() => {
-      expect(queryByText(/exec-1/)).not.toBeInTheDocument();
+      expect(within(container).queryAllByText(/exec-1/).length).toBe(0);
     });
   });
 });

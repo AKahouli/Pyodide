@@ -388,6 +388,41 @@ def test_task_without_assigned_agent_emits_failed_step_update() -> None:
     assert updates[0]["result"]["error"] == "No agent assigned to task task-1"
 
 
+def test_evaluation_task_without_assigned_agent_fails_like_other_tasks() -> None:
+    updates = []
+
+    async def on_step_update(update):
+        updates.append(update)
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    node = builder._create_task_node(
+        "task-1",
+        {
+            "id": "task-1",
+            "title": "Evaluation Task",
+            "task_type": "evaluation",
+            "evaluation_config": {},
+        },
+        on_step_update,
+    )
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {},
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+            },
+            {},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert updates
+    assert updates[0]["status"] == "failed"
+    assert updates[0]["result"]["error"] == "No agent assigned to task task-1"
+
+
 def test_workflow_task_node_uses_structured_output_artifacts_for_downstream_state(
     monkeypatch,
 ) -> None:

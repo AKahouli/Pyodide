@@ -195,6 +195,20 @@ export class PlaybookEvaluationService {
     }).sort({ createdAt: -1 }).lean().exec();
   }
 
+  async removeActiveBaseline(playbookId: string, evaluationTaskId: string) {
+    const activeBaseline = await this.baselineModel.findOneAndUpdate(
+      {
+        playbookId: new Types.ObjectId(playbookId),
+        evaluationTaskId,
+        replacedAt: null,
+      },
+      { $set: { replacedAt: new Date() } },
+      { new: true },
+    ).lean().exec();
+
+    return { removed: Boolean(activeBaseline) };
+  }
+
   async persistEvaluationExecution(params: {
     playbookId: string;
     executionId: string;

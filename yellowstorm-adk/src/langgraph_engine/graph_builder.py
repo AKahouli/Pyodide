@@ -694,6 +694,7 @@ class DynamicGraphBuilder:
             task_config = task
             playbook_id = state.get("playbook_id", "")
             thread_id = state.get("thread_id")
+            is_evaluation_task = str(task_config.get("task_type") or "") == "evaluation"
             agent_id = task_config.get("assigned_agent_id")
             start_time = time.time()
             started_at = datetime.utcnow().isoformat() + "Z"
@@ -767,7 +768,7 @@ class DynamicGraphBuilder:
                 return action_result
 
             # === AGENT MODE: continue with normal agent execution ===
-            if not agent_id or agent_id not in state["agents"]:
+            if not agent_id or agent_id not in state.get("agents", {}):
                 error_msg = f"No agent assigned to task {task_id}"
                 logger.error(f"[{task_id}] {error_msg}")
                 await _push_step_update(
@@ -795,8 +796,8 @@ class DynamicGraphBuilder:
                     "error": error_msg,
                     "status": "failed",
                 }
-
-            agent = state["agents"][agent_id]
+            else:
+                agent = state["agents"][agent_id]
 
             logger.info(f"[{task_id}] Starting task", title=task_config.get("title"))
 

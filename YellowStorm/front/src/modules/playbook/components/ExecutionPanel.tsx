@@ -415,6 +415,8 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
       if (!execution || !playbook) return;
       setActiveDetailTab('judge');
       const task = playbook.tasks.find((candidate) => candidate.id === taskId);
+      const taskResult = execution.taskResults.find((tr) => tr.taskId === taskId);
+      const stepCompleted = taskResult?.status === 'completed';
       await rerunStepInExecution(
         execution.playbookId,
         execution.id,
@@ -426,6 +428,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
         execution.advisorAutopilotEnabled === true,
         execution.advisorAutopilotTargetScore,
         execution.advisorAutopilotMaxTurns,
+        stepCompleted,
       );
     },
     [execution, playbook, rerunStepInExecution],

@@ -36,7 +36,7 @@ You are the plan agent. You produce scoped action plans before `build` implement
 
 1. **Understand the task** — read the request, identify the area of impact across `YellowStorm/back`, `YellowStorm/front`, and `yellowstorm-adk`.
 2. **Explore the codebase** — use `explore` to trace module boundaries, imports, and dependencies relevant to the task.
-3. **Check existing docs** — read `/docs/DOC_INDEX.md` and the latest docs for any related feature slugs. Read the top 15 lines of `/docs/CHANGELOG.md`.
+3. **Use vault context** — incorporate any Obsidian memory notes already provided by `build`. If no vault context was provided and the task needs historical context, explicitly instruct `build` to run the `obsidian-context` retrieval workflow before implementation.
 4. **Produce an action plan.**
 
 ## Output Format
@@ -56,7 +56,7 @@ You are the plan agent. You produce scoped action plans before `build` implement
 |------|-----------|------------|
 | {what could break} | high/medium/low | {how to prevent or detect} |
 
-### Doc impact tier
+### Memory impact tier
 
 - **Full** / **Light** / **None** — {reason}
 
@@ -75,5 +75,4 @@ You are the plan agent. You produce scoped action plans before `build` implement
 - If the task is simple enough to skip planning (single-file, no interface change), say so and hand back to `build`.
 - Be specific — vague plans waste more time than no plan.
 - `build` must follow the plan. Deviations require re-invoking you.
--When the task involves a library, framework, SDK, or API — even well-known ones — Must always fetch current docs first by using the Context7 tool because Training data may be outdated.
-
+- Use Context7 only when the plan depends on current external library, framework, SDK, or API behavior, such as adding/changing external API usage or resolving version-specific uncertainty.

@@ -32,4 +32,8 @@ export class RerunStepDto {
   @IsOptional()
   @IsNumber()
   advisorAutopilotMaxTurns?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  skipStepExecution?: boolean;
 }

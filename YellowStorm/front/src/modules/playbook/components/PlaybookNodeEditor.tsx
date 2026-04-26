@@ -19,8 +19,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
-import { Loader2, X, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Loader2, X, Plus, Trash2 } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
@@ -33,6 +34,7 @@ import type {
   TaskExecutionMode,
   SelectedAction,
   PlaybookEvaluationConfig,
+  PlaybookNodeType,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -55,6 +57,10 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const activateTaskReplay = usePlaybookStore((s) => s.activateTaskReplay);
   const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
+  const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
+  const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
+  const createEvaluationBaselineFromCurrentExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromCurrentExecution);
+  const deleteEvaluationBaseline = usePlaybookStore((s) => s.deleteEvaluationBaseline);
   const { user } = useAuth();
   const { t } = useModuleTranslation('playbook');
 
@@ -70,6 +76,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [assignedAgentId, setAssignedAgentId] = useState<string | null>(null);
+  const [nodeType, setNodeType] = useState<PlaybookNodeType>('agent');
   const [executionMode, setExecutionMode] = useState<TaskExecutionMode>('agent');
   const [selectedAction, setSelectedAction] = useState<SelectedAction>('index');
   const [interruptBefore, setInterruptBefore] = useState(false);
@@ -92,18 +99,25 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [outputPorts, setOutputPorts] = useState<TaskOutputPort[]>([]);
   const [evaluationConfig, setEvaluationConfig] = useState<PlaybookEvaluationConfig | null>(null);
   const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
+  const [evaluationExecutions, setEvaluationExecutions] = useState<Array<{ id: string; executionId: string; createdAt: string; score?: number | null; verdict?: 'pass' | 'warning' | 'fail' | null }>>([]);
+  const [selectedBaselineExecutionId, setSelectedBaselineExecutionId] = useState('');
   const [creatingEvaluationBaseline, setCreatingEvaluationBaseline] = useState(false);
+  const [removingEvaluationBaseline, setRemovingEvaluationBaseline] = useState(false);
+  const [baselineExecutionDialogOpen, setBaselineExecutionDialogOpen] = useState(false);
+  const [viewBaselineDialogOpen, setViewBaselineDialogOpen] = useState(false);
+  const [advancedEvaluationOpen, setAdvancedEvaluationOpen] = useState(false);
 
-  const isEvaluationTask = task?.taskType === 'evaluation';
+  const isEvaluationTask = nodeType === 'evaluation';
 
   const persistDraft = useCallback((overrides?: Partial<PlaybookTask>) => {
     if (!task) return;
     onSave(task.id, {
       title,
       description,
-      assignedAgentId: executionMode === 'agent' ? assignedAgentId : null,
-      executionMode,
-      selectedAction: executionMode === 'action' ? selectedAction : undefined,
+      taskType: nodeType === 'evaluation' ? 'evaluation' : 'generic',
+      assignedAgentId: nodeType === 'action' ? null : assignedAgentId,
+      executionMode: nodeType === 'evaluation' ? 'agent' : executionMode,
+      selectedAction: nodeType === 'action' ? selectedAction : undefined,
       interruptBefore,
       interruptAfter,
       allowClarification,
@@ -119,6 +133,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     allowClarification,
     assignedAgentId,
     description,
+    nodeType,
     enabled,
     executionMode,
     evaluationConfig,
@@ -138,6 +153,12 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     if (task) {
       setTitle(task.title);
       setDescription(task.description);
+      const derivedNodeType: PlaybookNodeType = task.taskType === 'evaluation'
+        ? 'evaluation'
+        : task.executionMode === 'action'
+          ? 'action'
+          : 'agent';
+      setNodeType(derivedNodeType);
       setAssignedAgentId(task.assignedAgentId);
       setExecutionMode(task.executionMode || 'agent');
       setSelectedAction(task.selectedAction || 'index');
@@ -232,7 +253,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     let cancelled = false;
     const loadEvaluationBaseline = async () => {
       setEvaluationBaselineMeta(null);
-      if (!open || !task || !playbookId || task?.taskType !== 'evaluation') return;
+      if (!open || !task || !playbookId || nodeType !== 'evaluation') return;
       try {
         const baseline = await fetchEvaluationBaseline(playbookId, task.id);
         if (!cancelled) {
@@ -248,7 +269,34 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     };
     void loadEvaluationBaseline();
     return () => { cancelled = true; };
-  }, [open, task, playbookId, fetchEvaluationBaseline]);
+  }, [open, task, playbookId, fetchEvaluationBaseline, nodeType]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadEvaluationExecutions = async () => {
+      setEvaluationExecutions([]);
+      setSelectedBaselineExecutionId('');
+      if (!open || !task || !playbookId || nodeType !== 'evaluation') return;
+      try {
+        const entries = await fetchEvaluationExecutions(playbookId, task.id);
+        if (!cancelled) {
+          const mapped = entries.map((entry) => ({
+            id: entry.id,
+            executionId: entry.executionId,
+            createdAt: entry.createdAt,
+            score: entry.score ?? null,
+            verdict: entry.verdict ?? null,
+          }));
+          setEvaluationExecutions(mapped);
+          setSelectedBaselineExecutionId(mapped[0]?.executionId || '');
+        }
+      } catch {
+        if (!cancelled) setEvaluationExecutions([]);
+      }
+    };
+    void loadEvaluationExecutions();
+    return () => { cancelled = true; };
+  }, [open, task, playbookId, fetchEvaluationExecutions, nodeType]);
 
   useEffect(() => {
     if (!open || !task || !playbookId) return;
@@ -341,6 +389,46 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     }
   };
 
+  const handleCreateBaselineFromSelectedExecution = async () => {
+    if (!playbookId || !task || !selectedBaselineExecutionId) return;
+    setCreatingEvaluationBaseline(true);
+    try {
+      const baseline = await createEvaluationBaselineFromExecution(playbookId, task.id, selectedBaselineExecutionId);
+      setEvaluationBaselineMeta({ id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt });
+      setEvaluationConfig((prev) => prev ? { ...prev, referenceBaselineId: baseline.id } : prev);
+      setBaselineExecutionDialogOpen(false);
+    } finally {
+      setCreatingEvaluationBaseline(false);
+    }
+  };
+
+  const handleCreateBaselineFromCurrentInputs = async () => {
+    if (!playbookId || !task) return;
+    const latestEvaluationExecution = evaluationExecutions[0];
+    if (!latestEvaluationExecution) return;
+    setCreatingEvaluationBaseline(true);
+    try {
+      const baseline = await createEvaluationBaselineFromCurrentExecution(playbookId, task.id, latestEvaluationExecution.executionId, latestEvaluationExecution.id);
+      setEvaluationBaselineMeta({ id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt });
+      setEvaluationConfig((prev) => prev ? { ...prev, referenceBaselineId: baseline.id } : prev);
+    } finally {
+      setCreatingEvaluationBaseline(false);
+    }
+  };
+
+  const handleRemoveBaseline = async () => {
+    if (!playbookId || !task) return;
+    setRemovingEvaluationBaseline(true);
+    try {
+      await deleteEvaluationBaseline(playbookId, task.id);
+      setEvaluationBaselineMeta(null);
+      setEvaluationConfig((prev) => prev ? { ...prev, referenceBaselineId: null } : prev);
+      setViewBaselineDialogOpen(false);
+    } finally {
+      setRemovingEvaluationBaseline(false);
+    }
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="sm:max-w-md overflow-y-auto" onCloseAutoFocus={(e) => e.preventDefault()}>
@@ -357,6 +445,30 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               placeholder={t('nodeEditor.stepTitlePlaceholder')}
               maxLength={200}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label>{t('nodeEditor.nodeType')}</Label>
+            <select
+              value={nodeType}
+              onChange={(e) => {
+                const nextType = e.target.value as PlaybookNodeType;
+                setNodeType(nextType);
+                if (nextType === 'evaluation') {
+                  setExecutionMode('agent');
+                } else if (nextType === 'action') {
+                  setExecutionMode('action');
+                  setAssignedAgentId(null);
+                } else {
+                  setExecutionMode('agent');
+                }
+              }}
+              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+            >
+              <option value="agent">{t('nodeEditor.nodeTypeAgent')}</option>
+              <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
+              <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
+            </select>
           </div>
 
           <div className="space-y-2">
@@ -442,10 +554,56 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                     ? `${t('nodeEditor.evaluationBaselineExecution')} ${evaluationBaselineMeta.sourceExecutionId} • ${new Date(evaluationBaselineMeta.createdAt).toLocaleString()}`
                     : t('nodeEditor.evaluationBaselineEmpty')}
                 </div>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button type="button" variant="outline" size="sm" onClick={() => setBaselineExecutionDialogOpen(true)}>
+                    {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceFromExecution') : t('nodeEditor.evaluationBaselineSelectExecution')}
+                  </Button>
+                  <Button type="button" variant="outline" size="sm" disabled={creatingEvaluationBaseline || evaluationExecutions.length === 0} onClick={() => void handleCreateBaselineFromCurrentInputs()}>
+                    {creatingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                    {evaluationBaselineMeta ? t('nodeEditor.evaluationBaselineReplaceCurrent') : t('nodeEditor.evaluationBaselineCurrent')}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta} onClick={() => setViewBaselineDialogOpen(true)}>
+                    {t('nodeEditor.evaluationBaselineView')}
+                  </Button>
+                  <Button type="button" variant="ghost" size="sm" disabled={!evaluationBaselineMeta || removingEvaluationBaseline} onClick={() => void handleRemoveBaseline()}>
+                    {removingEvaluationBaseline ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                    {t('nodeEditor.evaluationBaselineRemove')}
+                  </Button>
+                </div>
               </div>
+              <Collapsible open={advancedEvaluationOpen} onOpenChange={setAdvancedEvaluationOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button type="button" variant="ghost" className="w-full justify-between px-0 text-sm font-medium">
+                    {t('nodeEditor.evaluationAdvanced')}
+                    <ChevronDown className={`h-4 w-4 transition-transform ${advancedEvaluationOpen ? 'rotate-180' : ''}`} />
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent className="space-y-4 pt-2 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                  <div className="space-y-2">
+                    <Label>{t('nodeEditor.evaluationRubricVersion')}</Label>
+                    <Input value={evaluationConfig.rubricVersion} onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, rubricVersion: e.target.value } : prev)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    {([
+                      ['semanticMatch', 'nodeEditor.evaluationWeightSemantic'],
+                      ['referenceMatch', 'nodeEditor.evaluationWeightReference'],
+                      ['artifactRequirements', 'nodeEditor.evaluationWeightArtifact'],
+                      ['formatCompliance', 'nodeEditor.evaluationWeightFormat'],
+                      ['evidenceConsistency', 'nodeEditor.evaluationWeightEvidence'],
+                      ['executionHealth', 'nodeEditor.evaluationWeightExecution'],
+                    ] as const).map(([key, labelKey]) => (
+                      <div key={key} className="space-y-2">
+                        <Label>{t(labelKey)}</Label>
+                        <Input type="number" min={0} value={evaluationConfig.weights[key]} onChange={(e) => setEvaluationConfig((prev) => prev ? { ...prev, weights: { ...prev.weights, [key]: Number(e.target.value || 0) } } : prev)} />
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             </div>
           )}
 
+          {nodeType !== 'evaluation' && (
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">{t('ports.inputPorts')}</h4>
@@ -518,7 +676,9 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </div>
             ))}
           </div>
+          )}
 
+          {nodeType !== 'evaluation' && (
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">{t('ports.outputPorts')}</h4>
@@ -579,30 +739,9 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               </div>
             ))}
           </div>
+          )}
 
-          <div className="space-y-2">
-            <Label>{t('nodeEditor.executionMode') || 'Execution mode'}</Label>
-            <select
-              value={executionMode}
-              onChange={(e) => {
-                const nextMode = e.target.value as TaskExecutionMode;
-                setExecutionMode(nextMode);
-                const nextAssignedAgentId = nextMode === 'agent' ? assignedAgentId : null;
-                const nextSelectedAction = nextMode === 'action' ? selectedAction : undefined;
-                onSave(task.id, {
-                  executionMode: nextMode,
-                  assignedAgentId: nextAssignedAgentId,
-                  selectedAction: nextSelectedAction,
-                });
-              }}
-              className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-            >
-              <option value="agent">Agent</option>
-              <option value="action">Action</option>
-            </select>
-          </div>
-
-          {executionMode === 'action' ? (
+          {nodeType === 'action' ? (
             <div className="space-y-2">
               <Label>{t('nodeEditor.action') || 'Action'}</Label>
               <select
@@ -628,7 +767,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 {selectedAction === 'read' && 'Read document content for downstream processing.'}
               </p>
             </div>
-          ) : (
+          ) : nodeType === 'agent' || nodeType === 'evaluation' ? (
             <div className="space-y-2">
               <Label>{t('nodeEditor.agent')}</Label>
               <SearchableSelect
@@ -639,11 +778,14 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 searchPlaceholder={t('nodeEditor.searchAgent')}
                 emptyText={t('nodeEditor.noAgentFound')}
               />
+              {nodeType === 'evaluation' && (
+                <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
+              )}
               {!assignedAgentId && (
                 <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
               )}
             </div>
-          )}
+          ) : null}
 
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
@@ -942,6 +1084,49 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             <Button onClick={() => void handleSaveFormatGuide()} disabled={savingFormatGuide}>
               {savingFormatGuide ? 'Saving...' : 'Save format guide'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={baselineExecutionDialogOpen} onOpenChange={setBaselineExecutionDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('nodeEditor.evaluationBaselineDialogTitle')}</DialogTitle>
+            <DialogDescription>{t('nodeEditor.evaluationBaselineDialogDescription')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Label>{t('nodeEditor.evaluationBaselineExecutionPicker')}</Label>
+            <select value={selectedBaselineExecutionId} onChange={(e) => setSelectedBaselineExecutionId(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm">
+              <option value="">{t('nodeEditor.evaluationBaselineExecutionPlaceholder')}</option>
+              {evaluationExecutions.map((entry) => (
+                <option key={entry.id} value={entry.executionId}>
+                  {entry.executionId} • {entry.verdict || 'completed'} • {entry.score ?? 0}
+                </option>
+              ))}
+            </select>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setBaselineExecutionDialogOpen(false)}>{t('common.cancel')}</Button>
+            <Button type="button" disabled={!selectedBaselineExecutionId || creatingEvaluationBaseline} onClick={() => void handleCreateBaselineFromSelectedExecution()}>
+              {creatingEvaluationBaseline ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {t('nodeEditor.evaluationBaselineConfirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={viewBaselineDialogOpen} onOpenChange={setViewBaselineDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('nodeEditor.evaluationBaselineView')}</DialogTitle>
+            <DialogDescription>{t('nodeEditor.evaluationBaselineHint')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 text-sm">
+            <div><span className="font-medium">{t('nodeEditor.evaluationBaselineExecution')}</span> {evaluationBaselineMeta?.sourceExecutionId || '-'}</div>
+            <div><span className="font-medium">{t('nodeEditor.evaluationBaselineCreatedAt')}</span> {evaluationBaselineMeta ? new Date(evaluationBaselineMeta.createdAt).toLocaleString() : '-'}</div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setViewBaselineDialogOpen(false)}>{t('nodeEditor.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

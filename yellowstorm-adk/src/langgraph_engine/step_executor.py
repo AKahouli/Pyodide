@@ -415,6 +415,8 @@ async def _execute_evaluation_task(
     settings: Any,
     model_name: str,
     temperature: float,
+    evaluator_name: Optional[str] = None,
+    evaluator_instructions: Optional[str] = None,
     on_progress: Optional[StepProgressCallback] = None,
 ) -> Dict[str, Any]:
     config = task.get("evaluation_config") or {}
@@ -428,6 +430,12 @@ async def _execute_evaluation_task(
         field="systemTemplate",
         fallback="You are a strict playbook evaluation judge. Evaluate only the evidence provided through connected inputs and the configured expectation/baseline. Return strict JSON only.",
     )
+    if evaluator_name:
+        system_prompt = system_prompt.replace("{{agentName}}", evaluator_name)
+    if evaluator_instructions:
+        system_prompt = system_prompt.replace(
+            "{{agentInstructions}}", evaluator_instructions
+        )
     user_prompt = resolve_prompt_template(
         prompt_registry,
         "evaluation.task.user",
@@ -790,7 +798,6 @@ async def _execute_step_direct(
         agent.get("instructions") or agent.get("prompt", ""),
         agent.get("skills") or [],
     )
-    model_name = agent.get("model") or "gpt-4.1"
     agent_params = agent.get("agent_params") or {}
     temperature = float(agent_params.get("temperature", 0.7))
     output_mode = _determine_output_mode(task)
@@ -871,6 +878,8 @@ async def _execute_step_direct(
             settings,
             model_name,
             temperature,
+            evaluator_name=agent.get("name"),
+            evaluator_instructions=agent_instructions,
             on_progress=on_progress,
         )
         duration_ms = int((time.time() - start_time) * 1000)

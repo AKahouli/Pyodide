@@ -22,7 +22,7 @@
           "name": "GPT-5.4-Low-OC"
         },
         "gpt-5.4-mini-oc": {
-          "name": "GPT-5.4-Mini-OC"
+          "name": "gpt-5.4-mini-oc"
         },
         "gpt-5.4-nano-oc": {
           "name": "GPT-5.4-Nano-OC"
@@ -32,6 +32,9 @@
         },
         "deepseek-v4-flash": {
           "name": "DeepSeek V4 flash"
+        },
+        "glm-5-turbo": {
+          "name": "glm-5-turbo"
         }
       }
     }
@@ -44,6 +47,21 @@
         "-y",
         "chrome-devtools-mcp@latest"
       ]
+    },
+    "obsidian": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "obsidian-mcp-server"
+      ],
+      "environment": {
+        "OBSIDIAN_API_KEY": "864dd99bf65be82c94f6921e5578b1d27b50e8c4769d9a464b83d9f46dbc11ac",
+        "OBSIDIAN_BASE_URL": "http://127.0.0.1:27123",
+        "OBSIDIAN_VERIFY_SSL": "false",
+        "OBSIDIAN_ENABLE_CACHE": "true"
+      },
+      "enabled": true
     }
   },
   "permission": {
@@ -51,7 +69,7 @@
       "*": "deny",
       "chrome-devtools": "allow",
       "ai-elements": "allow",
-      "graphify-windows": "allow"
+      "obsidian-context": "allow"
     }
   },
   "agent": {
@@ -62,30 +80,21 @@
           "git status*": "allow",
           "git diff*": "allow",
           "git log*": "allow",
-          "npm run test*": "allow",
-          "npm run build*": "allow",
-          "npm run lint*": "allow",
-          "npm run typecheck*": "allow",
-          "pnpm run test*": "allow",
-          "pnpm run build*": "allow",
-          "pnpm run lint*": "allow",
-          "poetry run pytest*": "allow",
-          "npx *": "allow",
+          "npm *": "allow",
+          "pnpm *": "allow",
+          "pip *": "allow",
+          "poetry *": "allow",
+          "npx ctx7*": "allow",
           "git push*": "ask",
           "git reset*": "ask",
           "git rebase*": "ask",
           "del *": "ask",
           "rm *": "ask",
-          "docker compose down*": "allow",
-          "kubectl *": "allow",
           "ls *": "allow",
-          "python *": "allow",
-          "pytest *": "allow",
-          "python3 *": "allow"
+          "pytest *": "allow"
         },
         "task": {
           "*": "deny",
-          "general": "allow",
           "explore": "allow",
           "plan": "allow",
           "reviewer": "allow",

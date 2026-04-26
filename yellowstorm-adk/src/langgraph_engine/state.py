@@ -51,6 +51,7 @@ class TaskConfig(TypedDict):
     input_files: Optional[List[str]]
     input_files_by_port: Optional[List[Dict[str, Any]]]  # Port-aware document bindings
     task_type: Optional[str]
+    evaluation_config: Optional[Dict[str, Any]]
     input_ports: Optional[List[Dict[str, Any]]]
     output_ports: Optional[List[Dict[str, Any]]]
 

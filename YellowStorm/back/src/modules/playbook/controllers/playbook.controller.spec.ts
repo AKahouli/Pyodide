@@ -43,7 +43,7 @@ describe('PlaybookController', () => {
   >;
   let mailTriggerTestEventService: jest.Mocked<Pick<any, 'processTestEvent'>>;
   let mailGraphClientService: jest.Mocked<Pick<any, 'createInboxSubscription'>>;
-  let evaluationService: jest.Mocked<Pick<PlaybookEvaluationService, 'listEvaluationExecutions' | 'getActiveBaseline' | 'replaceBaselineFromExecution'>>;
+  let evaluationService: jest.Mocked<Pick<PlaybookEvaluationService, 'listEvaluationExecutions' | 'getActiveBaseline' | 'replaceBaselineFromExecution' | 'replaceBaselineFromCurrentEvaluationExecution' | 'removeActiveBaseline'>>;
   let streamGateway: jest.Mocked<Pick<PlaybookStreamGatewayService, 'sendToUser'>>;
   let userService: jest.Mocked<Pick<UserService, 'findById' | 'findByEmail'>>;
   let notificationsService: jest.Mocked<Pick<NotificationsService, 'sendToUser'>>;
@@ -108,6 +108,8 @@ describe('PlaybookController', () => {
       listEvaluationExecutions: jest.fn().mockResolvedValue([]),
       getActiveBaseline: jest.fn().mockResolvedValue(null),
       replaceBaselineFromExecution: jest.fn().mockResolvedValue({ id: 'baseline-1' } as any),
+      replaceBaselineFromCurrentEvaluationExecution: jest.fn().mockResolvedValue({ id: 'baseline-2' } as any),
+      removeActiveBaseline: jest.fn().mockResolvedValue({ removed: true }),
     };
 
     userService = {
@@ -155,6 +157,15 @@ describe('PlaybookController', () => {
       await controller.findAll(user, query);
 
       expect(playbookService.findAllByUser).toHaveBeenCalledWith('user-123', query);
+    });
+  });
+
+  describe('removeEvaluationBaseline', () => {
+    it('delegates to evaluationService.removeActiveBaseline', async () => {
+      const result = await controller.removeEvaluationBaseline(playbookId, 'eval-task-1');
+
+      expect(evaluationService.removeActiveBaseline).toHaveBeenCalledWith(playbookId, 'eval-task-1');
+      expect(result).toEqual({ removed: true });
     });
   });
 

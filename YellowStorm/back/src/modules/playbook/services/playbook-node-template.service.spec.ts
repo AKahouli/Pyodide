@@ -8,6 +8,9 @@ describe('PlaybookNodeTemplateService', () => {
   let service: PlaybookNodeTemplateService;
   let model: {
     find: jest.Mock;
+    findById: jest.Mock;
+    findOne: jest.Mock;
+    findByIdAndUpdate: jest.Mock;
     insertMany: jest.Mock;
     bulkWrite: jest.Mock;
   };
@@ -15,6 +18,9 @@ describe('PlaybookNodeTemplateService', () => {
   beforeEach(async () => {
     model = {
       find: jest.fn(),
+      findById: jest.fn(),
+      findOne: jest.fn(),
+      findByIdAndUpdate: jest.fn(),
       insertMany: jest.fn(),
       bulkWrite: jest.fn(),
     };
@@ -95,7 +101,7 @@ describe('PlaybookNodeTemplateService', () => {
     );
   });
 
-  it('refreshes built-in template fields without forcing enabled back on', async () => {
+  it('does not rewrite existing built-in templates during reads', async () => {
     mockFindOnce([
       ...buildExistingDefaults(),
       {
@@ -111,26 +117,7 @@ describe('PlaybookNodeTemplateService', () => {
     await service.findEnabled();
 
     expect(model.insertMany).not.toHaveBeenCalled();
-    expect(model.bulkWrite).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({
-          updateOne: expect.objectContaining({
-            filter: { _id: 'built-in-evaluation-id' },
-            update: expect.objectContaining({
-              $set: expect.objectContaining({
-                key: 'evaluation',
-                type: 'evaluation',
-                category: 'evaluation',
-                isBuiltIn: true,
-              }),
-            }),
-          }),
-        }),
-      ]),
-      { ordered: false },
-    );
-    const bulkPayload = model.bulkWrite.mock.calls[0][0];
-    expect(bulkPayload[0].updateOne.update.$set.enabled).toBeUndefined();
+    expect(model.bulkWrite).not.toHaveBeenCalled();
   });
 
   it('does not insert a built-in when a custom template already uses the same type', async () => {
@@ -149,16 +136,104 @@ describe('PlaybookNodeTemplateService', () => {
     await service.findEnabled();
 
     expect(model.insertMany).not.toHaveBeenCalled();
-    expect(model.bulkWrite).toHaveBeenCalledTimes(1);
-    const bulkPayload = model.bulkWrite.mock.calls[0][0];
-    expect(bulkPayload).not.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          updateOne: expect.objectContaining({
-            filter: { _id: 'custom-evaluation-id' },
-          }),
-        }),
-      ]),
+    expect(model.bulkWrite).not.toHaveBeenCalled();
+  });
+
+  it('preserves built-in template edits after updating a built-in template', async () => {
+    const builtInId = '507f1f77bcf86cd799439011';
+    const userId = '507f191e810c19729de860ea';
+
+    mockFindOnce([
+      ...buildExistingDefaults(),
+      {
+        _id: builtInId,
+        key: 'evaluation',
+        type: 'evaluation',
+        isBuiltIn: true,
+        enabled: true,
+      },
+    ]);
+
+    model.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => builtInId },
+        key: 'evaluation',
+        type: 'evaluation',
+        title: 'Evaluation Task',
+        description: 'Original built-in description',
+        icon: 'Scale',
+        color: 'rose',
+        category: 'evaluation',
+        inputPorts: [],
+        outputPorts: [],
+        promptTemplate: 'original prompt',
+        recommendedAgentTypeSlug: 'researcher',
+        requiredToolNames: [],
+        executionMode: 'agent',
+        assignedAgentId: null,
+        selectedAction: null,
+        enabled: true,
+        version: 1,
+        isBuiltIn: true,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      }),
+    });
+
+    model.findByIdAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => builtInId },
+        key: 'evaluation',
+        type: 'evaluation',
+        title: 'Custom Evaluation Title',
+        description: 'Custom saved description',
+        icon: 'Scale',
+        color: 'rose',
+        category: 'evaluation',
+        inputPorts: [],
+        outputPorts: [],
+        promptTemplate: 'custom saved prompt',
+        recommendedAgentTypeSlug: 'researcher',
+        requiredToolNames: [],
+        executionMode: 'agent',
+        assignedAgentId: null,
+        selectedAction: null,
+        enabled: true,
+        version: 2,
+        isBuiltIn: true,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-02T00:00:00Z'),
+      }),
+    });
+
+    const updated = await service.update(
+      builtInId,
+      {
+        title: 'Custom Evaluation Title',
+        description: 'Custom saved description',
+        promptTemplate: 'custom saved prompt',
+      },
+      userId,
     );
+
+    expect(updated.title).toBe('Custom Evaluation Title');
+    expect(updated.description).toBe('Custom saved description');
+    expect(updated.promptTemplate).toBe('custom saved prompt');
+
+    mockFindOnce([
+      ...buildExistingDefaults(),
+      {
+        _id: builtInId,
+        key: 'evaluation',
+        type: 'evaluation',
+        isBuiltIn: true,
+        enabled: true,
+      },
+    ]);
+    mockFindAllOnce([]);
+
+    await service.findAll();
+
+    expect(model.bulkWrite).not.toHaveBeenCalled();
   });
 });

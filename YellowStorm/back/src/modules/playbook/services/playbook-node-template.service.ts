@@ -241,50 +241,7 @@ export class PlaybookNodeTemplateService {
       );
     }
 
-    const builtInUpdates = DEFAULT_NODE_TEMPLATES.flatMap((item) => {
-      const matches = existing.filter((existingItem) => existingItem.key === item.key || existingItem.type === item.type);
-      const builtInMatch = matches.find((existingItem) => existingItem.isBuiltIn);
-      if (!builtInMatch?._id) {
-        return [];
-      }
-
-      return [{
-        updateOne: {
-          filter: { _id: builtInMatch._id },
-          update: {
-            $set: {
-              key: item.key,
-              type: item.type,
-              title: item.title,
-              description: item.description,
-              icon: item.icon,
-              color: item.color,
-              category: item.category,
-              inputPorts: item.inputPorts.map((port) => ({
-                ...port,
-                required: port.required ?? false,
-              })),
-              outputPorts: item.outputPorts.map((port) => ({
-                id: port.id,
-                name: port.name,
-                artifactKind: port.artifactKind,
-                description: port.description,
-              })),
-              promptTemplate: item.promptTemplate,
-              recommendedAgentTypeSlug: item.recommendedAgentTypeSlug,
-              requiredToolNames: item.requiredToolNames,
-              isBuiltIn: true,
-            },
-          },
-        },
-      }];
-    });
-
-    if (builtInUpdates.length) {
-      await this.templateModel.bulkWrite(builtInUpdates, { ordered: false });
-    }
-
-    if (missing.length || builtInUpdates.length) {
+    if (missing.length) {
       this.invalidateCache();
     }
   }

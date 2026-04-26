@@ -1303,6 +1303,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      deleteEvaluationBaseline: async (playbookId, taskId) => {
+        try {
+          const result = await api.deleteEvaluationBaseline(playbookId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: null,
+            },
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) => task.id === taskId
+                    ? {
+                        ...task,
+                        evaluationConfig: task.evaluationConfig
+                          ? { ...task.evaluationConfig, referenceBaselineId: null }
+                          : task.evaluationConfig,
+                      }
+                    : task),
+                }
+              : state.currentPlaybook,
+          }));
+          return result;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       updateTaskReplayFormatGuide: async (playbookId, taskId, replayId, data) => {
         try {
           const replay = await api.updateTaskReplayFormatGuide(playbookId, taskId, replayId, data);
@@ -1633,10 +1662,30 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns) => {
+      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, skipStepExecution = false) => {
         clearJudgeRefreshTimer(executionId);
         set((state) => {
           const cachedExecution = state.executionCache[executionId];
+          if (!cachedExecution) return state;
+
+          if (skipStepExecution) {
+            const taskResults = cachedExecution.taskResults.map((tr) =>
+              tr.taskId === taskId
+                ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
+                : tr,
+            );
+            const updatedExecution = {
+              ...cachedExecution,
+              taskResults,
+              updatedAt: new Date().toISOString(),
+            };
+            return {
+              executionCache: { ...state.executionCache, [executionId]: updatedExecution },
+              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
+              selectedStepId: taskId,
+            };
+          }
+
           const shouldPreserveOtherTaskResults = executionMode === 'replay_strict'
             || executionMode === 'replay_flex'
             || executionMode === 'replay_adaptive';
@@ -1686,12 +1735,15 @@ export const usePlaybookStore = create<PlaybookStore>()(
             advisorAutopilotEnabled,
             advisorAutopilotTargetScore,
             advisorAutopilotMaxTurns,
+            skipStepExecution,
           });
-          await get().fetchExecutions(playbookId);
+          await get().fetchExecution(playbookId, executionId);
         } catch (err) {
-          set((state) => ({
-            executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-          }));
+          if (!skipStepExecution) {
+            set((state) => ({
+              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
+            }));
+          }
           handleApiError(err);
           throw err;
         }

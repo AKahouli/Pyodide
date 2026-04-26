@@ -33,6 +33,18 @@ When you encounter a file reference (e.g., `@rules/general.md`), load it on dema
 - **Comments:** Sparingly — code should be self-documenting.
 - **Commits:** Conventional format: `<type>(<scope>): <subject>` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`.
 
+### Mandatory Guideline Loading (HARD RULE)
+
+**Before writing or reviewing any code**, agents **must** read the relevant coding guidelines file based on the paths being changed:
+
+| Paths being changed | Required reading |
+|---|---|
+| `YellowStorm/front/**` | `YellowStorm/front/FRONTEND_GUIDELINES.md` |
+| `YellowStorm/back/**` | `YellowStorm/back/BACKEND_GUIDELINES.md` |
+| Both `front/` and `back/` | **Both** files, plus cross-boundary contract rules |
+
+This applies to **all** agents: `build`, `plan`, `reviewer`, `diagnostics`. Skipping this step is a hard rule violation regardless of task size.
+
 ---
 
 ## Agent Team
@@ -56,7 +68,7 @@ User task
    │  pass / fail
    ▼
 ┌─────────────┐
-│ maintainer  │◀── post-merge docs & cleanup
+│ maintainer  │◀── Full/Light memory sync only
 └─────────────┘
 ```
 
@@ -78,10 +90,12 @@ User task
 
 **Skip when:** Single-file fix with no interface change. Pure formatting/typo/comment edit.
 
+**Before planning**, read the relevant coding guidelines file per the Mandatory Guideline Loading table above. The action plan must account for guideline compliance.
+
 **Outputs a scoped action plan:**
 1. Files to touch (with rationale)
 2. Risk assessment (what could break)
-3. Doc impact tier (Full / Light / None — see Documentation Protocol)
+3. Memory impact tier (Full / Light / None — see Memory Protocol)
 4. Recommended specialist calls (e.g., "call `diagnostics` first — failure is unclear")
 
 `build` must follow the plan. Deviations require re-invoking `plan`.
@@ -93,24 +107,25 @@ User task
 Primary coding agent. Has bash permissions, skill access, and delegation authority.
 
 **Before writing code:**
-0. check the `/docs/webapp-frontend/` and `/docs/webapp-backend/` for existing documentation.
-1. Check if `plan` is required (see criteria above). If yes, delegate and wait.
-2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs. >> Must say to the user (I'm reading the existing doc ...)
-3. Read the top 40 lines of `/docs/CHANGELOG.md`.
-4. For each related slug, read its `Latest Doc Path`. Note architecture decisions, API contracts, and recent changes.
-5. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
+0. Load the `obsidian-context` skill and search the Obsidian vault for relevant feature, architecture, contract, convention, and recent-change notes. Tell the user briefly that you are checking the vault memory.
+1. Read the relevant coding guidelines file per the Mandatory Guideline Loading table above. If touching frontend, read `FRONTEND_GUIDELINES.md`; if backend, read `BACKEND_GUIDELINES.md`; if both, read both.
+2. Check if `plan` is required (see criteria above). If yes, delegate and wait. `plan` must also read the relevant guideline file before producing its action plan.
+3. Read the relevant vault notes returned by search, prioritizing `Agent Quick Context`, index/MOC notes, and notes with matching `slug`, `source_paths`, or tags.
+4. Follow only directly relevant `[[Internal Links]]` from those notes; avoid broad recursive note traversal.
+5. Inspect the codebase after memory retrieval to verify the current implementation.
+6. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
 
 **After writing code:**
 1. Delegate to `reviewer`. **Task is not complete until `reviewer` returns PASS.**
 2. If `reviewer` returns FAIL, fix the findings and re-submit.
-3. Once passed, delegate to `maintainer` with: what changed, why, and which feature slugs were affected.
+3. Once passed, delegate to `maintainer` only when the memory tier is **Full** or **Light**. Include what changed, why, which feature slugs or modules were affected, and which vault notes should be updated. Skip `maintainer` for **None** tier tasks.
 
 **Delegation triggers during implementation:**
 - Unclear failure or vague bug → `diagnostics` before editing
 - Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
 - Proto/API change or cross-service modification → perform explicit contract validation after editing; if a dedicated `contract` agent is added later, use it
 - Cross-service change needing end-to-end verification → perform explicit integration verification after contract validation; if a dedicated `integration` agent is added later, use it
-- Need current library docs → context7 skill (see below)
+- Current external library/framework/API behavior is unclear or being changed → context7 skill (see below)
 
 **Hard rules:**
 - Destructive shell commands require user approval.
@@ -120,10 +135,13 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 
 #### `reviewer` — Quality Gate (read-only, BLOCKING)
 
-Single-pass review across three lenses:
+**Before reviewing**, read the relevant coding guidelines file per the Mandatory Guideline Loading table above. All review findings must be checked against the applicable guideline rules.
+
+Single-pass review across four lenses:
 
 | Lens | Focus |
 |------|-------|
+| **Guideline compliance** | Violations of `FRONTEND_GUIDELINES.md` or `BACKEND_GUIDELINES.md` rules — anti-patterns, wrong imports, missing i18n, wrong API patterns, etc. |
 | **Correctness** | Bugs, regressions, missing edge cases, missing tests |
 | **Security** | Auth flaws, input validation, injection/XSS/SSRF, secret leaks, unsafe trust boundaries, AI/tool safety |
 | **Performance** | N+1s, unbounded queries, render churn, unnecessary re-renders, blocking calls |
@@ -260,17 +278,17 @@ Single-pass review across three lenses:
 
 ---
 
-#### `maintainer` — Docs & Refactoring
+#### `maintainer` — Memory & Refactoring
 
 **Invoke:**
-- After every task that passes `reviewer` (mandatory for doc sync)
+- After tasks that pass `reviewer` and have memory tier **Full** or **Light**
 - When `plan` identifies refactoring opportunities
 
 **Does:**
-- Documentation: feature READMEs, `DOC_INDEX.md`, `CHANGELOG.md`
+- Obsidian vault memory: feature notes, architecture notes, decisions, contracts, conventions, and recent changes
 - Behavior-preserving code refactoring and module cleanup
 
-See the `maintainer` agent file for the full documentation procedure.
+See the `maintainer` agent file for the full memory procedure.
 
 ---
 
@@ -284,98 +302,118 @@ See the `maintainer` agent file for the full documentation procedure.
 | Frontend UI/interaction change | `frontend-qa` after |
 | Proto/API change or cross-service edit | Run explicit contract validation after implementation |
 | Cross-service change needing E2E verification | Run explicit integration verification after contract validation |
-| Task complete and reviewed | `maintainer` last |
-| Need library/framework docs | context7 skill |
-| Single-file, no interface change | `build` directly → `reviewer` → `maintainer` |
+| Full/Light memory tier and reviewed | `maintainer` last |
+| Need current external library/framework/API docs | context7 skill |
+| Single-file, no interface change | `build` directly → `reviewer` → `maintainer` only if Full/Light |
 
 ---
 
-## Documentation Protocol
+## Memory Protocol
 
-### Structure
+The Obsidian vault is the canonical long-term memory for agents. Repository markdown can remain for human reference, but agent workflows must retrieve and update implementation context through the vault.
+
+### Vault Structure
 
 ```
-docs/
-├── DOC_INDEX.md
-├── CHANGELOG.md
-└── {feature_slug}/
-    └── README.md     ← single living doc, versioned by git
+YellowStorm/
+├── Index.md
+├── Features/
+│   └── {feature_slug}.md
+├── Architecture/
+│   └── {topic}.md
+├── Decisions/
+│   └── ADR-{number}-{topic}.md
+├── Conventions/
+│   └── {topic}.md
+└── Timeline/
+    └── YYYY-MM.md
 ```
 
 ### Change Tiers
 
-| Tier | Trigger | Doc action |
+| Tier | Trigger | Memory action |
 |------|---------|------------|
-| **Full** | API/contract change, new feature, architecture mod, requirement change | Update or create feature README + index + changelog |
-| **Light** | Implementation-only change, no interface change | Changelog entry only |
-| **None** | Typo, formatting, comment-only edit | No doc action |
+| **Full** | API/contract change, new feature, architecture mod, requirement change | Update or create the relevant vault note(s), frontmatter, `Agent Quick Context`, 3-7 high-value links, tags, and timeline entry (use `timestamp `YYYY-MM-DD HH:MM:SS UTC` for each change) |
+| **Light** | Implementation-only change, no interface change | Append concise recent-change memory to the relevant vault note |
+| **None** | Typo, formatting, comment-only edit | No memory action |
 
 `plan` determines the tier when invoked. Otherwise `build` determines it.
 
 ### Hard Rules
 
-- One `README.md` per slug, updated in place, history tracked by git.
-- Never create a duplicate slug — check `DOC_INDEX.md` first.
-- Relative paths for cross-references.
+- Search before writing to avoid duplicate vault notes.
+- Prefer stable feature notes at `YellowStorm/Features/{feature_slug}.md`.
+- Use 3-7 high-value Obsidian `[[Internal Links]]` on Full-tier notes. Link to related architecture, contracts, decisions, conventions, and pitfalls where applicable.
+- Prefer link quality over quantity; links should answer which notes an agent should read next to avoid a bad change.
+- When reading a feature note, read `Agent Quick Context` first and follow only links directly relevant to the task.
 - All timestamps UTC.
-- `CHANGELOG.md` updated **last**.
 - Content must be factual and code-derived.
+- Vault interactions must go through the Obsidian MCP tools, not direct filesystem access.
+- `docs/` is passive human reference only. Agents must not read or write `docs/` during normal workflow. Memory lives exclusively in the Obsidian vault.
 
-### DOC_INDEX.md Format
-
-```markdown
-# Documentation Index
-
-> Auto-maintained by the maintainer agent. Do not edit manually.
-> Last updated: YYYY-MM-DD HH:MM UTC
-
-| Feature Slug | Description | Doc Path | Status | Last Updated |
-|--------------|-------------|----------|--------|--------------|
-| `auth` | Authentication & session management | `/docs/auth/README.md` | ✅ stable | 2026-03-20 |
-```
-
-### CHANGELOG.md Format
+### Feature Note Frontmatter
 
 ```markdown
-## [YYYY-MM-DD HH:MM UTC] — {short title}
-
-- **Feature:** `{feature_slug}`
-- **Type:** feat | fix | refactor | docs
-- **Changed:** {what}
-- **Why:** {rationale}
-- **Impact:** {files/modules affected}
+---
+project: YellowStorm
+type: feature
+slug: {feature_slug}
+status: active | draft | deprecated
+updated: YYYY-MM-DD HH:MM UTC
+source_paths:
+  - YellowStorm/front/src/modules/{module}
+  - YellowStorm/back/src/modules/{module}
+tags:
+  - yellowstorm
+  - feature/{feature_slug}
+---
 ```
 
-### Feature README Template
+### Feature Note Template
 
 ```markdown
 # {Feature Name}
 
-> **Slug:** `{feature_slug}` | **Status:** 🚧 draft | **Last Updated:** YYYY-MM-DD HH:MM UTC
+## Agent Quick Context
+- Entry points: `{primary source paths}`
+- Runtime flow: {short request/data flow}
+- Contracts: {endpoints, DTOs, proto messages, or none}
+- Invariants: {rules future agents must preserve}
+- Pitfalls: {known failure modes or testing gotchas}
 
 ## Purpose
 {What this feature does and why it exists.}
 
-## Scope
-{Included and explicitly excluded.}
+## Current Implementation
+{Current modules, data flow, runtime behavior.}
 
-## Architecture
-{Key modules, data flow. Mermaid diagram if non-trivial.}
-
-## Requirements
-- As a {role}, I want to {goal} so that {benefit}.
-- [ ] {acceptance criterion}
+## Key Files
+- `{path}` — {purpose}
 
 ## API / Interfaces
-{Key signatures, endpoints, or schemas.}
+{Endpoints, schemas, gRPC contracts, events, or tool contracts.}
 
 ## Design Decisions
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|
 
-## Related Features
-- [`{related_slug}`](/docs/{related_slug}/README.md)
+## Known Pitfalls
+- {Failure mode, invariant, migration warning, testing gotcha.}
+
+## Recent Changes
+### YYYY-MM-DD HH:MM UTC
+- Changed: {what}
+- Why: {rationale}
+- Impact: {files/modules affected}
+
+## Related Notes
+- [[Related Architecture]]
+- [[Related Contract]]
+- [[Related Decision]]
+- [[Related Convention]]
+- [[Known Pitfall]]
 ```
+
 
 ---
 
@@ -383,39 +421,32 @@ docs/
 
 **Available to:** `build`, `plan`, `diagnostics`, `reviewer`.
 
-When the task involves a library, framework, SDK, or API — even well-known ones — Must always fetch current docs first. Training data may be outdated.
+Use Context7 only when the task depends on current external library, framework, SDK, or API behavior.
 
 ```bash
 npx ctx7@latest library <name> "<question>"
 npx ctx7@latest docs <libraryId> "<question>"
 ```
 
-- Always `library` first to get a valid ID.
+- Use `library` first to get a valid ID.
 - Full question as the query.
 - Max 3 commands per question.
 - Never include credentials.
 - On quota errors, inform user → `npx ctx7@latest login`.
 
-**Not for:** refactoring, scripts from scratch, debugging business logic, code review, general concepts.
+**Use for:** adding or changing external API usage, version-specific behavior, unclear framework behavior, or suspected library misuse.
+
+**Not for:** refactoring, scripts from scratch, debugging business logic, simple code review, local test patterns, or general concepts.
 
 ---
 
 ## Development Workflow
 
-1. Must always Use Context7 when the task depends on current library or framework documentation
+1. Use Context7 only when current external library or framework documentation is needed
 2. `plan` if criteria met → action plan
 3. `build` implements (pre-coding protocol mandatory)
 4. Run relevant verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`, `poetry run pytest` in `yellowstorm-adk`
 5. `reviewer` validates → **must PASS**
 6. `diagnostics` if test gaps; `frontend-qa` if UI affected
-8. `maintainer` syncs docs per tier
+8. `maintainer` syncs Obsidian vault memory for Full/Light tiers; skip for None tier
 
-
-## graphify
-
-This project has a graphify knowledge graph at graphify-out/.
-
-Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current

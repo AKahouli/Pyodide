@@ -215,9 +215,35 @@ export function usePlaybookCanvas() {
       if (selectedNodeChange && selectedNodeChange.id !== TRIGGER_NODE_ID) {
         selectStep(selectedNodeChange.selected ? selectedNodeChange.id : null);
       }
+
+      const removes = changes.filter((c) => c.type === 'remove');
+      if (removes.length > 0) {
+        const removedIds = new Set(removes.map((r) => r.id).filter((id) => id !== TRIGGER_NODE_ID));
+        if (removedIds.size > 0) {
+          captureSnapshot();
+          setNodes((nds) => {
+            const updated = nds.filter((n) => !removedIds.has(n.id));
+            deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+            return updated;
+          });
+          setEdges((eds) => {
+            const updated = eds.filter(
+              (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
+            );
+            deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
+            return updated;
+          });
+          const nonRemoveChanges = changes.filter((c) => c.type !== 'remove');
+          if (nonRemoveChanges.length > 0) {
+            setNodes((nds) => applyNodeChanges(nonRemoveChanges, nds));
+          }
+          return;
+        }
+      }
+
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [selectStep],
+    [selectStep, updateTasks, updateEdges, captureSnapshot],
   );
 
   // Sync positions to store only when drag ends.

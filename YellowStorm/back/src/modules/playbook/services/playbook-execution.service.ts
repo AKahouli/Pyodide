@@ -1479,12 +1479,27 @@ export class PlaybookExecutionService {
       }
     }
 
+    const playbookWorkspaceIds = (playbook.workspaces || []).map((w: any) => w.toString());
+    const defaultWorkspaceId = playbookWorkspaceIds[0] || '';
+
     const effectiveWorkspaceContexts = Array.from(workspaceContextMap.entries()).map(
       ([workspace_id, docMap]) => ({
         workspace_id,
         workspace_documents: Array.from(docMap.values()),
       }),
     );
+
+    // Ensure the playbook's default workspace is always first so the ADK
+    // picks the correct output workspace via select_output_workspace_id.
+    if (defaultWorkspaceId && effectiveWorkspaceContexts.length > 0) {
+      const defaultIdx = effectiveWorkspaceContexts.findIndex(
+        (ctx) => ctx.workspace_id === defaultWorkspaceId,
+      );
+      if (defaultIdx > 0) {
+        const [moved] = effectiveWorkspaceContexts.splice(defaultIdx, 1);
+        effectiveWorkspaceContexts.unshift(moved);
+      }
+    }
     const toolBindingsByTaskId = new Map<string, any[]>();
     for (const task of enabledTasks) {
       toolBindingsByTaskId.set(
@@ -1539,6 +1554,17 @@ export class PlaybookExecutionService {
             description: p.description || '',
           })),
           task_type: t.taskType || 'generic',
+          evaluation_config: t.evaluationConfig
+            ? {
+                expectation: t.evaluationConfig.expectation || '',
+                reference_baseline_id: t.evaluationConfig.referenceBaselineId || null,
+                pass_threshold: t.evaluationConfig.passThreshold ?? 80,
+                warning_threshold: t.evaluationConfig.warningThreshold ?? 60,
+                weight: t.evaluationConfig.weight ?? 1,
+                rubric_version: t.evaluationConfig.rubricVersion || 'evaluation-node-v1',
+                weights: t.evaluationConfig.weights || {},
+              }
+            : null,
           tool_bindings: toolBindingsByTaskId.get(t.id) || [],
         };
       }),
@@ -2918,19 +2944,28 @@ export class PlaybookExecutionService {
 
     const activeOutputFormat = await this.outputFormatService.getActiveTemplate(playbookId, taskId);
 
-    // If task has inputFiles, build workspace_context from those (overrides playbook-level context)
+    // Build workspace_context: start with playbook workspaces, then merge task
+    // input-file contexts on top so the playbook's default workspace is always first.
     let taskWorkspaceContexts = workspaceContexts;
     let inputFilesByPort: Array<{ port_id: string; document_ids: string[] }> = [];
     if (task.inputFiles && task.inputFiles.length > 0) {
-      taskWorkspaceContexts = await this.contextService.buildWorkspaceContextFromInputFiles(
+      const fileContexts = await this.contextService.buildWorkspaceContextFromInputFiles(
         task.inputFiles,
       );
       inputFilesByPort = await this.contextService.extractDocumentIdsByPort(task.inputFiles);
-      this.logger.debug('Using task-level input files for workspace_context', {
+      // Merge instead of replace: add input-file workspaces after playbook ones,
+      // keeping the playbook default workspace at position 0.
+      const existingIds = new Set(taskWorkspaceContexts.map((c) => c.workspace_id));
+      const extraContexts = fileContexts.filter((c) => !existingIds.has(c.workspace_id));
+      if (extraContexts.length) {
+        taskWorkspaceContexts = [...taskWorkspaceContexts, ...extraContexts];
+      }
+      this.logger.debug('Merged task-level input files with playbook workspace_context', {
         executionId,
         taskId,
         inputFilesCount: task.inputFiles.length,
-        contextCount: taskWorkspaceContexts.length,
+        playbookContextCount: workspaceContexts.length,
+        extraContextCount: extraContexts.length,
         inputFilesByPortCount: inputFilesByPort.length,
       });
     }
@@ -3017,6 +3052,17 @@ export class PlaybookExecutionService {
           description: p.description || '',
         })),
         task_type: task.taskType || 'generic',
+        evaluation_config: task.evaluationConfig
+          ? {
+              expectation: task.evaluationConfig.expectation || '',
+              reference_baseline_id: task.evaluationConfig.referenceBaselineId || null,
+              pass_threshold: task.evaluationConfig.passThreshold ?? 80,
+              warning_threshold: task.evaluationConfig.warningThreshold ?? 60,
+              weight: task.evaluationConfig.weight ?? 1,
+              rubric_version: task.evaluationConfig.rubricVersion || 'evaluation-node-v1',
+              weights: task.evaluationConfig.weights || {},
+            }
+          : null,
         tool_bindings: toolBindings,
       },
       context_from_dependencies: contextFromDependencies,
@@ -4012,6 +4058,7 @@ export class PlaybookExecutionService {
     advisorAutopilotEnabled: boolean = false,
     advisorAutopilotTargetScore?: number,
     advisorAutopilotMaxTurns?: number,
+    skipStepExecution: boolean = false,
   ): Promise<{ status: string; executionId: string }> {
     if (!this.grpcService.isAvailable) {
       this.logger.warn('gRPC unavailable, rejecting rerunStepInExecution', {
@@ -4038,6 +4085,76 @@ export class PlaybookExecutionService {
     }
     if (currentPlaybookTask.enabled === false) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Disabled steps cannot be executed');
+    }
+
+    if (skipStepExecution) {
+      const existingTaskResult = (execution.taskResults || []).find(
+        (tr: any) => tr.taskId === taskId,
+      );
+
+      if (existingTaskResult && existingTaskResult.status === 'completed') {
+        this.logger.debug('Skipping step execution, running evaluation only', {
+          executionId,
+          taskId,
+        });
+
+        const effectiveReflectionEnabled =
+          runNodeReflection ?? (playbook as any).reflectionEnabled !== false;
+
+        await this.executionModel.findByIdAndUpdate(executionId, {
+          $set: {
+            runEvaluation: false,
+            reflectionEnabled: effectiveReflectionEnabled,
+            advisorAutopilotStatus: effectiveReflectionEnabled ? 'evaluating' : 'idle',
+            advisorAutopilotTaskId: taskId,
+          },
+        }).exec();
+
+        if (effectiveReflectionEnabled) {
+          await this.executionModel.findByIdAndUpdate(executionId, {
+            $set: {
+              'taskResults.$[elem].judgeStatus': 'evaluating',
+              'taskResults.$[elem].judgeError': null,
+            },
+            arrayFilters: [{ 'elem.taskId': taskId }],
+          }).exec();
+
+          try {
+            await this.judgeEnrichmentService.evaluateNodeNow(userId, executionId, taskId);
+            await this.judgeEnrichmentService.evaluateExecutionSummaryNowIfReady(userId, executionId);
+          } catch (error) {
+            this.logger.warn('Skip-step advisor evaluation failed', {
+              executionId,
+              taskId,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+            await this.executionModel.findByIdAndUpdate(executionId, {
+              $set: {
+                'taskResults.$[elem].judgeStatus': 'failed',
+                'taskResults.$[elem].judgeError': error instanceof Error ? error.message : 'Unknown error',
+                advisorAutopilotStatus: 'failed',
+                advisorAutopilotLastError: error instanceof Error ? error.message : 'Unknown error',
+              },
+              arrayFilters: [{ 'elem.taskId': taskId }],
+            }).exec();
+            throw error;
+          }
+
+          await this.executionModel.findByIdAndUpdate(executionId, {
+            $set: {
+              advisorAutopilotStatus: 'evaluated',
+            },
+          }).exec();
+        }
+
+        return { status: 'evaluation_started', executionId };
+      }
+
+      this.logger.debug('skipStepExecution requested but step not completed, falling back to full rerun', {
+        executionId,
+        taskId,
+        status: existingTaskResult?.status,
+      });
     }
 
     let snapshot = this.graphService.refreshSnapshotTask(execution.playbookSnapshot as any, playbook, taskId);

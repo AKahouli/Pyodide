@@ -5,14 +5,14 @@ import { PlaybookEvaluationService } from './playbook-evaluation.service';
 describe('PlaybookEvaluationService', () => {
   let service: PlaybookEvaluationService;
   let executionModel: { findById: jest.Mock };
-  let baselineModel: { findOne: jest.Mock; find: jest.Mock; updateMany: jest.Mock; create: jest.Mock };
+  let baselineModel: { findOne: jest.Mock; find: jest.Mock; updateMany: jest.Mock; create: jest.Mock; findOneAndUpdate: jest.Mock };
   let evaluationExecutionModel: { findById: jest.Mock; find: jest.Mock; create: jest.Mock };
   let grpcService: { isAvailable: boolean; evaluateSemanticMatch: jest.Mock };
   let logger: { setContext: jest.Mock; warn: jest.Mock };
 
   beforeEach(() => {
     executionModel = { findById: jest.fn() };
-    baselineModel = { findOne: jest.fn(), find: jest.fn(), updateMany: jest.fn(), create: jest.fn() };
+    baselineModel = { findOne: jest.fn(), find: jest.fn(), updateMany: jest.fn(), create: jest.fn(), findOneAndUpdate: jest.fn() };
     evaluationExecutionModel = { findById: jest.fn(), find: jest.fn(), create: jest.fn() };
     grpcService = { isAvailable: false, evaluateSemanticMatch: jest.fn() };
     logger = { setContext: jest.fn(), warn: jest.fn() };
@@ -174,5 +174,25 @@ describe('PlaybookEvaluationService', () => {
       expectation: 'Check finance output',
       judgeModel: 'judge-model',
     });
+  });
+
+  it('marks the active baseline as replaced when removing it', async () => {
+    baselineModel.findOneAndUpdate.mockReturnValue({
+      lean: () => ({ exec: async () => ({ id: 'baseline-1' }) }),
+    });
+
+    const result = await service.removeActiveBaseline(new Types.ObjectId().toString(), 'eval-1');
+
+    expect(result).toEqual({ removed: true });
+  });
+
+  it('returns removed false when there is no active baseline to remove', async () => {
+    baselineModel.findOneAndUpdate.mockReturnValue({
+      lean: () => ({ exec: async () => null }),
+    });
+
+    const result = await service.removeActiveBaseline(new Types.ObjectId().toString(), 'eval-1');
+
+    expect(result).toEqual({ removed: false });
   });
 });

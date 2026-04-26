@@ -66,7 +66,7 @@ export const NodeContextMenuContext = createContext<NodeContextMenuActions | nul
 
 const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
-  running: 'border-primary/40 ring-1 ring-primary/40 shadow-md shadow-primary/10',
+  running: 'border-running shadow-md shadow-running/10',
   completed: '',
   failed: 'ring-2 ring-destructive/60',
   skipped: '',
@@ -75,7 +75,7 @@ const STATUS_RING: Record<StepStatus, string> = {
 
 const STATUS_HEADER_BG: Record<StepStatus, string> = {
   pending: '',
-  running: 'bg-orange-500/10',
+  running: 'bg-running/10',
   completed: 'bg-green-500/10',
   failed: 'bg-destructive/10',
   skipped: '',
@@ -318,9 +318,12 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     return map;
   }, [inputFiles]);
   const effectiveTask = currentTask || data;
-  const agent = effectiveTask.assignedAgentId ? getAgentById(effectiveTask.assignedAgentId) : null;
+  const agentId = effectiveTask.assignedAgentId;
+  const agent = agentId ? getAgentById(agentId) : null;
   const isActionMode = effectiveTask.executionMode === 'action';
-  const isConfigured = isActionMode ? !!effectiveTask.selectedAction : !!effectiveTask.assignedAgentId;
+  const isConfigured = effectiveTask.taskType === 'evaluation'
+    ? !!(effectiveTask.assignedAgentId && (effectiveTask.evaluationConfig?.expectation || effectiveTask.evaluationConfig?.referenceBaselineId))
+    : isActionMode ? !!effectiveTask.selectedAction : !!effectiveTask.assignedAgentId;
   const selectedActionLabel = effectiveTask.selectedAction
     ? `${String(effectiveTask.selectedAction).charAt(0).toUpperCase()}${String(effectiveTask.selectedAction).slice(1)}`
     : null;
@@ -743,6 +746,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             </div>
           </NodeContent>
+          {isStepRunning && (
+            <div className="absolute inset-0 rounded-md pointer-events-none z-10 animate-running-node-glow" />
+          )}
         </Node>
       </ContextMenuTrigger>
 

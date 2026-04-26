@@ -238,6 +238,8 @@ async def test_execute_evaluation_task_uses_prompt_registry_and_emits_data_artif
         settings=SimpleNamespace(),
         model_name="test-model",
         temperature=0.2,
+        evaluator_name="Finance Evaluator",
+        evaluator_instructions="Judge finance outputs strictly.",
     )
 
     assert result["output"] == "Looks good."

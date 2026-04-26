@@ -271,9 +271,9 @@ export function PlaybookCanvasFloatingToolbar({
                     size="sm"
                     disabled={disabled}
                     className={cn('h-9', collapsed ? 'rounded-l-none px-1.5' : 'w-full rounded-t-none px-3 justify-between')}
-                    aria-label={t('toolbar.fromTemplate')}
+                    aria-label={t('toolbar.tasks')}
                   >
-                    {!collapsed && <span className="text-xs text-muted-foreground">{t('toolbar.fromTemplate')}</span>}
+                    {!collapsed && <span className="text-xs text-muted-foreground">{t('toolbar.tasks')}</span>}
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>

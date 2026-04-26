@@ -76,6 +76,7 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
+export type PlaybookNodeType = 'agent' | 'action' | 'evaluation';
 
 export interface PlaybookEvaluationRubricWeights {
   semanticMatch: number;
@@ -1027,6 +1028,7 @@ export interface RerunStepData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  skipStepExecution?: boolean;
 }
 
 export interface ResumeFromStepData {
@@ -1154,6 +1156,7 @@ export interface PlaybookActions {
     advisorAutopilotEnabled?: boolean,
     advisorAutopilotTargetScore?: number,
     advisorAutopilotMaxTurns?: number,
+    skipStepExecution?: boolean,
   ) => Promise<void>;
   resumeFromStep: (playbookId: string, executionId: string, taskId: string, streaming?: boolean) => Promise<void>;
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
@@ -1179,6 +1182,7 @@ export interface PlaybookActions {
   fetchEvaluationBaseline: (playbookId: string, taskId: string) => Promise<PlaybookEvaluationBaseline | null>;
   createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
   createEvaluationBaselineFromCurrentExecution: (playbookId: string, taskId: string, executionId: string, evaluationExecutionId: string) => Promise<PlaybookEvaluationBaseline>;
+  deleteEvaluationBaseline: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
   grabOutputFormatTemplate: (
     playbookId: string,
     taskId: string,
