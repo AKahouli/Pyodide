@@ -1209,7 +1209,7 @@ export class PlaybookExecutionService {
           'Selected step does not exist in the execution order',
         );
       }
-      if (advisorAutopilot.enabled) {
+      if (advisorAutopilot.enabled && !singleStepTask.disableAdvisorEvaluation) {
         this.runSingleStepAdvisorAutopilot(
           userId,
           executionId,
@@ -2176,12 +2176,13 @@ export class PlaybookExecutionService {
               return;
             }
             this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
+            const taskEntry = taskMap.get(taskId);
             this.scheduleNodeReflection(
               userId,
               executionId,
               taskId,
               'completed',
-              reflectionEnabled,
+              reflectionEnabled && !taskEntry?.disableAdvisorEvaluation,
             );
           });
           this.bufferService.activeStepBuffers.delete(executionId);
@@ -2822,7 +2823,7 @@ export class PlaybookExecutionService {
     );
 
     if (outcome.outcome === 'completed') {
-      if (runNodeReflection) {
+      if (runNodeReflection && !task.disableAdvisorEvaluation) {
         try {
           await this.judgeEnrichmentService.evaluateNodeNow(userId, executionId, task.id);
           await this.judgeEnrichmentService.evaluateExecutionSummaryNowIfReady(userId, executionId);
@@ -4101,16 +4102,19 @@ export class PlaybookExecutionService {
         const effectiveReflectionEnabled =
           runNodeReflection ?? (playbook as any).reflectionEnabled !== false;
 
+        const stepAdvisorEnabled =
+          effectiveReflectionEnabled && !currentPlaybookTask.disableAdvisorEvaluation;
+
         await this.executionModel.findByIdAndUpdate(executionId, {
           $set: {
             runEvaluation: false,
-            reflectionEnabled: effectiveReflectionEnabled,
-            advisorAutopilotStatus: effectiveReflectionEnabled ? 'evaluating' : 'idle',
+            reflectionEnabled: stepAdvisorEnabled,
+            advisorAutopilotStatus: stepAdvisorEnabled ? 'evaluating' : 'idle',
             advisorAutopilotTaskId: taskId,
           },
         }).exec();
 
-        if (effectiveReflectionEnabled) {
+        if (stepAdvisorEnabled) {
           await this.executionModel.findByIdAndUpdate(executionId, {
             $set: {
               'taskResults.$[elem].judgeStatus': 'evaluating',
@@ -4228,7 +4232,7 @@ export class PlaybookExecutionService {
       });
     }
 
-    if (advisorAutopilot.enabled) {
+    if (advisorAutopilot.enabled && !currentPlaybookTask.disableAdvisorEvaluation) {
       this.runSingleStepAdvisorAutopilot(
         userId,
         executionId,

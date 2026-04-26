@@ -96,6 +96,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [inputPorts, setInputPorts] = useState<TaskInputPort[]>([]);
   const [outputPorts, setOutputPorts] = useState<TaskOutputPort[]>([]);
   const [evaluationConfig, setEvaluationConfig] = useState<PlaybookEvaluationConfig | null>(null);
+  const [disableAdvisorEvaluation, setDisableAdvisorEvaluation] = useState(false);
+  const [expectedResult, setExpectedResult] = useState<string | null>(null);
   const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<Array<{ id: string; executionId: string; createdAt: string; score?: number | null; verdict?: 'pass' | 'warning' | 'fail' | null }>>([]);
   const [selectedBaselineExecutionId, setSelectedBaselineExecutionId] = useState('');
@@ -159,14 +161,18 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       inputPorts: [...inputPorts],
       outputPorts: [...outputPorts],
       evaluationConfig,
+      disableAdvisorEvaluation,
+      expectedResult,
       ...overrides,
     });
   }, [
     allowClarification,
     assignedAgentId,
     description,
+    disableAdvisorEvaluation,
     nodeType,
     enabled,
+    expectedResult,
     executionMode,
     evaluationConfig,
     inputPorts,
@@ -221,6 +227,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           executionHealth: 5,
         },
       });
+      setDisableAdvisorEvaluation(task.disableAdvisorEvaluation ?? false);
+      setExpectedResult(task.expectedResult ?? null);
     }
   }, [task]);
 
@@ -235,6 +243,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     allowClarification,
     assignedAgentId,
     description,
+    disableAdvisorEvaluation,
     enabled,
     executionMode,
     hasInitializedDraft,
@@ -476,9 +485,17 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
 
         <div className="flex items-center justify-between border-b px-4 py-3">
           <h2 className="text-sm font-semibold">{t('nodeEditor.title')}</h2>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
-            <X className="h-4 w-4" />
-          </Button>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <Label htmlFor="step-enabled" className="text-xs font-normal text-muted-foreground cursor-pointer">
+                {t('nodeEditor.enabledLabel')}
+              </Label>
+              <Switch id="step-enabled" checked={enabled} onCheckedChange={setEnabled} />
+            </div>
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
@@ -574,15 +591,19 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             />
           </div>
 
-          <div className="flex items-center justify-between rounded-md border p-3">
-            <div className="space-y-1">
-              <Label>Step enabled</Label>
-              <div className="text-xs text-muted-foreground">
-                Disabled steps stay in the playbook but are skipped during execution.
-              </div>
+          {!isEvaluationTask && (
+            <div className="space-y-2">
+              <Label>{t('nodeEditor.expectedResult')}</Label>
+              <Textarea
+                value={expectedResult ?? ''}
+                onChange={(e) => setExpectedResult(e.target.value || null)}
+                placeholder={t('nodeEditor.expectedResultPlaceholder')}
+                rows={4}
+                maxLength={10000}
+              />
+              <p className="text-xs text-muted-foreground">{t('nodeEditor.expectedResultHint')}</p>
             </div>
-            <Switch checked={enabled} onCheckedChange={setEnabled} />
-          </div>
+          )}
 
           {isEvaluationTask && evaluationConfig && (
             <div className="space-y-4 rounded-md border p-3">
@@ -1058,6 +1079,26 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 <p className="text-xs text-muted-foreground">{t('nodeEditor.notifyEmailHint')}</p>
               </div>
             )}
+          </div>
+
+          <div className="space-y-3 pt-2">
+            <h4 className="text-sm font-medium">{t('nodeEditor.advisorSettings')}</h4>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label htmlFor="disable-advisor" className="text-sm font-normal">
+                  {t('nodeEditor.disableAdvisorEvaluation')}
+                </Label>
+                <div className="text-xs text-muted-foreground">
+                  {t('nodeEditor.disableAdvisorEvaluationHint')}
+                </div>
+              </div>
+              <Switch
+                id="disable-advisor"
+                checked={disableAdvisorEvaluation}
+                onCheckedChange={setDisableAdvisorEvaluation}
+              />
+            </div>
           </div>
         </div>
 

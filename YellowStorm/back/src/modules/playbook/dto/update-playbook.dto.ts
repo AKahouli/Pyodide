@@ -296,6 +296,11 @@ export class UpdatePlaybookTaskDto {
   @IsString()
   expectedResult?: string | null;
 
+  @ApiPropertyOptional({ description: 'Disable advisor evaluation for this step even when enabled at playbook level' })
+  @IsOptional()
+  @IsBoolean()
+  disableAdvisorEvaluation?: boolean;
+
 }
 
 export class UpdatePlaybookEdgeDto {

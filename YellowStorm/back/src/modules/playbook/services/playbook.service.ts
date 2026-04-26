@@ -995,6 +995,7 @@ export class PlaybookService {
             }
           : null,
         expectedResult: t.expectedResult ?? null,
+        disableAdvisorEvaluation: t.disableAdvisorEvaluation === true,
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,

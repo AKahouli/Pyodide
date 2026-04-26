@@ -88,6 +88,7 @@ export interface PlaybookTaskData {
   toolBindings?: ToolBindingData[];
   evaluationConfig?: PlaybookEvaluationConfigData | null;
   expectedResult?: string | null;
+  disableAdvisorEvaluation?: boolean;
 }
 
 export interface PlaybookEdgeData {

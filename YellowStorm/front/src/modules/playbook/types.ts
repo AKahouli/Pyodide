@@ -196,6 +196,7 @@ export interface PlaybookTask {
   toolBindings?: ToolBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
   expectedResult?: string | null;
+  disableAdvisorEvaluation?: boolean;
 }
 
 export interface ToolBindingAction {
