@@ -1,10 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, type KeyboardEvent } from 'react';
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
+import { useState, useEffect, useMemo, useCallback, useRef, type KeyboardEvent } from 'react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -21,7 +15,7 @@ import {
 } from '@/components/ui/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
-import { ChevronDown, Loader2, X, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Loader2, X, Plus, Trash2, GripVertical } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
@@ -39,6 +33,10 @@ import type {
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
 import { getPortColor } from '../utils/port-colors';
+
+const MIN_WIDTH = 320;
+const MAX_WIDTH = 720;
+const DEFAULT_WIDTH = 420;
 
 interface Props {
   playbookId: string | null;
@@ -106,6 +104,40 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [baselineExecutionDialogOpen, setBaselineExecutionDialogOpen] = useState(false);
   const [viewBaselineDialogOpen, setViewBaselineDialogOpen] = useState(false);
   const [advancedEvaluationOpen, setAdvancedEvaluationOpen] = useState(false);
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(0);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = panelWidth;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, [panelWidth]);
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = dragStartX.current - e.clientX;
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartWidth.current + delta));
+      setPanelWidth(next);
+    };
+    const handleMouseUp = () => {
+      if (!isDragging.current) return;
+      isDragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   const isEvaluationTask = nodeType === 'evaluation';
 
@@ -350,7 +382,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     if (emailInput.trim()) addEmail(emailInput);
   }, [emailInput, addEmail]);
 
-  if (!task) return null;
+  if (!task || !open) return null;
 
   const handleActivateReplay = async (replayId: string) => {
     if (!playbookId || !task) return;
@@ -430,13 +462,27 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   };
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="sm:max-w-md overflow-y-auto" onCloseAutoFocus={(e) => e.preventDefault()}>
-        <SheetHeader>
-          <SheetTitle>{t('nodeEditor.title')}</SheetTitle>
-        </SheetHeader>
+    <>
+      <div
+        className="fixed right-0 top-0 z-50 flex h-full flex-col border-l bg-background shadow-xl"
+        style={{ width: panelWidth }}
+      >
+        <div
+          className="absolute left-0 top-0 z-10 flex h-full w-3 cursor-col-resize items-center justify-center hover:bg-primary/10"
+          onMouseDown={handleResizeStart}
+        >
+          <GripVertical className="h-4 w-4 text-muted-foreground" />
+        </div>
 
-        <div className="space-y-4 py-4">
+        <div className="flex items-center justify-between border-b px-4 py-3">
+          <h2 className="text-sm font-semibold">{t('nodeEditor.title')}</h2>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => onOpenChange(false)}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-4 py-4">
+          <div className="space-y-4">
           <div className="space-y-2">
             <Label>{t('nodeEditor.stepTitle')}</Label>
             <Input
@@ -470,6 +516,52 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
             </select>
           </div>
+
+          {nodeType === 'action' ? (
+            <div className="space-y-2">
+              <Label>{t('nodeEditor.action') || 'Action'}</Label>
+              <select
+                value={selectedAction}
+                onChange={(e) => {
+                  const nextAction = e.target.value as SelectedAction;
+                  setSelectedAction(nextAction);
+                  onSave(task.id, {
+                    executionMode: 'action',
+                    assignedAgentId: null,
+                    selectedAction: nextAction,
+                  });
+                }}
+                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="index">Index</option>
+                <option value="delete">Delete</option>
+                <option value="read">Read</option>
+              </select>
+              <p className="text-xs text-muted-foreground">
+                {selectedAction === 'index' && 'Index documents from input ports into the vector store.'}
+                {selectedAction === 'delete' && 'Delete documents from the workspace.'}
+                {selectedAction === 'read' && 'Read document content for downstream processing.'}
+              </p>
+            </div>
+          ) : nodeType === 'agent' || nodeType === 'evaluation' ? (
+            <div className="space-y-2">
+              <Label>{t('nodeEditor.agent')}</Label>
+              <SearchableSelect
+                options={agentOptions}
+                value={assignedAgentId || ''}
+                onValueChange={(v) => setAssignedAgentId(v)}
+                placeholder={t('nodeEditor.selectAgent')}
+                searchPlaceholder={t('nodeEditor.searchAgent')}
+                emptyText={t('nodeEditor.noAgentFound')}
+              />
+              {nodeType === 'evaluation' && (
+                <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
+              )}
+              {!assignedAgentId && (
+                <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
+              )}
+            </div>
+          ) : null}
 
           <div className="space-y-2">
             <Label>{t('nodeEditor.description')}</Label>
@@ -741,52 +833,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           </div>
           )}
 
-          {nodeType === 'action' ? (
-            <div className="space-y-2">
-              <Label>{t('nodeEditor.action') || 'Action'}</Label>
-              <select
-                value={selectedAction}
-                onChange={(e) => {
-                  const nextAction = e.target.value as SelectedAction;
-                  setSelectedAction(nextAction);
-                  onSave(task.id, {
-                    executionMode: 'action',
-                    assignedAgentId: null,
-                    selectedAction: nextAction,
-                  });
-                }}
-                className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-              >
-                <option value="index">Index</option>
-                <option value="delete">Delete</option>
-                <option value="read">Read</option>
-              </select>
-              <p className="text-xs text-muted-foreground">
-                {selectedAction === 'index' && 'Index documents from input ports into the vector store.'}
-                {selectedAction === 'delete' && 'Delete documents from the workspace.'}
-                {selectedAction === 'read' && 'Read document content for downstream processing.'}
-              </p>
-            </div>
-          ) : nodeType === 'agent' || nodeType === 'evaluation' ? (
-            <div className="space-y-2">
-              <Label>{t('nodeEditor.agent')}</Label>
-              <SearchableSelect
-                options={agentOptions}
-                value={assignedAgentId || ''}
-                onValueChange={(v) => setAssignedAgentId(v)}
-                placeholder={t('nodeEditor.selectAgent')}
-                searchPlaceholder={t('nodeEditor.searchAgent')}
-                emptyText={t('nodeEditor.noAgentFound')}
-              />
-              {nodeType === 'evaluation' && (
-                <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
-              )}
-              {!assignedAgentId && (
-                <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
-              )}
-            </div>
-          ) : null}
-
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">Replay baselines</h4>
@@ -1015,7 +1061,8 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           </div>
         </div>
 
-      </SheetContent>
+        </div>
+      </div>
 
       <Dialog open={!!editingReplay} onOpenChange={(open) => {
         if (!open) {
@@ -1130,6 +1177,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Sheet>
+    </>
   );
 }

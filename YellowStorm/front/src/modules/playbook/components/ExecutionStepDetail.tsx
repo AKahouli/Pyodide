@@ -323,6 +323,10 @@ export function ExecutionStepDetail({
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
+  const repeatability = usePlaybookStore((s) => s.repeatability);
+  const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
+  const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
+  const clearRepeatability = usePlaybookStore((s) => s.clearRepeatability);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
@@ -669,6 +673,12 @@ export function ExecutionStepDetail({
       return latestJudgeHistoryId;
     });
   }, [judgeHistory, step?.taskId]);
+
+  useEffect(() => {
+    if (activeTab !== 'judge' || !currentPlaybook?.id) return;
+    fetchRepeatability(currentPlaybook.id);
+    return () => { clearRepeatability(); };
+  }, [activeTab, currentPlaybook?.id, fetchRepeatability, clearRepeatability]);
 
   const handleSaveEvaluationBaseline = useCallback(async () => {
     if (!execution || !step) return;
@@ -1642,6 +1652,61 @@ export function ExecutionStepDetail({
                     emptyLabel={t('detail.judge.none')}
                   />
                 </div>
+              </div>
+            )}
+
+            {repeatability && (
+              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t('repeatability.title')}
+                </div>
+                <div className="grid gap-3 md:grid-cols-3">
+                  <div className={cn('rounded border p-2', getScoreTone(repeatability.overallScore))}>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('repeatability.overallScore')}</div>
+                    <div className="mt-1 text-lg font-semibold">
+                      {repeatability.overallScore !== null ? `${Math.round(repeatability.overallScore)}%` : '—'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t(`repeatability.verdict.${repeatability.overallVerdict}` as any)}</div>
+                    <Badge variant="outline" className="mt-1">{t(`repeatability.verdict.${repeatability.overallVerdict}` as any)}</Badge>
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('repeatability.evaluatedTasks')}</div>
+                    <div className="mt-1 font-medium">{repeatability.evaluatedTasks} / {repeatability.totalTasks}</div>
+                  </div>
+                </div>
+                {repeatability.tasks.length > 0 && (
+                  <div className="space-y-2">
+                    {repeatability.tasks.map((rt) => (
+                      <div key={rt.taskId} className="rounded-md border bg-background p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="font-medium text-xs truncate">{rt.taskTitle || rt.taskId}</div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">{t(`repeatability.verdict.${rt.verdict}` as any)}</Badge>
+                            {rt.repeatabilityScore !== null && (
+                              <span className={cn('text-xs font-semibold', rt.repeatabilityScore >= 75 ? 'text-green-600' : rt.repeatabilityScore >= 50 ? 'text-amber-600' : 'text-red-600')}>
+                                {Math.round(rt.repeatabilityScore)}%
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>{t(`repeatability.source.${rt.expectedResultSource}` as any)}</span>
+                          <span>·</span>
+                          <span>{rt.comparableCount} comparable</span>
+                        </div>
+                        {rt.findings.length > 0 && (
+                          <ul className="space-y-0.5 text-xs text-muted-foreground">
+                            {rt.findings.map((finding, i) => (
+                              <li key={i}>• {finding}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </TabsContent>

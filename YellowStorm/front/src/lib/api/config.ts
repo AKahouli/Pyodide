@@ -263,6 +263,8 @@ export const API_ENDPOINTS = {
     evaluationBaseline: (id: string, taskId: string) => `/playbooks/${id}/evaluation-tasks/${taskId}/baseline`,
     evaluationBaselineFromExecution: (id: string, taskId: string) => `/playbooks/${id}/evaluation-tasks/${taskId}/baseline/from-execution`,
     evaluationBaselineFromCurrentExecution: (id: string, taskId: string) => `/playbooks/${id}/evaluation-tasks/${taskId}/baseline/from-current-execution`,
+    repeatability: (id: string) => `/playbooks/${id}/repeatability`,
+    repeatabilityTask: (id: string, taskId: string) => `/playbooks/${id}/repeatability/${taskId}`,
     bulkDelete: '/playbooks/bulk-delete',
     activeExecutions: '/playbooks/active-executions',
   },

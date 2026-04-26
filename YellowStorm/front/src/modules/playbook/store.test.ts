@@ -25,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
   revertToSnapshot: vi.fn(),
   upsertPlaybookTriggerSchedule: vi.fn(),
   clearPlaybookTriggerSchedule: vi.fn(),
+  getPlaybookRepeatability: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -1080,5 +1081,58 @@ describe('playbook store', () => {
     expect(state.triggerSaving).toBe(false);
     expect(state.triggerError).toBeTruthy();
     expect(handleApiErrorMock).toHaveBeenCalled();
+  });
+
+  describe('fetchRepeatability', () => {
+    it('fetches and stores repeatability summary', async () => {
+      const mockSummary = {
+        playbookId: 'p1',
+        overallScore: 82,
+        overallVerdict: 'stable',
+        totalTasks: 3,
+        evaluatedTasks: 2,
+        tasks: [{ taskId: 't1', verdict: 'stable' }],
+        generatedAt: '2026-04-26T20:00:00.000Z',
+      };
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce(mockSummary);
+
+      const result = await usePlaybookStore.getState().fetchRepeatability('p1', 5);
+
+      expect(apiMock.getPlaybookRepeatability).toHaveBeenCalledWith('p1', 5);
+      expect(result.overallScore).toBe(82);
+      expect(usePlaybookStore.getState().repeatability).toEqual(mockSummary);
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+    });
+
+    it('sets loading state and clears on success', async () => {
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallScore: null, overallVerdict: 'insufficient_data', totalTasks: 0, evaluatedTasks: 0, tasks: [], generatedAt: '' });
+
+      await usePlaybookStore.getState().fetchRepeatability('p1');
+
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+    });
+
+    it('clears loading on failure and calls handleApiError', async () => {
+      apiMock.getPlaybookRepeatability.mockRejectedValueOnce(new Error('network'));
+
+      await expect(
+        usePlaybookStore.getState().fetchRepeatability('p1'),
+      ).rejects.toThrow('network');
+
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+      expect(handleApiErrorMock).toHaveBeenCalled();
+    });
+  });
+
+  describe('clearRepeatability', () => {
+    it('resets repeatability state', async () => {
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallScore: 90, overallVerdict: 'stable', totalTasks: 1, evaluatedTasks: 1, tasks: [], generatedAt: '' });
+      await usePlaybookStore.getState().fetchRepeatability('p1');
+      expect(usePlaybookStore.getState().repeatability).not.toBeNull();
+
+      usePlaybookStore.getState().clearRepeatability();
+      expect(usePlaybookStore.getState().repeatability).toBeNull();
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+    });
   });
 });

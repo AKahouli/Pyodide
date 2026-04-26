@@ -87,6 +87,7 @@ export interface PlaybookTaskData {
   stepReplayMode?: string;
   toolBindings?: ToolBindingData[];
   evaluationConfig?: PlaybookEvaluationConfigData | null;
+  expectedResult?: string | null;
 }
 
 export interface PlaybookEdgeData {

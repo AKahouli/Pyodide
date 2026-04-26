@@ -994,6 +994,7 @@ export class PlaybookService {
               },
             }
           : null,
+        expectedResult: t.expectedResult ?? null,
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,

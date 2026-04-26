@@ -134,6 +134,8 @@ const initialState: PlaybookState = {
   nodeTemplatesLoadedAt: 0,
   evaluationExecutionsByTask: {},
   evaluationBaselinesByTask: {},
+  repeatability: null,
+  repeatabilityLoading: false,
 };
 
 // ===== Stable empty references =====
@@ -1330,6 +1332,23 @@ export const usePlaybookStore = create<PlaybookStore>()(
           handleApiError(err);
           throw err;
         }
+      },
+
+      fetchRepeatability: async (playbookId, limit = 5) => {
+        set({ repeatabilityLoading: true });
+        try {
+          const result = await api.getPlaybookRepeatability(playbookId, limit);
+          set({ repeatability: result, repeatabilityLoading: false });
+          return result;
+        } catch (err) {
+          set({ repeatabilityLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      clearRepeatability: () => {
+        set({ repeatability: null, repeatabilityLoading: false });
       },
 
       updateTaskReplayFormatGuide: async (playbookId, taskId, replayId, data) => {

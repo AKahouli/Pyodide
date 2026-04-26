@@ -85,6 +85,7 @@ import { PlaybookExecutionGraphService } from './services/playbook-execution-gra
 import { PlaybookExecutionNotificationService } from './services/playbook-execution-notification.service';
 import { PlaybookExecutionBufferService } from './services/playbook-execution-buffer.service';
 import { PlaybookExecutionAdvisorService } from './services/playbook-execution-advisor.service';
+import { PlaybookRepeatabilityService } from './services/playbook-repeatability.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -170,6 +171,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookExecutionNotificationService,
     PlaybookExecutionBufferService,
     PlaybookExecutionAdvisorService,
+    PlaybookRepeatabilityService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],

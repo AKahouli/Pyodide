@@ -121,6 +121,7 @@ const baseTask: PlaybookTask = {
   inputPorts: [],
   outputPorts: [],
   evaluationConfig: null,
+  expectedResult: null,
 };
 
 describe('PlaybookNodeEditor', () => {
@@ -199,6 +200,26 @@ describe('PlaybookNodeEditor', () => {
 
     await waitFor(() => {
       expect(within(container).queryAllByText(/exec-1/).length).toBe(0);
+    });
+  });
+
+  it('does not render expected result placeholder for evaluation tasks', async () => {
+    const { container } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={baseTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      const textareas = container.querySelectorAll('textarea');
+      const hasPlaceholder = Array.from(textareas).some(
+        (ta) => (ta as HTMLTextAreaElement).getAttribute('placeholder') === 'nodeEditor.expectedResultPlaceholder',
+      );
+      expect(hasPlaceholder).toBe(false);
     });
   });
 });

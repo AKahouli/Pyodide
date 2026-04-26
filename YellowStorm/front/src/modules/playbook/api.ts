@@ -35,6 +35,8 @@ import type {
   ApplyRemediationsData,
   PlaybookEvaluationBaseline,
   PlaybookEvaluationExecution,
+  PlaybookRepeatabilitySummary,
+  TaskRepeatabilityResult,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -699,6 +701,29 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
 export async function deleteEvaluationBaseline(playbookId: string, taskId: string): Promise<{ removed: boolean }> {
   const response = await apiClient.delete<ApiResponse<{ removed: boolean }>>(
     API_ENDPOINTS.playbooks.evaluationBaseline(playbookId, taskId),
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookRepeatability(
+  playbookId: string,
+  limit = 5,
+): Promise<PlaybookRepeatabilitySummary> {
+  const response = await apiClient.get<ApiResponse<PlaybookRepeatabilitySummary>>(
+    API_ENDPOINTS.playbooks.repeatability(playbookId),
+    { params: { limit } },
+  );
+  return response.data.data;
+}
+
+export async function getTaskRepeatability(
+  playbookId: string,
+  taskId: string,
+  limit = 5,
+): Promise<TaskRepeatabilityResult> {
+  const response = await apiClient.get<ApiResponse<TaskRepeatabilityResult>>(
+    API_ENDPOINTS.playbooks.repeatabilityTask(playbookId, taskId),
+    { params: { limit } },
   );
   return response.data.data;
 }

@@ -274,8 +274,14 @@ export class PlaybookTask {
   @Prop({ type: Number, default: 4 })
   advisorAutopilotMaxTurns!: number;
 
+  @Prop({ type: Boolean, default: false })
+  disableAdvisorEvaluation!: boolean;
+
   @Prop({ type: PlaybookEvaluationConfigSchema, default: null })
   evaluationConfig!: PlaybookEvaluationConfig | null;
+
+  @Prop({ type: String, default: null })
+  expectedResult!: string | null;
 }
 
 export const PlaybookTaskSchema = SchemaFactory.createForClass(PlaybookTask);

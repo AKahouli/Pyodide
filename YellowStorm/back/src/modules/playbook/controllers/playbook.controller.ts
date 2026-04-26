@@ -61,6 +61,7 @@ import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.d
 import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
 import { PlaybookMailTriggerTestEventService } from '../services/playbook-mail-trigger-test-event.service';
 import { PlaybookMailGraphClientService } from '../services/playbook-mail-graph-client.service';
+import { PlaybookRepeatabilityService } from '../services/playbook-repeatability.service';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -74,6 +75,7 @@ export class PlaybookController {
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly evaluationService: PlaybookEvaluationService,
+    private readonly repeatabilityService: PlaybookRepeatabilityService,
     private readonly mailTriggerTestEventService: PlaybookMailTriggerTestEventService,
     private readonly mailGraphClientService: PlaybookMailGraphClientService,
     private readonly streamGateway: PlaybookStreamGatewayService,
@@ -125,6 +127,29 @@ export class PlaybookController {
   @UseGuards(PlaybookOwnerGuard)
   async removeEvaluationBaseline(@Param('id') id: string, @Param('taskId') taskId: string) {
     return this.evaluationService.removeActiveBaseline(id, taskId);
+  }
+
+  @Get(':id/repeatability')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get playbook repeatability analysis' })
+  async getRepeatability(
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = Math.min(Math.max(parseInt(limit || '5', 10) || 5, 1), 20);
+    return this.repeatabilityService.getRepeatability(id, parsedLimit);
+  }
+
+  @Get(':id/repeatability/:taskId')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get task-level repeatability analysis' })
+  async getTaskRepeatability(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = Math.min(Math.max(parseInt(limit || '5', 10) || 5, 1), 20);
+    return this.repeatabilityService.getTaskRepeatability(id, taskId, parsedLimit);
   }
 
   @Post()

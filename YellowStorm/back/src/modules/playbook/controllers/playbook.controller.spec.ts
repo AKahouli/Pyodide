@@ -132,6 +132,7 @@ describe('PlaybookController', () => {
       {} as any,
       {} as any,
       evaluationService as unknown as PlaybookEvaluationService,
+      {} as any,
       mailTriggerTestEventService as any,
       mailGraphClientService as any,
       streamGateway as unknown as PlaybookStreamGatewayService,

@@ -291,6 +291,11 @@ export class UpdatePlaybookTaskDto {
   @Type(() => EvaluationConfigDto)
   evaluationConfig?: EvaluationConfigDto | null;
 
+  @ApiPropertyOptional({ description: 'Expected result text for repeatability evaluation' })
+  @IsOptional()
+  @IsString()
+  expectedResult?: string | null;
+
 }
 
 export class UpdatePlaybookEdgeDto {

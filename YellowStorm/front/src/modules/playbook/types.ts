@@ -195,6 +195,7 @@ export interface PlaybookTask {
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
+  expectedResult?: string | null;
 }
 
 export interface ToolBindingAction {
@@ -1114,6 +1115,8 @@ export interface PlaybookState {
   nodeTemplatesLoadedAt: number;
   evaluationExecutionsByTask: Record<string, PlaybookEvaluationExecution[]>;
   evaluationBaselinesByTask: Record<string, PlaybookEvaluationBaseline | null>;
+  repeatability: PlaybookRepeatabilitySummary | null;
+  repeatabilityLoading: boolean;
 }
 
 export interface PlaybookActions {
@@ -1183,6 +1186,8 @@ export interface PlaybookActions {
   createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
   createEvaluationBaselineFromCurrentExecution: (playbookId: string, taskId: string, executionId: string, evaluationExecutionId: string) => Promise<PlaybookEvaluationBaseline>;
   deleteEvaluationBaseline: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
+  fetchRepeatability: (playbookId: string, limit?: number) => Promise<PlaybookRepeatabilitySummary>;
+  clearRepeatability: () => void;
   grabOutputFormatTemplate: (
     playbookId: string,
     taskId: string,
@@ -1260,3 +1265,34 @@ export interface PlaybookActions {
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;
+
+export type ExpectedResultSource = 'node_field' | 'golden_baseline' | 'none';
+
+export interface TaskRepeatabilityResult {
+  taskId: string;
+  taskTitle: string;
+  expectedResult: string | null;
+  expectedResultSource: ExpectedResultSource;
+  executionCount: number;
+  comparableCount: number;
+  repeatabilityScore: number | null;
+  verdict: 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline';
+  findings: string[];
+  perExecution: Array<{
+    executionId: string;
+    executionNumber: number;
+    output: string | null;
+    score: number | null;
+    completedAt: string | null;
+  }>;
+}
+
+export interface PlaybookRepeatabilitySummary {
+  playbookId: string;
+  overallScore: number | null;
+  overallVerdict: 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline';
+  totalTasks: number;
+  evaluatedTasks: number;
+  tasks: TaskRepeatabilityResult[];
+  generatedAt: string;
+}

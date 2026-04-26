@@ -17,6 +17,8 @@ import {
   clearPlaybookTriggerSchedule,
   rerunPlaybookStep,
   resumePlaybookFromStep,
+  getPlaybookRepeatability,
+  getTaskRepeatability,
 } from './api';
 
 const apiClientMock = vi.hoisted(() => ({
@@ -235,5 +237,50 @@ describe('playbook api', () => {
       API_ENDPOINTS.playbooks.resumeFromStep('p1', 'e1'),
       { taskId: 't2', streaming: true },
     );
+  });
+
+  it('fetches playbook repeatability with limit param', async () => {
+    const mockSummary = {
+      playbookId: 'p1',
+      overallScore: 82,
+      overallVerdict: 'stable',
+      totalTasks: 3,
+      evaluatedTasks: 2,
+      tasks: [],
+      generatedAt: '2026-04-26T20:00:00.000Z',
+    };
+    apiClientMock.get.mockResolvedValueOnce({ data: { data: mockSummary } });
+
+    const result = await getPlaybookRepeatability('p1', 5);
+    expect(apiClientMock.get).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.repeatability('p1'),
+      { params: { limit: 5 } },
+    );
+    expect(result.overallScore).toBe(82);
+    expect(result.overallVerdict).toBe('stable');
+  });
+
+  it('fetches task-level repeatability', async () => {
+    const mockTaskResult = {
+      taskId: 't1',
+      taskTitle: 'Step 1',
+      expectedResult: 'Expected output',
+      expectedResultSource: 'node_field',
+      executionCount: 3,
+      comparableCount: 3,
+      repeatabilityScore: 95,
+      verdict: 'stable',
+      findings: [],
+      perExecution: [],
+    };
+    apiClientMock.get.mockResolvedValueOnce({ data: { data: mockTaskResult } });
+
+    const result = await getTaskRepeatability('p1', 't1', 10);
+    expect(apiClientMock.get).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.repeatabilityTask('p1', 't1'),
+      { params: { limit: 10 } },
+    );
+    expect(result.taskId).toBe('t1');
+    expect(result.expectedResultSource).toBe('node_field');
   });
 });
