@@ -319,10 +319,10 @@ export class PlaybookMailWebhookService {
           workspaceImport: {
             workspaceDocumentId: doc.id,
             filename: doc.originalName,
-            finalFilename: doc.filename,
+            finalFilename: doc.filename || null,
             mimeType: doc.mimeType,
             size: doc.size,
-            sourcePath: doc.path,
+            sourcePath: doc.path || null,
             collisionResolved: doc.originalName !== filename,
             error: null,
           },
