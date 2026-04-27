@@ -28,6 +28,30 @@ export function getComponentType(comp: any): ComponentType {
 export function extractComponentData(comp: any): { type: ComponentType; data: Record<string, unknown> } {
   const type = getComponentType(comp);
 
+  const parseJsonArray = (value: unknown): Record<string, unknown>[] => {
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string') return [];
+
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const parseJsonObject = (value: unknown): Record<string, unknown> => {
+    if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+    if (typeof value !== 'string') return {};
+
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  };
+
   switch (type) {
     case 'text':
       return {
@@ -90,14 +114,16 @@ export function extractComponentData(comp: any): { type: ComponentType; data: Re
       };
     case 'chart':
       const chart = comp.chart || {};
+      const normalizedData = parseJsonArray(chart.data || chart.chartData || []);
       return {
         type,
         data: {
           title: chart.title || '',
-          chartData: chart.data || chart.chartData || '',
-          config: chart.config || '',
+          data: normalizedData,
+          chartData: normalizedData,
+          config: parseJsonObject(chart.config),
           xAxisKey: chart.xAxisKey || chart.x_axis_key || '',
-          series: chart.series || '',
+          series: parseJsonArray(chart.series),
           kind: chart.kind || 'CHART_KIND_UNSPECIFIED',
           yAxisKey: chart.yAxisKey || chart.y_axis_key || '',
           stacked: chart.stacked || false,

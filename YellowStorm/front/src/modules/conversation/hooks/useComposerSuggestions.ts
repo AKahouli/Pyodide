@@ -8,12 +8,7 @@ const DEFAULT_MIN_LENGTH = 3;
 
 /** apiClient rejects with `{ code, message, statusCode }` from the response interceptor. */
 function httpStatusFromComposerError(err: unknown): number {
-  if (
-    typeof err === 'object' &&
-    err !== null &&
-    'statusCode' in err &&
-    typeof (err as { statusCode: unknown }).statusCode === 'number'
-  ) {
+  if (typeof err === 'object' && err !== null && 'statusCode' in err && typeof (err as { statusCode: unknown }).statusCode === 'number') {
     return (err as { statusCode: number }).statusCode;
   }
   return 0;
@@ -27,13 +22,7 @@ export interface UseComposerSuggestionsOptions {
   agentId?: string;
 }
 
-export function useComposerSuggestions({
-  draftText,
-  enabled,
-  debounceMs = DEFAULT_DEBOUNCE_MS,
-  minLength = DEFAULT_MIN_LENGTH,
-  agentId,
-}: UseComposerSuggestionsOptions) {
+export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAULT_DEBOUNCE_MS, minLength = DEFAULT_MIN_LENGTH, agentId }: UseComposerSuggestionsOptions) {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
@@ -44,7 +33,6 @@ export function useComposerSuggestions({
   // Fetch composer-suggestions agent once on mount if no agentId provided
   useEffect(() => {
     if (agentId) {
-      console.log('[ComposerSuggestions] Using provided agentId:', agentId);
       setResolvedAgentId(agentId);
       return;
     }
@@ -52,45 +40,22 @@ export function useComposerSuggestions({
     const fetchComposerAgent = async () => {
       try {
         const agents = await getAllAgents();
-        console.log('[ComposerSuggestions] All agents fetched:', agents.map(a => ({
-          id: a.id,
-          name: a.name,
-          agentTypeName: a.agentType.name,
-          isDefault: a.isDefault,
-        })));
 
         // Priority 1: Find by name === 'Suggestions' (case-insensitive)
-        let composerAgent = agents.find(
-          (a) => a.name.toLowerCase() === 'suggestions' && a.isDefault
-        );
-        console.log('[ComposerSuggestions] Tried finding by name "Suggestions" (priority 1), composerAgent:', composerAgent?.name);
+        let composerAgent = agents.find((a) => a.name.toLowerCase() === 'suggestions' && a.isDefault);
 
         // Priority 2: Try to find by agentType.name === 'composer-suggestions'
         if (!composerAgent) {
-          composerAgent = agents.find(
-            (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
-          );
-          console.log('[ComposerSuggestions] Tried finding by agentType.name (priority 2), composerAgent:', composerAgent?.name);
+          composerAgent = agents.find((a) => a.agentType.name === 'composer-suggestions' && a.isDefault);
         }
 
         // Priority 3: Try to find by agentType.slug === 'composer-suggestions'
         if (!composerAgent) {
-          composerAgent = agents.find(
-            (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
-          );
-          console.log('[ComposerSuggestions] Tried finding by agentType.slug (priority 3), composerAgent:', composerAgent?.name);
+          composerAgent = agents.find((a) => a.agentType.name === 'composer-suggestions' && a.isDefault);
         }
 
         if (composerAgent) {
-          console.log('[ComposerSuggestions] Found default agent:', {
-            id: composerAgent.id,
-            name: composerAgent.name,
-            agentType: composerAgent.agentType.name,
-            isDefault: composerAgent.isDefault,
-          });
           setResolvedAgentId(composerAgent.id);
-        } else {
-          console.warn('[ComposerSuggestions] No default agent found for composer suggestions');
         }
       } catch (err) {
         console.error('[ComposerSuggestions] Failed to fetch composer agent:', err);
@@ -128,13 +93,6 @@ export function useComposerSuggestions({
       setSuggestion(null);
       setLoading(true);
       setFetchError(false);
-
-      console.log('[ComposerSuggestions Hook] Sending suggestion request', {
-        textLength: text.length,
-        textPreview: text.substring(0, 50),
-        resolvedAgentId,
-        hasResolvedAgentId: !!resolvedAgentId,
-      });
 
       fetchComposerSuggestions(text, ac.signal, resolvedAgentId)
         .then(({ content }) => {

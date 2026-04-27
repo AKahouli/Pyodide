@@ -52,7 +52,6 @@ export function ThemeProvider({ children, defaultTheme = 'dark', defaultColorThe
   const [logo, setLogo] = useState<'yellowmind' | 'kpmg'>(() => 'yellowmind');
   const { isAuthenticated, user } = useAuth();
 
-  console.log('colorTheme', colorTheme);
   useEffect(() => {
     const root = globalThis.document.documentElement;
 

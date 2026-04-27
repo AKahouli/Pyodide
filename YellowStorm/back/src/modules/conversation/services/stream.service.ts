@@ -844,6 +844,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
               // Extract component type and data from oneof structure
               const { type, data } = this.extractComponentData(comp);
 
+              // Debug logging for chart components
+              if (type === 'chart') {
+                this.logger.debug('[Chart chunk] Sending to frontend', {
+                  id: comp.id,
+                  action,
+                  dataKeys: Object.keys(data),
+                  hasData: 'data' in data,
+                  hasChartData: 'chartData' in data,
+                  dataDataType: typeof data.data,
+                  chartDataDataType: typeof data.chartData,
+                  dataValue: data.data,
+                  chartDataValue: data.chartData,
+                }, logOpts);
+              }
+
               // Capture time to first token when first text/reasoning content appears
               if (timeToFirstToken === null) {
                 if ((type === 'text' || type === 'reasoning') && data?.content) {

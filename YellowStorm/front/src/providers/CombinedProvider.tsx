@@ -46,7 +46,6 @@ export function CombinedProvider({ children }: CombinedProviderProps) {
         .then((appearance) => {
           if (isMounted) {
             setAppearanceSettings(appearance);
-            console.log('defaultColorTheme', appearance.defaultColorTheme);
             applyAppearanceClass(appearance.defaultColorTheme);
           }
         })

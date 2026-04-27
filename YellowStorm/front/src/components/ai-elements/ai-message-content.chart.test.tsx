@@ -111,4 +111,81 @@ describe('AIMessageContent charts', () => {
       series: [],
     });
   });
+
+  it('keeps backend-normalized chart data available after streaming merge', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        id: 'chart-normalized',
+        type: 'chart',
+        data: {
+          title: 'Normalized chart',
+          data: [{ month: 'Jan', revenue: 42 }],
+          chartData: [{ month: 'Jan', revenue: 42 }],
+          config: { revenue: { label: 'Revenue', color: '#123456' } },
+          xAxisKey: 'month',
+          yAxisKey: 'revenue',
+          series: [{ dataKey: 'revenue', label: 'Revenue' }],
+          kind: 'line',
+          showLegend: true,
+          showGrid: true,
+        },
+      },
+    ] as any);
+
+    expect(parts[0]).toMatchObject({
+      type: 'chart',
+      title: 'Normalized chart',
+      data: [{ month: 'Jan', revenue: 42 }],
+      kind: 'line',
+    });
+  });
+
+  it('defaults unspecified proto chart kinds to a renderable chart kind', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        id: 'chart-unspecified',
+        type: 'chart',
+        data: {
+          title: 'Revenue trend',
+          data: [{ month: 'Jan', revenue: 32 }],
+          chartData: [{ month: 'Jan', revenue: 32 }],
+          config: { revenue: { label: 'Revenue', color: '#2563eb' } },
+          xAxisKey: 'month',
+          yAxisKey: 'revenue',
+          series: [{ dataKey: 'revenue', label: 'Revenue' }],
+          kind: 'CHART_KIND_UNSPECIFIED',
+          layout: 'CHART_LAYOUT_UNSPECIFIED',
+        },
+      },
+    ] as any);
+
+    expect(parts[0]).toMatchObject({
+      type: 'chart',
+      kind: 'bar',
+      layout: 'horizontal',
+    });
+  });
+
+  it('drops chart payload strings produced by object concatenation', () => {
+    const parts = mapComponentsToContentParts([
+      {
+        id: 'chart-bad',
+        type: 'chart',
+        data: {
+          title: 'Broken chart',
+          chartData: '[object Object],[object Object],[object Object]',
+          config: {},
+          xAxisKey: 'month',
+          yAxisKey: 'revenue',
+          series: [],
+          kind: 'line',
+        },
+      },
+    ] as any);
+
+    expect(parts[0]).toMatchObject({
+      type: 'chart',
+      data: [],
+    });
+  });
 });

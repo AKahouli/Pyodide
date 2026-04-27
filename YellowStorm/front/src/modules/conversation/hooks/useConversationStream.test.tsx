@@ -65,4 +65,49 @@ describe('useConversationStream', () => {
     expect(storeHandlers.onStreamComplete).toHaveBeenCalled();
     expect(fetchUsageStatusMock).toHaveBeenCalled();
   });
+
+  it('preserves chart arrays from the mock stream path', () => {
+    let listener: ((event: StreamSSEEvent) => void) | null = null;
+    subscribeMock.mockImplementation((cb: (event: StreamSSEEvent) => void) => {
+      listener = cb;
+      return vi.fn();
+    });
+
+    renderHook(() => useConversationStream());
+
+    listener!({
+      type: 'stream_chunk',
+      data: {
+        conversationId: 'c1',
+        action: 'add',
+        component: {
+          id: 'chart-1',
+          type: 'chart',
+          data: {
+            title: 'Revenue trend',
+            data: [{ month: 'Jan', revenue: 42 }],
+            chartData: [{ month: 'Jan', revenue: 42 }],
+            config: { revenue: { label: 'Revenue' } },
+            xAxisKey: 'month',
+            series: [{ dataKey: 'revenue', label: 'Revenue' }],
+            kind: 'CHART_KIND_LINE',
+          },
+        },
+      },
+    });
+
+    expect(storeHandlers.onStreamChunk).toHaveBeenCalledWith(
+      expect.objectContaining({
+        component: expect.objectContaining({
+          type: 'chart',
+            data: expect.objectContaining({
+              data: [{ month: 'Jan', revenue: 42 }],
+              chartData: [{ month: 'Jan', revenue: 42 }],
+            kind: 'line',
+            layout: 'horizontal',
+          }),
+        }),
+      }),
+    );
+  });
 });

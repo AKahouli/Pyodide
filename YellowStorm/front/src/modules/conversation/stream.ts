@@ -4,6 +4,28 @@ import { translateConversation } from './translation';
 
 type StreamListener = (event: StreamSSEEvent) => void;
 
+function safeJsonParse(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function normalizeChartPayload(data: unknown): unknown {
+  if (!data || typeof data !== 'object') return data;
+
+  const payload = data as Record<string, unknown>;
+  return {
+    ...payload,
+    data: safeJsonParse(payload.data),
+    chartData: safeJsonParse(payload.chartData),
+    config: safeJsonParse(payload.config),
+    series: safeJsonParse(payload.series),
+  };
+}
+
 /**
  * ConversationStreamService - SSE-based streaming for AI responses.
  * Handles connection management, reconnection with exponential backoff,
@@ -116,6 +138,22 @@ class ConversationStreamService {
             this.emit({ type: 'stream_start', data });
             break;
           case 'stream_chunk':
+            if (data?.component?.type === 'chart') {
+              data.component = {
+                ...data.component,
+                data: normalizeChartPayload(data.component.data),
+              };
+            }
+            if (data?.component?.type === 'chart') {
+              console.debug('[ConversationStreamService][stream_chunk][chart]', {
+                action: data.action,
+                id: data.component?.id,
+                keys: Object.keys(data.component || {}),
+                dataKeys: data.component?.data ? Object.keys(data.component.data) : [],
+                chartDataLength: Array.isArray(data.component?.data?.data) ? data.component.data.data.length : undefined,
+                chartDataAltLength: Array.isArray(data.component?.data?.chartData) ? data.component.data.chartData.length : undefined,
+              });
+            }
             this.emit({ type: 'stream_chunk', data });
             break;
           case 'stream_complete':
