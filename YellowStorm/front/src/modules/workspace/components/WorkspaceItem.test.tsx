@@ -63,6 +63,8 @@ describe('WorkspaceItem', () => {
           documentCount: 2,
           usedStorage: 256,
           allocatedStorage: 1024,
+          isSystem: false,
+          isPersonal: true,
           createdAt: '',
           updatedAt: '',
         }}

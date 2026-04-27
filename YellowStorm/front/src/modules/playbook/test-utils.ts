@@ -50,6 +50,7 @@ export function makePlaybook(overrides: Partial<Playbook> = {}): Playbook {
     isFavorite: false,
     isActive: true,
     executionSchedule: null,
+    reflectionEnabled: true,
     triggers: [
       { type: 'manual', enabled: true },
       { type: 'schedule', enabled: false, schedule: null },
@@ -79,6 +80,9 @@ export function makePlaybook(overrides: Partial<Playbook> = {}): Playbook {
       },
     ],
     automatedTriggerType: null,
+    advisorAutopilotEnabled: false,
+    advisorAutopilotTargetScore: null,
+    advisorAutopilotMaxTurns: null,
     createdAt: '2025-01-01T00:00:00.000Z',
     updatedAt: '2025-01-01T00:00:00.000Z',
     ...overrides,

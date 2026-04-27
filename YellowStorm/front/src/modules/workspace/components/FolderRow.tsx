@@ -3,7 +3,7 @@
  * Single folder item for hierarchical tree view
  */
 
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { Folder, FolderOpen, ChevronRight, MoreVertical, Trash2, Edit2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';

@@ -44,6 +44,7 @@ export function useComposerSuggestions({
   // Fetch composer-suggestions agent once on mount if no agentId provided
   useEffect(() => {
     if (agentId) {
+      console.log('[ComposerSuggestions] Using provided agentId:', agentId);
       setResolvedAgentId(agentId);
       return;
     }
@@ -51,17 +52,25 @@ export function useComposerSuggestions({
     const fetchComposerAgent = async () => {
       try {
         const agents = await getAllAgents();
+        console.log('[ComposerSuggestions] All agents fetched:', agents.map(a => ({
+          id: a.id,
+          name: a.name,
+          agentTypeName: a.agentType.name,
+          isDefault: a.isDefault,
+        })));
 
         // Priority 1: Find by name === 'Suggestions' (case-insensitive)
         let composerAgent = agents.find(
           (a) => a.name.toLowerCase() === 'suggestions' && a.isDefault
         );
+        console.log('[ComposerSuggestions] Tried finding by name "Suggestions" (priority 1), composerAgent:', composerAgent?.name);
 
         // Priority 2: Try to find by agentType.name === 'composer-suggestions'
         if (!composerAgent) {
           composerAgent = agents.find(
             (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
           );
+          console.log('[ComposerSuggestions] Tried finding by agentType.name (priority 2), composerAgent:', composerAgent?.name);
         }
 
         // Priority 3: Try to find by agentType.slug === 'composer-suggestions'
@@ -69,10 +78,19 @@ export function useComposerSuggestions({
           composerAgent = agents.find(
             (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
           );
+          console.log('[ComposerSuggestions] Tried finding by agentType.slug (priority 3), composerAgent:', composerAgent?.name);
         }
 
         if (composerAgent) {
+          console.log('[ComposerSuggestions] Found default agent:', {
+            id: composerAgent.id,
+            name: composerAgent.name,
+            agentType: composerAgent.agentType.name,
+            isDefault: composerAgent.isDefault,
+          });
           setResolvedAgentId(composerAgent.id);
+        } else {
+          console.warn('[ComposerSuggestions] No default agent found for composer suggestions');
         }
       } catch (err) {
         console.error('[ComposerSuggestions] Failed to fetch composer agent:', err);
@@ -110,6 +128,13 @@ export function useComposerSuggestions({
       setSuggestion(null);
       setLoading(true);
       setFetchError(false);
+
+      console.log('[ComposerSuggestions Hook] Sending suggestion request', {
+        textLength: text.length,
+        textPreview: text.substring(0, 50),
+        resolvedAgentId,
+        hasResolvedAgentId: !!resolvedAgentId,
+      });
 
       fetchComposerSuggestions(text, ac.signal, resolvedAgentId)
         .then(({ content }) => {

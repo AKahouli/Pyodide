@@ -357,6 +357,9 @@ export interface Playbook {
   executionSchedule: ExecutionScheduleData | null;
   triggers: PlaybookTrigger[];
   automatedTriggerType: 'schedule' | 'mail' | null;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number | null;
+  advisorAutopilotMaxTurns?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -733,6 +736,7 @@ export interface PlaybookAdvisorAutopilotUpdatedEvent {
   lastAdvisorScoreDelta?: number | null;
   advisorStopReason?: string | null;
   advisorTurnHistoryEntry?: TaskResult['advisorTurnHistory'] extends Array<infer T> ? T : never;
+  advisorOptimizationHistoryEntry?: TaskResult['advisorOptimizationHistory'] extends Array<infer T> ? T : never;
 }
 
 export interface PlaybookStepStartEvent {

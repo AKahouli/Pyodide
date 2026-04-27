@@ -97,6 +97,8 @@ export interface WorkspaceFolder {
   folderName: string;
   parentId?: string;
   createdAt: string;
+  isExpanded?: boolean;
+  isFolder: true;
   children: (WorkspaceDocument | WorkspaceFolder)[];
 }
 

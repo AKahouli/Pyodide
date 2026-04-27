@@ -153,6 +153,13 @@ function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+function getExecutionModeLabel(mode?: string): string {
+  if (mode === 'replay_strict') return 'Replay (Strict)';
+  if (mode === 'replay_flex') return 'Replay (Flex)';
+  if (mode === 'replay_adaptive') return 'Replay (Adaptive)';
+  return 'Live';
+}
+
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
   return `${Math.round(value)}%`;
@@ -292,10 +299,7 @@ export function ExecutionStepDetail({
     return tasks.find((task) => task.id === step?.taskId) || null;
   }, [execution?.playbookSnapshot, step?.taskId]);
   const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
-  const currentTask = ({
-    ...(executionSnapshotTask || {}),
-    ...(playbookTask || {}),
-  } || null) as any;
+  const currentTask = (executionSnapshotTask || playbookTask || null) as any;
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
@@ -825,7 +829,7 @@ export function ExecutionStepDetail({
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
                 <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode, t)}</div>
+                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
                   {replaySource && (
                     <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                   )}
