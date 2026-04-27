@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notifications';
 import type {
   PlaybookStore,
   PlaybookState,
@@ -1337,10 +1337,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      fetchRepeatability: async (playbookId, limit = 5) => {
+      fetchRepeatability: async (playbookId, limit = 5, offset = 0) => {
         set({ repeatabilityLoading: true });
         try {
-          const result = await api.getPlaybookRepeatability(playbookId, limit);
+          const result = await api.getPlaybookRepeatability(playbookId, limit, offset);
           set({ repeatability: result, repeatabilityLoading: false });
           return result;
         } catch (err) {

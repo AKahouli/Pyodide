@@ -220,6 +220,33 @@ function normalizePercentValue(value: number | null | undefined): number | null 
   return value <= 1 ? value * 100 : value;
 }
 
+function getExpectedMatchTone(source: string | null | undefined, score: number | null | undefined): string {
+  if (source === 'none') return 'border-slate-400/40 bg-slate-500/10';
+  return getScoreTone(score);
+}
+
+function normalizeExpectedResultSource(value: string | null | undefined): 'node_field' | 'golden_baseline' | 'none' {
+  return value === 'node_field' || value === 'golden_baseline' || value === 'none'
+    ? value
+    : 'none';
+}
+
+function normalizeExpectedResultType(value: string | null | undefined): 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none' {
+  return value === 'exact_value'
+    || value === 'semantic_description'
+    || value === 'numeric_presentation'
+    || value === 'document_generation'
+    || value === 'baseline_comparison'
+    || value === 'none'
+    ? value
+    : 'none';
+}
+
+function normalizeAdvisorScore(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  return Math.max(0, Math.min(100, value));
+}
+
 function getEvaluationArtifactPayload(step: TaskResult | null): EvaluationArtifactPayload | null {
   if (!step?.artifacts?.length) return null;
   for (const artifact of step.artifacts) {
@@ -245,7 +272,7 @@ function formatToolArgs(args: Record<string, unknown> | undefined): string {
 }
 
 function formatPromptStage(stage: string | undefined): string {
-  if (!stage) return 'LLM Call';
+  if (!stage) return 'detail.promptStage.llmCall';
   return stage
     .split('_')
     .filter(Boolean)
@@ -362,6 +389,9 @@ export function ExecutionStepDetail({
   const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
   const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
   const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const normalizedExpectedResultSource = normalizeExpectedResultSource(stepJudgeResult?.expectedResultSource);
+  const normalizedExpectedResultType = normalizeExpectedResultType(stepJudgeResult?.expectedResultType);
+  const normalizedResultMatchingScore = normalizeAdvisorScore(stepJudgeResult?.resultMatchingScore);
   const selectedOptimizationEntry = useMemo(() => {
     if (!advisorOptimizationHistory.length) return null;
     if (!selectedJudgeHistory) return advisorOptimizationHistory[advisorOptimizationHistory.length - 1] || null;
@@ -945,7 +975,12 @@ export function ExecutionStepDetail({
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
                 <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
+                  <div>{t('detail.provenance.mode')}: {({
+                    'replay_strict': t('execution.mode.replayStrict'),
+                    'replay_flex': t('execution.mode.replayFlex'),
+                    'replay_adaptive': t('execution.mode.replayAdaptive'),
+                    'live': t('execution.mode.live'),
+                  } as Record<string, string>)[execution?.executionMode || 'live'] || t('execution.mode.live')}</div>
                   {replaySource && (
                     <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                   )}
@@ -1250,11 +1285,11 @@ export function ExecutionStepDetail({
                     <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.score ?? null)}</div>
                   </div>
                   <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.semanticScore ?? null))}>
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Semantic</div>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.semantic')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.semanticScore ?? null)}</div>
                   </div>
                   <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.referenceScore ?? null))}>
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Reference</div>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reference')}</div>
                     <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.referenceScore ?? null)}</div>
                   </div>
                 </div>
@@ -1324,6 +1359,7 @@ export function ExecutionStepDetail({
                   onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
                   disabled={isRunningEvaluation}
                 >
+                  {isRunningEvaluation && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
                   {isRunningEvaluation ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
                 </Button>
               </div>
@@ -1434,13 +1470,19 @@ export function ExecutionStepDetail({
                                 <div>
                                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.before')}</div>
                                   <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
-                                    {formatOptimizationValue(selectedOptimizationEntry.beforeTask?.[field])}
+                                    {(() => {
+                                      const val = selectedOptimizationEntry.beforeTask?.[field];
+                                      return typeof val === 'boolean' ? t(val ? 'detail.boolean.true' : 'detail.boolean.false') : formatOptimizationValue(val);
+                                    })()}
                                   </div>
                                 </div>
                                 <div>
                                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.after')}</div>
                                   <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
-                                    {formatOptimizationValue(selectedOptimizationEntry.afterTask?.[field])}
+                                    {(() => {
+                                      const val = selectedOptimizationEntry.afterTask?.[field];
+                                      return typeof val === 'boolean' ? t(val ? 'detail.boolean.true' : 'detail.boolean.false') : formatOptimizationValue(val);
+                                    })()}
                                   </div>
                                 </div>
                               </div>
@@ -1470,6 +1512,14 @@ export function ExecutionStepDetail({
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageScore')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatPercent(stepJudgeResult.toolUsageScore)}</div>
                     </div>
+                    <div className={cn('rounded-md border px-3 py-2', getExpectedMatchTone(normalizedExpectedResultSource, normalizedResultMatchingScore))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedMatch')}</div>
+                      <div className="mt-1 text-lg font-semibold">
+                        {normalizedExpectedResultSource === 'none'
+                          ? t('detail.judge.notEvaluated')
+                          : formatPercent(normalizedResultMatchingScore)}
+                      </div>
+                    </div>
                     <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(stepJudgeResult.confidence)))}>
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
                       <div className="mt-1 text-lg font-semibold">{formatConfidence(stepJudgeResult.confidence)}</div>
@@ -1494,6 +1544,44 @@ export function ExecutionStepDetail({
                         {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                         {t('detail.judge.updateCurrentPlaybook')}
                       </Button>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultSection')}</div>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-md border bg-background px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedMatch')}</div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {normalizedExpectedResultSource === 'none'
+                            ? t('detail.judge.notEvaluated')
+                            : formatPercent(normalizedResultMatchingScore)}
+                        </div>
+                      </div>
+                      <div className="rounded-md border bg-background px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultSourceLabel')}</div>
+                        <div className="mt-1 text-sm font-semibold">{t(`detail.judge.expectedResultSource.${normalizedExpectedResultSource}` as const)}</div>
+                      </div>
+                      <div className="rounded-md border bg-background px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultTypeLabel')}</div>
+                        <div className="mt-1 text-sm font-semibold">{t(`detail.judge.expectedResultType.${normalizedExpectedResultType}` as const)}</div>
+                      </div>
+                      <div className="rounded-md border bg-background px-3 py-2">
+                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultMatchedLabel')}</div>
+                        <div className="mt-1 text-sm font-semibold">
+                          {normalizedExpectedResultSource === 'none'
+                            ? t('detail.judge.notEvaluated')
+                            : t(`detail.judge.expectedResultMatched.${stepJudgeResult.expectedResultMatched ? 'yes' : 'no'}` as const)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-4 rounded-md border bg-muted/20 px-3 py-3 text-sm">
+                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultExplanation')}</div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm">
+                        {normalizedExpectedResultSource === 'none'
+                          ? t('detail.judge.expectedResultNoneExplanation')
+                          : (stepJudgeResult.expectedResultReason || t('detail.judge.expectedResultReasonFallback'))}
+                      </p>
                     </div>
                   </div>
 
@@ -1656,7 +1744,7 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} />
+            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} onPageFetch={currentPlaybook ? (limit, offset) => fetchRepeatability(currentPlaybook.id, limit, offset) : undefined} />
           </TabsContent>
 
           <TabsContent value="traces" className="space-y-4">
@@ -1791,7 +1879,7 @@ export function ExecutionStepDetail({
                           <div className="flex flex-wrap items-center gap-2 text-sm">
                             <span className="font-medium">{index + 1}.</span>
                             <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                              {formatPromptStage(item.stage)}
+                              {item.stage ? formatPromptStage(item.stage) : t('detail.promptStage.llmCall')}
                             </span>
                             <code className="rounded bg-background px-1.5 py-0.5 text-xs">{item.model || '-'}</code>
                           </div>

@@ -1,4 +1,5 @@
-import { Play, Save, Check, Loader2, History, Wand2, CalendarClock, Download, Settings2 } from 'lucide-react';
+import { useState } from 'react';
+import { Play, Save, Check, Loader2, History, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -13,8 +14,6 @@ interface Props {
   onRun: () => void;
   onSave: () => void;
   onViewExecutions: () => void;
-  onToggleCopilot?: () => void;
-  copilotOpen?: boolean;
   isDirty: boolean;
   isSaving: boolean;
   isExecuting: boolean;
@@ -23,10 +22,9 @@ interface Props {
   onNodeReflectionChange: (enabled: boolean) => void;
   advisorAutopilotEnabled?: boolean;
   onAdvisorAutopilotChange?: (enabled: boolean) => void;
-  onDownloadAllResults?: () => void;
-  canDownloadAllResults?: boolean;
   /** Opens triggers dialog (design mode). */
   onTriggers?: () => void;
+  triggersOpen?: boolean;
 }
 
 export function PlaybookToolbar({
@@ -37,8 +35,6 @@ export function PlaybookToolbar({
   onRun,
   onSave,
   onViewExecutions,
-  onToggleCopilot = () => {},
-  copilotOpen = false,
   isDirty,
   isSaving,
   isExecuting,
@@ -47,13 +43,12 @@ export function PlaybookToolbar({
   onNodeReflectionChange,
   advisorAutopilotEnabled = false,
   onAdvisorAutopilotChange,
-  onDownloadAllResults,
-  canDownloadAllResults = false,
   onTriggers,
+  triggersOpen = false,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
-  const showCopilotAction = pageMode === 'design' || hasPendingInterrupt || copilotOpen;
   const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
+  const [runSettingsOpen, setRunSettingsOpen] = useState(false);
 
   return (
     <div className="flex items-center gap-1 sm:gap-2">
@@ -71,32 +66,13 @@ export function PlaybookToolbar({
           </Button>
         ))}
       </div>
-      {onDownloadAllResults && (
-        <Button variant="outline" size="sm" onClick={onDownloadAllResults} disabled={!canDownloadAllResults} className="px-2 sm:px-3">
-          <Download className="h-4 w-4 sm:mr-1" />
-          <span className="hidden sm:inline">{t('execution.downloadAllResults')}</span>
-        </Button>
-      )}
-      {showCopilotAction && (
-        <Button
-          variant={copilotOpen ? 'default' : 'outline'}
-          size="sm"
-          onClick={onToggleCopilot}
-          className="px-2 sm:px-3"
-        >
-          <Wand2 className="h-4 w-4 sm:mr-1" />
-          <span className="hidden sm:inline">
-            {pageMode === 'run' ? t('toolbar.copilot') : t('toolbar.designer')}
-          </span>
-        </Button>
-      )}
       {showExecutionsAction && (
         <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
           <History className="h-4 w-4 sm:mr-1" />
           <span className="hidden sm:inline">{t('toolbar.executions')}</span>
         </Button>
       )}
-      <Popover>
+      <Popover open={runSettingsOpen} onOpenChange={setRunSettingsOpen}>
         <PopoverTrigger asChild>
           <Button variant="outline" size="sm" className="px-2 sm:px-3" aria-label={t('toolbar.runSettings')} title={t('toolbar.runSettings')}>
             <Settings2 className="h-4 w-4 sm:mr-1" />
@@ -109,10 +85,18 @@ export function PlaybookToolbar({
             <div className="text-xs text-muted-foreground">{t('toolbar.runSettingsHint')}</div>
           </div>
           {onTriggers && (
-            <Button variant="ghost" size="sm" onClick={onTriggers} className="w-full justify-start px-3">
-              <CalendarClock className="h-4 w-4 mr-2" />
-              {t('toolbar.triggers')}
-            </Button>
+            <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+              <span>{t('toolbar.triggers')}</span>
+              <Switch
+                checked={triggersOpen}
+                onCheckedChange={(checked) => {
+                  if (checked) {
+                    setRunSettingsOpen(false);
+                    onTriggers();
+                  }
+                }}
+              />
+            </div>
           )}
           <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
             <span>{t('toolbar.advisor')}</span>

@@ -135,9 +135,11 @@ export class PlaybookController {
   async getRepeatability(
     @Param('id') id: string,
     @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
   ) {
     const parsedLimit = Math.min(Math.max(parseInt(limit || '5', 10) || 5, 1), 20);
-    return this.repeatabilityService.getRepeatability(id, parsedLimit);
+    const parsedOffset = Math.max(parseInt(offset || '0', 10) || 0, 0);
+    return this.repeatabilityService.getRepeatability(id, parsedLimit, parsedOffset);
   }
 
   @Get(':id/repeatability/:taskId')

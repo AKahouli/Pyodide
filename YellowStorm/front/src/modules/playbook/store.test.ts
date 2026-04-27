@@ -1087,25 +1087,25 @@ describe('playbook store', () => {
     it('fetches and stores repeatability summary', async () => {
       const mockSummary = {
         playbookId: 'p1',
-        overallScore: 82,
-        overallVerdict: 'stable',
-        totalTasks: 3,
-        evaluatedTasks: 2,
-        tasks: [{ taskId: 't1', verdict: 'stable' }],
+        overallAverageMatchScore: 82,
+        totalIterations: 5,
+        evaluatedIterations: 3,
+        passedIterations: 2,
+        iterations: [],
         generatedAt: '2026-04-26T20:00:00.000Z',
       };
       apiMock.getPlaybookRepeatability.mockResolvedValueOnce(mockSummary);
 
-      const result = await usePlaybookStore.getState().fetchRepeatability('p1', 5);
+      const result = await usePlaybookStore.getState().fetchRepeatability('p1', 5, 0);
 
-      expect(apiMock.getPlaybookRepeatability).toHaveBeenCalledWith('p1', 5);
-      expect(result.overallScore).toBe(82);
+      expect(apiMock.getPlaybookRepeatability).toHaveBeenCalledWith('p1', 5, 0);
+      expect(result.overallAverageMatchScore).toBe(82);
       expect(usePlaybookStore.getState().repeatability).toEqual(mockSummary);
       expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
     });
 
     it('sets loading state and clears on success', async () => {
-      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallScore: null, overallVerdict: 'insufficient_data', totalTasks: 0, evaluatedTasks: 0, tasks: [], generatedAt: '' });
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallAverageMatchScore: null, totalIterations: 0, evaluatedIterations: 0, passedIterations: 0, iterations: [], generatedAt: '' });
 
       await usePlaybookStore.getState().fetchRepeatability('p1');
 
@@ -1126,7 +1126,7 @@ describe('playbook store', () => {
 
   describe('clearRepeatability', () => {
     it('resets repeatability state', async () => {
-      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallScore: 90, overallVerdict: 'stable', totalTasks: 1, evaluatedTasks: 1, tasks: [], generatedAt: '' });
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallAverageMatchScore: 90, totalIterations: 1, evaluatedIterations: 1, passedIterations: 1, iterations: [], generatedAt: '' });
       await usePlaybookStore.getState().fetchRepeatability('p1');
       expect(usePlaybookStore.getState().repeatability).not.toBeNull();
 

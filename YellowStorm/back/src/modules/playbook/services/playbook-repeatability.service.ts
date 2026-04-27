@@ -15,39 +15,48 @@ import {
 import { LoggerService } from '../../logger';
 
 export type ExpectedResultSource = 'node_field' | 'golden_baseline' | 'none';
+export type RepeatabilityMatchState = 'matched' | 'not_matched' | 'not_evaluated';
 
-export interface TaskRepeatabilityResult {
+export interface RepeatabilityTaskExecutionSummary {
   taskId: string;
   taskTitle: string;
+  output: string | null;
+  completedAt: Date | null;
   expectedResult: string | null;
   expectedResultSource: ExpectedResultSource;
-  executionCount: number;
-  comparableCount: number;
-  repeatabilityScore: number | null;
-  verdict: 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline';
-  findings: string[];
-  perExecution: Array<{
-    executionId: string;
-    executionNumber: number;
-    output: string | null;
-    score: number | null;
-    completedAt: Date | null;
-  }>;
+  expectedResultType: string | null;
+  expectedResultMatched: boolean | null;
+  expectedResultReason: string | null;
+  matchScore: number | null;
+  matchState: RepeatabilityMatchState;
+  passed: boolean;
+  evaluated: boolean;
+}
+
+export interface RepeatabilityIterationSummary {
+  executionId: string;
+  executionNumber: number;
+  completedAt: Date | null;
+  taskCount: number;
+  evaluatedTasks: number;
+  passedTasks: number;
+  averageMatchScore: number | null;
+  passed: boolean;
+  tasks: RepeatabilityTaskExecutionSummary[];
 }
 
 export interface PlaybookRepeatabilitySummary {
   playbookId: string;
-  overallScore: number | null;
-  overallVerdict: 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline';
-  totalTasks: number;
-  evaluatedTasks: number;
-  tasks: TaskRepeatabilityResult[];
+  totalIterations: number;
+  evaluatedIterations: number;
+  passedIterations: number;
+  overallAverageMatchScore: number | null;
   generatedAt: string;
+  iterations: RepeatabilityIterationSummary[];
 }
 
-const MIN_COMPARABLE_EXECUTIONS = 2;
-const STABLE_THRESHOLD = 75;
-const UNSTABLE_THRESHOLD = 50;
+const MIN_ITERATIONS = 2;
+const PASS_SCORE_THRESHOLD = 80;
 
 @Injectable()
 export class PlaybookRepeatabilityService {
@@ -66,6 +75,7 @@ export class PlaybookRepeatabilityService {
   async getRepeatability(
     playbookId: string,
     limit = 5,
+    offset = 0,
   ): Promise<PlaybookRepeatabilitySummary> {
     const playbook = await this.playbookModel.findById(playbookId).lean().exec();
     if (!playbook) {
@@ -77,38 +87,22 @@ export class PlaybookRepeatabilityService {
       return this.emptySummary(playbookId);
     }
 
-    const executions = await this.executionModel
-      .find({
-        playbookId: new Types.ObjectId(playbookId),
-        status: StepStatus.COMPLETED,
-      })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean()
-      .exec();
+    const baseQuery = {
+      playbookId: new Types.ObjectId(playbookId),
+      status: StepStatus.COMPLETED,
+    };
 
-    if (executions.length < MIN_COMPARABLE_EXECUTIONS) {
+    const totalCount = await this.executionModel.countDocuments(baseQuery);
+
+    if (totalCount < MIN_ITERATIONS) {
       return {
         playbookId,
-        overallScore: null,
-        overallVerdict: 'insufficient_data',
-        totalTasks: tasks.length,
-        evaluatedTasks: 0,
-        tasks: tasks.map((t) => ({
-          taskId: t.id,
-          taskTitle: t.title || '',
-          expectedResult: null,
-          expectedResultSource: 'none' as ExpectedResultSource,
-          executionCount: executions.length,
-          comparableCount: 0,
-          repeatabilityScore: null,
-          verdict: 'insufficient_data' as const,
-          findings: [
-            `Need at least ${MIN_COMPARABLE_EXECUTIONS} completed executions (found ${executions.length})`,
-          ],
-          perExecution: [],
-        })),
+        totalIterations: totalCount,
+        evaluatedIterations: 0,
+        passedIterations: 0,
+        overallAverageMatchScore: null,
         generatedAt: new Date().toISOString(),
+        iterations: [],
       };
     }
 
@@ -117,23 +111,37 @@ export class PlaybookRepeatabilityService {
       tasks.map((t) => t.id),
     );
 
-    const taskResults = tasks.map((task) =>
-      this.evaluateTaskRepeatability(task, executions, goldenBaselines),
+    const allExecutions = await this.executionModel
+      .find(baseQuery)
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
+
+    const allIterations = allExecutions.map((execution) =>
+      this.evaluateIteration(execution, tasks, goldenBaselines),
     );
 
-    const evaluatedTasks = taskResults.filter(
-      (r) => r.verdict !== 'insufficient_data' && r.verdict !== 'no_baseline',
-    );
-    const overallScore = this.computeOverallScore(evaluatedTasks);
+    const evaluatedIterations = allIterations.filter((iter) => iter.evaluatedTasks > 0);
+    const passedIterations = evaluatedIterations.filter((iter) => iter.passed);
+
+    const iterationAverages = evaluatedIterations
+      .map((iter) => iter.averageMatchScore)
+      .filter((score): score is number => score !== null);
+
+    const overallAverageMatchScore = iterationAverages.length > 0
+      ? Math.round((iterationAverages.reduce((sum, s) => sum + s, 0) / iterationAverages.length) * 10) / 10
+      : null;
+
+    const paginatedIterations = allIterations.slice(offset, offset + limit);
 
     return {
       playbookId,
-      overallScore,
-      overallVerdict: this.scoreToVerdict(overallScore, evaluatedTasks.length > 0),
-      totalTasks: tasks.length,
-      evaluatedTasks: evaluatedTasks.length,
-      tasks: taskResults,
+      totalIterations: allIterations.length,
+      evaluatedIterations: evaluatedIterations.length,
+      passedIterations: passedIterations.length,
+      overallAverageMatchScore,
       generatedAt: new Date().toISOString(),
+      iterations: paginatedIterations,
     };
   }
 
@@ -141,7 +149,7 @@ export class PlaybookRepeatabilityService {
     playbookId: string,
     taskId: string,
     limit = 5,
-  ): Promise<TaskRepeatabilityResult | null> {
+  ): Promise<RepeatabilityTaskExecutionSummary[] | null> {
     const playbook = await this.playbookModel.findById(playbookId).lean().exec();
     if (!playbook) {
       return null;
@@ -164,7 +172,9 @@ export class PlaybookRepeatabilityService {
       .exec();
 
     const goldenBaselines = await this.loadGoldenBaselines(playbookId, [taskId]);
-    return this.evaluateTaskRepeatability(task, executions, goldenBaselines);
+    return executions.map((execution) =>
+      this.evaluateTaskExecution(execution, task, goldenBaselines),
+    );
   }
 
   resolveExpectedResult(
@@ -222,120 +232,101 @@ export class PlaybookRepeatabilityService {
     return baselines;
   }
 
-  private evaluateTaskRepeatability(
-    task: { id: string; title: string; expectedResult?: string | null },
-    executions: any[],
+  private evaluateIteration(
+    execution: any,
+    tasks: Array<{ id: string; title: string; expectedResult?: string | null }>,
     goldenBaselines: Map<string, string>,
-  ): TaskRepeatabilityResult {
-    const baseline = goldenBaselines.get(task.id) || null;
-    const { value: expectedResult, source } = this.resolveExpectedResult(
-      task,
-      baseline,
+  ): RepeatabilityIterationSummary {
+    const executionTasks = tasks.map((task) =>
+      this.evaluateTaskExecution(execution, task, goldenBaselines),
     );
 
-    if (source === 'none') {
-      return {
-        taskId: task.id,
-        taskTitle: task.title,
-        expectedResult: null,
-        expectedResultSource: 'none',
-        executionCount: executions.length,
-        comparableCount: 0,
-        repeatabilityScore: null,
-        verdict: 'no_baseline',
-        findings: [
-          'No expected result defined and no golden execution baseline available',
-        ],
-        perExecution: [],
-      };
-    }
+    const evaluatedTasks = executionTasks.filter((t) => t.evaluated);
+    const passedTasks = executionTasks.filter((t) => t.passed);
 
-    const perExecution: TaskRepeatabilityResult['perExecution'] = [];
-    const scores: number[] = [];
-    const findings: string[] = [];
+    const taskScores = evaluatedTasks
+      .map((t) => t.matchScore)
+      .filter((score): score is number => score !== null);
 
-    for (const execution of executions) {
-      const taskResult = this.findTaskResult(execution, task.id);
-      const output = taskResult?.output || null;
-      const completedAt = taskResult?.completedAt || execution.completedAt || null;
+    const averageMatchScore = taskScores.length > 0
+      ? Math.round((taskScores.reduce((sum, s) => sum + s, 0) / taskScores.length) * 10) / 10
+      : null;
 
-      if (!output) {
-        perExecution.push({
-          executionId: execution._id.toString(),
-          executionNumber: execution.executionNumber,
-          output: null,
-          score: null,
-          completedAt,
-        });
-        continue;
-      }
+    const passed = evaluatedTasks.length > 0 && passedTasks.length === evaluatedTasks.length;
 
-      const score = this.computeTextSimilarity(expectedResult!, output);
-      scores.push(score);
-      perExecution.push({
-        executionId: execution._id.toString(),
-        executionNumber: execution.executionNumber,
-        output,
-        score,
-        completedAt,
-      });
-    }
+    return {
+      executionId: execution._id.toString(),
+      executionNumber: execution.executionNumber,
+      completedAt: execution.completedAt || null,
+      taskCount: executionTasks.length,
+      evaluatedTasks: evaluatedTasks.length,
+      passedTasks: passedTasks.length,
+      averageMatchScore,
+      passed,
+      tasks: executionTasks,
+    };
+  }
 
-    const comparableCount = scores.length;
-    if (comparableCount < MIN_COMPARABLE_EXECUTIONS) {
-      return {
-        taskId: task.id,
-        taskTitle: task.title,
-        expectedResult,
-        expectedResultSource: source,
-        executionCount: executions.length,
-        comparableCount,
-        repeatabilityScore: null,
-        verdict: 'insufficient_data',
-        findings: [
-          `Only ${comparableCount} comparable execution(s) — need at least ${MIN_COMPARABLE_EXECUTIONS}`,
-        ],
-        perExecution,
-      };
-    }
+  private evaluateTaskExecution(
+    execution: any,
+    task: { id: string; title: string; expectedResult?: string | null },
+    goldenBaselines: Map<string, string>,
+  ): RepeatabilityTaskExecutionSummary {
+    const baseline = goldenBaselines.get(task.id) || null;
+    const { value: expectedResult, source: expectedResultSource } = this.resolveExpectedResult(task, baseline);
 
-    const avgScore =
-      scores.reduce((sum, s) => sum + s, 0) / scores.length;
-    const variance =
-      scores.reduce((sum, s) => sum + (s - avgScore) ** 2, 0) / scores.length;
-    const stdDev = Math.sqrt(variance);
+    const taskResult = this.findTaskResult(execution, task.id);
+    const output = taskResult?.output || null;
+    const completedAt = taskResult?.completedAt || execution.completedAt || null;
+    const judgeResult = taskResult?.judgeResult || null;
 
-    if (stdDev > 20) {
-      findings.push(
-        `High output variance (stddev=${stdDev.toFixed(1)}) across executions`,
-      );
-    }
+    const resolvedJudgeMatched = judgeResult?.expectedResultMatched === true
+      || judgeResult?.expectedResultMatched === false
+      ? judgeResult.expectedResultMatched
+      : null;
 
-    const minScore = Math.min(...scores);
-    const maxScore = Math.max(...scores);
-    if (maxScore - minScore > 30) {
-      findings.push(
-        `Score spread is ${maxScore - minScore} points (${minScore.toFixed(0)}–${maxScore.toFixed(0)})`,
-      );
-    }
+    const resolvedJudgeScore = typeof judgeResult?.resultMatchingScore === 'number'
+      ? Math.max(0, Math.min(100, judgeResult.resultMatchingScore))
+      : null;
 
-    if (avgScore < UNSTABLE_THRESHOLD) {
-      findings.push(
-        'Average similarity to expected result is low — outputs diverge significantly',
-      );
+    const judgeScore = this.normalizeJudgeResultMatchingScore(judgeResult, expectedResultSource);
+    const fallbackScore = expectedResultSource !== 'none' && output
+      ? this.computeTextSimilarity(expectedResult!, output)
+      : null;
+
+    const matchScore = judgeScore ?? fallbackScore;
+    const expectedResultMatched = resolvedJudgeMatched === true
+      ? true
+      : matchScore !== null
+        ? matchScore >= PASS_SCORE_THRESHOLD
+        : resolvedJudgeMatched;
+
+    const evaluated = expectedResultSource !== 'none' && (matchScore !== null || expectedResultMatched !== null);
+    const passed = expectedResultMatched === true;
+
+    let matchState: RepeatabilityMatchState;
+    if (!evaluated) {
+      matchState = 'not_evaluated';
+    } else if (expectedResultMatched === true) {
+      matchState = 'matched';
+    } else {
+      matchState = 'not_matched';
     }
 
     return {
       taskId: task.id,
       taskTitle: task.title,
+      output,
+      completedAt,
       expectedResult,
-      expectedResultSource: source,
-      executionCount: executions.length,
-      comparableCount,
-      repeatabilityScore: Math.round(avgScore * 10) / 10,
-      verdict: this.scoreToVerdict(avgScore, true),
-      findings,
-      perExecution,
+      expectedResultSource,
+      expectedResultType: typeof judgeResult?.expectedResultType === 'string' ? judgeResult.expectedResultType : 'none',
+      expectedResultMatched,
+      expectedResultReason: typeof judgeResult?.expectedResultReason === 'string' ? judgeResult.expectedResultReason : null,
+      matchScore,
+      matchState,
+      passed,
+      evaluated,
     };
   }
 
@@ -375,38 +366,40 @@ export class PlaybookRepeatabilityService {
     return Math.round((jaccard * 0.6 + lenRatio * 0.4) * 100 * 10) / 10;
   }
 
-  private computeOverallScore(
-    evaluatedTasks: TaskRepeatabilityResult[],
+  private normalizeJudgeResultMatchingScore(
+    judgeResult: { resultMatchingScore?: unknown; expectedResultSource?: unknown } | null | undefined,
+    expectedResultSource: ExpectedResultSource,
   ): number | null {
-    const scored = evaluatedTasks.filter(
-      (t) => t.repeatabilityScore !== null,
-    );
-    if (scored.length === 0) return null;
+    if (!judgeResult || expectedResultSource === 'none') {
+      return null;
+    }
 
-    const total = scored.reduce((sum, t) => sum + (t.repeatabilityScore ?? 0), 0);
-    return Math.round((total / scored.length) * 10) / 10;
-  }
+    const judgeSource = judgeResult.expectedResultSource;
+    if (judgeSource === 'node_field' || judgeSource === 'golden_baseline') {
+      if (judgeSource !== expectedResultSource) {
+        return null;
+      }
+    }
 
-  private scoreToVerdict(
-    score: number | null,
-    hasEvaluated: boolean,
-  ): 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline' {
-    if (!hasEvaluated) return 'insufficient_data';
-    if (score === null) return 'insufficient_data';
-    if (score >= STABLE_THRESHOLD) return 'stable';
-    if (score >= UNSTABLE_THRESHOLD) return 'unstable';
-    return 'unstable';
+    const parsed = typeof judgeResult.resultMatchingScore === 'number'
+      ? judgeResult.resultMatchingScore
+      : Number(judgeResult.resultMatchingScore);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+
+    return Math.max(0, Math.min(100, parsed));
   }
 
   private emptySummary(playbookId: string): PlaybookRepeatabilitySummary {
     return {
       playbookId,
-      overallScore: null,
-      overallVerdict: 'no_baseline',
-      totalTasks: 0,
-      evaluatedTasks: 0,
-      tasks: [],
+      totalIterations: 0,
+      evaluatedIterations: 0,
+      passedIterations: 0,
+      overallAverageMatchScore: null,
       generatedAt: new Date().toISOString(),
+      iterations: [],
     };
   }
 }

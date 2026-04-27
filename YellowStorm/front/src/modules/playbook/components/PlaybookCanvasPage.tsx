@@ -1171,7 +1171,7 @@ function PlaybookCanvasInner() {
             </span>
           )}
         </div>
-        {/* Right: share + workspace select + usage + toolbar */}
+        {/* Right: share + workspace select + usage + evaluation + toolbar */}
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
@@ -1215,8 +1215,6 @@ function PlaybookCanvasInner() {
             onRun={handleRun}
             onSave={saveNow}
             onViewExecutions={handleViewExecutions}
-            onToggleCopilot={handleToggleCopilot}
-            copilotOpen={designerOpen}
             isDirty={isDirty}
             isSaving={isSaving}
             isExecuting={isExecuting}
@@ -1225,19 +1223,18 @@ function PlaybookCanvasInner() {
             onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
             onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
-            onDownloadAllResults={handleDownloadAllResults}
-            canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
             onTriggers={() => setTriggersSheetOpen(true)}
+            triggersOpen={triggersSheetOpen}
           />
         </div>
       </div>
 
       {id && (
-        <PlaybookTriggersSheet
-          open={triggersSheetOpen}
-          onOpenChange={setTriggersSheetOpen}
-          playbookId={id}
-          schedule={playbook.executionSchedule}
+          <PlaybookTriggersSheet
+            open={triggersSheetOpen}
+            onOpenChange={setTriggersSheetOpen}
+            playbookId={id}
+            schedule={playbook.executionSchedule}
           mailTrigger={playbook.triggers.find((trigger) => trigger.type === 'mail') ?? null}
         />
       )}
@@ -1295,6 +1292,10 @@ function PlaybookCanvasInner() {
                   canUndo={canUndo}
                   canRedo={canRedo}
                   disabled={isSaving}
+                  onDownloadAllResults={handleDownloadAllResults}
+                  canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
+                  onToggleDesigner={handleToggleCopilot}
+                  designerOpen={designerOpen}
                 />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>
@@ -1363,7 +1364,7 @@ function PlaybookCanvasInner() {
             <DialogDescription>{t('evaluationDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 overflow-y-auto pr-1">
-            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} />
+            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} onPageFetch={(limit, offset) => fetchRepeatability(id!, limit, offset)} />
           </div>
         </DialogContent>
       </Dialog>

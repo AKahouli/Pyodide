@@ -19,6 +19,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
     const service = new PlaybookJudgeEnrichmentService(
       {} as any,
+      {} as any,
       playbookService as any,
       {} as any,
       {} as any,
@@ -57,13 +58,19 @@ describe('PlaybookJudgeEnrichmentService', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
     const normalized = (service as any).normalizeNodeJudgePayload({
       overallScore: '87',
+      resultMatchingScore: '76',
       confidence: 82,
       toolUsageScore: 'bad',
+      expectedResultSource: 'golden_baseline',
+      expectedResultType: 'document_generation',
+      expectedResultMatched: true,
+      expectedResultReason: '  Produced the required report artifact  ',
       missingFacts: ['fact', 1, null],
       toolSelectionIssues: 'wrong-shape',
       safeAutoFixType: 'delete_everything',
@@ -73,8 +80,13 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
     expect(normalized).toEqual(expect.objectContaining({
       overallScore: 87,
+      resultMatchingScore: 76,
       confidence: 0.82,
       toolUsageScore: 0,
+      expectedResultSource: 'golden_baseline',
+      expectedResultType: 'document_generation',
+      expectedResultMatched: true,
+      expectedResultReason: 'Produced the required report artifact',
       missingFacts: ['fact'],
       toolSelectionIssues: [],
       safeAutoFixType: 'none',
@@ -86,6 +98,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
   it('normalizes malformed advisor execution summary payloads defensively', () => {
     const service = new PlaybookJudgeEnrichmentService(
+      {} as any,
       {} as any,
       {} as any,
       {} as any,
@@ -138,6 +151,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
     const service = new PlaybookJudgeEnrichmentService(
       executionModel as any,
+      {} as any,
       { findById: jest.fn().mockResolvedValue({ description: 'Goal' }) } as any,
       { findByKey: jest.fn().mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'user {{nodeFindingsJson}}' }) } as any,
       { getHttpClient: jest.fn().mockReturnValue({ post: jest.fn().mockResolvedValue({ data: { choices: [{ message: { content: JSON.stringify({ overallScore: 88, confidence: 0.9, recommendation: 'update_current_playbook' }) } }], usage: { model: 'judge-model' } } }) }) } as any,
@@ -184,6 +198,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
     const service = new PlaybookJudgeEnrichmentService(
       executionModel as any,
+      {} as any,
       { findById: jest.fn().mockResolvedValue({ description: 'Goal' }) } as any,
       { findByKey: jest.fn() } as any,
       { getHttpClient: jest.fn().mockReturnValue({ post: httpPost }) } as any,
@@ -197,5 +212,104 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
     expect(httpPost).not.toHaveBeenCalled();
     expect(executionModel.updateOne).toHaveBeenCalledTimes(1);
+  });
+
+  describe('resolveExpectedResult', () => {
+    const createService = (findOneResult: any = null) => new PlaybookJudgeEnrichmentService(
+      {} as any,
+      {
+        findOne: jest.fn().mockReturnValue({
+          sort: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockReturnThis(),
+          exec: jest.fn().mockResolvedValue(findOneResult),
+        }),
+      } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+    );
+
+    it('prioritizes node_field over golden_baseline over none', async () => {
+      const playbookId = new Types.ObjectId().toHexString();
+
+      const withNodeField = createService({ referenceOutput: 'Golden baseline value' });
+      await expect((withNodeField as any).resolveExpectedResult(playbookId, {
+        id: 'task-1',
+        expectedResult: '  Node expected result  ',
+      })).resolves.toEqual({
+        value: 'Node expected result',
+        source: 'node_field',
+      });
+
+      const withGoldenBaseline = createService({ referenceOutput: '  Golden baseline value  ' });
+      await expect((withGoldenBaseline as any).resolveExpectedResult(playbookId, {
+        id: 'task-1',
+        expectedResult: '   ',
+      })).resolves.toEqual({
+        value: 'Golden baseline value',
+        source: 'golden_baseline',
+      });
+
+      const withNone = createService(null);
+      await expect((withNone as any).resolveExpectedResult(playbookId, {
+        id: 'task-1',
+        expectedResult: null,
+      })).resolves.toEqual({
+        value: '',
+        source: 'none',
+      });
+    });
+  });
+
+  describe('sanitizeForPrompt', () => {
+    it('redacts sensitive keys recursively in objects and arrays', () => {
+      const service = new PlaybookJudgeEnrichmentService(
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+      );
+
+      const sanitized = (service as any).sanitizeForPrompt({
+        password: 'top-secret',
+        nested: {
+          authorization: 'Bearer token',
+          profile: {
+            sessionId: 'session-123',
+            safe: 'visible',
+          },
+        },
+        artifacts: [
+          { apiKey: 'key-123', result: 'ok' },
+          { credentials: { username: 'demo', secret: 'hidden' } },
+        ],
+        safeArray: ['a', 'b'],
+      });
+
+      expect(sanitized).toEqual({
+        password: '[REDACTED]',
+        nested: {
+          authorization: '[REDACTED]',
+          profile: {
+            sessionId: '[REDACTED]',
+            safe: 'visible',
+          },
+        },
+        artifacts: [
+          { apiKey: '[REDACTED]', result: 'ok' },
+          { credentials: '[REDACTED]' },
+        ],
+        safeArray: ['a', 'b'],
+      });
+    });
   });
 });

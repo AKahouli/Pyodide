@@ -81,9 +81,14 @@ export class TaskJudgeHistoryEntry {
   judgeResult!: {
     accuracyScore: number;
     completenessScore: number;
+    resultMatchingScore: number;
     overallScore: number;
     confidence: number;
     toolUsageScore: number;
+    expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+    expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+    expectedResultMatched: boolean;
+    expectedResultReason: string;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];
@@ -261,9 +266,14 @@ export class TaskResult {
   judgeResult!: {
     accuracyScore: number;
     completenessScore: number;
+    resultMatchingScore: number;
     overallScore: number;
     confidence: number;
     toolUsageScore: number;
+    expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+    expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+    expectedResultMatched: boolean;
+    expectedResultReason: string;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];

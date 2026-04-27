@@ -525,9 +525,14 @@ export interface TaskResult {
   judgeResult?: {
     accuracyScore: number;
     completenessScore: number;
+    resultMatchingScore: number;
     overallScore: number;
     confidence: number;
     toolUsageScore: number;
+    expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+    expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+    expectedResultMatched: boolean;
+    expectedResultReason: string;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];
@@ -553,9 +558,14 @@ export interface TaskResult {
     judgeResult: {
       accuracyScore: number;
       completenessScore: number;
+      resultMatchingScore: number;
       overallScore: number;
       confidence: number;
       toolUsageScore: number;
+      expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+      expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+      expectedResultMatched: boolean;
+      expectedResultReason: string;
       missingFacts: string[];
       incoherences: string[];
       unsupportedClaims: string[];
@@ -1188,7 +1198,7 @@ export interface PlaybookActions {
   createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
   createEvaluationBaselineFromCurrentExecution: (playbookId: string, taskId: string, executionId: string, evaluationExecutionId: string) => Promise<PlaybookEvaluationBaseline>;
   deleteEvaluationBaseline: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
-  fetchRepeatability: (playbookId: string, limit?: number) => Promise<PlaybookRepeatabilitySummary>;
+  fetchRepeatability: (playbookId: string, limit?: number, offset?: number) => Promise<PlaybookRepeatabilitySummary>;
   clearRepeatability: () => void;
   grabOutputFormatTemplate: (
     playbookId: string,
@@ -1273,32 +1283,42 @@ export interface PlaybookActions {
 export type PlaybookStore = PlaybookState & PlaybookActions;
 
 export type ExpectedResultSource = 'node_field' | 'golden_baseline' | 'none';
+export type RepeatabilityMatchState = 'matched' | 'not_matched' | 'not_evaluated';
 
-export interface TaskRepeatabilityResult {
+export interface RepeatabilityTaskExecutionSummary {
   taskId: string;
   taskTitle: string;
+  output: string | null;
+  completedAt: string | null;
   expectedResult: string | null;
   expectedResultSource: ExpectedResultSource;
-  executionCount: number;
-  comparableCount: number;
-  repeatabilityScore: number | null;
-  verdict: 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline';
-  findings: string[];
-  perExecution: Array<{
-    executionId: string;
-    executionNumber: number;
-    output: string | null;
-    score: number | null;
-    completedAt: string | null;
-  }>;
+  expectedResultType: string | null;
+  expectedResultMatched: boolean | null;
+  expectedResultReason: string | null;
+  matchScore: number | null;
+  matchState: RepeatabilityMatchState;
+  passed: boolean;
+  evaluated: boolean;
+}
+
+export interface RepeatabilityIterationSummary {
+  executionId: string;
+  executionNumber: number;
+  completedAt: string | null;
+  taskCount: number;
+  evaluatedTasks: number;
+  passedTasks: number;
+  averageMatchScore: number | null;
+  passed: boolean;
+  tasks: RepeatabilityTaskExecutionSummary[];
 }
 
 export interface PlaybookRepeatabilitySummary {
   playbookId: string;
-  overallScore: number | null;
-  overallVerdict: 'stable' | 'unstable' | 'insufficient_data' | 'no_baseline';
-  totalTasks: number;
-  evaluatedTasks: number;
-  tasks: TaskRepeatabilityResult[];
+  totalIterations: number;
+  evaluatedIterations: number;
+  passedIterations: number;
+  overallAverageMatchScore: number | null;
   generatedAt: string;
+  iterations: RepeatabilityIterationSummary[];
 }

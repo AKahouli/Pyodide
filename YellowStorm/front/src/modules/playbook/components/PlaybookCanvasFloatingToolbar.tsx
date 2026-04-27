@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2 } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -32,6 +32,10 @@ interface Props {
   canUndo: boolean;
   canRedo: boolean;
   disabled?: boolean;
+  onDownloadAllResults?: () => void;
+  canDownloadAllResults?: boolean;
+  onToggleDesigner?: () => void;
+  designerOpen?: boolean;
 }
 
 type Position = { x: number; y: number };
@@ -53,6 +57,10 @@ export function PlaybookCanvasFloatingToolbar({
   canUndo,
   canRedo,
   disabled = false,
+  onDownloadAllResults,
+  canDownloadAllResults = false,
+  onToggleDesigner,
+  designerOpen = false,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
@@ -195,6 +203,23 @@ export function PlaybookCanvasFloatingToolbar({
       disabled,
       active: connectorsOpen,
     },
+    {
+      key: 'download',
+      label: t('execution.downloadAllResults'),
+      icon: Download,
+      onClick: onDownloadAllResults,
+      disabled: !canDownloadAllResults,
+      hidden: !onDownloadAllResults,
+    },
+    {
+      key: 'designer',
+      label: t('toolbar.designer'),
+      icon: Wand2,
+      onClick: onToggleDesigner,
+      disabled: false,
+      active: designerOpen,
+      hidden: !onToggleDesigner,
+    },
   ];
 
   return (
@@ -305,7 +330,7 @@ export function PlaybookCanvasFloatingToolbar({
               </DropdownMenu>
             </div>
 
-            {actionButtons.map((action) => {
+            {actionButtons.filter((a) => !a.hidden).map((action) => {
               const Icon = action.icon;
               const button = (
                 <Button

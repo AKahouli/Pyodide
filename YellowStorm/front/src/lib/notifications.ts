@@ -100,3 +100,5 @@ export function showPromise<T>(
 export function dismissAll() {
   toast.dismiss();
 }
+
+export { toast };

@@ -185,25 +185,74 @@ function JudgeScoreBadge({
   score,
   accuracy,
   completeness,
+  resultMatchingScore,
+  expectedResultSource,
+  expectedResultType,
+  expectedResultMatched,
+  expectedResultReason,
 }: {
   score: number;
   accuracy: number;
   completeness: number;
+  resultMatchingScore: number;
+  expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+  expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+  expectedResultMatched: boolean;
+  expectedResultReason: string;
 }) {
   const { t } = useModuleTranslation('playbook');
   const tone = getSemanticScoreTone(score);
+  const normalizedExpectedResultSource = expectedResultSource === 'node_field'
+    || expectedResultSource === 'golden_baseline'
+    || expectedResultSource === 'none'
+    ? expectedResultSource
+    : 'none';
+  const normalizedExpectedResultType = expectedResultType === 'exact_value'
+    || expectedResultType === 'semantic_description'
+    || expectedResultType === 'numeric_presentation'
+    || expectedResultType === 'document_generation'
+    || expectedResultType === 'baseline_comparison'
+    || expectedResultType === 'none'
+    ? expectedResultType
+    : 'none';
+  const normalizedResultMatchingScore = Number.isFinite(resultMatchingScore)
+    ? Math.max(0, Math.min(100, resultMatchingScore))
+    : 0;
+  const resultMatchingTone = normalizedExpectedResultSource === 'none'
+    ? 'bg-slate-100 text-slate-600 border-slate-300'
+    : getSemanticScoreTone(normalizedResultMatchingScore).badgeClass;
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
-          <span>{Math.round(score)}%</span>
-        </Badge>
+        <div className="flex items-center gap-1">
+          <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
+            <span>{Math.round(score)}%</span>
+          </Badge>
+          <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', resultMatchingTone)}>
+            <span>
+              {normalizedExpectedResultSource === 'none'
+                ? t('node.expectedMatchNotEvaluated')
+                : `${Math.round(normalizedResultMatchingScore)}%`}
+            </span>
+          </Badge>
+        </div>
       </TooltipTrigger>
-      <TooltipContent side="bottom" className="text-xs">
+      <TooltipContent side="bottom" className="space-y-1 text-xs">
         <div className="font-medium">{t('node.advisorScore')}</div>
         <div>{t('node.scoreLabel.accuracy')} {Math.round(accuracy)}%</div>
         <div>{t('node.scoreLabel.completeness')} {Math.round(completeness)}%</div>
         <div>{t('node.scoreLabel.overall')} {Math.round(score)}%</div>
+        <div className="pt-1 font-medium">{t('node.expectedMatch')}</div>
+        <div>
+          {t('node.expectedMatchValue')} {normalizedExpectedResultSource === 'none'
+            ? t('node.expectedMatchNotEvaluated')
+            : `${Math.round(normalizedResultMatchingScore)}%`}
+        </div>
+        <div>{t('node.expectedMatchSource')} {t(`detail.judge.expectedResultSource.${normalizedExpectedResultSource}`)}</div>
+        <div>{t('node.expectedMatchType')} {t(`detail.judge.expectedResultType.${normalizedExpectedResultType}`)}</div>
+        <div>{t('node.expectedMatchMatched')} {normalizedExpectedResultSource === 'none' ? t('detail.judge.notEvaluated') : t(`detail.judge.expectedResultMatched.${expectedResultMatched ? 'yes' : 'no'}`)}</div>
+        <div>{expectedResultReason || t('detail.judge.expectedResultReasonFallback')}</div>
       </TooltipContent>
     </Tooltip>
   );
@@ -652,6 +701,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     score={judgeResult.overallScore}
                     accuracy={judgeResult.accuracyScore}
                     completeness={judgeResult.completenessScore}
+                    resultMatchingScore={judgeResult.resultMatchingScore}
+                    expectedResultSource={judgeResult.expectedResultSource}
+                    expectedResultType={judgeResult.expectedResultType}
+                    expectedResultMatched={judgeResult.expectedResultMatched}
+                    expectedResultReason={judgeResult.expectedResultReason}
                   />
                 )}
               </div>

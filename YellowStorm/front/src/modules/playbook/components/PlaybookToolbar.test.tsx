@@ -14,16 +14,12 @@ const defaultProps = {
   onRun: vi.fn(),
   onSave: vi.fn(),
   onViewExecutions: vi.fn(),
-  onToggleCopilot: vi.fn(),
-  copilotOpen: false,
   isDirty: false,
   isSaving: false,
   isExecuting: false,
   canRun: true,
   nodeReflectionEnabled: true,
   onNodeReflectionChange: vi.fn(),
-  onDownloadAllResults: vi.fn(),
-  canDownloadAllResults: true,
 };
 
 describe('PlaybookToolbar', () => {
@@ -31,9 +27,7 @@ describe('PlaybookToolbar', () => {
     render(<PlaybookToolbar {...defaultProps} />);
     expect(screen.getByText('mode.design')).toBeInTheDocument();
     expect(screen.getByText('mode.run')).toBeInTheDocument();
-    expect(screen.getByText('toolbar.designer')).toBeInTheDocument();
     expect(screen.getByText('toolbar.runSettings')).toBeInTheDocument();
-    expect(screen.getByText('execution.downloadAllResults')).toBeInTheDocument();
     expect(screen.getByText('toolbar.saved')).toBeInTheDocument();
     expect(screen.getByText('toolbar.run')).toBeInTheDocument();
   });
@@ -93,13 +87,6 @@ describe('PlaybookToolbar', () => {
     expect(screen.queryByText('toolbar.executions')).not.toBeInTheDocument();
   });
 
-  it('calls onDownloadAllResults when download button is clicked', async () => {
-    const onDownloadAllResults = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onDownloadAllResults={onDownloadAllResults} />);
-    await userEvent.click(screen.getByText('execution.downloadAllResults'));
-    expect(onDownloadAllResults).toHaveBeenCalledOnce();
-  });
-
   it('shows run settings content when the popover is opened', async () => {
     render(<PlaybookToolbar {...defaultProps} />);
     await userEvent.click(screen.getByText('toolbar.runSettings'));
@@ -108,9 +95,11 @@ describe('PlaybookToolbar', () => {
 
   it('calls onTriggers from inside the run settings popover', async () => {
     const onTriggers = vi.fn();
-    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} />);
+    render(<PlaybookToolbar {...defaultProps} onTriggers={onTriggers} triggersOpen={false} />);
     await userEvent.click(screen.getByText('toolbar.runSettings'));
-    await userEvent.click(screen.getByText('toolbar.triggers'));
+    const switches = screen.getAllByRole('switch');
+    const triggerSwitch = switches[0];
+    await userEvent.click(triggerSwitch);
     expect(onTriggers).toHaveBeenCalledOnce();
   });
 

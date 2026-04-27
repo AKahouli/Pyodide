@@ -7,6 +7,7 @@ import { ModelsService } from '../../models/models.service';
 import { UsageService } from '../../usage/usage.service';
 import { UsageType } from '../../usage/schemas/usage.schema';
 import { PlaybookExecution, PlaybookExecutionDocument, StepStatus, JudgeStatus } from '../schemas/playbook-execution.schema';
+import { PlaybookValidatedReplay, PlaybookValidatedReplayDocument, ReplayValidationStatus } from '../schemas/playbook-validated-replay.schema';
 import { PlaybookService } from './playbook.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookStreamGatewayService } from './playbook-stream-gateway.service';
@@ -40,9 +41,14 @@ const PLAYBOOK_REWRITE_TIMEOUT_MS = 200000;
 interface NodeJudgeResult {
   accuracyScore: number;
   completenessScore: number;
+  resultMatchingScore: number;
   overallScore: number;
   confidence: number;
   toolUsageScore: number;
+  expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+  expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+  expectedResultMatched: boolean;
+  expectedResultReason: string;
   missingFacts: string[];
   incoherences: string[];
   unsupportedClaims: string[];
@@ -92,6 +98,8 @@ export class PlaybookJudgeEnrichmentService {
   constructor(
     @InjectModel(PlaybookExecution.name)
     private readonly executionModel: Model<PlaybookExecutionDocument>,
+    @InjectModel(PlaybookValidatedReplay.name)
+    private readonly replayModel: Model<PlaybookValidatedReplayDocument>,
     private readonly playbookService: PlaybookService,
     private readonly promptService: PlaybookPromptService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
@@ -164,6 +172,32 @@ export class PlaybookJudgeEnrichmentService {
     );
 
     return result.modifiedCount > 0;
+  }
+
+  private async resolveExpectedResult(
+    playbookId: string,
+    task: { id?: string; expectedResult?: string | null } | null,
+  ): Promise<{ value: string; source: 'node_field' | 'golden_baseline' | 'none' }> {
+    const nodeValue = String(task?.expectedResult || '').trim();
+    if (nodeValue) {
+      return { value: nodeValue, source: 'node_field' };
+    }
+
+    const taskId = String(task?.id || '').trim();
+    if (playbookId && taskId) {
+      const baseline = await this.replayModel.findOne({
+        playbookId: new Types.ObjectId(playbookId),
+        taskId,
+        status: ReplayValidationStatus.ACTIVE,
+      }).sort({ updatedAt: -1, createdAt: -1 }).lean().exec();
+
+      const referenceOutput = String(baseline?.referenceOutput || '').trim();
+      if (referenceOutput) {
+        return { value: referenceOutput, source: 'golden_baseline' };
+      }
+    }
+
+    return { value: '', source: 'none' };
   }
 
   private async failClaimedExecutionSummary(executionId: string): Promise<void> {
@@ -485,9 +519,14 @@ export class PlaybookJudgeEnrichmentService {
         judgeResult: {
           accuracyScore: payload.accuracyScore,
           completenessScore: payload.completenessScore,
+          resultMatchingScore: payload.resultMatchingScore,
           overallScore: payload.overallScore,
           confidence: payload.confidence,
           toolUsageScore: payload.toolUsageScore,
+          expectedResultSource: payload.expectedResultSource,
+          expectedResultType: payload.expectedResultType,
+          expectedResultMatched: payload.expectedResultMatched,
+          expectedResultReason: payload.expectedResultReason,
           missingFacts: payload.missingFacts || [],
           incoherences: payload.incoherences || [],
           unsupportedClaims: payload.unsupportedClaims || [],
@@ -678,6 +717,35 @@ export class PlaybookJudgeEnrichmentService {
     }
   }
 
+  private sanitizeForPrompt(data: unknown): unknown {
+    if (!data || typeof data !== 'object') return data;
+
+    const sensitiveKeys = [
+      'password', 'token', 'secret', 'authorization', 'apikey', 'api_key',
+      'accessToken', 'refreshToken', 'credentials', 'sessionId', 'cookie', 'set-cookie',
+    ];
+
+    const sanitize = (obj: unknown, depth = 0): unknown => {
+      if (depth > 5) return '[MAX_DEPTH_EXCEEDED]';
+      if (Array.isArray(obj)) {
+        return obj.slice(0, 100).map((item) => sanitize(item, depth + 1));
+      }
+      if (typeof obj !== 'object' || obj === null) return obj;
+
+      const result: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(obj)) {
+        if (sensitiveKeys.some((sk) => key.toLowerCase().includes(sk.toLowerCase()))) {
+          result[key] = '[REDACTED]';
+        } else {
+          result[key] = sanitize(value, depth + 1);
+        }
+      }
+      return result;
+    };
+
+    return sanitize(data);
+  }
+
   private async runNodeJudge(execution: any, task: any, taskResult: any, upstreamContext: Record<string, unknown>): Promise<NodeJudgeResult> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
     if (!httpClient) {
@@ -685,6 +753,10 @@ export class PlaybookJudgeEnrichmentService {
     }
 
     const playbook = await this.playbookService.findById(execution.playbookId?.toString?.() || String(execution.playbookId || ''));
+    const expectedResult = await this.resolveExpectedResult(
+      execution.playbookId?.toString?.() || String(execution.playbookId || ''),
+      task,
+    );
 
     const defaultModel = await this.modelsService.getDefaultModel();
     const model = defaultModel?.id || defaultModel?.litellmModel || '';
@@ -698,11 +770,13 @@ export class PlaybookJudgeEnrichmentService {
       taskTitle: task?.title || taskResult.nodeTitle || '',
       taskDescription: task?.description || '',
       workflowGoal: String(playbook.description || ''),
-      upstreamContextJson: JSON.stringify(upstreamContext, null, 2),
+      expectedResultSource: expectedResult.source,
+      expectedResult: expectedResult.value || 'None',
+      upstreamContextJson: JSON.stringify(this.sanitizeForPrompt(upstreamContext), null, 2),
       taskOutput: String(taskResult.output || ''),
-      artifactsJson: JSON.stringify(taskResult.artifacts || [], null, 2),
-      toolTraceJson: JSON.stringify(taskResult.toolTrace || [], null, 2),
-      promptTraceJson: JSON.stringify(taskResult.llmPromptTrace || [], null, 2),
+      artifactsJson: JSON.stringify(this.sanitizeForPrompt(taskResult.artifacts || []), null, 2),
+      toolTraceJson: JSON.stringify(this.sanitizeForPrompt(taskResult.toolTrace || []), null, 2),
+      promptTraceJson: JSON.stringify(this.sanitizeForPrompt(taskResult.llmPromptTrace || []), null, 2),
     });
 
     const response = await httpClient.post('/v1/chat/completions', {
@@ -767,9 +841,14 @@ export class PlaybookJudgeEnrichmentService {
     return {
       accuracyScore: this.normalizeScore(source.accuracyScore),
       completenessScore: this.normalizeScore(source.completenessScore),
+      resultMatchingScore: this.normalizeScore(source.resultMatchingScore),
       overallScore: this.normalizeScore(source.overallScore),
       confidence: this.normalizeConfidence(source.confidence),
       toolUsageScore: this.normalizeScore(source.toolUsageScore),
+      expectedResultSource: this.normalizeExpectedResultSource(source.expectedResultSource),
+      expectedResultType: this.normalizeExpectedResultType(source.expectedResultType),
+      expectedResultMatched: source.expectedResultMatched === true,
+      expectedResultReason: this.normalizeText(source.expectedResultReason),
       missingFacts: this.normalizeStringList(source.missingFacts),
       incoherences: this.normalizeStringList(source.incoherences),
       unsupportedClaims: this.normalizeStringList(source.unsupportedClaims),
@@ -837,6 +916,25 @@ export class PlaybookJudgeEnrichmentService {
 
   private normalizeNodeRecommendation(value: unknown): JudgeRecommendation {
     return value === 'update_current_playbook' || value === 'generate_new_optimized_playbook' || value === 'none'
+      ? value
+      : 'none';
+  }
+
+  private normalizeExpectedResultSource(value: unknown): 'node_field' | 'golden_baseline' | 'none' {
+    return value === 'node_field' || value === 'golden_baseline' || value === 'none'
+      ? value
+      : 'none';
+  }
+
+  private normalizeExpectedResultType(
+    value: unknown,
+  ): 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none' {
+    return value === 'exact_value'
+      || value === 'semantic_description'
+      || value === 'numeric_presentation'
+      || value === 'document_generation'
+      || value === 'baseline_comparison'
+      || value === 'none'
       ? value
       : 'none';
   }
