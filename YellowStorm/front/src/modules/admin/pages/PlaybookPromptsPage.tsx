@@ -545,6 +545,11 @@ export function PlaybookPromptsPage() {
                     </div>
                   </div>
 
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground mb-1 font-medium">{t('playbook.prompts.hints.title')}</p>
+                    <p className="text-xs text-muted-foreground">{t('playbook.prompts.hints.variables')}</p>
+                  </div>
+
                   <div className="flex justify-end">
                     <Button onClick={() => void handleSavePrompt()} disabled={!promptDraft.key || promptSaving}>
                       {promptSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}

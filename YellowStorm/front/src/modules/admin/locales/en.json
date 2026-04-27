@@ -1206,6 +1206,8 @@
   "playbook.prompts.toasts.saved": "Prompt saved and published",
   "playbook.prompts.toasts.saveFailed": "Failed to save prompt",
   "playbook.prompts.toasts.loadFailed": "Failed to load playbook prompts",
+  "playbook.prompts.hints.title": "Template Variables",
+  "playbook.prompts.hints.variables": "Use {{agentName}}, {{agentInstructions}}, {{UserLanguage}} in task prompts. {{UserLanguage}} resolves to the user's UI language (e.g. \"en\", \"fr\"). Other variables depend on the prompt key (e.g. {{taskTitle}}, {{workflowGoal}}).",
   "playbook.templates.title": "Node Templates",
   "playbook.templates.registry": "Template Registry",
   "playbook.templates.slots": "{{count}} templates",

@@ -1899,6 +1899,7 @@ class ChatbotServicer(
                     prompt_overrides=dict(request.prompt_overrides)
                     if getattr(request, "prompt_overrides", None)
                     else {},
+                    user_language=getattr(request, "user_language", None) or "en",
                 )
 
             return _build_step_response(result)
@@ -2012,10 +2013,11 @@ class ChatbotServicer(
                         or request.user_context.user_id
                         or "unknown",
                         on_progress=on_progress,
-                        prompt_overrides=dict(request.prompt_overrides)
-                        if getattr(request, "prompt_overrides", None)
-                        else {},
-                    )
+                    prompt_overrides=dict(request.prompt_overrides)
+                    if getattr(request, "prompt_overrides", None)
+                    else {},
+                    user_language=getattr(request, "user_language", None) or "en",
+                )
                 )
 
             while True:

@@ -14,6 +14,13 @@ class UpdateAppearanceDto {
   @IsOptional()
   @IsEnum(ColorThemeDto)
   colorTheme?: ColorThemeDto;
+
+  @ApiPropertyOptional({ description: 'User language preference (ISO 639-1 code)' })
+  @IsOptional()
+  @IsString()
+  @MinLength(2)
+  @MaxLength(5)
+  language?: string;
 }
 
 export class UpdateProfileDto {

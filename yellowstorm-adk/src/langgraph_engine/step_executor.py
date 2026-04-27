@@ -436,6 +436,7 @@ async def _execute_evaluation_task(
         system_prompt = system_prompt.replace(
             "{{agentInstructions}}", evaluator_instructions
         )
+    system_prompt = system_prompt.replace("{{UserLanguage}}", "en")
     user_prompt = resolve_prompt_template(
         prompt_registry,
         "evaluation.task.user",
@@ -447,6 +448,7 @@ async def _execute_evaluation_task(
         .replace("{{taskDescription}}", str(task.get("description") or ""))
         .replace("{{expectation}}", expectation or "No semantic expectation configured.")
         .replace("{{baselineSummary}}", baseline_id or "No reference baseline configured.")
+        .replace("{{UserLanguage}}", "en")
         .replace(
             "{{inputsJson}}",
             json.dumps(
@@ -716,6 +718,7 @@ async def execute_step(
     evaluation_user_id: str = "unknown",
     on_progress: Optional[StepProgressCallback] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
+    user_language: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a single task.
 
@@ -750,6 +753,7 @@ async def execute_step(
             evaluation_user_id=evaluation_user_id,
             on_progress=on_progress,
             prompt_overrides=prompt_overrides,
+            user_language=user_language,
         )
 
     return await _execute_step_direct(
@@ -767,6 +771,7 @@ async def execute_step(
         evaluation_user_id=evaluation_user_id,
         on_progress=on_progress,
         prompt_overrides=prompt_overrides,
+        user_language=user_language,
     )
 
 
@@ -785,6 +790,7 @@ async def _execute_step_direct(
     evaluation_user_id: str = "unknown",
     on_progress: Optional[StepProgressCallback] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
+    user_language: Optional[str] = None,
 ) -> Dict[str, Any]:
     from src.config.settings import get_settings
 
@@ -857,7 +863,7 @@ async def _execute_step_direct(
     )
     system_prompt = system_prompt.replace("{{agentName}}", agent["name"]).replace(
         "{{agentInstructions}}", agent_instructions
-    )
+    ).replace("{{UserLanguage}}", user_language or "en")
 
     user_prompt = build_task_prompt(
         task,
@@ -868,6 +874,7 @@ async def _execute_step_direct(
         prompt_overrides=prompt_overrides or (task or {}).get("prompt_overrides") or {},
         output_mode=output_mode,
     )
+    user_prompt = user_prompt.replace("{{UserLanguage}}", user_language or "en")
     llm_prompt_trace: List[Dict[str, Any]] = []
 
     if str(task.get("task_type") or "") == "evaluation":

@@ -882,6 +882,7 @@ class DynamicGraphBuilder:
                             clarification_prompt += (
                                 f"\n\nPrior clarification turns:\n{prior_turns}"
                             )
+                        clarification_prompt = clarification_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
 
                         _store_clarification_context(
                             state,
@@ -1105,7 +1106,9 @@ class DynamicGraphBuilder:
                 )
                 system_prompt = system_prompt.replace(
                     "{{agentName}}", agent["name"]
-                ).replace("{{agentInstructions}}", agent_instructions)
+                ).replace("{{agentInstructions}}", agent_instructions).replace(
+                    "{{UserLanguage}}", state.get("user_language") or "en"
+                )
 
                 effective_workspace_context = list(state.get("workspace_context") or [])
                 if workspace_artifacts:
@@ -1131,6 +1134,7 @@ class DynamicGraphBuilder:
                     )
 
                 user_prompt = _build_user_prompt(task_for_execution)
+                user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
 
                 async def _execute_task_once(
                     current_task_for_execution: Dict[str, Any],
@@ -1558,8 +1562,9 @@ class DynamicGraphBuilder:
                                 clarification_transcript,
                                 task_description,
                             )
-                            user_prompt = _build_user_prompt(task_for_execution)
-                            continue
+                        user_prompt = _build_user_prompt(task_for_execution)
+                        user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
+                        continue
 
                     if not task_config.get("interrupt_after", False):
                         break
@@ -1653,6 +1658,7 @@ class DynamicGraphBuilder:
                         "description": f"{task_for_execution['description']}\n\nHuman Review Feedback: {feedback_message}",
                     }
                     user_prompt = _build_user_prompt(task_for_execution)
+                    user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
 
                 completed_at = datetime.utcnow().isoformat() + "Z"
                 duration_ms = int((time.time() - start_time) * 1000)

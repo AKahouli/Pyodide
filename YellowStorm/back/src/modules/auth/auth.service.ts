@@ -195,6 +195,7 @@ export class AuthService {
           profileComplete: user.profileComplete,
           appearance: {
             colorTheme: user.appearance?.colorTheme ?? 'default',
+            language: user.appearance?.language ?? 'en',
           },
           profile: {
             firstName: user.profile?.firstName,

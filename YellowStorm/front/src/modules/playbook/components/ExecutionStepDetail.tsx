@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
-import { RepeatabilityDetails } from './RepeatabilityDetails';
+
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -351,10 +351,6 @@ export function ExecutionStepDetail({
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
-  const repeatability = usePlaybookStore((s) => s.repeatability);
-  const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
-  const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
-  const clearRepeatability = usePlaybookStore((s) => s.clearRepeatability);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
@@ -704,12 +700,6 @@ export function ExecutionStepDetail({
       return latestJudgeHistoryId;
     });
   }, [judgeHistory, step?.taskId]);
-
-  useEffect(() => {
-    if (activeTab !== 'judge' || !currentPlaybook?.id) return;
-    fetchRepeatability(currentPlaybook.id);
-    return () => { clearRepeatability(); };
-  }, [activeTab, currentPlaybook?.id, fetchRepeatability, clearRepeatability]);
 
   const handleSaveEvaluationBaseline = useCallback(async () => {
     if (!execution || !step) return;
@@ -1744,7 +1734,6 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} onPageFetch={currentPlaybook ? (limit, offset) => fetchRepeatability(currentPlaybook.id, limit, offset) : undefined} />
           </TabsContent>
 
           <TabsContent value="traces" className="space-y-4">

@@ -893,6 +893,7 @@ export class PlaybookExecutionService {
     options?: {
       executionTrigger?: 'manual' | 'scheduled' | 'mail';
       triggerContext?: Record<string, unknown> | null;
+      userLanguage?: string;
     },
   ): Promise<{ executionId: string }> {
     const executionTrigger: 'manual' | 'scheduled' | 'mail' =
@@ -1316,6 +1317,7 @@ export class PlaybookExecutionService {
         playbook.name,
         activeReplayMap,
         activeOutputFormatMap,
+        options?.userLanguage || 'en',
       ).catch(async (err) => {
         this.logger.error('Full workflow failed', {
           executionId,
@@ -1368,6 +1370,7 @@ export class PlaybookExecutionService {
     const owner = await this.userService.findById(ownerId);
     return this.executePlaybook(ownerId, playbook._id.toString(), dto, owner?.email || '', {
       executionTrigger: 'manual',
+      userLanguage: (owner as any)?.appearance?.language || 'en',
     });
   }
 
@@ -1388,6 +1391,7 @@ export class PlaybookExecutionService {
     playbookName: string = '',
     activeReplayMap: Map<string, any> = new Map(),
     activeOutputFormatMap: Map<string, any> = new Map(),
+    userLanguage: string = 'en',
   ): Promise<void> {
     this.logger.debug('runFullWorkflow start', { executionId, userId });
 
@@ -1579,6 +1583,7 @@ export class PlaybookExecutionService {
       execution_mode: 'live',
       step_execution_modes: stepExecutionModesForGrpc,
       prompt_overrides: promptOverrides,
+      user_language: userLanguage || 'en',
     };
 
     if (triggerContext && typeof triggerContext === 'object') {

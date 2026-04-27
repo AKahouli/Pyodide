@@ -48,7 +48,7 @@ message Tool {
     string prompt = 2;
     string description = 3;
     int32 top_k = 4;
-    string accessToken = 5; // optional  
+    string accessToken = 5;
     string guidelines = 6;
 }
 
@@ -543,6 +543,7 @@ message RunPlaybookWorkflowRequest {
     map<string, string> prompt_overrides = 12;
     google.protobuf.Struct trigger_context = 13;
     string trigger_context_json = 14;
+    string user_language = 15;
 }
 
 message ResumePlaybookWorkflowRequest {
@@ -568,6 +569,7 @@ message RunStepRequest {
     google.protobuf.Struct trigger_context = 13;
     repeated PortPayload node_inputs = 14;
     repeated string declared_output_ports = 15;
+    string user_language = 16;
 }
 
 message ResumeStepRequest {

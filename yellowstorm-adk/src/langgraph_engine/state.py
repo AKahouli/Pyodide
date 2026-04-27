@@ -206,6 +206,7 @@ class ExecutionState(TypedDict):
     execution_mode: Optional[str]
     validated_replays_by_task: Optional[Dict[str, Any]]
     step_execution_modes: Optional[Dict[str, str]]
+    user_language: Optional[str]
     prompt_overrides: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
     artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]

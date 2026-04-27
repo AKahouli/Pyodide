@@ -485,6 +485,7 @@ export class PlaybookController {
   ) {
     return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email, {
       executionTrigger: 'manual',
+      userLanguage: (user as any).appearance?.language || 'en',
     });
   }
 

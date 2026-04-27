@@ -198,7 +198,7 @@ The vault is accessed through the **Obsidian Local REST API** plugin:
 | **Base URL** | `http://127.0.0.1:27123` |
 | **Transport** | HTTP (via `obsidian-mcp-server` npx package) |
 | **Requirement** | Obsidian must be running with the Local REST API plugin enabled |
-| **Vault path** | `C:\Users\agara\Documents\my2nd\my2nd` |
+| **Vault path** | `C:\Users\agara\Documents\my2nd` |
 
 > The vault filesystem path above is for direct file operations only. All agent interactions must go through the MCP tools — never bypass the API layer for vault reads/writes.
 

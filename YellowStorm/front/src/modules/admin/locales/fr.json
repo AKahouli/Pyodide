@@ -1206,6 +1206,8 @@
   "playbook.prompts.toasts.saved": "Invite enregistr\u00e9e et publi\u00e9e",
   "playbook.prompts.toasts.saveFailed": "\u00c9chec de l'enregistrement de l'invite",
   "playbook.prompts.toasts.loadFailed": "\u00c9chec du chargement des invites de playbook",
+  "playbook.prompts.hints.title": "Variables de mod\u00e8le",
+  "playbook.prompts.hints.variables": "Utilisez {{agentName}}, {{agentInstructions}}, {{UserLanguage}} dans les invites de t\u00e2che. {{UserLanguage}} est remplac\u00e9 par la langue de l'utilisateur (ex. \"en\", \"fr\"). Les autres variables d\u00e9pendent de la cl\u00e9 de l'invite (ex. {{taskTitle}}, {{workflowGoal}}).",
   "playbook.templates.title": "Mod\u00e8les de n\u0153uds",
   "playbook.templates.registry": "Registre des mod\u00e8les",
   "playbook.templates.slots": "{{count}} mod\u00e8les",

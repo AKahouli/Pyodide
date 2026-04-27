@@ -495,8 +495,7 @@ export class PlaybookJudgeEnrichmentService {
 
     if (taskResult.judgeStatus === JudgeStatus.EVALUATED) return;
 
-    const playbookSnapshot = (execution.playbookSnapshot as any) || {};
-    const task = (playbookSnapshot.tasks || []).find((candidate: any) => candidate.id === taskId) || null;
+    const task = playbook?.tasks?.find((candidate: any) => candidate.id === taskId) || null;
     const upstreamContext = this.buildUpstreamContext(execution, taskId);
 
       await this.executionModel.updateOne(

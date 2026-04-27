@@ -27,6 +27,13 @@ export async function updateAppearance(colorTheme: 'default' | 'yellow' | 'orang
   return response.data.data;
 }
 
+export async function updateLanguage(language: string): Promise<User> {
+  const response = await apiClient.put<ApiResponse<User>>(API_ENDPOINTS.users.me, {
+    appearance: { language },
+  });
+  return response.data.data;
+}
+
 /**
  * Get active sessions
  */
