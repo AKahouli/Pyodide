@@ -6,6 +6,7 @@ describe('component-mapper chart extraction', () => {
       chart: {
         title: 'Revenue trend',
         data: '[{"month":"Jan","revenue":42}]',
+        chartData: [{ month: 'Jan', revenue: 42 }],
         config: '{"revenue":{"label":"Revenue","color":"#123456"}}',
         xAxisKey: 'month',
         yAxisKey: 'revenue',
@@ -21,12 +22,13 @@ describe('component-mapper chart extraction', () => {
 
     expect(result).toEqual({
       type: 'chart',
-      data: {
-        title: 'Revenue trend',
-        chartData: '[{"month":"Jan","revenue":42}]',
-        config: '{"revenue":{"label":"Revenue","color":"#123456"}}',
+        data: {
+          title: 'Revenue trend',
+          data: [{ month: 'Jan', revenue: 42 }],
+          chartData: [{ month: 'Jan', revenue: 42 }],
+        config: { revenue: { label: 'Revenue', color: '#123456' } },
         xAxisKey: 'month',
-        series: '[{"dataKey":"revenue","label":"Revenue","color":"#123456"}]',
+        series: [{ dataKey: 'revenue', label: 'Revenue', color: '#123456' }],
         kind: 'CHART_KIND_LINE',
         yAxisKey: 'revenue',
         nameKey: '',
@@ -45,6 +47,7 @@ describe('component-mapper chart extraction', () => {
       chart: {
         title: 'Prices',
         data: '[{"produit":"Stylo","prix":1.2}]',
+        chartData: [{ produit: 'Stylo', prix: 1.2 }],
         config: '{"prix":{"label":"Prix (€)","color":"#123456"}}',
         x_axis_key: 'produit',
         y_axis_key: 'prix',
@@ -62,12 +65,13 @@ describe('component-mapper chart extraction', () => {
 
     expect(result).toEqual({
       type: 'chart',
-      data: {
-        title: 'Prices',
-        chartData: '[{"produit":"Stylo","prix":1.2}]',
-        config: '{"prix":{"label":"Prix (€)","color":"#123456"}}',
+        data: {
+          title: 'Prices',
+          data: [{ produit: 'Stylo', prix: 1.2 }],
+          chartData: [{ produit: 'Stylo', prix: 1.2 }],
+        config: { prix: { label: 'Prix (€)', color: '#123456' } },
         xAxisKey: 'produit',
-        series: '[{"dataKey":"prix","label":"Prix (€)"}]',
+        series: [{ dataKey: 'prix', label: 'Prix (€)' }],
         kind: 'CHART_KIND_BAR',
         yAxisKey: 'prix',
         nameKey: '',
@@ -86,6 +90,7 @@ describe('component-mapper chart extraction', () => {
       chart: {
         title: 'Legacy',
         data: '[]',
+        chartData: [],
         config: '{}',
         xAxisKey: 'name',
         series: '[]',
@@ -108,6 +113,7 @@ describe('component-mapper chart extraction', () => {
       chart: {
         title: 'Empty payload',
         data: '[]',
+        chartData: [],
         config: '{}',
         xAxisKey: 'category',
         yAxisKey: 'value',
@@ -118,12 +124,13 @@ describe('component-mapper chart extraction', () => {
 
     expect(result).toEqual({
       type: 'chart',
-      data: {
-        title: 'Empty payload',
-        chartData: '[]',
-        config: '{}',
+        data: {
+          title: 'Empty payload',
+          data: [],
+          chartData: [],
+        config: {},
         xAxisKey: 'category',
-        series: '[]',
+        series: [],
         kind: 'CHART_KIND_BAR',
         yAxisKey: 'value',
         nameKey: '',
@@ -134,6 +141,65 @@ describe('component-mapper chart extraction', () => {
         showLegend: true,
         showGrid: true,
       },
+    });
+  });
+
+  it('maps backend-normalized chart arrays into the chart payload', () => {
+    const result = extractComponentData({
+      chart: {
+        title: 'Normalized',
+        data: [{ month: 'Jan', revenue: 42 }],
+        config: {},
+        xAxisKey: 'month',
+        yAxisKey: 'revenue',
+        series: [{ dataKey: 'revenue' }],
+        kind: 'CHART_KIND_LINE',
+      },
+    });
+
+    expect(result).toEqual({
+      type: 'chart',
+      data: {
+        title: 'Normalized',
+        data: [{ month: 'Jan', revenue: 42 }],
+        chartData: [{ month: 'Jan', revenue: 42 }],
+        config: {},
+        xAxisKey: 'month',
+        series: [{ dataKey: 'revenue' }],
+        kind: 'CHART_KIND_LINE',
+        yAxisKey: 'revenue',
+        nameKey: '',
+        zAxisKey: '',
+        stacked: false,
+        layout: 'CHART_LAYOUT_UNSPECIFIED',
+        innerRadius: 0,
+        showLegend: true,
+        showGrid: true,
+      },
+    });
+  });
+
+  it('parses chart arrays and config when grpc returns JSON strings', () => {
+    const result = extractComponentData({
+      chart: {
+        title: 'Parsed strings',
+        data: '[{"month":"Jan","revenue":42},{"month":"Feb","revenue":84}]',
+        chartData: '[{"month":"Jan","revenue":42},{"month":"Feb","revenue":84}]',
+        config: '{"revenue":{"label":"Revenue","color":"#123456"}}',
+        xAxisKey: 'month',
+        yAxisKey: 'revenue',
+        series: '[{"dataKey":"revenue","label":"Revenue"}]',
+        kind: 'CHART_KIND_LINE',
+      },
+    });
+
+    expect(result.data).toMatchObject({
+      title: 'Parsed strings',
+      data: [{ month: 'Jan', revenue: 42 }, { month: 'Feb', revenue: 84 }],
+      chartData: [{ month: 'Jan', revenue: 42 }, { month: 'Feb', revenue: 84 }],
+      config: { revenue: { label: 'Revenue', color: '#123456' } },
+      series: [{ dataKey: 'revenue', label: 'Revenue' }],
+      kind: 'CHART_KIND_LINE',
     });
   });
 });
