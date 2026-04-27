@@ -1296,12 +1296,6 @@ def _create_connector_mcp_tools(
     if not bindings:
         return []
 
-    brain_header: Dict[str, str] = {}
-    if output_workspace_id:
-        brain_header["X-Brain-ID"] = str(output_workspace_id)
-    if external_ids:
-        brain_header["X-External-ID"] = ",".join(external_ids)
-
     tools: List[StructuredTool] = []
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
@@ -1390,7 +1384,7 @@ def _create_connector_mcp_tools(
                 sc: Dict[str, Any] = server_config,
                 fp: Dict[str, Any] = fixed_params,
                 tn: str = tool_name,
-                ah: Dict[str, str] = {**binding_auth_headers, **brain_header},
+                ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
                 async def _execute_mcp(**kwargs: Any) -> Any:
@@ -1484,7 +1478,7 @@ def _create_connector_mcp_tools(
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
             brain_ids=brain_ids,
-            brain_header=brain_header,
+            external_ids=external_ids,
         )
 
     return tools

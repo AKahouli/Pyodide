@@ -161,7 +161,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
     ]
 
 
-def test_connector_mcp_tools_use_output_workspace_id_for_brain_header(
+def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -188,7 +188,6 @@ def test_connector_mcp_tools_use_output_workspace_id_for_brain_header(
                 "mcp_server_url": "https://example.com/mcp",
                 "auth_headers": {
                     "Authorization": "Bearer token",
-                    "X-Brain-ID": "wrong-brain",
                 },
                 "actions": [
                     {
@@ -210,14 +209,10 @@ def test_connector_mcp_tools_use_output_workspace_id_for_brain_header(
     assert result == {"text": "ok"}
     assert captured["params"] == {"query": "revenue"}
     assert captured["auth_env"] == {}
-    assert captured["auth_headers"] == {
-        "Authorization": "Bearer token",
-        "X-Brain-ID": "playbook-workspace-1",
-        "X-External-ID": "doc-1,doc-2",
-    }
+    assert captured["auth_headers"] == {"Authorization": "Bearer token"}
 
 
-def test_connector_mcp_tools_omit_brain_header_without_output_workspace_id(
+def test_connector_mcp_tools_preserve_explicit_auth_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -240,7 +235,10 @@ def test_connector_mcp_tools_omit_brain_header_without_output_workspace_id(
                 "connector_slug": "sharepoint",
                 "mcp_transport_type": "streamable_http",
                 "mcp_server_url": "https://example.com/mcp",
-                "auth_headers": {"Authorization": "Bearer token"},
+                "auth_headers": {
+                    "Authorization": "Bearer token",
+                    "X-Custom-Header": "custom-value",
+                },
                 "actions": [
                     {
                         "action_key": "searchv2_search_document_blocks",
@@ -257,4 +255,7 @@ def test_connector_mcp_tools_omit_brain_header_without_output_workspace_id(
 
     asyncio.run(tools[0].ainvoke({"query": "revenue"}))
 
-    assert captured["auth_headers"] == {"Authorization": "Bearer token"}
+    assert captured["auth_headers"] == {
+        "Authorization": "Bearer token",
+        "X-Custom-Header": "custom-value",
+    }

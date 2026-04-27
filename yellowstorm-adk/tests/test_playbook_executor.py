@@ -613,6 +613,44 @@ class TestExecuteStepOnly:
             assert result["agent"] == mock_agent
             assert "Agent execution returned no result" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_execute_step_only_uses_shared_citation_manager_when_session_provided(
+        self,
+        executor,
+        mock_playbook_request,
+    ):
+        """Test that step replay reuses a shared citation manager for derived sessions."""
+        with patch('src.smart_rag.playbook_dir.execute_step.AgentDelegationFactory') as MockFactory, \
+             patch('src.smart_rag.playbook_dir.execute_step.langfuse_client'), \
+             patch('src.smart_rag.playbook_dir.execute_step.get_citation_manager', new=AsyncMock()) as mock_get_citation_manager:
+
+            mock_delegation_factory = MagicMock()
+            mock_agent = MagicMock()
+            mock_agent.name = "Test Agent"
+            mock_toolkit = MagicMock()
+            mock_citation_manager = MagicMock()
+
+            mock_delegation_factory._create_agent_with_error_handling = AsyncMock(
+                return_value=(mock_agent, mock_toolkit)
+            )
+            mock_delegation_factory._execute_agent_with_error_handling = AsyncMock(
+                return_value="Step execution result"
+            )
+
+            MockFactory.return_value = mock_delegation_factory
+            mock_get_citation_manager.return_value = mock_citation_manager
+
+            queue = asyncio.Queue()
+            result = await executor.execute_step_only(
+                mock_playbook_request,
+                queue,
+                citation_session_id="session-derived",
+            )
+
+            assert result["success"] is True
+            mock_get_citation_manager.assert_awaited_once_with("session-derived")
+            assert MockFactory.call_args.kwargs["citation_manager"] == mock_citation_manager
+
 
 class TestExecuteStep:
     """Test suite for execute_step method (main orchestration method)."""
@@ -625,7 +663,9 @@ class TestExecuteStep:
              patch.object(executor, '_modify_events_by_call_id') as mock_modify, \
              patch.object(executor, '_filter_events_up_to_call_id') as mock_filter, \
              patch.object(executor, '_reinject_events_to_database') as mock_reinject, \
-             patch('src.smart_rag.playbook_dir.execute_step.PlaybookManagerExecutor') as MockManagerExecutor:
+             patch('src.smart_rag.playbook_dir.execute_step.PlaybookManagerExecutor') as MockManagerExecutor, \
+             patch('src.smart_rag.playbook_dir.execute_step.clone_citation_manager_state', new=AsyncMock()) as mock_clone_citation_state, \
+             patch('src.smart_rag.playbook_dir.execute_step.uuid.uuid4', return_value='fixed-session'):
 
             # Setup mocks
             mock_event1 = MagicMock()
@@ -655,12 +695,18 @@ class TestExecuteStep:
             assert result["result"] == "Manager result"
             assert result["step_result"] == "New step result"
             assert "new_session_id" in result
+            mock_clone_citation_state.assert_awaited_once_with(
+                source_session_id=mock_playbook_request.messageId,
+                target_session_id="session-fixed-session",
+            )
+            assert mock_execute_step.await_args.kwargs["citation_session_id"] == "session-fixed-session"
 
     @pytest.mark.asyncio
     async def test_execute_step_retrieve_events_failure(self, executor, mock_playbook_request):
         """Test execute_step when retrieving events fails."""
         with patch.object(executor, '_retrieve_session_events') as mock_retrieve, \
-             patch.object(executor, '_send_error_message') as mock_send_error:
+             patch.object(executor, '_send_error_message') as mock_send_error, \
+             patch('src.smart_rag.playbook_dir.execute_step.clone_citation_manager_state', new=AsyncMock()):
 
             mock_retrieve.side_effect = ConnectionError("Database connection failed")
             mock_send_error.return_value = None
@@ -675,7 +721,8 @@ class TestExecuteStep:
     async def test_execute_step_empty_events(self, executor, mock_playbook_request):
         """Test execute_step when no events are found."""
         with patch.object(executor, '_retrieve_session_events') as mock_retrieve, \
-             patch.object(executor, '_send_error_message') as mock_send_error:
+             patch.object(executor, '_send_error_message') as mock_send_error, \
+             patch('src.smart_rag.playbook_dir.execute_step.clone_citation_manager_state', new=AsyncMock()):
 
             mock_retrieve.return_value = []
             mock_send_error.return_value = None
@@ -691,7 +738,8 @@ class TestExecuteStep:
         """Test execute_step when step execution fails."""
         with patch.object(executor, '_retrieve_session_events') as mock_retrieve, \
              patch.object(executor, 'execute_step_only') as mock_execute_step, \
-             patch.object(executor, '_send_error_message') as mock_send_error:
+             patch.object(executor, '_send_error_message') as mock_send_error, \
+             patch('src.smart_rag.playbook_dir.execute_step.clone_citation_manager_state', new=AsyncMock()):
 
             mock_event = MagicMock()
             mock_event.model_copy = MagicMock(return_value=mock_event)
@@ -717,7 +765,8 @@ class TestExecuteStep:
              patch.object(executor, '_modify_events_by_call_id') as mock_modify, \
              patch.object(executor, '_filter_events_up_to_call_id') as mock_filter, \
              patch.object(executor, '_reinject_events_to_database') as mock_reinject, \
-             patch.object(executor, '_send_error_message') as mock_send_error:
+             patch.object(executor, '_send_error_message') as mock_send_error, \
+             patch('src.smart_rag.playbook_dir.execute_step.clone_citation_manager_state', new=AsyncMock()):
 
             mock_event = MagicMock()
             mock_event.model_copy = MagicMock(return_value=mock_event)
@@ -747,7 +796,8 @@ class TestExecuteStep:
              patch.object(executor, '_modify_events_by_call_id') as mock_modify, \
              patch.object(executor, '_filter_events_up_to_call_id') as mock_filter, \
              patch.object(executor, '_reinject_events_to_database') as mock_reinject, \
-             patch('src.smart_rag.playbook_dir.execute_step.PlaybookManagerExecutor') as MockManagerExecutor:
+             patch('src.smart_rag.playbook_dir.execute_step.PlaybookManagerExecutor') as MockManagerExecutor, \
+             patch('src.smart_rag.playbook_dir.execute_step.clone_citation_manager_state', new=AsyncMock()):
 
             mock_event = MagicMock()
             mock_event.model_copy = MagicMock(return_value=mock_event)

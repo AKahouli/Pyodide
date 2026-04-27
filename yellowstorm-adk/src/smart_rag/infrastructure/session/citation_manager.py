@@ -6,6 +6,7 @@ Handles the conversion from tag-based to numeric citations.
 """
 
 import asyncio
+from copy import deepcopy
 from typing import Dict, List, Optional, Any
 from .global_session_manager import GlobalSessionManager
 from src.logger.logging import get_logger
@@ -335,6 +336,51 @@ async def remove_citation_manager(session_id: str):
         session_id: Session identifier to remove
     """
     await _citation_registry.remove_manager(session_id)
+
+
+async def clone_citation_manager_state(
+    source_session_id: str,
+    target_session_id: str,
+    db_pool=None,
+) -> SessionCitationManager:
+    """
+    Clone citation state from one session into another session.
+
+    This is used when a playbook step creates a derived session that must keep
+    the original citation numbering and continue appending from it.
+    """
+    if not source_session_id or not source_session_id.strip():
+        raise ValueError("source_session_id cannot be empty")
+    if not target_session_id or not target_session_id.strip():
+        raise ValueError("target_session_id cannot be empty")
+
+    if source_session_id == target_session_id:
+        return await get_citation_manager(source_session_id, db_pool)
+
+    source_manager = await get_citation_manager(source_session_id, db_pool)
+    target_manager = await SessionCitationManager.create(target_session_id, db_pool)
+
+    async with source_manager.lock:
+        target_manager.citation_cache = deepcopy(source_manager.citation_cache)
+        target_manager.global_manager.next_task_order = source_manager.global_manager.next_task_order
+        target_manager.global_manager.next_citation_number = source_manager.global_manager.next_citation_number
+        target_manager.global_manager.citation_mapping = deepcopy(
+            source_manager.global_manager.citation_mapping
+        )
+        target_manager.global_manager.sources = deepcopy(source_manager.global_manager.sources)
+        await target_manager.global_manager._save_state()
+
+    async with _citation_registry._registry_lock:
+        _citation_registry._managers[target_session_id] = target_manager
+        if target_session_id not in _citation_registry._locks:
+            _citation_registry._locks[target_session_id] = asyncio.Lock()
+
+    logger.info(
+        "[CitationRegistry] Cloned citation state from session %s to %s",
+        source_session_id,
+        target_session_id,
+    )
+    return target_manager
 
 
 async def clear_all_citation_managers():

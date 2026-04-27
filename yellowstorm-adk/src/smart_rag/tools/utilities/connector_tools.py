@@ -500,10 +500,6 @@ def create_connector_tools(
     settings = get_settings()
     backend_url = getattr(settings, "API_URL", None)
 
-    brain_header: Dict[str, str] = {}
-    if brain_ids:
-        brain_header["X-Brain-ID"] = ",".join(brain_ids)
-
     for binding in bindings or []:
         connector_id = str(binding.get("connector_id") or "").strip()
         connector_name = str(binding.get("connector_name") or connector_id).strip()
@@ -681,7 +677,7 @@ def create_connector_tools(
                 _server_config: Dict[str, Any] = server_config,
                 _action_key: str = action_key,
                 _fixed_params: Dict[str, Any] = fixed_params,
-                _auth_headers: Dict[str, str] = {**binding_auth_headers, **brain_header},
+                _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
@@ -748,7 +744,7 @@ def create_connector_tools(
                 "connector_tool_created tool_name=%s action_key=%s auth_headers=%s",
                 tool_name,
                 action_key,
-                {**binding_auth_headers, **brain_header},
+                binding_auth_headers,
             )
 
             _connector_tool.__name__ = tool_name

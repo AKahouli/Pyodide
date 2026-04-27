@@ -92,6 +92,51 @@ def _unique_strings(values: Iterable[Any]) -> List[str]:
     return result
 
 
+def _build_port_retrieval_scope(
+    port_state: Dict[str, Any],
+    *,
+    default_workspace_id: str = "",
+) -> Dict[str, List[str]]:
+    resolved_documents = list(port_state.get("resolved_documents") or [])
+    staged_files = list(port_state.get("staged_files") or [])
+
+    return {
+        "brain_ids": _unique_strings(
+            [
+                default_workspace_id,
+                *[
+                    doc.get("workspace_id")
+                    for doc in resolved_documents
+                    if isinstance(doc, dict)
+                ],
+                *[
+                    file_ref.get("workspace_id")
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict)
+                ],
+            ]
+        ),
+        "external_ids": _unique_strings(
+            [
+                *(
+                    (port_state.get("document_bindings") or {}).get("document_ids")
+                    or []
+                ),
+                *[
+                    doc.get("document_id")
+                    for doc in resolved_documents
+                    if isinstance(doc, dict)
+                ],
+                *[
+                    file_ref.get("document_id")
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict)
+                ],
+            ]
+        ),
+    }
+
+
 def _resolve_document_metadata(
     document_id: str,
     *,
@@ -850,13 +895,18 @@ def build_task_prompt_context(
         resolved_documents = list(port_state.get("resolved_documents") or [])
         staged_files = list(port_state.get("staged_files") or [])
         workspace_artifacts = list(port_state.get("workspace_artifacts") or [])
+        retrieval_scope = _build_port_retrieval_scope(
+            port_state,
+            default_workspace_id=str(default_workspace_id or ""),
+        )
 
         prompt_inputs.append(
             {
                 "input_port_id": port_id,
                 "name": str(input_port.get("name") or port_id),
                 "expected_kind": str(input_port.get("artifact_kind") or ""),
-                "default_workspace_id": str(default_workspace_id or ""),           
+                "default_workspace_id": str(default_workspace_id or ""),
+                "retrieval_scope": retrieval_scope,
                 "sources": [
                     {
                         "source_task_id": str(
@@ -908,6 +958,30 @@ def build_task_prompt_context(
             }
         )
 
+    retrieval_scope = {
+        "brain_ids": _unique_strings(
+            [
+                str(default_workspace_id or ""),
+                *[
+                    brain_id
+                    for item in prompt_inputs
+                    for brain_id in (
+                        (item.get("retrieval_scope") or {}).get("brain_ids") or []
+                    )
+                ],
+            ]
+        ),
+        "external_ids": _unique_strings(
+            [
+                external_id
+                for item in prompt_inputs
+                for external_id in (
+                    (item.get("retrieval_scope") or {}).get("external_ids") or []
+                )
+            ]
+        ),
+    }
+
     return {
         "task": {
             "id": str(task_config.get("id") or resolved_inputs.get("task_id") or ""),
@@ -916,6 +990,7 @@ def build_task_prompt_context(
         },
         "metadata": {
             "default_workspace_id": default_workspace_id,
+            "retrieval_scope": retrieval_scope,
         },
         "resolved_inputs": prompt_inputs,
         "declared_output_ports": [
@@ -982,6 +1057,24 @@ def build_task_prompt(
                 ensure_ascii=True,
                 indent=2,
             )
+        )
+
+    retrieval_scope = (
+        (prompt_context.get("metadata") or {}).get("retrieval_scope") or {}
+    )
+    if retrieval_scope.get("brain_ids") or retrieval_scope.get("external_ids"):
+        lines.append(
+            "Retrieval scope for MCP document tools JSON:\n"
+            + json.dumps(retrieval_scope, ensure_ascii=True, indent=2)
+            + "\n\n"
+            + "MCP retrieval rules:\n"
+            + "- Use `brain_ids` exactly from `retrieval_scope.brain_ids` when calling global retrieval tools.\n"
+            + "- Use `external_ids` exactly from `retrieval_scope.external_ids` when restricting retrieval to known documents.\n"
+            + "- Always pass `brain_ids` and `external_ids` as arrays when provided.\n"
+            + "- `workspace_id` values map to MCP `brain_ids`.\n"
+            + "- `document_id` values map to MCP `external_ids`.\n"
+            + "- `list_documents` supports `brain_ids` only and must not receive `external_ids`.\n"
+            + "- Do not invent IDs or derive them from filenames."
         )
 
     output_ports = list(task_config.get("output_ports") or [])
