@@ -23,7 +23,7 @@ from typing import AsyncGenerator, Dict, Any, Optional, List
 from structlog import get_logger
 from src.config.settings import get_settings
 from src.routers.authentification import create_access_token
-
+from src.middleware.correlation import UserContext, user_ctx
 # Import generated protobuf code (will be generated after running proto generation)
 try:
     from src.grpc_generated import chatbot_pb2, chatbot_pb2_grpc
@@ -84,7 +84,8 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
             StreamChunk: Protobuf messages containing text chunks and metadata
         """
         logger.info(f"[gRPC] RunAgentTeam request from user_id: {request.user_context.user_id}, username: {request.user_context.username}, conversation_id: {request.conversation_id}, agent_mode: {request.agent_mode}")
-
+        username = request.user_context.username or 'unknown'
+        user_token = user_ctx.set(username)
         # Create asyncio queue
         queue: asyncio.Queue[dict] = asyncio.Queue()
 
@@ -265,7 +266,12 @@ class ChatbotServicer(chatbot_pb2_grpc.ChatbotServiceServicer if chatbot_pb2_grp
 
             # End stream gracefully
             return
-
+        finally:
+            # Clear user context after processing
+            try:
+                user_ctx.reset(user_token)
+            except Exception:
+                pass  # Token may already be reset or invalid
     # ========== CONVERSION HELPERS ==========
 
     def _convert_agent(self, pb_agent: "chatbot_pb2.Agent") -> AgentSuggestion:

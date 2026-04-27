@@ -41,3 +41,5 @@ coverage/
 
 */.claude
 *cwd*
+*/.agents/
+YellowStorm/skills-lock.json
