@@ -2,6 +2,7 @@ import pytest
 
 from src.langgraph_engine.workflow_service import (
     _build_resume_state_update,
+    _build_task_results,
     run_single_step_graph,
 )
 
@@ -29,6 +30,95 @@ def test_build_resume_state_update_restores_clarification_context() -> None:
 
 def test_build_resume_state_update_ignores_non_clarification_interrupts() -> None:
     assert _build_resume_state_update({"type": "approval_request", "task_id": "step_1"}) is None
+
+
+def _citation_component(reference: str, source: str, content: str, parent_id: str = ""):
+    return {
+        "type": "citation",
+        "data": {
+            "parent_id": parent_id,
+            "text_source": {
+                "type": "text",
+                "source": source,
+                "external_id": source.lower().replace(" ", "-"),
+                "page": "1",
+                "page_content": content,
+                "workspace_id": "workspace-1",
+                "reference": reference,
+            },
+        },
+    }
+
+
+def test_build_task_results_normalizes_parallel_citations_in_step_order() -> None:
+    tasks = [
+        {"id": "step-1", "execution_order": 1},
+        {"id": "step-2", "execution_order": 2},
+        {"id": "step-3", "execution_order": 3},
+    ]
+    state = {
+        "results": {
+            "step-1": {
+                "output": "Step 1 answer [1].",
+                "components": [
+                    {
+                        "id": "text-1",
+                        "type": "text",
+                        "data": {"content": "Step 1 answer [1]."},
+                    },
+                    _citation_component("1", "Doc A", "A evidence"),
+                ],
+            },
+            "step-2": {
+                "output": "Step 2 answer [1].",
+                "components": [
+                    {
+                        "id": "text-2",
+                        "type": "text",
+                        "data": {"content": "Step 2 answer [1]."},
+                    },
+                    _citation_component("1", "Doc B", "B evidence"),
+                ],
+            },
+            "step-3": {
+                "output": "Step 3 combines [1] and [2], then adds [3].",
+                "components": [
+                    {
+                        "id": "text-3",
+                        "type": "text",
+                        "data": {
+                            "content": "Step 3 combines [1] and [2], then adds [3]."
+                        },
+                    },
+                    _citation_component("1", "Doc A", "A evidence", "old-text"),
+                    _citation_component("2", "Doc B", "B evidence", "old-text"),
+                    _citation_component("3", "Doc C", "C evidence"),
+                ],
+            },
+        },
+        "node_timings": {},
+    }
+
+    results = _build_task_results(state, tasks)
+
+    assert results[0]["output"] == "Step 1 answer [1]."
+    assert results[1]["output"] == "Step 2 answer [2]."
+    assert results[1]["components"][-1]["data"]["text_source"]["reference"] == "2"
+    assert results[1]["components"][-1]["data"]["parent_id"] == "text-2"
+
+    step_3_citations = [
+        component
+        for component in results[2]["components"]
+        if component["type"] == "citation"
+    ]
+    assert results[2]["output"] == "Step 3 combines [1] and [2], then adds [3]."
+    assert [
+        component["data"]["text_source"]["reference"]
+        for component in step_3_citations
+    ] == ["1", "2", "3"]
+    assert {component["data"]["parent_id"] for component in step_3_citations} == {
+        "text-3"
+    }
 
 
 @pytest.mark.asyncio

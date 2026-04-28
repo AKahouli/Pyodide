@@ -95,6 +95,69 @@ def test_collect_connector_response_components_reuses_connector_references() -> 
     assert second_components == []
 
 
+def test_collector_seed_continues_references_and_reuses_prior_citations() -> None:
+    collector = ToolResultCollector(
+        initial_components=[
+            {
+                "type": "citation",
+                "data": {
+                    "parent_id": "step-1-text",
+                    "text_source": {
+                        "type": "text",
+                        "source": "Doc 1",
+                        "external_id": "doc-1",
+                        "page": "1",
+                        "page_content": "Existing evidence",
+                        "workspace_id": "workspace-1",
+                        "reference": "5",
+                    },
+                },
+            }
+        ]
+    )
+
+    reused = _collect_connector_response_components(
+        collector,
+        {
+            "text": "Existing evidence",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "Doc 1",
+                    "external_id": "doc-1",
+                    "page": "1",
+                    "page_content": "Existing evidence",
+                    "workspace_id": "workspace-1",
+                    "reference": "",
+                }
+            ],
+        },
+    )
+    reused_components = collector.get_and_clear()
+
+    fresh = _collect_connector_response_components(
+        collector,
+        {
+            "text": "New evidence",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "Doc 2",
+                    "external_id": "doc-2",
+                    "page": "3",
+                    "page_content": "New evidence",
+                    "workspace_id": "workspace-1",
+                    "reference": "",
+                }
+            ],
+        },
+    )
+
+    assert reused["citation_sources"][0]["reference"] == "5"
+    assert reused_components == []
+    assert fresh["citation_sources"][0]["reference"] == "6"
+
+
 def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_call_mcp_tool(*args, **kwargs):
         return {

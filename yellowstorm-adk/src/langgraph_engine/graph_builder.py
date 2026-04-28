@@ -112,6 +112,87 @@ def _store_clarification_context(
     state["task_outputs"] = task_outputs
 
 
+def _citation_reference(component: Dict[str, Any]) -> str:
+    data = component.get("data") or {}
+    for key in ("text_source", "image_source"):
+        source = data.get(key)
+        if isinstance(source, dict):
+            return str(source.get("reference") or "").strip()
+    return ""
+
+
+def _component_signature(component: Dict[str, Any]) -> str:
+    if component.get("type") == "citation":
+        reference = _citation_reference(component)
+        if reference:
+            return f"citation:{reference}"
+    return json.dumps(component, sort_keys=True, default=str)
+
+
+def _merge_unique_components(
+    first: List[Dict[str, Any]],
+    second: List[Dict[str, Any]],
+    *,
+    component_type: str = "",
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for component in [*(first or []), *(second or [])]:
+        if not isinstance(component, dict):
+            continue
+        if component_type and component.get("type") != component_type:
+            continue
+        signature = _component_signature(component)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        merged.append(dict(component))
+    return merged
+
+
+def _reset_citation_parent(component: Dict[str, Any]) -> Dict[str, Any]:
+    if component.get("type") != "citation":
+        return dict(component)
+    updated = dict(component)
+    data = dict(updated.get("data") or {})
+    data["parent_id"] = ""
+    updated["data"] = data
+    return updated
+
+
+def _collect_prior_source_components(
+    state: ExecutionState,
+    current_task_id: str,
+) -> List[Dict[str, Any]]:
+    results = state.get("results") or {}
+    tasks = sorted(
+        state.get("tasks") or [],
+        key=lambda item: (
+            int(item.get("execution_order", 0) or 0),
+            str(item.get("id") or ""),
+        ),
+    )
+    ordered_task_ids = [
+        str(task.get("id") or "")
+        for task in tasks
+        if str(task.get("id") or "") and str(task.get("id") or "") != current_task_id
+    ]
+
+    components: List[Dict[str, Any]] = []
+    for task_id in ordered_task_ids:
+        result = results.get(task_id)
+        if not isinstance(result, dict):
+            continue
+        for component in result.get("components") or []:
+            if (
+                isinstance(component, dict)
+                and component.get("type") in {"sources", "citation"}
+            ):
+                components.append(component)
+
+    return _merge_unique_components([], components)
+
+
 _ARTIFACT_KIND_BY_EXTENSION = {
     ".pdf": "document",
     ".doc": "document",
@@ -1144,6 +1225,10 @@ class DynamicGraphBuilder:
                     components = []
                     tool_trace = []
                     llm_prompt_trace = []
+                    prior_source_components = _collect_prior_source_components(
+                        state,
+                        task_id,
+                    )
 
                     from src.langgraph_engine.playbook_tool_factory import (
                         create_langchain_tools,
@@ -1180,6 +1265,7 @@ class DynamicGraphBuilder:
                         output_workspace_id=output_workspace_id,
                         workspace_context_mode=tool_scope["workspace_context_mode"],
                         step_connector_bindings=task.get("tool_bindings"),
+                        initial_components=prior_source_components,
                     )
                     step_execution_modes = state.get("step_execution_modes") or {}
                     execution_mode = step_execution_modes.get(task_id) or state.get(
@@ -1402,6 +1488,33 @@ class DynamicGraphBuilder:
                         or "visualizer_agent" in agent["name"].lower()
                     )
                     if not is_visualizer:
+                        prior_citations = _merge_unique_components(
+                            [],
+                            prior_source_components,
+                            component_type="citation",
+                        )
+                        prior_citations = [
+                            _reset_citation_parent(component)
+                            for component in prior_citations
+                        ]
+                        current_non_citations = [
+                            component
+                            for component in components
+                            if not (
+                                isinstance(component, dict)
+                                and component.get("type") == "citation"
+                            )
+                        ]
+                        current_citations = _merge_unique_components(
+                            [],
+                            components,
+                            component_type="citation",
+                        )
+                        components = current_non_citations + _merge_unique_components(
+                            prior_citations,
+                            current_citations,
+                            component_type="citation",
+                        )
                         components = _attach_result_text_for_citations(
                             response,
                             components,
