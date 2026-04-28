@@ -25,6 +25,9 @@ def normalize_tools(tools: List[Any]) -> List[Any]:
         if isinstance(tool, str):
             # Normalize string tool names to lowercase
             normalized.append(tool.lower())
+        elif callable(tool):
+            # Python function: keep as is (name is used directly)
+            normalized.append(tool)
         elif isinstance(tool, dict):
             # Normalize dictionary tool names to lowercase
             normalized_tool = tool.copy()
@@ -57,6 +60,9 @@ def extract_tool_names(tools: List[Any]) -> List[str]:
         if isinstance(tool, str):
             # Simple string format: "search", "calculator" - normalize to lowercase
             tool_names.append(tool.lower())
+        elif callable(tool):
+            # Python function format: use function name
+            tool_names.append(tool.__name__.lower())
         elif isinstance(tool, dict) and 'name' in tool:
             # Dictionary format: {"name": "search_web", "description": "...", ...} - normalize to lowercase
             tool_names.append(tool['name'].lower())
@@ -85,6 +91,9 @@ def extract_tool_names_and_descriptions(tools: List[Any]) -> str:
         if isinstance(tool, str):
             # Simple string format: just the name, no description available
             result.append(f"{tool}: No description available")
+        elif callable(tool):
+            # Python function format: use function name
+            result.append(f"{tool.__name__}: No description available")
         elif isinstance(tool, dict) and 'name' in tool:
             # Dictionary format: {"name": "search_web", "description": "...", ...}
             name = tool['name']

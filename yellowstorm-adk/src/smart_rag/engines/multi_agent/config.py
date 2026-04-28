@@ -89,7 +89,13 @@ TOOL_DESCRIPTIONS = {
 **HTML Diagram Tool**: Create interactive HTML diagrams and visualizations.
 - Generates clean, responsive HTML/CSS diagrams
 - When to use: For creating flowcharts, process diagrams, organizational charts
-- Example: Create a flowchart showing the user authentication process"""
+- Example: Create a flowchart showing the user authentication process""",
+
+    "render_chart": """
+**Chart Rendering Tool**: Create visual charts for data analysis.
+- Supports: line, bar, area, pie, scatter, composed charts
+- When to use: When displaying data trends, comparisons, or distributions
+- Example: render_chart(kind="line", xAxisKey="month", data=[{"month": "Jan", "sales": 100}])"""
 }
 
 

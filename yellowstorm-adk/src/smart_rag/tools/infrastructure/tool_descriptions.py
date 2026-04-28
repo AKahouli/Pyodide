@@ -23,6 +23,11 @@ class ToolDescriptionProvider:
                 # Simple string format - use default description
                 if tool in TOOL_DESCRIPTIONS:
                     descriptions.append(TOOL_DESCRIPTIONS[tool])
+            elif callable(tool):
+                # Python function format - use function name
+                tool_name = tool.__name__
+                if tool_name in TOOL_DESCRIPTIONS:
+                    descriptions.append(TOOL_DESCRIPTIONS[tool_name])
             elif isinstance(tool, dict):
                 # Dictionary format - use custom description if provided
                 tool_name = tool.get('name', 'unknown')
