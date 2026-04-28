@@ -4201,13 +4201,19 @@ export class PlaybookExecutionService {
       },
     });
 
+    const selectedExecutionMode = executionMode || (task as any).stepReplayMode || 'live';
+    const isReplayMode = selectedExecutionMode === 'replay_strict'
+      || selectedExecutionMode === 'replay_flex'
+      || selectedExecutionMode === 'replay_adaptive';
+
     await this.prepareExecutionForRerun(executionId, taskId, attemptNumber);
     await this.resetTaskForAttempt(executionId, taskId, attemptNumber);
-    await this.resetTasksForRecompute(executionId, descendants, taskId, attemptNumber);
+    if (!isReplayMode) {
+      await this.resetTasksForRecompute(executionId, descendants, taskId, attemptNumber);
+    }
     await this.appendAttemptHistory(executionId, attemptNumber, 'rerun_step', taskId, null);
 
     const startedAt = new Date();
-    const selectedExecutionMode = executionMode || (task as any).stepReplayMode || 'live';
     const validatedReplay =
       selectedExecutionMode !== 'live'
         ? await this.replayService.getActiveReplay(playbookId, taskId)

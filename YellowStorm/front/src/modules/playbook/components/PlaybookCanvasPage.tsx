@@ -27,6 +27,7 @@ import {
   useCurrentPlaybookLoading,
   useCurrentExecution,
   useLatestExecutionForPlaybook,
+  useExecutionHistoryForPlaybook,
   useIsDirty,
   useIsSaving,
   useIsGenerating,
@@ -109,7 +110,6 @@ function normalizeTaskForExecutionReuse(task: Partial<PlaybookTask> | null | und
     enabled: task.enabled !== false,
     notifyOnComplete: Boolean(task.notifyOnComplete),
     notifyEmails: [...(task.notifyEmails || [])],
-    stepReplayMode: task.stepReplayMode ?? 'live',
   };
 }
 
@@ -186,6 +186,7 @@ function PlaybookCanvasInner() {
   const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
+  const executionHistory = useExecutionHistoryForPlaybook(id);
   const repeatability = usePlaybookStore((s) => s.repeatability);
   const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
   const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
@@ -683,15 +684,33 @@ function PlaybookCanvasInner() {
       const node = nodes.find((n) => n.id === nodeId);
       const task = node?.data as unknown as PlaybookTask | undefined;
       const selectedStepMode = task?.stepReplayMode || 'live';
-      const targetExecution =
+      const requiresExistingExecution = selectedStepMode !== 'live' || Boolean(task?.activeReplayId || task?.hasValidatedReplay);
+      let targetExecution =
         (currentExecution?.playbookId === id ? currentExecution : null)
         || execution
         || null;
+
+      if (!targetExecution) {
+        const latestHistory = executionHistory.find(
+          (e) => e.status === 'completed' || e.status === 'failed' || e.status === 'interrupted',
+        );
+        if (latestHistory) {
+          await fetchExecution(id, latestHistory.id);
+          targetExecution = usePlaybookStore.getState().executionCache[latestHistory.id] || null;
+        }
+      }
+
       try {
-        if (targetExecution && canReuseExecutionForTask(targetExecution, task)) {
+        if (targetExecution && (requiresExistingExecution || canReuseExecutionForTask(targetExecution, task))) {
           await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
           return;
         }
+
+        if (requiresExistingExecution) {
+          showError(t('errors.replayStepRequiresReusableExecution'));
+          return;
+        }
+
         await executePlaybook(id, {
           singleStepTaskId: nodeId,
           executionMode: 'live',
@@ -704,7 +723,7 @@ function PlaybookCanvasInner() {
         // handled in store
       }
     },
-    [id, isDirty, saveNow, currentExecution, execution, rerunStepInExecution, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled],
+    [id, isDirty, saveNow, currentExecution, execution, executionHistory, fetchExecution, rerunStepInExecution, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled],
   );
 
   const handleResumeFromStep = useCallback(

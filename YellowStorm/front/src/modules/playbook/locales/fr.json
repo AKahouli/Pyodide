@@ -282,6 +282,7 @@
   "store.errors.executionFailed": "L'ex\u00e9cution du playbook a \u00e9chou\u00e9. Veuillez r\u00e9essayer.",
   "errors.workspaceRequiredForRun": "S\u00e9lectionnez un workspace par d\u00e9faut avant d'ex\u00e9cuter ce playbook.",
   "errors.workspaceRequired": "S\u00e9lectionnez au moins un workspace par d\u00e9faut pour ce playbook.",
+  "errors.replayStepRequiresReusableExecution": "Les \u00e9tapes en replay doivent \u00eatre relanc\u00e9es depuis une ex\u00e9cution existante. Ouvrez la derni\u00e8re ex\u00e9cution, puis r\u00e9essayez.",
   "store.executionCompleted": "L'ex\u00e9cution du playbook est termin\u00e9e avec succ\u00e8s.",
   "store.toasts.viewExecution": "Voir",
   "store.toasts.interruptAttention": "Une \u00e9tape du playbook n\u00e9cessite votre attention.",
