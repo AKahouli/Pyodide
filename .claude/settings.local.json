@@ -8,7 +8,10 @@
       "Bash(python -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
       "Bash(python *)",
       "Bash(node -p \"require\\('recharts/package.json'\\).version\")",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "Bash(python3 -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
+      "Bash(python3 -m py_compile utilities/render_chart.py)",
+      "Bash(git restore *)"
     ]
   }
 }
