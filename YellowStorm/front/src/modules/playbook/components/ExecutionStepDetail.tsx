@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
+import { AdvisorResultPanel } from './AdvisorResultPanel';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -169,6 +170,12 @@ function formatTime(isoString: string | null): string {
   return new Date(isoString).toLocaleTimeString();
 }
 
+function formatDateTimeCompact(isoString: string | null): string {
+  if (!isoString) return '-';
+  const date = new Date(isoString);
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
+}
+
 function formatDuration(ms: number | null): string {
   if (ms === null) return '-';
   if (ms < 1000) return `${ms}ms`;
@@ -184,7 +191,8 @@ function getExecutionModeLabel(mode?: string): string {
 
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
-  return `${Math.round(value)}%`;
+  const scaled = value <= 1 ? value * 100 : value;
+  return `${Math.round(scaled)}%`;
 }
 
 function formatSignedPercentDelta(value: number): string {
@@ -245,6 +253,15 @@ function normalizeExpectedResultType(value: string | null | undefined): 'exact_v
 function normalizeAdvisorScore(value: number | null | undefined): number | null {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
   return Math.max(0, Math.min(100, value));
+}
+
+function getJudgeVerdictKey(score: number | null | undefined): 'passed' | 'passedWithImprovements' | 'needsOptimization' | 'failed' {
+  const normalized = normalizeAdvisorScore(score);
+  if (normalized === null) return 'needsOptimization';
+  if (normalized >= 90) return 'passed';
+  if (normalized >= 75) return 'passedWithImprovements';
+  if (normalized >= 50) return 'needsOptimization';
+  return 'failed';
 }
 
 function getEvaluationArtifactPayload(step: TaskResult | null): EvaluationArtifactPayload | null {
@@ -388,6 +405,7 @@ export function ExecutionStepDetail({
   const normalizedExpectedResultSource = normalizeExpectedResultSource(stepJudgeResult?.expectedResultSource);
   const normalizedExpectedResultType = normalizeExpectedResultType(stepJudgeResult?.expectedResultType);
   const normalizedResultMatchingScore = normalizeAdvisorScore(stepJudgeResult?.resultMatchingScore);
+  const judgeVerdictKey = getJudgeVerdictKey(stepJudgeResult?.overallScore);
   const selectedOptimizationEntry = useMemo(() => {
     if (!advisorOptimizationHistory.length) return null;
     if (!selectedJudgeHistory) return advisorOptimizationHistory[advisorOptimizationHistory.length - 1] || null;
@@ -472,6 +490,8 @@ export function ExecutionStepDetail({
       },
     ];
   }, [stepJudgeResult, t]);
+  const remediationCount = stepJudgeResult?.rewriteHints.length ?? 0;
+  const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
     if (baselineReplay?.llmPromptTrace?.length) {
@@ -1347,10 +1367,10 @@ export function ExecutionStepDetail({
                   size="sm"
                   variant="outline"
                   onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
-                  disabled={isRunningEvaluation}
+                  disabled={isRunningEvaluation || stepJudgeStatus === 'evaluating'}
                 >
-                  {isRunningEvaluation && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-                  {isRunningEvaluation ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
+                  {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  {stepJudgeStatus === 'evaluating' ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
                 </Button>
               </div>
             )}
@@ -1387,33 +1407,6 @@ export function ExecutionStepDetail({
                   <div>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.lastError')}</div>
                     <div className="mt-1 text-destructive whitespace-pre-wrap">{execution.advisorAutopilotLastError}</div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {judgeHistory.length > 0 && (
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
-                <div className="min-w-[260px] flex-1 space-y-1">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.stepExecutionLabel')}</div>
-                  <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {judgeHistory.map((entry) => (
-                        <SelectItem key={entry.id} value={entry.id}>
-                          {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.judgeResult.overallScore)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {selectedJudgeHistory && (
-                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                    <span>{t('detail.evaluation.recorded')}: {new Date(selectedJudgeHistory.createdAt).toLocaleString()}</span>
-                    <span>{t('detail.evaluation.attempt')}: {selectedJudgeHistory.attemptNumber ?? '-'}</span>
-                    <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
                   </div>
                 )}
               </div>
@@ -1492,105 +1485,52 @@ export function ExecutionStepDetail({
 
             {stepJudgeResult ? (
               <div className="space-y-4">
-                <div className="rounded-lg border bg-muted/20 p-4">
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(stepJudgeResult.overallScore))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
-                      <div className="mt-1 text-lg font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
-                    </div>
-                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(stepJudgeResult.toolUsageScore))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageScore')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(stepJudgeResult.toolUsageScore)}</div>
-                    </div>
-                    <div className={cn('rounded-md border px-3 py-2', getExpectedMatchTone(normalizedExpectedResultSource, normalizedResultMatchingScore))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedMatch')}</div>
-                      <div className="mt-1 text-lg font-semibold">
-                        {normalizedExpectedResultSource === 'none'
-                          ? t('detail.judge.notEvaluated')
-                          : formatPercent(normalizedResultMatchingScore)}
-                      </div>
-                    </div>
-                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(stepJudgeResult.confidence)))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatConfidence(stepJudgeResult.confidence)}</div>
-                    </div>
-                    <div className="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
-                      {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
-                    </div>
-                  </div>
-                  <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
-                    <p className="mt-2 whitespace-pre-wrap text-sm">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
-                        {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.generateOptimizedPlaybook')}
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.optimizeThisStep')}
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.updateCurrentPlaybook')}
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
-                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultSection')}</div>
-                    <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <div className="rounded-md border bg-background px-3 py-2">
-                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedMatch')}</div>
-                        <div className="mt-1 text-sm font-semibold">
-                          {normalizedExpectedResultSource === 'none'
-                            ? t('detail.judge.notEvaluated')
-                            : formatPercent(normalizedResultMatchingScore)}
-                        </div>
-                      </div>
-                      <div className="rounded-md border bg-background px-3 py-2">
-                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultSourceLabel')}</div>
-                        <div className="mt-1 text-sm font-semibold">{t(`detail.judge.expectedResultSource.${normalizedExpectedResultSource}` as const)}</div>
-                      </div>
-                      <div className="rounded-md border bg-background px-3 py-2">
-                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultTypeLabel')}</div>
-                        <div className="mt-1 text-sm font-semibold">{t(`detail.judge.expectedResultType.${normalizedExpectedResultType}` as const)}</div>
-                      </div>
-                      <div className="rounded-md border bg-background px-3 py-2">
-                        <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultMatchedLabel')}</div>
-                        <div className="mt-1 text-sm font-semibold">
-                          {normalizedExpectedResultSource === 'none'
-                            ? t('detail.judge.notEvaluated')
-                            : t(`detail.judge.expectedResultMatched.${stepJudgeResult.expectedResultMatched ? 'yes' : 'no'}` as const)}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-4 rounded-md border bg-muted/20 px-3 py-3 text-sm">
-                      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.judge.expectedResultExplanation')}</div>
-                      <p className="mt-2 whitespace-pre-wrap text-sm">
-                        {normalizedExpectedResultSource === 'none'
-                          ? t('detail.judge.expectedResultNoneExplanation')
-                          : (stepJudgeResult.expectedResultReason || t('detail.judge.expectedResultReasonFallback'))}
-                      </p>
-                    </div>
-                  </div>
-
-                  <AdvisorChangeReviewDialog
-                    open={remediationDialogOpen}
-                    onOpenChange={setRemediationDialogOpen}
-                    items={remediationItems}
-                    tasks={currentPlaybook?.tasks || []}
-                    mode={remediationDialogMode}
-                    loading={remediationLoading}
-                    onApply={handleApplyRemediations}
-                  />
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
+                    {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.generateOptimizedPlaybook')}
+                  </Button>
+                  {judgeHistory.length > 0 && (
+                    <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
+                      <SelectTrigger className="h-9 min-w-[260px] sm:w-[320px]">
+                        <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {judgeHistory.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} · {new Date(entry.createdAt).toLocaleString()} · {formatPercent(entry.judgeResult.overallScore)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.previewChanges')}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.applyToCurrentPlaybook')}
+                  </Button>
                 </div>
+
+                <AdvisorResultPanel judgeResult={stepJudgeResult} />
+
+                <AdvisorChangeReviewDialog
+                  open={remediationDialogOpen}
+                  onOpenChange={setRemediationDialogOpen}
+                  items={remediationItems}
+                  tasks={currentPlaybook?.tasks || []}
+                  mode={remediationDialogMode}
+                  loading={remediationLoading}
+                  onApply={handleApplyRemediations}
+                />
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
                     <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
                       <span>{t('detail.judge.remediationSuggestions')}</span>
-                      <span>{t('detail.judge.countSummary', { count: stepJudgeResult.rewriteHints.length })}</span>
+                      <span>{t('detail.judge.remediationSummary', { count: remediationCount })}</span>
                     </div>
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
@@ -1605,39 +1545,28 @@ export function ExecutionStepDetail({
                   </CollapsibleContent>
                 </Collapsible>
 
-                <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
-                    <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
-                      <span>{t('detail.judge.issueSections')}</span>
-                      <span>{t('detail.judge.countSummary', { count: issueSections.reduce((sum, section) => sum + section.items.length, 0) })}</span>
+              </div>
+            ) : judgeSummary ? (
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-muted/20 p-4">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeSummary.overallScore))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
+                      <div className="mt-1 text-lg font-semibold">{formatPercent(judgeSummary.overallScore)}</div>
                     </div>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    {issueSections.map((section) => (
-                      <IssueSection
-                        key={section.title}
-                        title={section.title}
-                        badge={section.badge}
-                        badgeClassName={section.badgeClassName}
-                        items={section.items}
-                        emptyLabel={t('detail.judge.none')}
-                      />
-                    ))}
-                  </CollapsibleContent>
-                </Collapsible>
-
-                <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-2 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                      {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
-                    </p>
-                  </CollapsibleContent>
-                </Collapsible>
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
+                      <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeSummary.confidence)}</div>
+                    </div>
+                    <div className="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
+                      {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm">{judgeSummary.reason || t('detail.judge.noReason')}</p>
+                  </div>
+                </div>
               </div>
             ) : stepJudgeStatus === 'failed' ? (
               <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm">
@@ -1654,83 +1583,6 @@ export function ExecutionStepDetail({
                 {stepJudgeStatus === 'evaluating' || execution?.judgeSummaryStatus === 'evaluating'
                   ? t('detail.judge.evaluating')
                   : t('detail.judge.empty')}
-              </div>
-            )}
-
-            {judgeSummary && !stepJudgeResult && (
-              <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
-                <div className="flex flex-wrap items-start gap-2">
-                  <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeSummary.overallScore))}>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
-                    <div className="mt-1 text-lg font-semibold">{Math.round(judgeSummary.overallScore)}%</div>
-                  </div>
-                  <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
-                    <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeSummary.confidence)}</div>
-                  </div>
-                  <div className="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
-                    {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
-                  </div>
-                </div>
-                <div className="rounded-lg border border-border/60 bg-background/60 p-4">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
-                  <p className="mt-2 whitespace-pre-wrap">{judgeSummary.reason || t('detail.judge.noReason')}</p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
-                      {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.generateOptimizedPlaybook')}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.optimizeThisStep')}
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.updateCurrentPlaybook')}
-                    </Button>
-                  </div>
-                </div>
-
-                <AdvisorChangeReviewDialog
-                  open={remediationDialogOpen}
-                  onOpenChange={setRemediationDialogOpen}
-                  items={remediationItems}
-                  tasks={currentPlaybook?.tasks || []}
-                  mode={remediationDialogMode}
-                  loading={remediationLoading}
-                  onApply={handleApplyRemediations}
-                />
-
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
-                  <IssueSection
-                    title={t('detail.judge.toolUsageIssues')}
-                    badge={t('detail.remediation.category.tooling')}
-                    badgeClassName="bg-emerald-100 text-emerald-700 border-emerald-200"
-                    items={judgeSummary.toolUsageIssues || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                  <IssueSection
-                    title={t('detail.judge.crossStepToolPatterns')}
-                    badge={t('detail.remediation.category.structure')}
-                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                    items={judgeSummary.crossStepToolPatterns || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                  <IssueSection
-                    title={t('detail.judge.rootCauseTaskIds')}
-                    badge={t('detail.remediation.category.structure')}
-                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                    items={judgeSummary.rootCauseTaskIds || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                  <IssueSection
-                    title={t('detail.judge.highImpactRecommendations')}
-                    badge={t('detail.remediation.category.structure')}
-                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                    items={judgeSummary.highImpactRecommendations || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                </div>
               </div>
             )}
 

@@ -101,6 +101,7 @@ describe('PlaybookRepeatabilityService', () => {
         playbookId: '507f1f77bcf86cd799439011',
         totalIterations: 0,
         overallAverageMatchScore: null,
+        overallAdvisorScore: null,
         iterations: [],
       });
     });
@@ -262,15 +263,15 @@ describe('PlaybookRepeatabilityService', () => {
       executionModel.find.mockReturnValue(mockChain([
         {
           _id: 'e1', executionNumber: 1, completedAt: new Date(),
-          taskResults: [{ taskId, status: 'completed', output: 'A', judgeResult: { expectedResultMatched: true, resultMatchingScore: 90, expectedResultSource: 'node_field' } }],
+          taskResults: [{ taskId, status: 'completed', output: 'A', judgeResult: { expectedResultMatched: true, resultMatchingScore: 90, overallScore: 92, expectedResultSource: 'node_field' } }],
         },
         {
           _id: 'e2', executionNumber: 2, completedAt: new Date(),
-          taskResults: [{ taskId, status: 'completed', output: 'B', judgeResult: { expectedResultMatched: true, resultMatchingScore: 80, expectedResultSource: 'node_field' } }],
+          taskResults: [{ taskId, status: 'completed', output: 'B', judgeResult: { expectedResultMatched: true, resultMatchingScore: 80, overallScore: 0.8, expectedResultSource: 'node_field' } }],
         },
         {
           _id: 'e3', executionNumber: 3, completedAt: new Date(),
-          taskResults: [{ taskId, status: 'completed', output: 'C', judgeResult: { expectedResultMatched: false, resultMatchingScore: 50, expectedResultSource: 'node_field' } }],
+          taskResults: [{ taskId, status: 'completed', output: 'C', judgeResult: { expectedResultMatched: false, resultMatchingScore: 50, overallScore: 50, expectedResultSource: 'node_field' } }],
         },
       ]));
 
@@ -280,6 +281,26 @@ describe('PlaybookRepeatabilityService', () => {
       expect(result.evaluatedIterations).toBe(3);
       expect(result.passedIterations).toBe(2);
       expect(result.overallAverageMatchScore).toBeGreaterThan(0);
+      expect(result.overallAdvisorScore).toBe(74);
+    });
+
+    it('returns null advisor score when no advisor scores are available', async () => {
+      const taskId = 't1';
+      playbookModel.findById.mockReturnValue(mockFindOne({
+        _id: '507f1f77bcf86cd799439011',
+        tasks: [{ id: taskId, title: 'Step 1', taskType: 'generic', expectedResult: 'Expected' }],
+      }));
+
+      executionModel.countDocuments.mockResolvedValue(2);
+      executionModel.find.mockReturnValue(mockChain([
+        { _id: 'e1', executionNumber: 1, completedAt: new Date(), taskResults: [{ taskId, status: 'completed', output: 'Expected' }] },
+        { _id: 'e2', executionNumber: 2, completedAt: new Date(), taskResults: [{ taskId, status: 'completed', output: 'Expected' }] },
+      ]));
+
+      replayModel.find.mockReturnValue({ lean: () => ({ exec: () => Promise.resolve([]) }) });
+
+      const result = await service.getRepeatability('507f1f77bcf86cd799439011');
+      expect(result.overallAdvisorScore).toBeNull();
     });
   });
 

@@ -410,6 +410,30 @@ export async function updateTaskReplayFormatGuide(
   return response.data.data;
 }
 
+export async function updateTaskReplayLabel(
+  playbookId: string,
+  taskId: string,
+  replayId: string,
+  label: string | null,
+): Promise<ValidatedTaskReplay> {
+  const response = await apiClient.patch<ApiResponse<ValidatedTaskReplay>>(
+    API_ENDPOINTS.playbooks.updateReplayLabel(playbookId, taskId, replayId),
+    { label },
+  );
+  return response.data.data;
+}
+
+export async function deleteTaskReplay(
+  playbookId: string,
+  taskId: string,
+  replayId: string,
+): Promise<{ removed: boolean; wasActive: boolean }> {
+  const response = await apiClient.delete<ApiResponse<{ removed: boolean; wasActive: boolean }>>(
+    API_ENDPOINTS.playbooks.deleteReplay(playbookId, taskId, replayId),
+  );
+  return response.data.data;
+}
+
 export async function grabOutputFormatTemplate(
   playbookId: string,
   taskId: string,

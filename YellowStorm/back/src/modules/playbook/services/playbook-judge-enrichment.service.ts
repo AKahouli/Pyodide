@@ -890,7 +890,8 @@ export class PlaybookJudgeEnrichmentService {
   private normalizeScore(value: unknown): number {
     const parsed = typeof value === 'number' ? value : Number(value);
     if (!Number.isFinite(parsed)) return 0;
-    return Math.max(0, Math.min(100, parsed));
+    const scaled = parsed <= 1 ? parsed * 100 : parsed;
+    return Math.max(0, Math.min(100, Math.round(scaled * 10) / 10));
   }
 
   private normalizeConfidence(value: unknown): number {

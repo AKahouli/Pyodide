@@ -13,6 +13,7 @@ import {
   ReplayValidationStatus,
 } from '../schemas/playbook-validated-replay.schema';
 import { LoggerService } from '../../logger';
+import type { PlaybookAdvisorResult } from '../interfaces/playbook.interface';
 
 export type ExpectedResultSource = 'node_field' | 'golden_baseline' | 'none';
 export type RepeatabilityMatchState = 'matched' | 'not_matched' | 'not_evaluated';
@@ -31,6 +32,7 @@ export interface RepeatabilityTaskExecutionSummary {
   matchState: RepeatabilityMatchState;
   passed: boolean;
   evaluated: boolean;
+  judgeResult: PlaybookAdvisorResult | null;
 }
 
 export interface RepeatabilityIterationSummary {
@@ -51,6 +53,7 @@ export interface PlaybookRepeatabilitySummary {
   evaluatedIterations: number;
   passedIterations: number;
   overallAverageMatchScore: number | null;
+  overallAdvisorScore: number | null;
   generatedAt: string;
   iterations: RepeatabilityIterationSummary[];
 }
@@ -101,6 +104,7 @@ export class PlaybookRepeatabilityService {
         evaluatedIterations: 0,
         passedIterations: 0,
         overallAverageMatchScore: null,
+        overallAdvisorScore: null,
         generatedAt: new Date().toISOString(),
         iterations: [],
       };
@@ -132,6 +136,15 @@ export class PlaybookRepeatabilityService {
       ? Math.round((iterationAverages.reduce((sum, s) => sum + s, 0) / iterationAverages.length) * 10) / 10
       : null;
 
+    const advisorScores = allIterations
+      .flatMap((iter) => iter.tasks)
+      .map((task) => this.normalizePercentScore(task.judgeResult?.overallScore))
+      .filter((score): score is number => score !== null);
+
+    const overallAdvisorScore = advisorScores.length > 0
+      ? Math.round((advisorScores.reduce((sum, score) => sum + score, 0) / advisorScores.length) * 10) / 10
+      : null;
+
     const paginatedIterations = allIterations.slice(offset, offset + limit);
 
     return {
@@ -140,6 +153,7 @@ export class PlaybookRepeatabilityService {
       evaluatedIterations: evaluatedIterations.length,
       passedIterations: passedIterations.length,
       overallAverageMatchScore,
+      overallAdvisorScore,
       generatedAt: new Date().toISOString(),
       iterations: paginatedIterations,
     };
@@ -327,6 +341,7 @@ export class PlaybookRepeatabilityService {
       matchState,
       passed,
       evaluated,
+      judgeResult,
     };
   }
 
@@ -391,6 +406,15 @@ export class PlaybookRepeatabilityService {
     return Math.max(0, Math.min(100, parsed));
   }
 
+  private normalizePercentScore(value: unknown): number | null {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed)) {
+      return null;
+    }
+    const normalized = parsed > 0 && parsed <= 1 ? parsed * 100 : parsed;
+    return Math.max(0, Math.min(100, normalized));
+  }
+
   private emptySummary(playbookId: string): PlaybookRepeatabilitySummary {
     return {
       playbookId,
@@ -398,6 +422,7 @@ export class PlaybookRepeatabilityService {
       evaluatedIterations: 0,
       passedIterations: 0,
       overallAverageMatchScore: null,
+      overallAdvisorScore: null,
       generatedAt: new Date().toISOString(),
       iterations: [],
     };

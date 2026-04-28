@@ -489,6 +489,60 @@ export class PlaybookReplayService {
     return this.mapReplayToResponse(replay.toJSON(), playbook);
   }
 
+  async deleteTaskReplay(playbookId: string, taskId: string, replayId: string) {
+    const replay = await this.replayModel.findOne({
+      _id: new Types.ObjectId(replayId),
+      playbookId: new Types.ObjectId(playbookId),
+      taskId,
+    }).exec();
+
+    if (!replay) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND, 'Validated replay not found');
+    }
+
+    const wasActive = replay.status === ReplayValidationStatus.ACTIVE;
+    await replay.deleteOne();
+
+    this.logger.log('Validated task replay deleted', {
+      playbookId,
+      taskId,
+      replayId,
+      wasActive,
+    });
+
+    return { removed: true, wasActive };
+  }
+
+  async updateTaskReplayLabel(
+    playbookId: string,
+    taskId: string,
+    replayId: string,
+    label: string | undefined,
+  ) {
+    const replay = await this.replayModel.findOne({
+      _id: new Types.ObjectId(replayId),
+      playbookId: new Types.ObjectId(playbookId),
+      taskId,
+    }).exec();
+
+    if (!replay) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND, 'Validated replay not found');
+    }
+
+    replay.label = (label && label.trim()) || null;
+    await replay.save();
+
+    this.logger.log('Validated task replay label updated', {
+      playbookId,
+      taskId,
+      replayId,
+      label: replay.label,
+    });
+
+    const playbook = await this.playbookModel.findById(playbookId).lean().exec();
+    return this.mapReplayToResponse(replay.toJSON(), playbook);
+  }
+
   async getActiveReplay(playbookId: string, taskId: string) {
     const playbook = await this.playbookModel.findById(playbookId).lean().exec();
     const replay = await this.replayModel.findOne({
@@ -582,6 +636,7 @@ export class PlaybookReplayService {
       formatGuideStatus: replay.formatGuideStatus || ReplayFormatGuideStatus.DISABLED,
       formatGuideError: replay.formatGuideError ?? null,
       llmPromptTrace: replay.llmPromptTrace || [],
+      label: replay.label ?? null,
       isStale,
       staleReasons,
       createdAt: replay.createdAt?.toISOString?.() || replay.createdAt,

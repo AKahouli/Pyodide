@@ -5,8 +5,9 @@ import { Search, PanelLeftClose, FolderOpen, FileText, ChevronRight, ChevronDown
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible';
+import { Collapsible, CollapsibleContent } from '@/components/ui/collapsible';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ResizablePanel, OverflowTooltip } from '@/components/ui/resizable-panel';
 import { useWorkspaceExplorerOpen, usePlaybookStore } from '../store';
 import { getWorkspaces } from '@/modules/workspace/api';
 import type { Workspace, WorkspaceDocument } from '@/modules/workspace/types';
@@ -110,7 +111,7 @@ function DocumentRow({
         onClick={(e) => e.stopPropagation()}
       />
       <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-      <span className="text-sm truncate">{document.originalName || document.filename}</span>
+      <OverflowTooltip text={document.originalName || document.filename} />
     </div>
   );
 }
@@ -174,7 +175,7 @@ function WorkspaceTreeNode({
             onClick={(e) => e.stopPropagation()}
           />
           <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="text-sm font-medium truncate">{workspace.name}</span>
+          <OverflowTooltip text={workspace.name} />
           <span className="text-xs text-muted-foreground ml-auto">{workspace.documentCount}</span>
         </div>
       </div>
@@ -210,7 +211,6 @@ function WorkspaceTreeNode({
 export function WorkspaceExplorerSidebar() {
   const isOpen = useWorkspaceExplorerOpen();
   const setOpen = usePlaybookStore((s) => s.setWorkspaceExplorerOpen);
-  const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
 
   const [workspaces, setWorkspaces] = useState<WorkspaceWithDocuments[]>([]);
   const [loading, setLoading] = useState(true);
@@ -314,7 +314,14 @@ export function WorkspaceExplorerSidebar() {
   if (!isOpen) return null;
 
   return (
-    <div className="w-72 border-l bg-background flex flex-col h-full shrink-0">
+    <ResizablePanel
+      storageKey="ys_workspace_explorer_width"
+      defaultWidth={288}
+      minWidth={200}
+      maxWidthRatio={0.4}
+      handlePosition="right"
+      className="border-l bg-background"
+    >
       <div className="flex items-center justify-between px-3 py-2 border-b">
         <span className="text-sm font-semibold">Workspace Explorer</span>
         <Button
@@ -362,6 +369,6 @@ export function WorkspaceExplorerSidebar() {
           )}
         </div>
       </ScrollArea>
-    </div>
+    </ResizablePanel>
   );
 }

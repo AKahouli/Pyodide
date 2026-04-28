@@ -1196,6 +1196,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                       activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
                       activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
                       activeReplayFormatGuideError: replay.formatGuideError || null,
+                      activeReplayLabel: replay.label || null,
                       hasOutputFormatTemplate: task.hasOutputFormatTemplate,
                       activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
                       activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
@@ -1209,6 +1210,71 @@ export const usePlaybookStore = create<PlaybookStore>()(
               : state.currentPlaybook,
           }));
           toast.success(tPlaybook('store.toasts.saved', 'Replay baseline activated'));
+          return replay;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteTaskReplay: async (playbookId, taskId, replayId) => {
+        try {
+          const result = await api.deleteTaskReplay(playbookId, taskId, replayId);
+          if (result.wasActive) {
+            set((state) => ({
+              currentPlaybook: state.currentPlaybook?.id === playbookId
+                ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) =>
+                    task.id === taskId
+                      ? {
+                        ...task,
+                        hasValidatedReplay: false,
+                        activeReplayId: null,
+                        activeReplayVersion: null,
+                        activeReplayIsStale: false,
+                        activeReplayStaleReasons: [],
+                        activeReplayPreserveOutputFormat: false,
+                        activeReplayFormatGuideStatus: 'disabled',
+                        activeReplayFormatGuideError: null,
+                        activeReplayLabel: null,
+                        hasOutputFormatTemplate: false,
+                        activeOutputFormatTemplateId: null,
+                        activeOutputFormatTemplateVersion: null,
+                        activeOutputFormatStatus: null,
+                        activeOutputFormatError: null,
+                        isSavingReplayBaseline: false,
+                      }
+                      : task,
+                  ),
+                }
+                : state.currentPlaybook,
+            }));
+          }
+          toast.success(tPlaybook('store.toasts.replayDeleted', 'Replay baseline removed'));
+          return result;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      renameTaskReplay: async (playbookId, taskId, replayId, label) => {
+        try {
+          const replay = await api.updateTaskReplayLabel(playbookId, taskId, replayId, label);
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId && task.activeReplayId === replayId
+                    ? { ...task, activeReplayLabel: replay.label || null }
+                    : task,
+                ),
+              }
+              : state.currentPlaybook,
+          }));
+          toast.success(tPlaybook('store.toasts.replayRenamed', 'Replay baseline renamed'));
           return replay;
         } catch (err) {
           handleApiError(err);

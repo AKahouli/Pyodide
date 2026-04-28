@@ -980,10 +980,9 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
-    expect(screen.getByText('detail.judge.stepExecutionLabel')).toBeInTheDocument();
-    expect(screen.getByText(/detail.evaluation.attempt: 2/)).toBeInTheDocument();
-    expect(screen.getByText(/detail.evaluation.judgeModel/)).toBeInTheDocument();
-    expect(screen.getByText('Latest advisor result.')).toBeInTheDocument();
+    expect(screen.getAllByRole('combobox')).toHaveLength(2);
+    expect(screen.getByText(/detail.evaluation.attempt - \| 01\/01\/2025 01:00:05/)).toBeInTheDocument();
+    expect(screen.getAllByText('Latest advisor result.').length).toBeGreaterThan(0);
   });
 
   it('shows an in-progress message while evaluation is running', () => {

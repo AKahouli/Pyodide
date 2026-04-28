@@ -46,6 +46,7 @@ import { TestPlaybookMailEventDto } from '../dto/test-playbook-mail-event.dto';
 import { SyncPlaybookMailSubscriptionDto } from '../dto/sync-playbook-mail-subscription.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
+import { UpdateTaskReplayLabelDto } from '../dto/update-task-replay-label.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
 import { UpdateOutputFormatTemplateDto } from '../dto/update-output-format-template.dto';
 import { RerunStepDto } from '../dto/rerun-step.dto';
@@ -552,6 +553,27 @@ export class PlaybookController {
     @Body() dto: UpdateTaskReplayFormatDto,
   ) {
     return this.replayService.updateTaskReplayFormatGuide(id, taskId, replayId, dto);
+  }
+
+  @Patch(':id/tasks/:taskId/replays/:replayId')
+  @UseGuards(PlaybookOwnerGuard)
+  async updateTaskReplayLabel(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Param('replayId') replayId: string,
+    @Body() dto: UpdateTaskReplayLabelDto,
+  ) {
+    return this.replayService.updateTaskReplayLabel(id, taskId, replayId, dto.label);
+  }
+
+  @Delete(':id/tasks/:taskId/replays/:replayId')
+  @UseGuards(PlaybookOwnerGuard)
+  async deleteTaskReplay(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Param('replayId') replayId: string,
+  ) {
+    return this.replayService.deleteTaskReplay(id, taskId, replayId);
   }
 
   @Post(':id/tasks/:taskId/output-format-template')

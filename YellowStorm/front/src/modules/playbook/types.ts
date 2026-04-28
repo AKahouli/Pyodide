@@ -181,6 +181,7 @@ export interface PlaybookTask {
   activeReplayPreserveOutputFormat?: boolean;
   activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   activeReplayFormatGuideError?: string | null;
+  activeReplayLabel?: string | null;
   hasOutputFormatTemplate?: boolean;
   activeOutputFormatTemplateId?: string | null;
   activeOutputFormatTemplateVersion?: number | null;
@@ -718,6 +719,7 @@ export interface ValidatedTaskReplay {
   llmPromptTrace?: LLMPromptTraceItem[];
   isStale?: boolean;
   staleReasons?: string[];
+  label?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1193,6 +1195,8 @@ export interface PlaybookActions {
   ) => Promise<ValidatedTaskReplay>;
   fetchTaskReplays: (playbookId: string, taskId: string) => Promise<ValidatedTaskReplay[]>;
   activateTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<ValidatedTaskReplay>;
+  deleteTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<{ removed: boolean; wasActive: boolean }>;
+  renameTaskReplay: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<ValidatedTaskReplay>;
   fetchEvaluationExecutions: (playbookId: string, taskId?: string) => Promise<PlaybookEvaluationExecution[]>;
   fetchEvaluationBaseline: (playbookId: string, taskId: string) => Promise<PlaybookEvaluationBaseline | null>;
   createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
@@ -1299,6 +1303,7 @@ export interface RepeatabilityTaskExecutionSummary {
   matchState: RepeatabilityMatchState;
   passed: boolean;
   evaluated: boolean;
+  judgeResult: TaskResult['judgeResult'];
 }
 
 export interface RepeatabilityIterationSummary {
@@ -1319,6 +1324,7 @@ export interface PlaybookRepeatabilitySummary {
   evaluatedIterations: number;
   passedIterations: number;
   overallAverageMatchScore: number | null;
+  overallAdvisorScore: number | null;
   generatedAt: string;
   iterations: RepeatabilityIterationSummary[];
 }

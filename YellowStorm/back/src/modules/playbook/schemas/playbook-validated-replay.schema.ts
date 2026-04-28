@@ -113,6 +113,9 @@ export class PlaybookValidatedReplay extends Document {
   @Prop({ type: [ReplayLLMPromptTraceItemSchema], default: [] })
   llmPromptTrace!: ReplayLLMPromptTraceItem[];
 
+  @Prop({ type: String, default: null })
+  label!: string | null;
+
   createdAt!: Date;
   updatedAt!: Date;
 }

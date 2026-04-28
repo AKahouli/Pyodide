@@ -19,6 +19,7 @@ import {
 } from '@/components/ai-elements/node';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
+import { BaselineBadgePopover } from './BaselineBadgePopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
@@ -39,6 +40,8 @@ export interface NodeContextMenuActions {
   onSkipStep: (nodeId: string) => void;
   onSaveBaseline: (nodeId: string) => void;
   onGrabOutputFormat: (nodeId: string) => void;
+  onRemoveReplayBaseline: (playbookId: string, taskId: string, replayId: string) => Promise<void>;
+  onRenameReplayBaseline: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<void>;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
@@ -169,12 +172,12 @@ function JudgeScoreBadge({
 }: {
   score: number;
 }) {
-  const { t } = useModuleTranslation('playbook');
-  const tone = getSemanticScoreTone(score);
+  const normalizedScore = score <= 1 ? score * 100 : score;
+  const tone = getSemanticScoreTone(normalizedScore);
 
   return (
     <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
-      <span>{Math.round(score)}%</span>
+      <span>{Math.round(normalizedScore)}%</span>
     </Badge>
   );
 }
@@ -261,6 +264,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const { t } = useModuleTranslation('playbook');
   const getAgentById = useAgentStore((s) => s.getAgentById);
   const currentTask = usePlaybookStore((s) => s.currentPlaybook?.tasks.find((t) => t.id === id));
+  const playbookId = usePlaybookStore((s) => s.currentPlaybook?.id ?? null);
   const selectedStepId = usePlaybookStore((s) => s.selectedStepId);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
@@ -311,9 +315,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
-  const replayBadgeLabel = currentTask?.activeReplayVersion
-    ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
-    : t('detail.badges.baseline');
+  const replayBadgeLabel = currentTask?.activeReplayLabel
+    ? currentTask.activeReplayVersion
+      ? t('baselineBadge.versionedLabel', { label: currentTask.activeReplayLabel, version: currentTask.activeReplayVersion })
+      : t('baselineBadge.customLabel', { label: currentTask.activeReplayLabel })
+    : currentTask?.activeReplayVersion
+      ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
+      : t('detail.badges.baseline');
   const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline);
   const showOutputFormatBadge = Boolean(currentTask?.hasOutputFormatTemplate || currentTask?.isCapturingOutputFormat);
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
@@ -561,12 +569,18 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             {(showReplayBadge || showOutputFormatBadge) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 {showReplayBadge && (
-                  <NodeMetaBadge
-                    label={replayBadgeLabel}
-                    busy={Boolean(currentTask?.isSavingReplayBaseline)}
+                  <BaselineBadgePopover
+                    taskId={id}
+                    playbookId={playbookId || ''}
+                    replayId={currentTask?.activeReplayId}
+                    label={currentTask?.activeReplayLabel}
                     toneClassName={currentTask?.activeReplayIsStale
                       ? 'border-orange-500/30 bg-orange-100 text-orange-700'
                       : 'border-amber-500/30 bg-amber-100 text-amber-700'}
+                    badgeLabel={replayBadgeLabel}
+                    isBusy={Boolean(currentTask?.isSavingReplayBaseline)}
+                    onRemove={actions?.onRemoveReplayBaseline ?? (() => Promise.resolve())}
+                    onRename={actions?.onRenameReplayBaseline ?? (() => Promise.resolve())}
                   />
                 )}
                 {showOutputFormatBadge && (

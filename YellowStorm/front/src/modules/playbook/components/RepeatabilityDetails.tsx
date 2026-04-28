@@ -1,14 +1,20 @@
-import { Loader2, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Loader2, ChevronDown, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { useState, useCallback } from 'react';
+import type { Worksheet } from 'exceljs';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { showError, showSuccess } from '@/lib/notifications';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
+import { AdvisorResultPanel } from './AdvisorResultPanel';
 import type { PlaybookRepeatabilitySummary, RepeatabilityIterationSummary, RepeatabilityTaskExecutionSummary } from '../types';
 
 const PAGE_SIZE = 5;
+const EXPORT_PAGE_SIZE = 100;
+
+type ExcelModule = typeof import('exceljs');
 
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
@@ -18,6 +24,150 @@ function formatPercent(value: number | null | undefined): string {
 function formatDate(value: string | null): string {
   if (!value) return '-';
   return new Date(value).toLocaleString();
+}
+
+function formatBoolean(value: boolean | null | undefined, t: (key: string) => string): string {
+  if (value === null || value === undefined) return '-';
+  return value ? t('detail.boolean.true') : t('detail.boolean.false');
+}
+
+function sanitizeFilenamePart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'playbook';
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function joinList(value: string[] | null | undefined): string {
+  return Array.isArray(value) && value.length > 0 ? value.join('\n') : '-';
+}
+
+function addHeaderRow(worksheet: Pick<Worksheet, 'addRow'>, headers: string[]): void {
+  const row = worksheet.addRow(headers);
+  row.font = { ...row.font, bold: true };
+}
+
+async function writeRepeatabilityWorkbook(
+  repeatability: PlaybookRepeatabilitySummary,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): Promise<void> {
+  const excelModule: ExcelModule = await import('exceljs');
+  const workbook = new excelModule.Workbook();
+  workbook.creator = 'YellowStorm';
+  workbook.created = new Date();
+
+  const summarySheet = workbook.addWorksheet(t('repeatability.export.sheet.summary'));
+  summarySheet.columns = [{ width: 34 }, { width: 24 }];
+  summarySheet.addRows([
+    [t('repeatability.export.field.generatedAt'), formatDate(repeatability.generatedAt)],
+    [t('repeatability.overallAverageMatch'), formatPercent(repeatability.overallAverageMatchScore)],
+    [t('repeatability.overallAdvisorScore'), formatPercent(repeatability.overallAdvisorScore)],
+    [t('repeatability.passedIterations'), `${repeatability.passedIterations} / ${repeatability.evaluatedIterations}`],
+    [t('repeatability.totalIterations'), repeatability.totalIterations],
+  ]);
+
+  const iterationsSheet = workbook.addWorksheet(t('repeatability.export.sheet.iterations'));
+  iterationsSheet.columns = [
+    { width: 16 },
+    { width: 24 },
+    { width: 12 },
+    { width: 16 },
+    { width: 16 },
+    { width: 16 },
+    { width: 12 },
+  ];
+  addHeaderRow(iterationsSheet, [
+    t('repeatability.export.column.executionNumber'),
+    t('repeatability.export.column.completedAt'),
+    t('repeatability.export.column.taskCount'),
+    t('repeatability.export.column.evaluatedTasks'),
+    t('repeatability.export.column.passedTasks'),
+    t('repeatability.export.column.averageMatchScore'),
+    t('repeatability.export.column.passed'),
+  ]);
+  repeatability.iterations.forEach((iteration) => {
+    iterationsSheet.addRow([
+      iteration.executionNumber,
+      formatDate(iteration.completedAt),
+      iteration.taskCount,
+      iteration.evaluatedTasks,
+      iteration.passedTasks,
+      formatPercent(iteration.averageMatchScore),
+      formatBoolean(iteration.passed, t),
+    ]);
+  });
+
+  const tasksSheet = workbook.addWorksheet(t('repeatability.export.sheet.tasks'));
+  tasksSheet.columns = [
+    { width: 16 },
+    { width: 28 },
+    { width: 24 },
+    { width: 18 },
+    { width: 16 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 18 },
+    { width: 42 },
+    { width: 42 },
+    { width: 42 },
+    { width: 42 },
+  ];
+  addHeaderRow(tasksSheet, [
+    t('repeatability.export.column.executionNumber'),
+    t('repeatability.export.column.taskTitle'),
+    t('repeatability.export.column.completedAt'),
+    t('repeatability.export.column.matchState'),
+    t('repeatability.export.column.matchScore'),
+    t('repeatability.export.column.advisorOverallScore'),
+    t('repeatability.export.column.advisorToolUsageScore'),
+    t('repeatability.export.column.advisorConfidence'),
+    t('repeatability.export.column.expectedResultSource'),
+    t('repeatability.export.column.expectedResultType'),
+    t('repeatability.export.column.expectedResultMatched'),
+    t('repeatability.export.column.passed'),
+    t('repeatability.export.column.expectedResultReason'),
+    t('repeatability.export.column.advisorReason'),
+    t('repeatability.export.column.rewriteHints'),
+    t('repeatability.export.column.output'),
+  ]);
+  repeatability.iterations.forEach((iteration) => {
+    iteration.tasks.forEach((task) => {
+      tasksSheet.addRow([
+        iteration.executionNumber,
+        task.taskTitle || task.taskId,
+        formatDate(task.completedAt),
+        t(`repeatability.matchState.${task.matchState}`),
+        formatPercent(task.matchScore),
+        formatPercent(task.judgeResult?.overallScore),
+        formatPercent(task.judgeResult?.toolUsageScore),
+        formatPercent(task.judgeResult?.confidence),
+        t(`repeatability.source.${task.expectedResultSource}`),
+        task.expectedResultType ? t(`repeatability.expectedResultType.${task.expectedResultType}`) : '-',
+        formatBoolean(task.expectedResultMatched, t),
+        formatBoolean(task.passed, t),
+        task.expectedResultReason || '-',
+        task.judgeResult?.reason || '-',
+        joinList(task.judgeResult?.rewriteHints),
+        task.output || '-',
+      ]);
+    });
+  });
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  downloadBlob(blob, `playbook-repeatability-${sanitizeFilenamePart(repeatability.playbookId)}.xlsx`);
 }
 
 function getScoreTone(value: number | null | undefined): string {
@@ -75,53 +225,18 @@ function TaskExecutionPane({ task }: Readonly<{ task: RepeatabilityTaskExecution
         </div>
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-        <div>
-          <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('repeatability.expectedResult')}</div>
-          <div className="max-h-32 overflow-auto rounded border bg-muted/30 p-2 text-xs whitespace-pre-wrap break-words">
-            {task.expectedResult || t('repeatability.expectedResultMissing')}
-          </div>
-        </div>
-
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded border bg-muted/20 px-2 py-1.5">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('repeatability.source')}</div>
-            <div className="text-xs font-medium">{t(`repeatability.source.${task.expectedResultSource}`)}</div>
-          </div>
-          <div className="rounded border bg-muted/20 px-2 py-1.5">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('repeatability.type')}</div>
-            <div className="text-xs font-medium">{
-              ({
-                none: t('repeatability.expectedResultType.none'),
-                exact_value: t('repeatability.expectedResultType.exact_value'),
-                semantic_description: t('repeatability.expectedResultType.semantic_description'),
-                numeric_presentation: t('repeatability.expectedResultType.numeric_presentation'),
-                document_generation: t('repeatability.expectedResultType.document_generation'),
-                baseline_comparison: t('repeatability.expectedResultType.baseline_comparison'),
-              } as Record<string, string>)[task.expectedResultType || 'none'] || task.expectedResultType || '-'
-            }</div>
-          </div>
-          <div className="rounded border bg-muted/20 px-2 py-1.5">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('repeatability.matched')}</div>
-            <div className="text-xs font-medium">
-              {task.expectedResultMatched === null
-                ? t('repeatability.notEvaluated')
-                : t(`repeatability.expectedResultMatched.${task.expectedResultMatched ? 'yes' : 'no'}`)}
-            </div>
-          </div>
-          <div className="rounded border bg-muted/20 px-2 py-1.5">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{t('repeatability.matchScore')}</div>
-            <div className="text-xs font-medium">{formatPercent(task.matchScore)}</div>
-          </div>
-        </div>
-
-        {task.expectedResultReason && (
+        {task.judgeResult ? (
+          <AdvisorResultPanel judgeResult={task.judgeResult} />
+        ) : (
           <div>
-            <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('repeatability.matchExplanation')}</div>
-            <p className="rounded border bg-muted/30 p-2 text-xs whitespace-pre-wrap">{task.expectedResultReason}</p>
+            <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('repeatability.expectedResult')}</div>
+            <div className="max-h-32 overflow-auto rounded border bg-muted/30 p-2 text-xs whitespace-pre-wrap break-words">
+              {task.expectedResult || t('repeatability.expectedResultMissing')}
+            </div>
           </div>
         )}
 
-        {task.output && (
+        {task.output && !task.judgeResult && (
           <div>
             <div className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">{t('repeatability.output')}</div>
             <pre className="max-h-40 overflow-auto rounded border bg-muted/30 p-2 text-xs whitespace-pre-wrap break-words">
@@ -176,14 +291,17 @@ export function RepeatabilityDetails({
   loading = false,
   className,
   onPageFetch,
+  onExportFetch,
 }: Readonly<{
   repeatability: PlaybookRepeatabilitySummary | null;
   loading?: boolean;
   className?: string;
   onPageFetch?: (limit: number, offset: number) => Promise<PlaybookRepeatabilitySummary>;
+  onExportFetch?: (limit: number, offset: number) => Promise<PlaybookRepeatabilitySummary>;
 }>) {
   const { t } = useModuleTranslation('playbook');
   const [page, setPage] = useState(0);
+  const [exportLoading, setExportLoading] = useState(false);
 
   const totalPages = repeatability ? Math.max(1, Math.ceil(repeatability.totalIterations / PAGE_SIZE)) : 1;
 
@@ -193,6 +311,33 @@ export function RepeatabilityDetails({
     await onPageFetch(PAGE_SIZE, offset);
     setPage(newPage);
   }, [onPageFetch]);
+
+  const handleExport = useCallback(async () => {
+    if (!repeatability || exportLoading) return;
+
+    setExportLoading(true);
+    try {
+      let exportData = repeatability;
+      if (onExportFetch) {
+        const firstPage = await onExportFetch(EXPORT_PAGE_SIZE, 0);
+        const allIterations = [...firstPage.iterations];
+        for (let offset = EXPORT_PAGE_SIZE; offset < firstPage.totalIterations; offset += EXPORT_PAGE_SIZE) {
+          const nextPage = await onExportFetch(EXPORT_PAGE_SIZE, offset);
+          allIterations.push(...nextPage.iterations);
+        }
+        exportData = { ...firstPage, iterations: allIterations };
+      }
+
+      const exportT = (key: string, options?: Record<string, unknown>) =>
+        t(key as Parameters<typeof t>[0], options as Parameters<typeof t>[1]);
+      await writeRepeatabilityWorkbook(exportData, exportT);
+      showSuccess(t('repeatability.export.success'));
+    } catch {
+      showError(t('repeatability.export.failed'));
+    } finally {
+      setExportLoading(false);
+    }
+  }, [exportLoading, onExportFetch, repeatability, t]);
 
   if (loading) {
     return (
@@ -222,13 +367,28 @@ export function RepeatabilityDetails({
             {t('repeatability.generatedAt', { date: formatDate(repeatability.generatedAt) })}
           </div>
         </div>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => void handleExport()}
+          disabled={exportLoading}
+          aria-label={t('repeatability.export.button')}
+        >
+          {exportLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+          {t('repeatability.export.button')}
+        </Button>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-4">
         <MetricCard
           label={t('repeatability.overallAverageMatch')}
           value={formatPercent(repeatability.overallAverageMatchScore)}
           className={getScoreTone(repeatability.overallAverageMatchScore)}
+        />
+        <MetricCard
+          label={t('repeatability.overallAdvisorScore')}
+          value={formatPercent(repeatability.overallAdvisorScore)}
+          className={getScoreTone(repeatability.overallAdvisorScore)}
         />
         <MetricCard
           label={t('repeatability.passedIterations')}

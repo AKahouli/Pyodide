@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
 import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import '@xyflow/react/dist/style.css';
 
 import { Button } from '@/components/ui/button';
@@ -60,6 +61,7 @@ import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
+import { getPlaybookRepeatability } from '../api';
 import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -180,6 +182,8 @@ function PlaybookCanvasInner() {
   const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
   const skipExecutionStep = usePlaybookStore((s) => s.skipExecutionStep);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
+  const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
+  const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const repeatability = usePlaybookStore((s) => s.repeatability);
@@ -806,6 +810,20 @@ function PlaybookCanvasInner() {
     [executionForNodeActions, getTaskResultForNode, grabOutputFormatTemplate, id],
   );
 
+  const handleRemoveReplayBaseline = useCallback(
+    async (playbookId: string, taskId: string, replayId: string) => {
+      await deleteTaskReplay(playbookId, taskId, replayId);
+    },
+    [deleteTaskReplay],
+  );
+
+  const handleRenameReplayBaseline = useCallback(
+    async (playbookId: string, taskId: string, replayId: string, label: string | null) => {
+      await renameTaskReplay(playbookId, taskId, replayId, label);
+    },
+    [renameTaskReplay],
+  );
+
   const canSaveBaseline = useCallback(
     (nodeId: string) => Boolean(executionForNodeActions && getTaskResultForNode(nodeId)?.status === 'completed'),
     [executionForNodeActions, getTaskResultForNode],
@@ -875,6 +893,8 @@ function PlaybookCanvasInner() {
       onSkipStep: handleSkipStep,
       onSaveBaseline: handleSaveBaseline,
       onGrabOutputFormat: handleGrabOutputFormat,
+      onRemoveReplayBaseline: handleRemoveReplayBaseline,
+      onRenameReplayBaseline: handleRenameReplayBaseline,
       canExecute: !hasActiveExecution && !isSaving && !isDirty,
       isExecuting,
       canResumeFromStep,
@@ -892,6 +912,8 @@ function PlaybookCanvasInner() {
       handleSkipStep,
       handleSaveBaseline,
       handleGrabOutputFormat,
+      handleRemoveReplayBaseline,
+      handleRenameReplayBaseline,
       hasActiveExecution,
       isSaving,
       isDirty,
@@ -1240,6 +1262,7 @@ function PlaybookCanvasInner() {
       )}
 
       {/* Main content area with optional workspace explorer */}
+      <TooltipProvider delayDuration={300}>
       <div className="flex flex-1 overflow-hidden">
         {/* Workspace Explorer Sidebar */}
         <WorkspaceExplorerSidebar />
@@ -1338,6 +1361,7 @@ function PlaybookCanvasInner() {
           )}
         </div>
       </div>
+      </TooltipProvider>
 
       {/* Node Editor Sheet */}
       <PlaybookNodeEditor
@@ -1364,7 +1388,12 @@ function PlaybookCanvasInner() {
             <DialogDescription>{t('evaluationDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="min-h-0 overflow-y-auto pr-1">
-            <RepeatabilityDetails repeatability={repeatability} loading={repeatabilityLoading} onPageFetch={(limit, offset) => fetchRepeatability(id!, limit, offset)} />
+            <RepeatabilityDetails
+              repeatability={repeatability}
+              loading={repeatabilityLoading}
+              onPageFetch={(limit, offset) => fetchRepeatability(id!, limit, offset)}
+              onExportFetch={(limit, offset) => getPlaybookRepeatability(id!, limit, offset)}
+            />
           </div>
         </DialogContent>
       </Dialog>
