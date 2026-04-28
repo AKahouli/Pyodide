@@ -24,6 +24,10 @@ from src.smart_rag.messaging import StreamingFormatter, MessageTransformer
 from src.smart_rag.engines.traditional import EventExtractor
 from src.smart_rag.engines.multi_agent.config import langfuse_client, AgentTeamConfig
 from src.smart_rag.playbook_dir.execute_manager import PlaybookManagerExecutor
+from src.smart_rag.infrastructure.session.citation_manager import (
+    clone_citation_manager_state,
+    get_citation_manager,
+)
 
 # Constants
 DEFAULT_MODEL = 'gpt-5.4-mini'
@@ -396,7 +400,8 @@ class PlaybookStepExecutor:
         self,
         request: RunPlaybookStepRequest,
         queue: asyncio.Queue[dict],
-        copied_events: Optional[List[Any]] = None
+        copied_events: Optional[List[Any]] = None,
+        citation_session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Execute only the step (without manager re-execution).
 
@@ -413,6 +418,10 @@ class PlaybookStepExecutor:
         temp_session_id = f"temp-execution-{uuid.uuid4()}"
 
         try:
+            citation_manager = None
+            if citation_session_id:
+                citation_manager = await get_citation_manager(citation_session_id)
+
             # Create agent and execute with new description
             # Create config object for delegation factory
             config_obj = self._create_config_object(request, temp_session_id)
@@ -425,7 +434,7 @@ class PlaybookStepExecutor:
                 agent_repository=self.agent_repository,
                 agent_helper=self.agent_helper,
                 tool_description_provider=self.tool_description_provider,
-                citation_manager=None
+                citation_manager=citation_manager
             )
 
             # Convert request to agent_config
@@ -653,6 +662,19 @@ class PlaybookStepExecutor:
                 f"[PLAYBOOK EXECUTOR] Retrieved {len(original_events)} events from session {original_session_id}"
             )
 
+            try:
+                await clone_citation_manager_state(
+                    source_session_id=original_session_id,
+                    target_session_id=new_session_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[PLAYBOOK EXECUTOR] Failed to clone citation state from %s to %s: %s",
+                    original_session_id,
+                    new_session_id,
+                    str(e),
+                )
+
             # Step 2: Create a deep copy of all events
             copied_events = [event.model_copy(deep=True) for event in original_events]
             logger.info(
@@ -661,7 +683,12 @@ class PlaybookStepExecutor:
 
             # Step 3: Execute the step with new description
             logger.info(f"[PLAYBOOK EXECUTOR] Executing step: {request.agent.name}")
-            step_execution_result = await self.execute_step_only(request, queue, copied_events)
+            step_execution_result = await self.execute_step_only(
+                request,
+                queue,
+                copied_events,
+                citation_session_id=new_session_id,
+            )
 
             if not step_execution_result["success"]:
                 error_msg = step_execution_result.get("error", "Step execution failed")

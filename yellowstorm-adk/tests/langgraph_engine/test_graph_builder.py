@@ -10,6 +10,7 @@ from src.langgraph_engine.graph_builder import (
     _get_clarification_context,
     _store_clarification_context,
     _resolve_output_port,
+    _collect_prior_source_components,
 )
 
 
@@ -19,6 +20,65 @@ def _install_fake_tool_factory(monkeypatch, create_langchain_tools) -> None:
         "src.langgraph_engine.playbook_tool_factory",
         SimpleNamespace(create_langchain_tools=create_langchain_tools),
     )
+
+
+def test_collect_prior_source_components_returns_sources_and_citations_in_task_order() -> None:
+    state = {
+        "tasks": [
+            {"id": "step-2", "execution_order": 2},
+            {"id": "step-1", "execution_order": 1},
+            {"id": "step-3", "execution_order": 3},
+        ],
+        "results": {
+            "step-1": {
+                "components": [
+                    {
+                        "type": "citation",
+                        "data": {
+                            "text_source": {
+                                "source": "Doc 1",
+                                "reference": "1",
+                            }
+                        },
+                    }
+                ]
+            },
+            "step-2": {
+                "components": [
+                    {
+                        "type": "sources",
+                        "data": {
+                            "sources": [
+                                {
+                                    "title": "Doc 2",
+                                    "url": "https://example.com/doc-2",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "type": "citation",
+                        "data": {
+                            "text_source": {
+                                "source": "Doc 2",
+                                "reference": "6",
+                            }
+                        },
+                    },
+                ]
+            },
+        },
+    }
+
+    components = _collect_prior_source_components(state, "step-3")
+
+    assert [component["type"] for component in components] == [
+        "citation",
+        "sources",
+        "citation",
+    ]
+    assert components[0]["data"]["text_source"]["reference"] == "1"
+    assert components[2]["data"]["text_source"]["reference"] == "6"
 
 
 def test_extract_artifacts_routes_explicit_same_kind_outputs_by_port_id() -> None:

@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import re
 import sys
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
@@ -29,6 +30,8 @@ from src.langgraph_engine.playbook_queue import register_queue, get_queue, remov
 from src.langgraph_engine.port_resolution import validate_port_routing
 
 logger = get_logger(__name__)
+
+_CITATION_REF_PATTERN = re.compile(r"\[(\d+)\]")
 
 
 def _extract_interrupt_from_snapshot(
@@ -126,6 +129,188 @@ def _build_resume_state_update(
     if task_description:
         update["task_description_overrides_by_task"] = {task_id: task_description}
     return update
+
+
+def _citation_source_from_component(
+    component: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    data = component.get("data") or {}
+    for key in ("text_source", "image_source"):
+        source = data.get(key)
+        if isinstance(source, dict):
+            return source
+    return None
+
+
+def _citation_reference(component: Dict[str, Any]) -> str:
+    source = _citation_source_from_component(component)
+    if not source:
+        return ""
+    return str(source.get("reference") or "").strip()
+
+
+def _citation_signature(component: Dict[str, Any]) -> str:
+    data = component.get("data") or {}
+    text_source = data.get("text_source")
+    if isinstance(text_source, dict):
+        return "::".join(
+            [
+                "text",
+                str(text_source.get("source") or ""),
+                str(text_source.get("external_id") or ""),
+                str(text_source.get("page") or ""),
+                str(text_source.get("page_content") or ""),
+            ]
+        )
+
+    image_source = data.get("image_source")
+    if isinstance(image_source, dict):
+        return "::".join(
+            [
+                "image",
+                str(image_source.get("path") or ""),
+                str(image_source.get("external_id") or ""),
+                str(image_source.get("page") or ""),
+            ]
+        )
+
+    return json.dumps(component, sort_keys=True, default=str)
+
+
+def _set_citation_reference(
+    component: Dict[str, Any],
+    reference: str,
+    parent_id: str,
+) -> Dict[str, Any]:
+    updated = dict(component)
+    data = dict(updated.get("data") or {})
+    data["parent_id"] = parent_id
+    for key in ("text_source", "image_source"):
+        source = data.get(key)
+        if isinstance(source, dict):
+            source_data = dict(source)
+            source_data["reference"] = reference
+            data[key] = source_data
+            break
+    updated["data"] = data
+    return updated
+
+
+def _rewrite_citation_references(text: str, ref_map: Dict[str, str]) -> str:
+    if not text or not ref_map:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        current = match.group(1)
+        return f"[{ref_map.get(current, current)}]"
+
+    return _CITATION_REF_PATTERN.sub(replace, text)
+
+
+def _find_text_parent_id(components: List[Dict[str, Any]], output: str) -> str:
+    normalized_output = str(output or "").strip()
+    for component in reversed(components or []):
+        if not isinstance(component, dict) or component.get("type") != "text":
+            continue
+        data = component.get("data") or {}
+        if (
+            normalized_output
+            and str(data.get("content") or "").strip() != normalized_output
+        ):
+            continue
+        return str(component.get("id") or "").strip()
+    return ""
+
+
+def _normalize_task_result_citations(
+    task_results: List[Dict[str, Any]],
+    tasks: List[TaskConfig],
+) -> List[Dict[str, Any]]:
+    order_by_task_id = {
+        str(task.get("id") or ""): (
+            int(task.get("execution_order", index) or index),
+            index,
+        )
+        for index, task in enumerate(tasks or [])
+    }
+    ordered_results = sorted(
+        [
+            result
+            for result in task_results
+            if isinstance(result, dict) and result.get("status") == "completed"
+        ],
+        key=lambda result: order_by_task_id.get(
+            str(result.get("task_id") or ""),
+            (len(order_by_task_id), len(order_by_task_id)),
+        ),
+    )
+
+    reference_by_signature: Dict[str, str] = {}
+    citation_by_signature: Dict[str, Dict[str, Any]] = {}
+    cumulative_signatures: List[str] = []
+    next_reference = 1
+
+    for result in ordered_results:
+        components = [
+            component
+            for component in (result.get("components") or [])
+            if isinstance(component, dict)
+        ]
+        parent_id = _find_text_parent_id(components, str(result.get("output") or ""))
+        local_ref_map: Dict[str, str] = {}
+
+        task_citation_components = [
+            component for component in components if component.get("type") == "citation"
+        ]
+        for component in task_citation_components:
+            signature = _citation_signature(component)
+            if signature not in reference_by_signature:
+                reference_by_signature[signature] = str(next_reference)
+                cumulative_signatures.append(signature)
+                next_reference += 1
+
+            normalized_reference = reference_by_signature[signature]
+            original_reference = _citation_reference(component)
+            if original_reference:
+                local_ref_map[original_reference.strip("[]")] = normalized_reference
+            citation_by_signature[signature] = _set_citation_reference(
+                component,
+                normalized_reference,
+                parent_id,
+            )
+
+        if local_ref_map:
+            result["output"] = _rewrite_citation_references(
+                str(result.get("output") or ""),
+                local_ref_map,
+            )
+
+        non_citation_components: List[Dict[str, Any]] = []
+        for component in components:
+            if component.get("type") == "citation":
+                continue
+            updated_component = dict(component)
+            if updated_component.get("type") == "text":
+                data = dict(updated_component.get("data") or {})
+                data["content"] = _rewrite_citation_references(
+                    str(data.get("content") or ""),
+                    local_ref_map,
+                )
+                updated_component["data"] = data
+            non_citation_components.append(updated_component)
+
+        cumulative_citations = [
+            _set_citation_reference(
+                citation_by_signature[signature],
+                reference_by_signature[signature],
+                parent_id,
+            )
+            for signature in cumulative_signatures
+            if signature in citation_by_signature
+        ]
+        result["components"] = non_citation_components + cumulative_citations
+
+    return task_results
 
 
 async def _consume_graph_stream(
@@ -813,4 +998,4 @@ def _build_task_results(
                     }
                 )
 
-    return task_results
+    return _normalize_task_result_citations(task_results, tasks)

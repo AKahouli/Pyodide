@@ -95,6 +95,69 @@ def test_collect_connector_response_components_reuses_connector_references() -> 
     assert second_components == []
 
 
+def test_collector_seed_continues_references_and_reuses_prior_citations() -> None:
+    collector = ToolResultCollector(
+        initial_components=[
+            {
+                "type": "citation",
+                "data": {
+                    "parent_id": "step-1-text",
+                    "text_source": {
+                        "type": "text",
+                        "source": "Doc 1",
+                        "external_id": "doc-1",
+                        "page": "1",
+                        "page_content": "Existing evidence",
+                        "workspace_id": "workspace-1",
+                        "reference": "5",
+                    },
+                },
+            }
+        ]
+    )
+
+    reused = _collect_connector_response_components(
+        collector,
+        {
+            "text": "Existing evidence",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "Doc 1",
+                    "external_id": "doc-1",
+                    "page": "1",
+                    "page_content": "Existing evidence",
+                    "workspace_id": "workspace-1",
+                    "reference": "",
+                }
+            ],
+        },
+    )
+    reused_components = collector.get_and_clear()
+
+    fresh = _collect_connector_response_components(
+        collector,
+        {
+            "text": "New evidence",
+            "citation_sources": [
+                {
+                    "type": "text",
+                    "source": "Doc 2",
+                    "external_id": "doc-2",
+                    "page": "3",
+                    "page_content": "New evidence",
+                    "workspace_id": "workspace-1",
+                    "reference": "",
+                }
+            ],
+        },
+    )
+
+    assert reused["citation_sources"][0]["reference"] == "5"
+    assert reused_components == []
+    assert fresh["citation_sources"][0]["reference"] == "6"
+
+
 def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_call_mcp_tool(*args, **kwargs):
         return {
@@ -161,7 +224,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
     ]
 
 
-def test_connector_mcp_tools_use_output_workspace_id_for_brain_header(
+def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -188,7 +251,6 @@ def test_connector_mcp_tools_use_output_workspace_id_for_brain_header(
                 "mcp_server_url": "https://example.com/mcp",
                 "auth_headers": {
                     "Authorization": "Bearer token",
-                    "X-Brain-ID": "wrong-brain",
                 },
                 "actions": [
                     {
@@ -210,14 +272,10 @@ def test_connector_mcp_tools_use_output_workspace_id_for_brain_header(
     assert result == {"text": "ok"}
     assert captured["params"] == {"query": "revenue"}
     assert captured["auth_env"] == {}
-    assert captured["auth_headers"] == {
-        "Authorization": "Bearer token",
-        "X-Brain-ID": "playbook-workspace-1",
-        "X-External-ID": "doc-1,doc-2",
-    }
+    assert captured["auth_headers"] == {"Authorization": "Bearer token"}
 
 
-def test_connector_mcp_tools_omit_brain_header_without_output_workspace_id(
+def test_connector_mcp_tools_preserve_explicit_auth_headers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured = {}
@@ -240,7 +298,10 @@ def test_connector_mcp_tools_omit_brain_header_without_output_workspace_id(
                 "connector_slug": "sharepoint",
                 "mcp_transport_type": "streamable_http",
                 "mcp_server_url": "https://example.com/mcp",
-                "auth_headers": {"Authorization": "Bearer token"},
+                "auth_headers": {
+                    "Authorization": "Bearer token",
+                    "X-Custom-Header": "custom-value",
+                },
                 "actions": [
                     {
                         "action_key": "searchv2_search_document_blocks",
@@ -257,4 +318,7 @@ def test_connector_mcp_tools_omit_brain_header_without_output_workspace_id(
 
     asyncio.run(tools[0].ainvoke({"query": "revenue"}))
 
-    assert captured["auth_headers"] == {"Authorization": "Bearer token"}
+    assert captured["auth_headers"] == {
+        "Authorization": "Bearer token",
+        "X-Custom-Header": "custom-value",
+    }
