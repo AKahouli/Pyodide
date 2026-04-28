@@ -45,18 +45,6 @@ export function useConversationStream() {
                 } as StreamingComponent,
               };
             }
-            console.debug('[useConversationStream][stream_chunk][chart]', {
-              action: event.data.action,
-              id: event.data.component?.id,
-              componentKeys: Object.keys(event.data.component || {}),
-              data: event.data.component?.data,
-              dataType: typeof event.data.component?.data,
-              dataKeys: event.data.component?.data ? Object.keys(event.data.component.data) : [],
-              chartData: event.data.component?.data?.chartData,
-              chartDataLength: Array.isArray(event.data.component?.data?.chartData) ? event.data.component.data.chartData.length : 'not array',
-              dataData: event.data.component?.data?.data,
-              dataDataLength: Array.isArray(event.data.component?.data?.data) ? event.data.component.data.data.length : 'not array',
-            });
           }
           store.onStreamChunk(event.data);
           break;

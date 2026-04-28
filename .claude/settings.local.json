@@ -11,7 +11,8 @@
       "Bash(npm test *)",
       "Bash(python3 -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
       "Bash(python3 -m py_compile utilities/render_chart.py)",
-      "Bash(git restore *)"
+      "Bash(git restore *)",
+      "Bash(grep -E \"^\\\\+\\\\+\\\\+.*\\\\.\\(ts|tsx\\)$|^\\\\+.*console\\\\.\\(log|warn|error|debug|info\\)\")"
     ]
   }
 }
