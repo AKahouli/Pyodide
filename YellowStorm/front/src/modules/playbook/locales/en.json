@@ -546,6 +546,8 @@
   "store.errors.executeFailed": "Failed to execute playbook",
   "store.errors.resumeFailed": "Failed to resume execution",
   "store.errors.executionFailed": "Playbook execution failed. Please try again.",
+  "errors.workspaceRequiredForRun": "Select a default playbook workspace before running this playbook.",
+  "errors.workspaceRequired": "Select at least one default workspace for this playbook.",
   "store.executionCompleted": "Playbook execution completed successfully.",
   "store.toasts.viewExecution": "View",
   "store.toasts.interruptAttention": "A playbook's step requires your attention.",

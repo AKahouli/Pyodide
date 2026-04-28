@@ -1303,6 +1303,8 @@ export interface RepeatabilityTaskExecutionSummary {
   matchState: RepeatabilityMatchState;
   passed: boolean;
   evaluated: boolean;
+  advisorPassed: boolean;
+  advisorEvaluated: boolean;
   judgeResult: TaskResult['judgeResult'];
 }
 

@@ -32,6 +32,8 @@ export interface RepeatabilityTaskExecutionSummary {
   matchState: RepeatabilityMatchState;
   passed: boolean;
   evaluated: boolean;
+  advisorPassed: boolean;
+  advisorEvaluated: boolean;
   judgeResult: PlaybookAdvisorResult | null;
 }
 
@@ -255,8 +257,8 @@ export class PlaybookRepeatabilityService {
       this.evaluateTaskExecution(execution, task, goldenBaselines),
     );
 
-    const evaluatedTasks = executionTasks.filter((t) => t.evaluated);
-    const passedTasks = executionTasks.filter((t) => t.passed);
+    const evaluatedTasks = executionTasks.filter((t) => t.advisorEvaluated);
+    const passedTasks = executionTasks.filter((t) => t.advisorPassed);
 
     const taskScores = evaluatedTasks
       .map((t) => t.matchScore)
@@ -302,6 +304,7 @@ export class PlaybookRepeatabilityService {
     const resolvedJudgeScore = typeof judgeResult?.resultMatchingScore === 'number'
       ? Math.max(0, Math.min(100, judgeResult.resultMatchingScore))
       : null;
+    const advisorOverallScore = this.normalizePercentScore(judgeResult?.overallScore);
 
     const judgeScore = this.normalizeJudgeResultMatchingScore(judgeResult, expectedResultSource);
     const fallbackScore = expectedResultSource !== 'none' && output
@@ -317,6 +320,8 @@ export class PlaybookRepeatabilityService {
 
     const evaluated = expectedResultSource !== 'none' && (matchScore !== null || expectedResultMatched !== null);
     const passed = expectedResultMatched === true;
+    const advisorEvaluated = advisorOverallScore !== null;
+    const advisorPassed = advisorOverallScore !== null && advisorOverallScore >= PASS_SCORE_THRESHOLD;
 
     let matchState: RepeatabilityMatchState;
     if (!evaluated) {
@@ -341,6 +346,8 @@ export class PlaybookRepeatabilityService {
       matchState,
       passed,
       evaluated,
+      advisorPassed,
+      advisorEvaluated,
       judgeResult,
     };
   }

@@ -207,6 +207,7 @@ function MetricCard({
 
 function TaskExecutionPane({ task }: Readonly<{ task: RepeatabilityTaskExecutionSummary }>) {
   const { t } = useModuleTranslation('playbook');
+  const headerMatchState = task.advisorEvaluated ? task.matchState : 'not_evaluated';
 
   return (
     <Collapsible defaultOpen={false} className="rounded-md border bg-background/60 px-3 py-2">
@@ -216,8 +217,8 @@ function TaskExecutionPane({ task }: Readonly<{ task: RepeatabilityTaskExecution
           <span className="truncate text-xs font-medium">{task.taskTitle || task.taskId}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px]', getMatchStateBadge(task.matchState))}>
-            {t(`repeatability.matchState.${task.matchState}`)}
+          <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px]', getMatchStateBadge(headerMatchState))}>
+            {t(`repeatability.matchState.${headerMatchState}`)}
           </Badge>
           <Badge variant="outline" className={cn('h-5 px-1.5 text-[10px]', getScoreTone(task.matchScore))}>
             {formatPercent(task.matchScore)}

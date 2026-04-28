@@ -280,6 +280,8 @@
   "store.errors.executeFailed": "\u00c9chec de l'ex\u00e9cution du playbook",
   "store.errors.resumeFailed": "\u00c9chec de la reprise de l'ex\u00e9cution",
   "store.errors.executionFailed": "L'ex\u00e9cution du playbook a \u00e9chou\u00e9. Veuillez r\u00e9essayer.",
+  "errors.workspaceRequiredForRun": "S\u00e9lectionnez un workspace par d\u00e9faut avant d'ex\u00e9cuter ce playbook.",
+  "errors.workspaceRequired": "S\u00e9lectionnez au moins un workspace par d\u00e9faut pour ce playbook.",
   "store.executionCompleted": "L'ex\u00e9cution du playbook est termin\u00e9e avec succ\u00e8s.",
   "store.toasts.viewExecution": "Voir",
   "store.toasts.interruptAttention": "Une \u00e9tape du playbook n\u00e9cessite votre attention.",

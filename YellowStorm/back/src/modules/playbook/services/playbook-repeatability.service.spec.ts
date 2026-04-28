@@ -194,6 +194,8 @@ describe('PlaybookRepeatabilityService', () => {
       expect(task.matchState).toBe('not_evaluated');
       expect(task.evaluated).toBe(false);
       expect(task.passed).toBe(false);
+      expect(task.advisorEvaluated).toBe(false);
+      expect(task.advisorPassed).toBe(false);
     });
 
     it('filters out evaluation tasks from analysis', async () => {
@@ -244,7 +246,8 @@ describe('PlaybookRepeatabilityService', () => {
       const iter1 = result.iterations[0];
       expect(iter1.tasks[0].matchState).toBe('matched');
       expect(iter1.tasks[0].passed).toBe(true);
-      expect(iter1.passed).toBe(true);
+      expect(iter1.tasks[0].advisorPassed).toBe(false);
+      expect(iter1.passed).toBe(false);
 
       const iter2 = result.iterations[1];
       expect(iter2.tasks[0].matchState).toBe('not_matched');
@@ -415,6 +418,8 @@ describe('PlaybookRepeatabilityService', () => {
         matchState: 'matched',
         evaluated: true,
         passed: true,
+        advisorEvaluated: false,
+        advisorPassed: false,
       }));
     });
 
@@ -445,6 +450,8 @@ describe('PlaybookRepeatabilityService', () => {
         matchState: 'matched',
         evaluated: true,
         passed: true,
+        advisorEvaluated: false,
+        advisorPassed: false,
       }));
     });
 
@@ -475,6 +482,8 @@ describe('PlaybookRepeatabilityService', () => {
         matchState: 'not_matched',
         evaluated: true,
         passed: false,
+        advisorEvaluated: false,
+        advisorPassed: false,
       }));
     });
 
@@ -505,6 +514,38 @@ describe('PlaybookRepeatabilityService', () => {
         matchScore: null,
         matchState: 'not_evaluated',
         evaluated: false,
+        passed: false,
+        advisorEvaluated: false,
+        advisorPassed: false,
+      }));
+    });
+
+    it('marks advisor evaluation only when overall score exists and passes at threshold', () => {
+      const result = evaluateTaskExecution(
+        {
+          _id: 'execution-5',
+          completedAt: new Date('2026-04-27T10:00:00.000Z'),
+          taskResults: [{
+            taskId: 'task-1',
+            status: StepStatus.COMPLETED,
+            output: 'Some output',
+            judgeResult: {
+              expectedResultMatched: false,
+              resultMatchingScore: 40,
+              overallScore: 80,
+              expectedResultSource: 'node_field',
+              expectedResultType: 'semantic_description',
+              expectedResultReason: 'Advisor score available',
+            },
+          }],
+        },
+        { id: 'task-1', title: 'Task 1', expectedResult: 'Expected result' },
+      );
+
+      expect(result).toEqual(expect.objectContaining({
+        advisorEvaluated: true,
+        advisorPassed: true,
+        evaluated: true,
         passed: false,
       }));
     });

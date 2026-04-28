@@ -67,7 +67,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
-import { toast } from 'sonner';
+import { showError } from '@/lib/notifications';
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
@@ -273,8 +273,9 @@ function PlaybookCanvasInner() {
     void fetchRepeatability(id);
   }, [evaluationDialogOpen, id, isGeneratingRoute, fetchRepeatability]);
 
-  // Fallback polling while an execution is active. This keeps both the canvas
-  // and the detail pane in sync if an SSE step-complete/execution-complete event
+  // Fallback polling while an execution is active or while the run view is
+  // recovering from a missed realtime handoff. This keeps both the canvas and
+  // the detail pane in sync if an SSE step-complete/execution-complete event
   // is missed by the browser.
   useEffect(() => {
     if (!id || isGeneratingRoute) return;
@@ -289,24 +290,38 @@ function PlaybookCanvasInner() {
         ? execution
         : null;
 
-    if (!activeExecution) return;
+    const latestHistoryExecution = execution?.playbookId === id ? execution : null;
+    const recoveryExecution = !activeExecution
+      && (pageMode === 'run' || executionPanelOpen)
+      && latestHistoryExecution
+      && (latestHistoryExecution.status === 'running' || latestHistoryExecution.status === 'interrupted')
+        ? latestHistoryExecution
+        : null;
+
+    const executionToRefresh = activeExecution ?? recoveryExecution;
+
+    if (!executionToRefresh) return;
 
     const interval = setInterval(() => {
-      void fetchExecution(id, activeExecution.id);
+      void fetchExecution(id, executionToRefresh.id);
       void fetchExecutions(id);
     }, 2000);
 
     return () => clearInterval(interval);
   }, [
+    executionPanelOpen,
     id,
     isGeneratingRoute,
     execution?.id,
     execution?.status,
+    execution?.playbookId,
     currentExecution?.id,
     currentExecution?.status,
+    currentExecution?.taskResults,
     currentExecution?.playbookId,
     fetchExecution,
     fetchExecutions,
+    pageMode,
   ]);
 
   // When generation completes, redirect to the real playbook URL
@@ -945,8 +960,8 @@ function PlaybookCanvasInner() {
   const handleRun = useCallback(async () => {
     if (!id || !playbook) return;
     if (!playbook.workspaces || playbook.workspaces.length === 0) {
-      toast.error('Select a default playbook workspace before running this playbook.');
-      return;
+        showError(t('errors.workspaceRequiredForRun'));
+        return;
     }
     if (isDirty) await saveNow();
     setPageMode('run');
@@ -1118,7 +1133,7 @@ function PlaybookCanvasInner() {
   const handleWorkspacesChange = useCallback(
     (workspaces: string[]) => {
       if (workspaces.length === 0) {
-        toast.error('Select at least one default workspace for this playbook.');
+        showError(t('errors.workspaceRequired'));
         return;
       }
       captureSnapshot();
