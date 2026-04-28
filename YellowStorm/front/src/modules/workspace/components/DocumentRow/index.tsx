@@ -20,7 +20,7 @@ type DocumentRowProps = Readonly<{
   document: WorkspaceDocument;
   isSelected: boolean;
   onToggleSelect: () => void;
-  onFolderUpload?: (folderId: string, input: HTMLInputElement) => void;
+  onFolderUpload?: (folderId: string) => void;
   onFolderDoubleClick?: (folderId: string) => void;
   onDragStart?: (e: React.DragEvent, documentId: string, isFolder: boolean, workspaceId: string, name?: string) => void;
   onDragEnd?: () => void;

@@ -20,7 +20,7 @@ export async function updateProfile(data: UpdateProfileData): Promise<User> {
 /**
  * Update user appearance preferences
  */
-export async function updateAppearance(colorTheme: User['appearance']['colorTheme']): Promise<User> {
+export async function updateAppearance(colorTheme: 'default' | 'yellow' | 'orange' | 'blue'): Promise<User> {
   const response = await apiClient.put<ApiResponse<User>>(API_ENDPOINTS.users.me, {
     appearance: { colorTheme },
   });

@@ -936,7 +936,7 @@ function PlaybookCanvasInner() {
 
   useEffect(() => {
     if (!playbook) return;
-    setAdvisorAutopilotEnabled(playbook.advisorAutopilotEnabled === true);
+    setAdvisorAutopilotEnabled((playbook.advisorAutopilotEnabled ?? false) === true);
   }, [playbook?.advisorAutopilotEnabled]);
 
   const handleNodeReflectionChange = useCallback(
@@ -948,8 +948,8 @@ function PlaybookCanvasInner() {
         await updatePlaybook(id, {
           reflectionEnabled: enabled,
           advisorAutopilotEnabled: playbook.advisorAutopilotEnabled,
-          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore,
-          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns,
+          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
         });
       } catch {
       }
@@ -965,8 +965,8 @@ function PlaybookCanvasInner() {
       try {
         await updatePlaybook(id, {
           advisorAutopilotEnabled: enabled,
-          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore,
-          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns,
+          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
         });
       } catch {
         // handled by the store/API layer

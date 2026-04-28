@@ -75,7 +75,7 @@ export function useComposerSuggestions({
           setResolvedAgentId(composerAgent.id);
         }
       } catch (err) {
-        console.error('[ComposerSuggestions] Failed to fetch composer agent:', err);
+        // Silently fail - suggestions will be disabled
       }
     };
     fetchComposerAgent();

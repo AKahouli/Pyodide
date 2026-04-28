@@ -3,7 +3,8 @@ import { conversationStreamService } from '../stream';
 import { useConversationStore } from '../store';
 import { useAuth } from '@/modules/auth';
 import { useUsage } from '@/modules/usage';
-import type { StreamSSEEvent } from '../types';
+import { normalizeChartComponentData } from '../utils';
+import type { StreamSSEEvent, StreamingComponent } from '../types';
 
 /**
  * Hook that connects the ConversationStreamService to the Zustand store.
@@ -33,6 +34,18 @@ export function useConversationStream() {
           store.onStreamStart(event.data);
           break;
         case 'stream_chunk':
+          if (event.data?.component?.type === 'chart') {
+            const normalizedData = normalizeChartComponentData(event.data.component.data);
+            if (normalizedData) {
+              event.data = {
+                ...event.data,
+                component: {
+                  ...event.data.component,
+                  data: normalizedData,
+                } as StreamingComponent,
+              };
+            }
+          }
           store.onStreamChunk(event.data);
           break;
         case 'stream_complete':
