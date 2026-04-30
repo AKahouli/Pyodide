@@ -1295,9 +1295,12 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
         from src.langgraph_engine.workflow_service import run_playbook
         from src.langgraph_engine.playbook_queue import register_task, remove_task
 
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = user_ctx.set(username)
         logger.info(
             "[RunPlaybookWorkflow] Request received",
             playbook_id=request.playbook_id,
+            username=username,
             task_count=len(request.tasks),
             agent_count=len(request.agents),
             edge_count=len(request.edges),
@@ -1329,7 +1332,7 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                         replay.task_id: _proto_validated_replay_to_dict(replay)
                         for replay in request.validated_replays
                     } if request.validated_replays else {},
-                    evaluation_user_id=request.user_context.username or request.user_context.user_id or "unknown",
+                    evaluation_user_id=username,
                     step_execution_modes=dict(request.step_execution_modes) if request.step_execution_modes else {},
                 )
             )
@@ -1356,17 +1359,21 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
 
         finally:
             remove_task(thread_id)
+            user_ctx.reset(user_token)
 
     async def ResumePlaybookWorkflow(self, request, context):
         """Resume an interrupted playbook with server-streaming step updates."""
         from src.langgraph_engine.workflow_service import resume_playbook
         from src.langgraph_engine.playbook_queue import register_task, remove_task
 
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = user_ctx.set(username)
         logger.info(
             "[ResumePlaybookWorkflow] Request received",
             playbook_id=request.playbook_id,
             thread_id=request.thread_id,
             task_id=request.task_id,
+            username=username,
         )
 
         queue: asyncio.Queue = asyncio.Queue()
@@ -1411,6 +1418,7 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
 
         finally:
             remove_task(request.thread_id)
+            user_ctx.reset(user_token)
 
     async def StopPlaybookWorkflow(self, request, context):
         """Stop a running playbook workflow by thread_id."""
@@ -1500,7 +1508,9 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
-        logger.info("[RunStep] Request received", task_id=task_id, agent=agent_name)
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = user_ctx.set(username)
+        logger.info("[RunStep] Request received", task_id=task_id, agent=agent_name, username=username)
 
         try:
             task = _proto_task_to_dict(request.task)
@@ -1524,7 +1534,7 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                 workspace_context=_proto_workspace_context(request.workspace_context),
                 execution_mode=request.execution_mode or "live",
                 validated_replay=validated_replay,
-                evaluation_user_id=request.user_context.username or request.user_context.user_id or "unknown",
+                evaluation_user_id=username,
             )
 
             return _build_step_response(result)
@@ -1539,15 +1549,20 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                     error=str(e),
                 ),
             )
+        finally:
+            user_ctx.reset(user_token)
 
     async def ResumeStep(self, request, context):
         """Resume an interrupted step with human response."""
         from src.langgraph_engine.step_executor import resume_step
 
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = user_ctx.set(username)
         logger.info(
             "[ResumeStep] Request received",
             thread_id=request.thread_id,
             task_id=request.task_id,
+            username=username,
         )
 
         try:
@@ -1576,6 +1591,8 @@ Tu dois modifier le playbook existant ci-dessous en fonction de la demande de l'
                     error=str(e),
                 ),
             )
+        finally:
+            user_ctx.reset(user_token)
 
     async def EvaluateSemanticMatch(self, request, context):
         """Evaluate semantic similarity for a playbook step over the gRPC channel."""
