@@ -25,7 +25,7 @@ import { CheckUsage } from '../../usage/decorators/check-usage.decorator';
 import { UsageLimitGuard } from '../../usage/guards/usage-limit.guard';
 import { RequestContextService } from '../../request-context';
 import { LoggerService } from '../../logger';
-
+import { UserDocument } from '../../user/schemas/user.schema';
 @ApiTags('Messages')
 @Controller('conversations/:conversationId/messages')
 @ApiBearerAuth()
@@ -46,11 +46,19 @@ export class MessageController {
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
   async sendMessage(
-    @CurrentUser() user: { _id: string; email: string },
+    @CurrentUser() user: UserDocument,
     @Param('conversationId') conversationId: string,
     @Body() dto: SendMessageDto,
   ) {
     const requestId = this.requestContext.getRequestId();
+
+    // DEBUG: Log user object to verify email is present
+    this.logger.log('[DEBUG] User object received', {
+      userId: user._id,
+      email: user.email,
+      hasEmail: !!user.email,
+      userKeys: Object.keys(user),
+    });
 
     this.logger.log('Request received', {
       conversationId,
@@ -137,6 +145,7 @@ export class MessageController {
         conversationId,
         dto.content,
         dto.modelId,
+        user.email,
       );
     }
 
@@ -171,7 +180,7 @@ export class MessageController {
           webSearchEnabled: dto.webSearchEnabled,
           modelId: dto.modelId,
           agentIds: dto.agentIds,
-        }, requestId)
+        }, requestId, undefined, user.email)
         .catch((err) => {
           this.logger.error('Stream start failed', {
             conversationId,
@@ -227,7 +236,7 @@ export class MessageController {
 
   @Post(':messageId/stop')
   async stopStream(
-    @CurrentUser() user: { _id: string },
+    @CurrentUser() user: UserDocument,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -250,7 +259,7 @@ export class MessageController {
   @UseGuards(UsageLimitGuard)
   @CheckUsage()
   async regenerate(
-    @CurrentUser() user: { _id: string; email: string },
+    @CurrentUser() user: UserDocument,
     @Param('conversationId') conversationId: string,
     @Param('messageId') messageId: string,
   ) {
@@ -301,7 +310,7 @@ export class MessageController {
         attachedFileIds: userMessage.attachedFileIds?.map((id) => id.toString()),
         webSearchEnabled: userMessage.webSearchEnabled,
         agentIds: userMessage.agentIds?.map((id) => id.toString()),
-      }, requestId, user.email)
+      }, requestId, undefined, user.email)
       .catch((err) => {
         this.logger.error('Regenerate stream failed', {
           conversationId,

@@ -250,10 +250,14 @@ export class IndexingService {
         'Document is already being indexed',
       );
     }
+    // Delete existing index before re-indexing
+    await this.deleteDocumentIndex(documentId, workspaceId);
 
     // Reset to pending for re-indexing
     document.indexingStatus = IndexingStatus.PENDING;
     document.indexingError = undefined;
+    const { download_id, indexing_id, ...restMetadata } = document.metadata || {};
+    document.metadata = restMetadata;
     await document.save();
 
     this.logger.debug('Document queued for re-indexing', {
