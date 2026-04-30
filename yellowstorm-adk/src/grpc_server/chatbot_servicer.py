@@ -1948,6 +1948,8 @@ class ChatbotServicer(
 
         task_id = request.task.id if request.task else "unknown"
         agent_name = request.agent.name if request.agent else "unknown"
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = user_ctx.set(username)
         has_trigger_context = _has_struct_payload(getattr(request, "trigger_context", None))
         trigger_edge_count = sum(
             1 for edge in request.edges if (edge.source_id or "") == "__trigger__"
@@ -1956,6 +1958,7 @@ class ChatbotServicer(
             "[RunStepStream] Request received",
             task_id=task_id,
             agent=agent_name,
+            username=username,
             has_trigger_context=has_trigger_context,
             trigger_edge_count=trigger_edge_count,
         )
@@ -2033,9 +2036,7 @@ class ChatbotServicer(
                         node_inputs_by_port=node_inputs_by_port,
                         execution_mode=request.execution_mode or "live",
                         validated_replay=validated_replay,
-                        evaluation_user_id=request.user_context.username
-                        or request.user_context.user_id
-                        or "unknown",
+                        evaluation_user_id=username,
                         on_progress=on_progress,
                         prompt_overrides=dict(request.prompt_overrides)
                         if getattr(request, "prompt_overrides", None)
@@ -2132,6 +2133,8 @@ class ChatbotServicer(
                 task_title=task.get("title", "") if "task" in locals() else "",
                 error=str(e),
             )
+        finally:
+            user_ctx.reset(user_token)
 
     async def ResumeStep(self, request, context):
         """Resume an interrupted step with human response."""
