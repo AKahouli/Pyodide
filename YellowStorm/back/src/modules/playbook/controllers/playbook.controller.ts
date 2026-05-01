@@ -51,6 +51,7 @@ import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.
 import { UpdateOutputFormatTemplateDto } from '../dto/update-output-format-template.dto';
 import { RerunStepDto } from '../dto/rerun-step.dto';
 import { GetAdvisorRemediationsDto, ApplyAdvisorRemediationsDto } from '../dto/advisor-remediation.dto';
+import { ReapplyOptimizationDto } from '../dto/reapply-optimization.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
 import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
 import {
@@ -457,6 +458,25 @@ export class PlaybookController {
       executionId,
       dto.selectedIds || [],
       dto.mode === 'generate-new' ? 'generate-new' : 'update-current',
+    );
+  }
+
+  @Post(':id/executions/:executionId/tasks/:taskId/reapply-optimization')
+  @UseGuards(PlaybookOwnerGuard)
+  async reapplyOptimization(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Param('executionId') executionId: string,
+    @Param('taskId') taskId: string,
+    @Body() body: ReapplyOptimizationDto,
+  ) {
+    return this.judgeService.reapplyOptimization(
+      user._id.toString(),
+      id,
+      executionId,
+      taskId,
+      body.historyIndex,
+      body.direction,
     );
   }
 

@@ -50,13 +50,7 @@ interface PaginatedResponse<T> {
 }
 
 function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
-  if (!data.tasks) {
-    return data;
-  }
-
-  return {
-    ...data,
-    tasks: data.tasks.map((task) => ({
+  const sanitizedTasks = data.tasks?.map((task) => ({
       id: task.id,
       title: task.title,
       description: task.description,
@@ -109,7 +103,22 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
         : null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
-    })),
+    }));
+
+  const sanitizedEdges = data.edges
+    ?.filter((edge) => typeof edge.id === 'string' && edge.id)
+    .map((edge) => ({
+      id: edge.id,
+      sourceId: edge.sourceId,
+      targetId: edge.targetId,
+      sourceOutputPortId: edge.sourceOutputPortId,
+      targetInputPortId: edge.targetInputPortId,
+    }));
+
+  return {
+    ...data,
+    tasks: sanitizedTasks,
+    edges: sanitizedEdges,
   };
 }
 
@@ -281,6 +290,20 @@ export async function applyAdvisorRemediations(
   const response = await apiClient.post<ApiResponse<Playbook>>(
     `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations/apply`,
     data,
+  );
+  return response.data.data;
+}
+
+export async function reapplyOptimization(
+  playbookId: string,
+  executionId: string,
+  taskId: string,
+  historyIndex: number,
+  direction: 'after' | 'before',
+): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/tasks/${taskId}/reapply-optimization`,
+    { historyIndex, direction },
   );
   return response.data.data;
 }

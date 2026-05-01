@@ -26,6 +26,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
       {} as any,
       {} as any,
       {} as any,
+      { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
@@ -59,6 +60,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
       {} as any,
       {} as any,
       {} as any,
+      { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
@@ -106,6 +108,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
       {} as any,
       {} as any,
       {} as any,
+      { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
@@ -158,6 +161,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
       { getDefaultModel: jest.fn().mockResolvedValue({ id: 'judge-model' }) } as any,
       {} as any,
       streamGateway as any,
+      { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
@@ -205,6 +209,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
       { getDefaultModel: jest.fn().mockResolvedValue({ id: 'judge-model' }) } as any,
       {} as any,
       { sendToUser: jest.fn() } as any,
+      { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
@@ -212,6 +217,220 @@ describe('PlaybookJudgeEnrichmentService', () => {
 
     expect(httpPost).not.toHaveBeenCalled();
     expect(executionModel.updateOne).toHaveBeenCalledTimes(1);
+  });
+
+  describe('applyRemediations', () => {
+    const createApplyService = (parsedPayload: any, graphService: any, playbookService: any, execution: any) => {
+      const executionModel = {
+        findById: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue(execution),
+          }),
+        }),
+      };
+
+      return new PlaybookJudgeEnrichmentService(
+        executionModel as any,
+        {} as any,
+        playbookService as any,
+        { findByKey: jest.fn().mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'playbook {{playbookJson}}' }) } as any,
+        { getHttpClient: jest.fn().mockReturnValue({ post: jest.fn().mockResolvedValue({ data: { choices: [{ message: { content: JSON.stringify(parsedPayload) } }], usage: { model: 'judge-model' } } }) }) } as any,
+        { getDefaultModel: jest.fn().mockResolvedValue({ id: 'judge-model' }) } as any,
+        { recordUsage: jest.fn().mockResolvedValue(undefined) } as any,
+        { sendToUser: jest.fn() } as any,
+        graphService as any,
+        { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+      );
+    };
+
+    it('persists sanitized rewritten edges for selected structural remediations', async () => {
+      const originalEdges = [{ id: 'old-edge', sourceId: 'task-0', targetId: 'task-1' }];
+      const rewrittenEdges = [{ id: 'new-edge', sourceId: 'task-1', targetId: 'task-2' }];
+      const sanitizedEdges = [{ id: 'new-edge', sourceId: 'task-1', targetId: 'task-2' }];
+      const playbookService = {
+        findById: jest.fn().mockResolvedValue({
+          id: 'playbook-1',
+          name: 'Original',
+          tasks: [{ id: 'task-1' }],
+          edges: originalEdges,
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'playbook-1' }),
+      };
+      const graphService = {
+        sanitizeEdgesForTasks: jest.fn().mockReturnValue(sanitizedEdges),
+      };
+      const execution = {
+        executedBy: 'user-1',
+        playbookSnapshot: { tasks: [{ id: 'task-1' }], edges: originalEdges },
+        judgeSummary: { highImpactRecommendations: ['Split task-1 into analysis and synthesis steps'] },
+        taskResults: [],
+      };
+      const parsedTasks = [{ id: 'task-1' }, { id: 'task-2' }];
+      const service = createApplyService({ name: 'Updated', tasks: parsedTasks, edges: rewrittenEdges }, graphService, playbookService, execution);
+
+      await service.applyRemediations('user-1', 'playbook-1', 'execution-1', ['summary.highImpactRecommendations:playbook:0']);
+
+      expect(graphService.sanitizeEdgesForTasks).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'task-1', advisorOptimizedAt: expect.any(Date) }),
+          expect.objectContaining({ id: 'task-2' }),
+        ]),
+        rewrittenEdges,
+      );
+      expect(playbookService.update).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
+        edges: sanitizedEdges,
+      }));
+    });
+
+    it('preserves existing edges for non-structural remediations', async () => {
+      const originalEdges = [{ id: 'old-edge', sourceId: 'task-0', targetId: 'task-1' }];
+      const rewrittenEdges = [{ id: 'ignored-edge', sourceId: 'task-1', targetId: 'task-2' }];
+      const playbookService = {
+        findById: jest.fn().mockResolvedValue({
+          id: 'playbook-1',
+          name: 'Original',
+          tasks: [{ id: 'task-1' }],
+          edges: originalEdges,
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'playbook-1' }),
+      };
+      const graphService = {
+        sanitizeEdgesForTasks: jest.fn(),
+      };
+      const execution = {
+        executedBy: 'user-1',
+        playbookSnapshot: { tasks: [{ id: 'task-1' }], edges: originalEdges },
+        judgeSummary: {},
+        taskResults: [{ taskId: 'task-1', judgeResult: { rewriteHints: ['Clarify the task instructions'] } }],
+      };
+      const service = createApplyService({ name: 'Updated', tasks: [{ id: 'task-1' }], edges: rewrittenEdges }, graphService, playbookService, execution);
+
+      await service.applyRemediations('user-1', 'playbook-1', 'execution-1', ['rewriteHints:task-1:0']);
+
+      expect(graphService.sanitizeEdgesForTasks).not.toHaveBeenCalled();
+      expect(playbookService.update).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
+        edges: originalEdges,
+      }));
+    });
+
+    it('falls back to existing edges when structural edge sanitization drops candidates', async () => {
+      const originalEdges = [{ id: 'old-edge', sourceId: 'task-0', targetId: 'task-1' }];
+      const rewrittenEdges = [
+        { id: 'valid-edge', sourceId: 'task-1', targetId: 'task-2' },
+        { id: 'invalid-edge', sourceId: 'task-2', targetId: 'missing-task' },
+      ];
+      const playbookService = {
+        findById: jest.fn().mockResolvedValue({
+          id: 'playbook-1',
+          name: 'Original',
+          tasks: [{ id: 'task-1' }],
+          edges: originalEdges,
+        }),
+        update: jest.fn().mockResolvedValue({ id: 'playbook-1' }),
+      };
+      const graphService = {
+        sanitizeEdgesForTasks: jest.fn().mockReturnValue([rewrittenEdges[0]]),
+      };
+      const execution = {
+        executedBy: 'user-1',
+        playbookSnapshot: { tasks: [{ id: 'task-1' }], edges: originalEdges },
+        judgeSummary: { highImpactRecommendations: ['Split task-1 and reconnect downstream flow'] },
+        taskResults: [],
+      };
+      const service = createApplyService(
+        { name: 'Updated', tasks: [{ id: 'task-1' }, { id: 'task-2' }], edges: rewrittenEdges },
+        graphService,
+        playbookService,
+        execution,
+      );
+
+      await service.applyRemediations('user-1', 'playbook-1', 'execution-1', ['summary.highImpactRecommendations:playbook:0']);
+
+      expect(graphService.sanitizeEdgesForTasks).toHaveBeenCalled();
+      expect(playbookService.update).toHaveBeenCalledWith('playbook-1', expect.objectContaining({
+        edges: originalEdges,
+      }));
+    });
+
+    it('renders rewrite prompt from the latest persisted playbook instead of the execution snapshot', async () => {
+      const originalEdges = [{ id: 'edge-1', sourceId: 'task-0', targetId: 'task-1' }];
+      const latestPlaybook = {
+        id: 'playbook-1',
+        name: 'Latest Playbook',
+        description: 'latest description',
+        tasks: [{ id: 'task-live', title: 'Latest task' }],
+        edges: originalEdges,
+      };
+      const playbookService = {
+        findById: jest.fn().mockResolvedValue(latestPlaybook),
+        update: jest.fn().mockResolvedValue({ id: 'playbook-1' }),
+      };
+      const httpPost = jest.fn().mockResolvedValue({
+        data: {
+          choices: [{ message: { content: JSON.stringify({ name: 'Updated', tasks: [{ id: 'task-live' }], edges: originalEdges }) } }],
+          usage: { model: 'judge-model' },
+        },
+      });
+      const graphService = {
+        sanitizeEdgesForTasks: jest.fn(),
+      };
+      const execution = {
+        executedBy: 'user-1',
+        playbookSnapshot: {
+          name: 'Stale Snapshot',
+          tasks: [{ id: 'task-stale', title: 'Old task' }],
+          edges: [{ id: 'stale-edge', sourceId: 'old', targetId: 'task-stale' }],
+        },
+        judgeSummary: {},
+        taskResults: [{ taskId: 'task-live', judgeResult: { rewriteHints: ['Clarify the task instructions'] } }],
+      };
+      const executionModel = {
+        findById: jest.fn().mockReturnValue({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue(execution),
+          }),
+        }),
+      };
+      const service = new PlaybookJudgeEnrichmentService(
+        executionModel as any,
+        {} as any,
+        playbookService as any,
+        { findByKey: jest.fn().mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'PB={{playbookJson}}' }) } as any,
+        { getHttpClient: jest.fn().mockReturnValue({ post: httpPost }) } as any,
+        { getDefaultModel: jest.fn().mockResolvedValue({ id: 'judge-model' }) } as any,
+        { recordUsage: jest.fn().mockResolvedValue(undefined) } as any,
+        { sendToUser: jest.fn() } as any,
+        graphService as any,
+        { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
+      );
+
+      await service.applyRemediations('user-1', 'playbook-1', 'execution-1', ['rewriteHints:task-live:0']);
+
+      expect(httpPost).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('Latest Playbook'),
+          }),
+        ]),
+      }), expect.any(Object));
+      expect(httpPost).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.not.stringContaining('Stale Snapshot'),
+          }),
+        ]),
+      }), expect.any(Object));
+      expect(httpPost).toHaveBeenCalledWith('/v1/chat/completions', expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: 'user',
+            content: expect.stringContaining('Apply only the following remediation hints (exclude all others):'),
+          }),
+        ]),
+      }), expect.any(Object));
+    });
   });
 
   describe('resolveExpectedResult', () => {
@@ -230,6 +449,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
       {} as any,
       {} as any,
       {} as any,
+      { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
       { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
     );
 
@@ -276,6 +496,7 @@ describe('PlaybookJudgeEnrichmentService', () => {
         {} as any,
         {} as any,
         {} as any,
+        { sanitizeEdgesForTasks: jest.fn((_: any[], edges: any[]) => edges) } as any,
         { setContext: jest.fn(), log: jest.fn(), warn: jest.fn() } as any,
       );
 

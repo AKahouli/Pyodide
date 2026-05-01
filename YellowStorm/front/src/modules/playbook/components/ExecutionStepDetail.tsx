@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { AdvisorResultPanel } from './AdvisorResultPanel';
 
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -16,6 +16,7 @@ import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
+import { showError } from '@/lib/notifications';
 import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
@@ -353,7 +354,6 @@ export function ExecutionStepDetail({
   onActiveTabChange,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
-  const navigate = useNavigate();
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
@@ -363,7 +363,9 @@ export function ExecutionStepDetail({
   const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
   const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
-  const applyAdvisorRemediations = usePlaybookStore((s) => s.applyAdvisorRemediations);
+  const designPlaybookAction = usePlaybookStore((s) => s.designPlaybook);
+  const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
+  const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
@@ -382,6 +384,9 @@ export function ExecutionStepDetail({
   const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
+  const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
+  const [missingAdvisorTaskIds, setMissingAdvisorTaskIds] = useState<string[]>([]);
+  const [runningAdvisorPreflight, setRunningAdvisorPreflight] = useState(false);
   const executionSnapshotTask = useMemo(() => {
     const snapshot = execution?.playbookSnapshot as { tasks?: Array<Record<string, unknown>> } | null;
     const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
@@ -490,6 +495,17 @@ export function ExecutionStepDetail({
       },
     ];
   }, [stepJudgeResult, t]);
+  const playbookTaskTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const task of currentPlaybook?.tasks || []) {
+      map.set(task.id, task.title);
+    }
+    return map;
+  }, [currentPlaybook?.tasks]);
+  const missingAdvisorTaskTitles = useMemo(
+    () => missingAdvisorTaskIds.map((taskId) => playbookTaskTitleMap.get(taskId) || taskId),
+    [missingAdvisorTaskIds, playbookTaskTitleMap],
+  );
   const remediationCount = stepJudgeResult?.rewriteHints.length ?? 0;
   const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
@@ -630,17 +646,6 @@ export function ExecutionStepDetail({
     }
   }, [currentPlaybook, execution, updatePlaybookFromJudge]);
 
-  const handleGenerateJudgePlaybook = useCallback(async () => {
-    if (!execution || !currentPlaybook) return;
-    setJudgeActionLoading('generate');
-    try {
-      const created = await generatePlaybookFromJudge(currentPlaybook.id, execution.id);
-      navigate(`/playbooks/${created.id}`);
-    } finally {
-      setJudgeActionLoading(null);
-    }
-  }, [currentPlaybook, execution, generatePlaybookFromJudge, navigate]);
-
   const handleOptimizeJudgeStep = useCallback(async () => {
     if (!execution || !currentPlaybook || !step) return;
     setJudgeActionLoading('optimize');
@@ -653,6 +658,20 @@ export function ExecutionStepDetail({
 
   const openRemediationDialog = useCallback(async (mode: 'optimize-step' | 'update-current' | 'generate-new') => {
     if (!execution || !currentPlaybook) return;
+    if (mode === 'generate-new') {
+      const taskResultsById = new Map((execution.taskResults || []).map((taskResult) => [taskResult.taskId, taskResult]));
+      const missingTaskIds = (currentPlaybook.tasks || [])
+        .filter((task) => !taskResultsById.get(task.id)?.judgeResult)
+        .map((task) => task.id);
+
+      if (missingTaskIds.length > 0) {
+        setMissingAdvisorTaskIds(missingTaskIds);
+        setRemediationDialogOpen(false);
+        return;
+      }
+    }
+
+    setMissingAdvisorTaskIds([]);
     setRemediationLoading(true);
     setRemediationDialogMode(mode);
     try {
@@ -665,13 +684,107 @@ export function ExecutionStepDetail({
     }
   }, [execution, currentPlaybook, step, fetchAdvisorRemediations]);
 
+  const handleGenerateJudgePlaybook = useCallback(async () => {
+    await openRemediationDialog('generate-new');
+  }, [openRemediationDialog]);
+
+  const handleRunAdvisorForAllTasks = useCallback(async () => {
+    if (!currentPlaybook) return;
+    setRunningAdvisorPreflight(true);
+    try {
+      await executePlaybook(currentPlaybook.id, {
+        executionMode: 'live',
+        advisorAutopilotEnabled: true,
+        advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
+        advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
+      });
+      setMissingAdvisorTaskIds([]);
+    } catch (error) {
+      showError(t('detail.judge.failedUnknown'), { description: t('detail.judge.missingEvaluationRunFailed') });
+    } finally {
+      setRunningAdvisorPreflight(false);
+    }
+  }, [currentPlaybook, executePlaybook, t]);
+
+  const buildOptimizationQuery = useCallback((
+    selectedIds: string[],
+    editedItems: Map<string, string>,
+    mode: 'optimize-step' | 'update-current' | 'generate-new',
+  ): string => {
+    const selectedItems = remediationItems.filter((item) => selectedIds.includes(item.id));
+    const groupedByCategory = new Map<RemediationCategory, AdvisorRemediationItem[]>();
+    for (const item of selectedItems) {
+      const existing = groupedByCategory.get(item.category) || [];
+      existing.push(item);
+      groupedByCategory.set(item.category, existing);
+    }
+    const categoryOrder: RemediationCategory[] = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat'];
+    const findings = categoryOrder
+      .filter((cat) => groupedByCategory.has(cat))
+      .map((cat) => {
+        const items = groupedByCategory.get(cat)!;
+        const lines = items.map((item) => {
+          const desc = editedItems.get(item.id) || item.description;
+          return `- [${cat}] ${desc}`;
+        });
+        return lines.join('\n');
+      })
+      .join('\n');
+
+    if (mode === 'optimize-step') {
+      const taskTitle = step?.taskId
+        ? currentPlaybook?.tasks.find((t) => t.id === step.taskId)?.title || step.taskId
+        : 'this step';
+      return [
+        `Optimize only the step "${taskTitle}" based on these advisor findings.`,
+        'Preserve the rest of the playbook unless a connection or port must change to keep the workflow valid.',
+        '',
+        'Advisor findings:',
+        findings,
+        '',
+        'Apply the changes directly to the current playbook.',
+      ].join('\n');
+    }
+
+    if (mode === 'generate-new') {
+      return [
+        'Generate an optimized playbook based on these advisor findings.',
+        'Restructure the workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
+        'Preserve the user\'s original intent.',
+        '',
+        'Advisor findings:',
+        findings,
+        '',
+        'Apply the changes directly to the current playbook.',
+      ].join('\n');
+    }
+
+    return [
+      'Optimize the current playbook based on these advisor findings.',
+      'Preserve the user\'s original intent, keep valid DAG structure, and only change steps, edges, ports, or agent assignments that are necessary to address the findings.',
+      '',
+      'Advisor findings:',
+      findings,
+      '',
+      'Apply the changes directly to the current playbook.',
+    ].join('\n');
+  }, [remediationItems, step?.taskId, currentPlaybook?.tasks]);
+
   const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
     if (!currentPlaybook || !execution) return;
-    return applyAdvisorRemediations(currentPlaybook.id, execution.id, {
-      mode: remediationDialogMode === 'generate-new' ? 'generate-new' : 'update-current',
-      selectedIds,
-    });
-  }, [currentPlaybook, execution, remediationDialogMode, applyAdvisorRemediations]);
+    const query = buildOptimizationQuery(selectedIds, editedItems, remediationDialogMode);
+    return designPlaybookAction(currentPlaybook.id, { query });
+  }, [currentPlaybook, execution, remediationDialogMode, buildOptimizationQuery, designPlaybookAction]);
+
+  const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
+    if (!currentPlaybook || !execution || !step) return;
+    setReapplyingIndex(historyIndex);
+    try {
+      await reapplyOptimization(currentPlaybook.id, execution.id, step.taskId, historyIndex, direction);
+    } finally {
+      setReapplyingIndex(null);
+    }
+  }, [currentPlaybook, execution, step, reapplyOptimization]);
 
   useEffect(() => {
     setSelectedStepExecutionId((current) => {
@@ -680,17 +793,13 @@ export function ExecutionStepDetail({
         ? stepExecutions.find((entry) => entry.id === currentStepExecutionId) || stepExecutions[0]
         : stepExecutions[0];
 
-      if (step?.status === 'running' || step?.status === 'interrupted') {
-        return liveExecution?.id ?? null;
-      }
-
       if (current && stepExecutions.some((entry) => entry.id === current)) {
         return current;
       }
 
       return liveExecution?.id ?? null;
     });
-  }, [currentStepExecutionId, step?.status, stepExecutions]);
+  }, [currentStepExecutionId, stepExecutions]);
 
   useEffect(() => {
     setSelectedEvaluationId((current) => {
@@ -1375,7 +1484,7 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            {advisorAutopilotActive && (
+            {advisorOptimizationHistory.length > 0 && (
               <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.title')}</div>
@@ -1472,6 +1581,33 @@ export function ExecutionStepDetail({
                             ))}
                           </div>
                         )}
+                        {selectedOptimizationEntry && (() => {
+                          const idx = advisorOptimizationHistory.indexOf(selectedOptimizationEntry);
+                          return (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={reapplyingIndex === idx}
+                                onClick={() => void handleReapplyOptimization(idx, 'after')}
+                              >
+                                {reapplyingIndex === idx && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                                <RotateCcw className="mr-1 h-3 w-3" />
+                                {t('detail.autopilot.reapply')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                disabled={reapplyingIndex === idx}
+                                onClick={() => void handleReapplyOptimization(idx, 'before')}
+                              >
+                                {t('detail.autopilot.revert')}
+                              </Button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
@@ -1485,6 +1621,22 @@ export function ExecutionStepDetail({
 
             {stepJudgeResult ? (
               <div className="space-y-4">
+                {missingAdvisorTaskIds.length > 0 && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>{t('detail.judge.missingEvaluationTitle')}</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>{t('detail.judge.missingEvaluationDescription', { count: missingAdvisorTaskIds.length })}</p>
+                      <p className="text-xs text-destructive/90">{missingAdvisorTaskTitles.join(', ')}</p>
+                      <div>
+                        <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight || judgeActionLoading !== null}>
+                          {runningAdvisorPreflight && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {t('detail.judge.missingEvaluationRunCta')}
+                        </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
                 <div className="flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
                     {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}

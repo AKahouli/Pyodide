@@ -484,5 +484,4 @@ npx ctx7@latest docs <libraryId> "<question>"
 5. `frontend-qa` validates frontend-visible changes → **must PASS**
 6. `reviewer` validates → **must PASS**
 7. `diagnostics` if test gaps
-8. `maintainer` syncs Obsidian vault memory for Full/Light tiers; skip for None tier
-
+8. must always call the `maintainer` agent to syncs Obsidian vault memory with relevant changes

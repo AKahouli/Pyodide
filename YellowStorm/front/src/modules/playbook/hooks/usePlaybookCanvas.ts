@@ -263,13 +263,11 @@ export function usePlaybookCanvas() {
 
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
-      const hasStructuralChange = changes.some(
-        (c) => c.type !== 'select',
-      );
+      const removes = changes.filter((c) => c.type === 'remove');
 
       setEdges((eds) => {
         const updated = applyEdgeChanges(changes, eds);
-        if (hasStructuralChange) {
+        if (removes.length > 0) {
           captureSnapshot();
           deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
         }

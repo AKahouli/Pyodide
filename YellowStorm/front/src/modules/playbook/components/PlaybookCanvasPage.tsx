@@ -16,6 +16,16 @@ import {
   DialogDescription,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogAction,
+  AlertDialogCancel,
+} from '@/components/ui/alert-dialog';
 import { Canvas } from '@/components/ai-elements/canvas';
 import { Controls } from '@/components/ai-elements/controls';
 import { Edge as AiEdge } from '@/components/ai-elements/edge';
@@ -186,6 +196,8 @@ function PlaybookCanvasInner() {
   const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
+  const pendingRerunTaskId = usePlaybookStore((s) => s.pendingRerunTaskId);
+  const setPendingRerunTaskId = usePlaybookStore((s) => s.setPendingRerunTaskId);
   const executionHistory = useExecutionHistoryForPlaybook(id);
   const repeatability = usePlaybookStore((s) => s.repeatability);
   const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
@@ -585,6 +597,23 @@ function PlaybookCanvasInner() {
         positionX: node.position.x + 50,
         positionY: node.position.y + 80,
         enabled: sourceData.enabled !== false,
+        stepReplayMode: 'live',
+        hasValidatedReplay: undefined,
+        activeReplayId: null,
+        activeReplayVersion: null,
+        activeReplayIsStale: undefined,
+        activeReplayStaleReasons: undefined,
+        activeReplayPreserveOutputFormat: undefined,
+        activeReplayFormatGuideStatus: 'disabled',
+        activeReplayFormatGuideError: null,
+        activeReplayLabel: null,
+        isSavingReplayBaseline: undefined,
+        hasOutputFormatTemplate: undefined,
+        activeOutputFormatTemplateId: null,
+        activeOutputFormatTemplateVersion: null,
+        activeOutputFormatStatus: null,
+        activeOutputFormatError: null,
+        isCapturingOutputFormat: undefined,
       };
       addNode(clonedTask);
     },
@@ -743,6 +772,66 @@ function PlaybookCanvasInner() {
     },
     [id, isDirty, saveNow, currentExecution, execution, resumeFromStep],
   );
+
+  const handleRerunAfterOptimization = useCallback(async () => {
+    if (!pendingRerunTaskId || !id) return;
+    const taskId = pendingRerunTaskId;
+    setPendingRerunTaskId(null);
+    const node = nodes.find((n) => n.id === taskId);
+    const task = node?.data as unknown as PlaybookTask | undefined;
+    const selectedStepMode = task?.stepReplayMode || 'live';
+    let targetExecution =
+      (currentExecution?.playbookId === id ? currentExecution : null)
+      || execution
+      || null;
+
+    if (!targetExecution) {
+      const latestHistory = executionHistory.find(
+        (e) => e.status === 'completed' || e.status === 'failed' || e.status === 'interrupted',
+      );
+      if (latestHistory) {
+        await fetchExecution(id, latestHistory.id);
+        targetExecution = usePlaybookStore.getState().executionCache[latestHistory.id] || null;
+      }
+    }
+
+    if (!targetExecution) {
+      showError(t('rerunPrompt.noExecution'));
+      return;
+    }
+
+    try {
+      await rerunStepInExecution(
+        id,
+        targetExecution.id,
+        taskId,
+        false,
+        selectedStepMode,
+        true,
+        nodeReflectionEnabled,
+        advisorAutopilotEnabled,
+      );
+    } catch {
+      // handled in store
+    }
+  }, [
+    pendingRerunTaskId,
+    id,
+    setPendingRerunTaskId,
+    nodes,
+    currentExecution,
+    execution,
+    executionHistory,
+    fetchExecution,
+    rerunStepInExecution,
+    nodeReflectionEnabled,
+    advisorAutopilotEnabled,
+    t,
+  ]);
+
+  const handleDismissRerunPrompt = useCallback(() => {
+    setPendingRerunTaskId(null);
+  }, [setPendingRerunTaskId]);
 
   const handleToggleEnabled = useCallback(
     (nodeId: string) => {
@@ -1489,6 +1578,19 @@ function PlaybookCanvasInner() {
           onSave={handleBindingModalSave}
         />
       )}
+
+      <AlertDialog open={!!pendingRerunTaskId} onOpenChange={(open) => { if (!open) handleDismissRerunPrompt(); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('rerunPrompt.title')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('rerunPrompt.description')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleDismissRerunPrompt}>{t('rerunPrompt.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleRerunAfterOptimization()}>{t('rerunPrompt.confirm')}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

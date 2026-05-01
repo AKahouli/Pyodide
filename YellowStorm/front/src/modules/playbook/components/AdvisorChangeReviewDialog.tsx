@@ -35,7 +35,6 @@ interface Props {
   mode: 'optimize-step' | 'update-current' | 'generate-new';
   loading?: boolean;
   onApply: (selectedIds: string[], editedItems: Map<string, string>) => Promise<Playbook | void>;
-  onGenerate?: (selectedIds: string[], editedItems: Map<string, string>) => Promise<Playbook | void>;
 }
 
 export function AdvisorChangeReviewDialog({
@@ -46,7 +45,6 @@ export function AdvisorChangeReviewDialog({
   mode,
   loading = false,
   onApply,
-  onGenerate,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const [selections, setSelections] = useState<Set<string>>(new Set());
@@ -128,17 +126,12 @@ export function AdvisorChangeReviewDialog({
     setApplying(true);
     try {
       const selectedIds = Array.from(selections);
-      if (mode === 'generate-new' && onGenerate) {
-        const created = await onGenerate(selectedIds, editedItems);
-        onOpenChange(false);
-        return created;
-      }
       await onApply(selectedIds, editedItems);
       onOpenChange(false);
     } finally {
       setApplying(false);
     }
-  }, [selections, editedItems, mode, onApply, onGenerate, onOpenChange]);
+  }, [selections, editedItems, onApply, onOpenChange]);
 
   const title =
     mode === 'generate-new'

@@ -277,6 +277,9 @@ export class PlaybookTask {
   @Prop({ type: Boolean, default: false })
   disableAdvisorEvaluation!: boolean;
 
+  @Prop({ type: Date, default: null })
+  advisorOptimizedAt!: Date | null;
+
   @Prop({ type: PlaybookEvaluationConfigSchema, default: null })
   evaluationConfig!: PlaybookEvaluationConfig | null;
 

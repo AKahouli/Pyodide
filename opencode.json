@@ -53,7 +53,7 @@
       "command": [
         "npx",
         "-y",
-        "obsidian-mcp-server"
+        "obsidian-mcp-server@2.0.7"
       ],
       "environment": {
         "OBSIDIAN_API_KEY": "3f636a13992a2758e2d08803dbf0546f0a178a049c1c8e0f0bd4ea0c98d8e22d",

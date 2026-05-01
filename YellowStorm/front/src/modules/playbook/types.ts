@@ -198,6 +198,7 @@ export interface PlaybookTask {
   evaluationConfig?: PlaybookEvaluationConfig | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
+  advisorOptimizedAt?: string | null;
 }
 
 export interface ToolBindingAction {
@@ -1105,6 +1106,7 @@ export interface PlaybookState {
   isGenerating: boolean;
   generateRetryData: GeneratePlaybookData | null;
   selectedStepId: string | null;
+  pendingRerunTaskId: string | null;
   error: string | null;
   designMessages: DesignMessage[];
   designMessagesLoading: boolean;
@@ -1221,6 +1223,9 @@ export interface PlaybookActions {
   optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
   applyAdvisorRemediations: (playbookId: string, executionId: string, data: ApplyRemediationsData) => Promise<Playbook>;
+  reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
+  pendingRerunTaskId: string | null;
+  setPendingRerunTaskId: (taskId: string | null) => void;
 
   // SSE handlers
   onExecutionStart: (data: PlaybookExecutionStartEvent) => void;

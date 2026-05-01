@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { LoggerService } from '../../logger';
@@ -11,6 +11,7 @@ import { PlaybookValidatedReplay, PlaybookValidatedReplayDocument, ReplayValidat
 import { PlaybookService } from './playbook.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookStreamGatewayService } from './playbook-stream-gateway.service';
+import { PlaybookExecutionGraphService } from './playbook-execution-graph.service';
 import { pLimit } from '../utils/execution.utils';
 
 type JudgeRecommendation = 'none' | 'update_current_playbook' | 'generate_new_optimized_playbook';
@@ -106,6 +107,7 @@ export class PlaybookJudgeEnrichmentService {
     private readonly modelsService: ModelsService,
     private readonly usageService: UsageService,
     private readonly streamGateway: PlaybookStreamGatewayService,
+    private readonly graphService: PlaybookExecutionGraphService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('PlaybookJudgeEnrichmentService');
@@ -304,7 +306,7 @@ export class PlaybookJudgeEnrichmentService {
     const prompt = await this.promptService.findByKey(promptKey);
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return strict JSON only.';
     const userPrompt = this.renderTemplate(prompt?.userTemplate || '', {
-      playbookJson: JSON.stringify(execution.playbookSnapshot || playbook || {}, null, 2),
+      playbookJson: JSON.stringify(playbook || {}, null, 2),
       judgeSummaryJson: JSON.stringify(execution.judgeSummary || {}, null, 2),
     });
 
@@ -405,6 +407,7 @@ export class PlaybookJudgeEnrichmentService {
       inputPorts: originalTask.inputPorts || [],
       outputPorts: originalTask.outputPorts || [],
       inputFiles: originalTask.inputFiles || [],
+      advisorOptimizedAt: new Date(),
     };
   }
 
@@ -498,10 +501,10 @@ export class PlaybookJudgeEnrichmentService {
     const task = playbook?.tasks?.find((candidate: any) => candidate.id === taskId) || null;
     const upstreamContext = this.buildUpstreamContext(execution, taskId);
 
-      await this.executionModel.updateOne(
-        { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
-        { $set: { 'taskResults.$.judgeStatus': JudgeStatus.EVALUATING, 'taskResults.$.judgeError': null, updatedAt: new Date() } },
-      );
+    await this.executionModel.updateOne(
+      { _id: new Types.ObjectId(executionId), 'taskResults.taskId': taskId },
+      { $set: { 'taskResults.$.judgeStatus': JudgeStatus.EVALUATING, 'taskResults.$.judgeError': null, updatedAt: new Date() } },
+    );
 
     this.streamGateway.sendToUser(userId, {
       type: 'playbook_step_judge_started',
@@ -564,13 +567,13 @@ export class PlaybookJudgeEnrichmentService {
 
       this.streamGateway.sendToUser(userId, {
         type: 'playbook_step_judge_updated',
-          data: {
-            executionId,
-            taskId,
-            judgeStatus: JudgeStatus.EVALUATED,
-            judgeResult: judgeHistoryEntry.judgeResult,
-            judgeError: null,
-            judgeHistoryEntry: {
+        data: {
+          executionId,
+          taskId,
+          judgeStatus: JudgeStatus.EVALUATED,
+          judgeResult: judgeHistoryEntry.judgeResult,
+          judgeError: null,
+          judgeHistoryEntry: {
             ...judgeHistoryEntry,
             createdAt: judgeHistoryEntry.createdAt.toISOString(),
           },
@@ -1058,7 +1061,7 @@ export class PlaybookJudgeEnrichmentService {
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return strict JSON only.';
 
     const userPrompt = this.renderTemplate(prompt?.userTemplate || '', {
-      playbookJson: JSON.stringify(execution.playbookSnapshot || playbook || {}, null, 2),
+      playbookJson: JSON.stringify(playbook || {}, null, 2),
       judgeSummaryJson: JSON.stringify(execution.judgeSummary || {}, null, 2),
     });
 
@@ -1088,6 +1091,12 @@ export class PlaybookJudgeEnrichmentService {
       }).catch((err) => this.logger.warn('Failed to record advisor usage', { error: (err as Error).message }));
     }
 
+    const stampOptimized = (tasks: any[]): any[] =>
+      tasks.map((t: any) => {
+        const match = (playbook.tasks || []).find((orig: any) => orig.id === t.id);
+        return match ? { ...t, advisorOptimizedAt: new Date() } : t;
+      });
+
     if (mode === 'generate-new') {
       const tasks = this.normalizeWorkspaceIds(
         playbook.workspaces || [],
@@ -1097,17 +1106,34 @@ export class PlaybookJudgeEnrichmentService {
         userId,
         parsed.name || `${playbook.name} (optimized)`,
         parsed.description || playbook.description || '',
-        this.preserveInputMappings(playbook.tasks || [], Array.isArray(parsed.tasks) ? parsed.tasks : []),
+        this.preserveInputMappings(playbook.tasks || [], Array.isArray(parsed.tasks) ? stampOptimized(parsed.tasks) : []),
         Array.isArray(parsed.edges) && parsed.edges.length > 0 ? parsed.edges : playbook.edges,
         tasks,
       );
     }
 
+    const updatedTasks = Array.isArray(parsed.tasks) ? stampOptimized(parsed.tasks) : parsed.tasks;
+    const canRewriteGraph = selected.some((item) => item.category === 'structure' || item.category === 'handoff');
+    const sanitizedEdges = canRewriteGraph && Array.isArray(parsed.edges)
+      ? this.graphService.sanitizeEdgesForTasks(updatedTasks || playbook.tasks || [], parsed.edges)
+      : null;
+    const updatedEdges = sanitizedEdges && sanitizedEdges.length === parsed.edges.length
+      ? sanitizedEdges
+      : playbook.edges;
+    if (sanitizedEdges && sanitizedEdges.length !== parsed.edges.length) {
+      this.logger.warn('Rejected advisor graph rewrite with invalid edges', {
+        playbookId,
+        executionId,
+        candidateEdgeCount: parsed.edges.length,
+        validEdgeCount: sanitizedEdges.length,
+      });
+    }
+
     return this.playbookService.update(playbookId, {
       name: parsed.name || undefined,
       description: parsed.description || undefined,
-      tasks: parsed.tasks || undefined,
-      edges: parsed.edges || undefined,
+      tasks: updatedTasks || undefined,
+      edges: updatedEdges,
     } as any);
   }
 
@@ -1152,5 +1178,66 @@ export class PlaybookJudgeEnrichmentService {
     const truncated = text.slice(0, maxLen);
     const lastSpace = truncated.lastIndexOf(' ');
     return lastSpace > maxLen / 2 ? truncated.slice(0, lastSpace) + '…' : truncated + '…';
+  }
+
+  async reapplyOptimization(
+    userId: string,
+    playbookId: string,
+    executionId: string,
+    taskId: string,
+    historyIndex: number,
+    direction: 'after' | 'before',
+  ): Promise<any> {
+    const execution = await this.executionModel.findById(executionId).lean().exec();
+    if (!execution) {
+      throw new NotFoundException('Playbook execution not found');
+    }
+
+    if (String(execution.playbookId) !== String(playbookId)) {
+      throw new BadRequestException('Execution does not belong to the specified playbook');
+    }
+
+    const taskResult = (execution.taskResults || []).find((item: any) => item.taskId === taskId);
+    if (!taskResult) {
+      throw new NotFoundException('Task result not found in execution');
+    }
+
+    const history = taskResult.advisorOptimizationHistory || [];
+    if (historyIndex < 0 || historyIndex >= history.length) {
+      throw new BadRequestException(`Invalid history index ${historyIndex}`);
+    }
+
+    const entry = history[historyIndex];
+    const sourceTask = direction === 'before' ? entry.beforeTask : entry.afterTask;
+    if (!sourceTask) {
+      throw new BadRequestException('No task snapshot found for the requested direction');
+    }
+
+    const playbook = await this.playbookService.findById(playbookId);
+    if (!playbook) {
+      throw new NotFoundException('Playbook not found');
+    }
+
+    const preservedKeys = new Set([
+      'id', 'executionOrder', 'positionX', 'positionY',
+      'inputKeys', 'outputKey', 'inputPorts', 'outputPorts', 'inputFiles',
+    ]);
+    const restoredTask: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(sourceTask)) {
+      if (!preservedKeys.has(key)) {
+        restoredTask[key] = value;
+      }
+    }
+    const currentTask = (playbook.tasks || []).find((item: any) => item.id === taskId);
+    for (const key of preservedKeys) {
+      restoredTask[key] = (currentTask as any)?.[key] ?? (sourceTask as any)[key];
+    }
+    restoredTask.advisorOptimizedAt = direction === 'after' ? new Date() : null;
+
+    const tasks = (playbook.tasks || []).map((item: any) =>
+      item.id === taskId ? restoredTask : item,
+    );
+
+    return this.playbookService.update(playbookId, { tasks } as any);
   }
 }

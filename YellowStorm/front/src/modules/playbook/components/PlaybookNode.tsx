@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -23,6 +23,9 @@ import { BaselineBadgePopover } from './BaselineBadgePopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
+import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
+import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
+import type { Agent } from '@/modules/agent/types';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -272,6 +275,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
   const [dragPortCompatible, setDragPortCompatible] = useState<boolean | null>(null);
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const [agentDialogSaving, setAgentDialogSaving] = useState(false);
+  const updateAgent = useAgentStore((s) => s.updateAgent);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
@@ -324,6 +330,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
       : t('detail.badges.baseline');
   const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline);
   const showOutputFormatBadge = Boolean(currentTask?.hasOutputFormatTemplate || currentTask?.isCapturingOutputFormat);
+  const showOptimizationBadge = Boolean(effectiveTask?.advisorOptimizedAt);
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
@@ -349,6 +356,35 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     } catch { /* noop */ }
     return null;
   }, []);
+
+  const handleAgentDialogSave = useCallback(async (data: UserAgentFormValues) => {
+    if (!agent) return;
+    setAgentDialogSaving(true);
+    try {
+      await updateAgent(agent.id, {
+        name: data.name,
+        agentType: data.agentType,
+        role: data.role,
+        description: data.description,
+        temperature: data.temperature,
+        model: data.model || undefined,
+        instruction: data.instruction,
+        ignorePrePrompt: data.ignorePrePrompt,
+        knowledgeBases: data.knowledgeBases,
+        tools: data.tools,
+        skills: data.skills,
+        disabledSkills: data.disabledSkills,
+        connectors: data.connectors,
+        isActive: data.isActive,
+        isDefaultForType: data.isDefaultForType,
+      });
+      setAgentDialogOpen(false);
+    } catch {
+      // handled by store toast
+    } finally {
+      setAgentDialogSaving(false);
+    }
+  }, [agent, updateAgent]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -544,15 +580,41 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
           <NodeContent className="p-3 space-y-2.5">
             <div className="flex items-center gap-2">
-              <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className={cn(
-                'truncate text-xs',
-                isActionMode
-                  ? (selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground')
-                  : (agent ? 'font-medium' : 'italic text-muted-foreground'),
-              )}>
-                {isActionMode ? (selectedActionLabel || t('node.notConfigured')) : (agent ? agent.name : t('node.noAgent'))}
-              </span>
+              {isActionMode ? (
+                <>
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className={cn(
+                    'truncate text-xs',
+                    selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground',
+                  )}>
+                    {selectedActionLabel || t('node.notConfigured')}
+                  </span>
+                </>
+              ) : agent ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition-colors cursor-pointer max-w-full"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAgentDialogOpen(true);
+                      }}
+                    >
+                      <Bot className="h-2.5 w-2.5 shrink-0" />
+                      <span className="truncate">{agent.name}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('node.agentBadge.editAgent')}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <>
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="truncate text-xs italic text-muted-foreground">
+                    {t('node.noAgent')}
+                  </span>
+                </>
+              )}
               {!isConfigured && (
                 <Badge variant="outline" className="h-5 border-dashed px-1.5 py-0 text-[10px] text-muted-foreground">
                   {t('node.notConfigured')}
@@ -566,8 +628,14 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               <p className="text-xs text-muted-foreground/60 italic">{t('node.noDescription')}</p>
             )}
 
-            {(showReplayBadge || showOutputFormatBadge) && (
+            {(showReplayBadge || showOutputFormatBadge || showOptimizationBadge) && (
               <div className="flex flex-wrap items-center gap-1.5">
+                {showOptimizationBadge && (
+                  <NodeMetaBadge
+                    label={t('node.badges.optimized')}
+                    toneClassName="border-violet-500/30 bg-violet-100 text-violet-700"
+                  />
+                )}
                 {showReplayBadge && (
                   <BaselineBadgePopover
                     taskId={id}
@@ -770,6 +838,15 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           {t('nodeContextMenu.delete')}
         </ContextMenuItem>
       </ContextMenuContent>
+      {agent && (
+        <CreateEditAgentDialog
+          open={agentDialogOpen}
+          onOpenChange={setAgentDialogOpen}
+          agent={agent}
+          onSave={handleAgentDialogSave}
+          saving={agentDialogSaving}
+        />
+      )}
     </ContextMenu>
   );
 }

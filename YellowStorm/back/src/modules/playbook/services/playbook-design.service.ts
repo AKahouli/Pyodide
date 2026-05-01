@@ -208,7 +208,7 @@ export class PlaybookDesignService {
           { role: 'user', content: userPrompt },
         ],
       }, {
-        timeout: 30000,
+        timeout: 360000,
       });
 
       const rewrittenPrompt = this.normalizeRewritePrompt(this.extractChatCompletionText(response.data) || sourcePrompt);
@@ -504,21 +504,21 @@ export class PlaybookDesignService {
       inputPorts:
         (node.input_ports || []).length > 0
           ? node.input_ports.map((p: any) => ({
-              id: p.id || `in-${idx}`,
-              name: p.name || 'Input',
-              artifactKind: p.artifact_kind || 'text',
-              required: p.required ?? false,
-              description: p.description || '',
-            }))
+            id: p.id || `in-${idx}`,
+            name: p.name || 'Input',
+            artifactKind: p.artifact_kind || 'text',
+            required: p.required ?? false,
+            description: p.description || '',
+          }))
           : [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
       outputPorts:
         (node.output_ports || []).length > 0
           ? node.output_ports.map((p: any) => ({
-              id: p.id || `out-${idx}`,
-              name: p.name || 'Output',
-              artifactKind: p.artifact_kind || 'text',
-              description: p.description || '',
-            }))
+            id: p.id || `out-${idx}`,
+            name: p.name || 'Output',
+            artifactKind: p.artifact_kind || 'text',
+            description: p.description || '',
+          }))
           : [{ id: 'default', name: 'Output', artifactKind: 'text' }],
     }));
 

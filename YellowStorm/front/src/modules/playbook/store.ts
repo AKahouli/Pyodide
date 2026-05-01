@@ -113,6 +113,7 @@ const initialState: PlaybookState = {
   isGenerating: false,
   generateRetryData: null,
   selectedStepId: null,
+  pendingRerunTaskId: null as string | null,
   error: null,
   designMessages: [],
   designMessagesLoading: false,
@@ -1655,6 +1656,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
             currentPlaybook: updated,
+            pendingRerunTaskId: taskId,
           }));
           toast.success(tPlaybook('store.toasts.stepOptimized', 'Step optimized'));
           return updated;
@@ -1689,6 +1691,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             set((state) => ({
               playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
               currentPlaybook: updated,
+              pendingRerunTaskId: state.selectedStepId || null,
             }));
             toast.success(tPlaybook('store.toasts.updatedFromAdvisor', 'Playbook updated from advisor'));
           }
@@ -1698,6 +1701,36 @@ export const usePlaybookStore = create<PlaybookStore>()(
           throw err;
         }
       },
+
+      reapplyOptimization: async (playbookId, executionId, taskId, historyIndex, direction) => {
+        try {
+          const updated = await api.reapplyOptimization(playbookId, executionId, taskId, historyIndex, direction);
+          const summary: PlaybookSummary = {
+            id: updated.id,
+            name: updated.name,
+            description: updated.description,
+            taskCount: updated.tasks.length,
+            isFavorite: updated.isFavorite,
+            scheduleEnabled: updated.executionSchedule?.enabled === true,
+            executionStatus: null,
+            lastExecutionAt: null,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+          };
+          set((state) => ({
+            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
+            currentPlaybook: updated,
+            pendingRerunTaskId: direction === 'after' ? taskId : null,
+          }));
+          toast.success(tPlaybook('store.toasts.optimizationReapplied', 'Optimization reapplied'));
+          return updated;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      setPendingRerunTaskId: (taskId) => set({ pendingRerunTaskId: taskId }),
 
       resumeExecution: async (id, data) => {
         const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');

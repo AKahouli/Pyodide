@@ -2110,6 +2110,9 @@ export class PlaybookExecutionService {
 
     this.grpcService.registerStream(executionId, call);
 
+    const earlyEvaluatedTaskIds = new Set<string>();
+    const earlyFlushPromises = new Map<string, Promise<void>>();
+
     return new Promise<void>((resolve, reject) => {
       call.on('data', (chunk: any) => {
         resetIdleTimeout();
@@ -2140,6 +2143,42 @@ export class PlaybookExecutionService {
             reject(err);
             return;
           }
+
+          if (normalizedUpdate.status === 'completed') {
+            const completedTaskId = normalizedUpdate.task_id;
+            const capturedBuffered = stepBuffer.get(completedTaskId);
+            if (capturedBuffered && capturedBuffered.status === StepStatus.COMPLETED) {
+              const flushPromise = this.bufferService
+                .flushBufferedTaskResult(executionId, completedTaskId, capturedBuffered as any, [])
+                .then(() => {
+                  earlyEvaluatedTaskIds.add(completedTaskId);
+                  this.scheduleSemanticEvaluation(
+                    userId,
+                    executionId,
+                    completedTaskId,
+                    'completed',
+                    evalEnabled,
+                  );
+                  const taskEntry = taskMap.get(completedTaskId);
+                  this.scheduleNodeReflection(
+                    userId,
+                    executionId,
+                    completedTaskId,
+                    'completed',
+                    reflectionEnabled && !taskEntry?.disableAdvisorEvaluation,
+                  );
+                })
+                .catch((err: unknown) => {
+                  this.logger.warn('Per-step evaluation flush failed', {
+                    executionId,
+                    taskId: completedTaskId,
+                    error: err instanceof Error ? err.message : 'Unknown error',
+                  });
+                });
+              earlyFlushPromises.set(completedTaskId, flushPromise);
+            }
+          }
+
           if (normalizedUpdate.status === 'suspended' && normalizedUpdate.interrupt) {
             const interruptTaskId = normalizedUpdate.interrupt.task_id || normalizedUpdate.task_id;
             const sameTask = resumedTaskId && interruptTaskId === resumedTaskId;
@@ -2178,6 +2217,13 @@ export class PlaybookExecutionService {
         try {
           await this.bufferService.flushStepBuffer(executionId, stepBuffer, async (taskId, buffered) => {
             if (buffered.status !== StepStatus.COMPLETED) {
+              return;
+            }
+            const inFlight = earlyFlushPromises.get(taskId);
+            if (inFlight) {
+              await inFlight;
+            }
+            if (earlyEvaluatedTaskIds.has(taskId)) {
               return;
             }
             this.scheduleSemanticEvaluation(userId, executionId, taskId, 'completed', evalEnabled);
