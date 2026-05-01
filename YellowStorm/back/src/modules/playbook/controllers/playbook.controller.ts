@@ -54,6 +54,7 @@ import { GetAdvisorRemediationsDto, ApplyAdvisorRemediationsDto } from '../dto/a
 import { ReapplyOptimizationDto } from '../dto/reapply-optimization.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
 import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
+import { RequestNodeSuggestionsDto } from '../dto/request-node-suggestions.dto';
 import {
   CreateEvaluationBaselineFromCurrentExecutionDto,
   CreateEvaluationBaselineFromExecutionDto,
@@ -64,6 +65,7 @@ import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interfac
 import { PlaybookMailTriggerTestEventService } from '../services/playbook-mail-trigger-test-event.service';
 import { PlaybookMailGraphClientService } from '../services/playbook-mail-graph-client.service';
 import { PlaybookRepeatabilityService } from '../services/playbook-repeatability.service';
+import { PlaybookNodeSuggestionsService } from '../services/playbook-node-suggestions.service';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -78,6 +80,7 @@ export class PlaybookController {
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly evaluationService: PlaybookEvaluationService,
     private readonly repeatabilityService: PlaybookRepeatabilityService,
+    private readonly nodeSuggestionsService: PlaybookNodeSuggestionsService,
     private readonly mailTriggerTestEventService: PlaybookMailTriggerTestEventService,
     private readonly mailGraphClientService: PlaybookMailGraphClientService,
     private readonly streamGateway: PlaybookStreamGatewayService,
@@ -180,6 +183,17 @@ export class PlaybookController {
     @Body() dto: GeneratePlaybookDto,
   ) {
     return this.designService.generatePlaybook(user._id.toString(), dto, user.email);
+  }
+
+  @Post(':id/tasks/:taskId/suggestions')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get AI suggestions around a task without mutating the playbook' })
+  async getNodeSuggestions(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: RequestNodeSuggestionsDto,
+  ) {
+    return this.nodeSuggestionsService.suggest(id, taskId, dto);
   }
 
   @Post('rewrite-prompt')

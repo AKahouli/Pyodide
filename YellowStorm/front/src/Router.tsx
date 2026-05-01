@@ -49,6 +49,7 @@ import {
   AgentTypesPage,
   DefaultAgentsPage,
   PlaybookPromptsPage,
+  PlaybookSettingsPage,
   PermissionGuard,
   AuthProvidersPage,
   ConnectedAppsAdminPage,
@@ -162,6 +163,14 @@ export const router = createHashRouter([
           { path: "playbook-prompts", element: <PlaybookPromptsPage /> },
           { path: "analytics", element: <AnalyticsPage /> },
           { path: "system", element: <SystemPage /> },
+          {
+            path: 'playbook-settings',
+            element: (
+              <PermissionGuard permissions={['system.maintenance', 'system.*', '*']}>
+                <PlaybookSettingsPage />
+              </PermissionGuard>
+            ),
+          },
           {
             path: 'users',
             element: (

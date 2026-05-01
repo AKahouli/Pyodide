@@ -37,6 +37,8 @@ import type {
   PlaybookEvaluationExecution,
   PlaybookRepeatabilitySummary,
   RepeatabilityTaskExecutionSummary,
+  RequestNodeSuggestionsData,
+  NodeSuggestionsResponse,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -125,6 +127,13 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
 function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData {
   return {
     ...data,
+    designSettings: data.designSettings
+      ? {
+          inferenceModelId: data.designSettings.inferenceModelId ?? null,
+          nodeSuggestionsMode: data.designSettings.nodeSuggestionsMode,
+          approvalSuggestionMode: data.designSettings.approvalSuggestionMode,
+        }
+      : undefined,
     tasks: data.tasks?.map((task) => ({
       ...task,
       evaluationConfig: task.evaluationConfig
@@ -241,6 +250,18 @@ export async function updatePlaybook(
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
     sanitizePlaybookSettings(sanitizePlaybookUpdate(data)),
+  );
+  return response.data.data;
+}
+
+export async function requestNodeSuggestions(
+  playbookId: string,
+  taskId: string,
+  data: RequestNodeSuggestionsData,
+): Promise<NodeSuggestionsResponse> {
+  const response = await apiClient.post<ApiResponse<NodeSuggestionsResponse>>(
+    API_ENDPOINTS.playbooks.nodeSuggestions(playbookId, taskId),
+    data,
   );
   return response.data.data;
 }

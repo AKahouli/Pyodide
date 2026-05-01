@@ -189,6 +189,20 @@ export class PlaybookEvaluationConfig {
 export const PlaybookEvaluationConfigSchema = SchemaFactory.createForClass(PlaybookEvaluationConfig);
 
 @Schema({ _id: false })
+export class PlaybookDesignSettings {
+  @Prop({ type: String, default: null })
+  inferenceModelId!: string | null;
+
+  @Prop({ type: String, enum: ['inherit', 'auto', 'manual'], default: 'inherit' })
+  nodeSuggestionsMode!: string;
+
+  @Prop({ type: String, enum: ['inherit', 'auto', 'manual'], default: 'inherit' })
+  approvalSuggestionMode!: string;
+}
+
+export const PlaybookDesignSettingsSchema = SchemaFactory.createForClass(PlaybookDesignSettings);
+
+@Schema({ _id: false })
 export class PlaybookTask {
   @Prop({ type: String, required: true })
   id!: string;
@@ -316,6 +330,9 @@ export class Playbook extends Document {
 
   @Prop({ type: String, trim: true, maxlength: 20000, default: '' })
   description!: string;
+
+  @Prop({ type: PlaybookDesignSettingsSchema, default: () => ({}) })
+  designSettings!: PlaybookDesignSettings;
 
   @Prop({ type: [PlaybookTaskSchema], default: [] })
   tasks!: PlaybookTask[];

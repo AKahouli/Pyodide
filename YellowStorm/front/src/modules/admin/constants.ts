@@ -19,6 +19,7 @@ import {
   Plug,
   Cable,
   Palette,
+  Sparkles,
 } from 'lucide-react';
 import type { AdminMenuItem } from './types';
 
@@ -153,6 +154,16 @@ export const ADMIN_MENU_ITEMS: AdminMenuItem[] = [
     permissions: ['admin.*', '*'],
     description: 'Manage playbook prompt templates',
     descriptionKey: 'menu.playbookPrompts.description',
+  },
+  {
+    id: 'playbook-settings',
+    label: 'Playbook Settings',
+    labelKey: 'menu.playbookSettings.label',
+    path: '/admin/playbook-settings',
+    icon: Sparkles,
+    permissions: ['system.maintenance', 'system.*', '*'],
+    description: 'Manage playbook AI inference settings',
+    descriptionKey: 'menu.playbookSettings.description',
   },
   {
     id: 'tools',

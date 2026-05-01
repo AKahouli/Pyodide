@@ -6,6 +6,19 @@ import type {
   PlaybookExecutionSummary,
 } from './types';
 
+const defaultDesignSettings = {
+  inferenceModelId: null,
+  nodeSuggestionsMode: 'inherit' as const,
+  approvalSuggestionMode: 'inherit' as const,
+};
+
+const defaultEffectiveDesignSettings = {
+  inferenceModelId: null,
+  resolvedInferenceModelId: null,
+  nodeSuggestionsMode: 'manual' as const,
+  approvalSuggestionMode: 'auto' as const,
+};
+
 export function makeTask(overrides: Partial<PlaybookTask> = {}): PlaybookTask {
   return {
     id: 'task-1',
@@ -43,6 +56,8 @@ export function makePlaybook(overrides: Partial<Playbook> = {}): Playbook {
     id: 'playbook-1',
     name: 'Playbook',
     description: 'Description',
+    designSettings: defaultDesignSettings,
+    effectiveDesignSettings: defaultEffectiveDesignSettings,
     tasks: [makeTask(), makeTask({ id: 'task-2', executionOrder: 2, positionX: 200 })],
     edges: [makeEdge()],
     workspaces: [],

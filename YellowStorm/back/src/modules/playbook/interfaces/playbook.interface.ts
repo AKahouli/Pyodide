@@ -1,4 +1,5 @@
 import { ExecutionStatus } from '../schemas/playbook-execution.schema';
+import type { EffectivePlaybookDesignSettings, PlaybookDesignSettings } from './playbook-settings.interface';
 
 export interface ToolBindingActionData {
   actionKey: string;
@@ -351,6 +352,8 @@ export interface PlaybookResponse {
   id: string;
   name: string;
   description: string;
+  designSettings: PlaybookDesignSettings;
+  effectiveDesignSettings: EffectivePlaybookDesignSettings;
   tasks: PlaybookTaskData[];
   edges: PlaybookEdgeData[];
   reflectionEnabled: boolean;

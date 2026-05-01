@@ -201,6 +201,45 @@ export interface PlaybookTask {
   advisorOptimizedAt?: string | null;
 }
 
+export type PlaybookSuggestionMode = 'inherit' | 'auto' | 'manual';
+
+export interface PlaybookDesignSettings {
+  inferenceModelId: string | null;
+  nodeSuggestionsMode: PlaybookSuggestionMode;
+  approvalSuggestionMode: PlaybookSuggestionMode;
+}
+
+export interface EffectivePlaybookDesignSettings {
+  inferenceModelId: string | null;
+  resolvedInferenceModelId: string | null;
+  nodeSuggestionsMode: 'auto' | 'manual';
+  approvalSuggestionMode: 'auto' | 'manual';
+}
+
+export interface PlaybookNodeSuggestion {
+  id: string;
+  kind: 'upstream' | 'downstream' | 'validation' | 'approval' | 'trigger' | 'action' | 'split';
+  title: string;
+  description: string;
+  reason: string;
+  confidence: number;
+  position: 'before' | 'after' | 'parallel';
+  connectsFromTaskId: string | null;
+  connectsToTaskId: string | null;
+}
+
+export interface RequestNodeSuggestionsData {
+  title?: string;
+  description?: string;
+  expectedResult?: string | null;
+}
+
+export interface NodeSuggestionsResponse {
+  suggestions: PlaybookNodeSuggestion[];
+  model: string;
+  settings: EffectivePlaybookDesignSettings;
+}
+
 export interface ToolBindingAction {
   actionKey: string;
   isEnabled?: boolean;
@@ -428,6 +467,8 @@ export interface Playbook {
   id: string;
   name: string;
   description: string;
+  designSettings: PlaybookDesignSettings;
+  effectiveDesignSettings: EffectivePlaybookDesignSettings;
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
   reflectionEnabled: boolean;
@@ -984,6 +1025,7 @@ export interface DesignPlaybookData {
 export interface UpdatePlaybookData {
   name?: string;
   description?: string;
+  designSettings?: Partial<PlaybookDesignSettings>;
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
   workspaces?: string[];
@@ -1254,6 +1296,7 @@ export interface PlaybookActions {
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
+  requestNodeSuggestions: (playbookId: string, taskId: string, data: RequestNodeSuggestionsData) => Promise<NodeSuggestionsResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;
   setCopilotMode: (mode: PlaybookCopilotMode) => void;

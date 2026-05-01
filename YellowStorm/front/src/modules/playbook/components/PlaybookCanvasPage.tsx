@@ -73,7 +73,7 @@ import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability } from '../api';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookNodeSuggestion } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -1065,6 +1065,107 @@ function PlaybookCanvasInner() {
     [updateNodeData],
   );
 
+  const syncProgrammaticEdges = useCallback((nextEdges: Edge[]) => {
+    setEdges(nextEdges);
+    updateEdges(nextEdges.map((edge) => {
+      const data = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+      return {
+        id: edge.id,
+        sourceId: edge.source,
+        targetId: edge.target,
+        sourceOutputPortId: data.sourceOutputPortId || edge.sourceHandle || 'default',
+        targetInputPortId: data.targetInputPortId || edge.targetHandle || 'default',
+      };
+    }));
+  }, [setEdges, updateEdges]);
+
+  const createProgrammaticEdge = useCallback((sourceId: string, targetId: string, sourceOutputPortId = 'default', targetInputPortId = 'default'): Edge => ({
+    id: `e-${sourceId}-${sourceOutputPortId}-${targetId}-${targetInputPortId}`,
+    source: sourceId,
+    target: targetId,
+    sourceHandle: sourceOutputPortId,
+    targetHandle: targetInputPortId,
+    type: 'animated',
+    data: {
+      sourceOutputPortId,
+      targetInputPortId,
+      isTypeMatch: undefined,
+    },
+  }), []);
+
+  const handleApplySuggestion = useCallback((taskId: string, suggestion: PlaybookNodeSuggestion) => {
+    const sourceTask = playbook?.tasks.find((task) => task.id === taskId);
+    if (!sourceTask) return;
+
+    const offsetX = suggestion.position === 'before' ? -320 : 320;
+    const offsetY = suggestion.position === 'parallel' ? 180 : 0;
+    const newTaskId = crypto.randomUUID();
+
+    const newTask: PlaybookTask = {
+      id: newTaskId,
+      title: suggestion.title,
+      description: suggestion.description,
+      assignedAgentId: null,
+      executionMode: 'agent',
+      selectedAction: undefined,
+      executionOrder: playbook?.tasks.length ?? 0,
+      positionX: sourceTask.positionX + offsetX,
+      positionY: sourceTask.positionY + offsetY,
+      interruptBefore: false,
+      interruptAfter: false,
+      allowClarification: false,
+      clarificationPrompt: '',
+      maxClarifications: 3,
+      inputKeys: [],
+      outputKey: '',
+      enabled: true,
+      notifyOnComplete: false,
+      notifyEmails: [],
+      inputFiles: [],
+      taskType: 'generic',
+      inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+      outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
+    };
+
+    addNode(newTask);
+
+    if (suggestion.position === 'before') {
+      const incomingEdges = edges.filter((edge) => edge.target === taskId);
+      const untouchedEdges = edges.filter((edge) => edge.target !== taskId);
+      const rewiredIncoming = incomingEdges.map((edge) => {
+        const data = (edge.data || {}) as { sourceOutputPortId?: string };
+        return createProgrammaticEdge(edge.source, newTaskId, data.sourceOutputPortId || edge.sourceHandle || 'default', 'default');
+      });
+      syncProgrammaticEdges([
+        ...untouchedEdges,
+        ...rewiredIncoming,
+        createProgrammaticEdge(newTaskId, suggestion.connectsToTaskId || taskId),
+      ]);
+      return;
+    }
+
+    if (suggestion.position === 'after') {
+      const outgoingEdges = edges.filter((edge) => edge.source === taskId);
+      const untouchedEdges = edges.filter((edge) => edge.source !== taskId);
+      const rewiredOutgoing = outgoingEdges.map((edge) => {
+        const data = (edge.data || {}) as { targetInputPortId?: string };
+        return createProgrammaticEdge(newTaskId, edge.target, 'default', data.targetInputPortId || edge.targetHandle || 'default');
+      });
+      syncProgrammaticEdges([
+        ...untouchedEdges,
+        createProgrammaticEdge(suggestion.connectsFromTaskId || taskId, newTaskId),
+        ...rewiredOutgoing,
+      ]);
+      return;
+    }
+
+    if (suggestion.connectsFromTaskId) {
+      onConnect({ source: suggestion.connectsFromTaskId, sourceHandle: null, target: newTaskId, targetHandle: null });
+    } else if (suggestion.connectsToTaskId) {
+      onConnect({ source: newTaskId, sourceHandle: null, target: suggestion.connectsToTaskId, targetHandle: null });
+    }
+  }, [addNode, createProgrammaticEdge, edges, onConnect, playbook?.tasks, setEdges, syncProgrammaticEdges, updateEdges]);
+
   const handleRun = useCallback(async () => {
     if (!id || !playbook) return;
     if (!playbook.workspaces || playbook.workspaces.length === 0) {
@@ -1493,6 +1594,7 @@ function PlaybookCanvasInner() {
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}
+        onApplySuggestion={handleApplySuggestion}
       />
 
       {/* Share Dialog */}

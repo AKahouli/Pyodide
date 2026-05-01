@@ -46,6 +46,9 @@ export const API_ENDPOINTS = {
     registration: '/experimental/system/registration',
     appearance: '/experimental/system/appearance',
   },
+  adminPlaybookSettings: {
+    base: '/admin/playbook-settings',
+  },
   usage: {
     status: '/usage/status',
     plan: '/usage/plan',
@@ -247,6 +250,7 @@ export const API_ENDPOINTS = {
     deleteReplay: (id: string, taskId: string, replayId: string) => `/playbooks/${id}/tasks/${taskId}/replays/${replayId}`,
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
+    nodeSuggestions: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/suggestions`,
     skipStep: (id: string) => `/playbooks/${id}/steps/skip`,
     rerunStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/rerun-step`,
     resumeFromStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/resume-from-step`,

@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { UpdatePlaybookDesignSettingsDto } from './playbook-settings.dto';
 
 export class InputFileMetadataDto {
   @IsOptional()
@@ -171,6 +172,12 @@ export class UpdatePlaybookTaskDto {
   @IsString()
   @MaxLength(20000)
   description?: string;
+
+  @ApiPropertyOptional({ type: UpdatePlaybookDesignSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdatePlaybookDesignSettingsDto)
+  designSettings?: UpdatePlaybookDesignSettingsDto;
 
   @IsOptional()
   @IsString()
@@ -335,6 +342,12 @@ export class UpdatePlaybookDto {
   @IsString()
   @MaxLength(20000)
   description?: string;
+
+  @ApiPropertyOptional({ type: UpdatePlaybookDesignSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdatePlaybookDesignSettingsDto)
+  designSettings?: UpdatePlaybookDesignSettingsDto;
 
   @ApiPropertyOptional({ type: [UpdatePlaybookTaskDto] })
   @IsOptional()

@@ -53,6 +53,7 @@ import { PlaybookStreamController } from './controllers/playbook-stream.controll
 import { PlaybookController } from './controllers/playbook.controller';
 import { PlaybookExecutionController } from './controllers/playbook-execution.controller';
 import { AdminPlaybookPromptsController } from './controllers/admin-playbook-prompts.controller';
+import { AdminPlaybookSettingsController } from './controllers/admin-playbook-settings.controller';
 import { AdminPlaybookNodeTemplatesController } from './controllers/admin-playbook-node-templates.controller';
 import { PlaybookNodeTemplatesController } from './controllers/playbook-node-templates.controller';
 import { PlaybookMailWebhookController } from './controllers/playbook-mail-webhook.controller';
@@ -86,6 +87,8 @@ import { PlaybookExecutionNotificationService } from './services/playbook-execut
 import { PlaybookExecutionBufferService } from './services/playbook-execution-buffer.service';
 import { PlaybookExecutionAdvisorService } from './services/playbook-execution-advisor.service';
 import { PlaybookRepeatabilityService } from './services/playbook-repeatability.service';
+import { PlaybookSettingsService } from './services/playbook-settings.service';
+import { PlaybookNodeSuggestionsService } from './services/playbook-node-suggestions.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -102,6 +105,7 @@ import { UserModule } from '../user/user.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ConnectorModule } from '../connector/connector.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
+import { AuthorizationModule } from '../authorization/authorization.module';
 import playbookConfig from './config/playbook.config';
 
 @Module({
@@ -133,6 +137,7 @@ import playbookConfig from './config/playbook.config';
     NotificationsModule,
     ConnectorModule,
     ConnectedAppModule,
+    AuthorizationModule,
   ],
   controllers: [
     PlaybookStreamController, // Must be before PlaybookController to avoid route conflict with :id param
@@ -140,6 +145,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookMailWebhookController,
     PlaybookExecutionController,
     AdminPlaybookPromptsController,
+    AdminPlaybookSettingsController,
     AdminPlaybookNodeTemplatesController,
     PlaybookNodeTemplatesController,
   ],
@@ -172,6 +178,8 @@ import playbookConfig from './config/playbook.config';
     PlaybookExecutionBufferService,
     PlaybookExecutionAdvisorService,
     PlaybookRepeatabilityService,
+    PlaybookSettingsService,
+    PlaybookNodeSuggestionsService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],

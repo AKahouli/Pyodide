@@ -913,6 +913,18 @@ export interface SyncModelsResponse {
   total: number;
 }
 
+export interface AdminPlaybookSettings {
+  inferenceModelId: string | null;
+  nodeSuggestionsMode: 'auto' | 'manual';
+  approvalSuggestionMode: 'auto' | 'manual';
+}
+
+export interface UpdateAdminPlaybookSettingsRequest {
+  inferenceModelId?: string | null;
+  nodeSuggestionsMode: 'auto' | 'manual';
+  approvalSuggestionMode: 'auto' | 'manual';
+}
+
 // Playbook Prompt Types
 
 export interface PlaybookPromptResponse {

@@ -16,12 +16,12 @@ import { LoggerService } from '../../logger';
 import { BadRequestException, ServiceUnavailableException } from '../../exceptions';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { AgentService } from '../../agent/agent.service';
-import { ModelsService } from '../../models/models.service';
 import { LiteLLMConnectionService } from '../../models/litellm-connection.service';
 import { UsageService } from '../../usage/usage.service';
 import { UsageType } from '../../usage/schemas/usage.schema';
 import type { AxiosResponse } from 'axios';
 import { PlaybookPromptService } from './playbook-prompt.service';
+import { PlaybookSettingsService } from './playbook-settings.service';
 
 const FALLBACK_PROMPT_REWRITE_SYSTEM_PROMPT = [
   'You rewrite workflow prompts for a playbook builder.',
@@ -39,8 +39,8 @@ export class PlaybookDesignService {
     private readonly contextService: PlaybookContextService,
     private readonly promptService: PlaybookPromptService,
     private readonly agentService: AgentService,
-    private readonly modelsService: ModelsService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly playbookSettingsService: PlaybookSettingsService,
     private readonly configService: ConfigService,
     private readonly usageService: UsageService,
     private readonly logger: LoggerService,
@@ -99,8 +99,8 @@ export class PlaybookDesignService {
     // Resolve all agents available to the user — fully built for gRPC
     const allAgents = await this.agentService.getAgentsForUser(userId);
     const allAgentIds = allAgents.map((a) => a.id);
-    const defaultModel = await this.modelsService.getDefaultModel();
-    const fallbackModelId = defaultModel?.id || '';
+    const modelId = await this.playbookSettingsService.resolveInferenceModel();
+    const fallbackModelId = modelId;
     const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(userId, allAgentIds, fallbackModelId);
     await this.contextService.resolveAgentBrainContexts(grpcAgents);
 
@@ -108,8 +108,6 @@ export class PlaybookDesignService {
     const workspaceIds = (dto.workspaces || []).map((id) => id);
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
-
-    const modelId = defaultModel?.id || defaultModel?.litellmModel || '';
 
     const grpcRequest = {
       query: dto.prompt,
@@ -190,8 +188,7 @@ export class PlaybookDesignService {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.id || defaultModel?.litellmModel || '';
+    const model = await this.playbookSettingsService.resolveInferenceModel();
     if (!model) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
@@ -252,8 +249,7 @@ export class PlaybookDesignService {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
 
-    const defaultModel = await this.modelsService.getDefaultModel();
-    const model = defaultModel?.id || defaultModel?.litellmModel || '';
+    const model = await this.playbookSettingsService.resolveInferenceModel();
     if (!model) {
       throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
     }
@@ -359,16 +355,14 @@ export class PlaybookDesignService {
     // Resolve all agents available to the user — fully built for gRPC
     const allAgents = await this.agentService.getAgentsForUser(userId);
     const allAgentIds = allAgents.map((a) => a.id);
-    const defaultModel = await this.modelsService.getDefaultModel();
-    const fallbackModelId = defaultModel?.id || '';
+    const modelId = await this.playbookSettingsService.resolveInferenceModel(playbook.designSettings);
+    const fallbackModelId = modelId;
     const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(userId, allAgentIds, fallbackModelId);
     await this.contextService.resolveAgentBrainContexts(grpcAgents);
 
     // Build workspace contexts
     const workspaceContexts = await this.contextService.buildWorkspaceContexts(playbook.workspaces || []);
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
-
-    const modelId = defaultModel?.id || defaultModel?.litellmModel || '';
 
     const grpcRequest = {
       query: dto.query,
