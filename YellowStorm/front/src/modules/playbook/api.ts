@@ -37,8 +37,8 @@ import type {
   PlaybookEvaluationExecution,
   PlaybookRepeatabilitySummary,
   RepeatabilityTaskExecutionSummary,
-  RequestNodeSuggestionsData,
-  NodeSuggestionsResponse,
+  RequestPlaybookIntentData,
+  PlaybookIntentResponse,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -254,13 +254,12 @@ export async function updatePlaybook(
   return response.data.data;
 }
 
-export async function requestNodeSuggestions(
+export async function requestPlaybookIntent(
   playbookId: string,
-  taskId: string,
-  data: RequestNodeSuggestionsData,
-): Promise<NodeSuggestionsResponse> {
-  const response = await apiClient.post<ApiResponse<NodeSuggestionsResponse>>(
-    API_ENDPOINTS.playbooks.nodeSuggestions(playbookId, taskId),
+  data: RequestPlaybookIntentData,
+): Promise<PlaybookIntentResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
+    API_ENDPOINTS.playbooks.intent(playbookId),
     data,
   );
   return response.data.data;

@@ -216,26 +216,86 @@ export interface EffectivePlaybookDesignSettings {
   approvalSuggestionMode: 'auto' | 'manual';
 }
 
-export interface PlaybookNodeSuggestion {
-  id: string;
-  kind: 'upstream' | 'downstream' | 'validation' | 'approval' | 'trigger' | 'action' | 'split';
+export type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
+
+export type PlaybookIntentSuggestionKind = 'single_change' | 'workflow_plan';
+
+export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
+}
+
+export interface PlaybookIntentSingleChangeSuggestion {
+  id: string;
+  kind: 'single_change';
+  label: string;
+  summary: string;
   reason: string;
   confidence: number;
-  position: 'before' | 'after' | 'parallel';
-  connectsFromTaskId: string | null;
-  connectsToTaskId: string | null;
+  operationType: PlaybookIntentOperationType;
+  task: PlaybookIntentTaskDraft | null;
+  targetTaskId: string | null;
+  isDirectIntentFallback: boolean;
 }
 
-export interface RequestNodeSuggestionsData {
-  title?: string;
-  description?: string;
-  expectedResult?: string | null;
+export type PlaybookIntentWorkflowAnchorMode = 'append' | 'before' | 'after' | 'as_input';
+
+export interface PlaybookIntentWorkflowAnchor {
+  mode: PlaybookIntentWorkflowAnchorMode;
+  targetTaskId: string | null;
+  nodeRef: string | null;
+  targetTaskIds?: string[];
+  nodeRefs?: string[];
 }
 
-export interface NodeSuggestionsResponse {
-  suggestions: PlaybookNodeSuggestion[];
+export type PlaybookIntentWorkflowChange =
+  | {
+      type: 'create_node';
+      nodeRef: string;
+      anchor: PlaybookIntentWorkflowAnchor;
+      task: PlaybookIntentTaskDraft;
+    }
+  | {
+      type: 'update_node';
+      targetTaskId: string;
+      task: Partial<PlaybookIntentTaskDraft>;
+    }
+  | {
+      type: 'delete_node';
+      targetTaskId: string;
+    };
+
+export interface PlaybookIntentWorkflowImpact {
+  nodesToCreate: number;
+  nodesToUpdate: number;
+  nodesToDelete: number;
+  edgesToCreate: number;
+  edgesToDelete: number;
+  affectedTaskIds: string[];
+  businessOutcome: string;
+}
+
+export interface PlaybookIntentWorkflowPlanSuggestion {
+  id: string;
+  kind: 'workflow_plan';
+  label: string;
+  summary: string;
+  reason: string;
+  confidence: number;
+  impact: PlaybookIntentWorkflowImpact;
+  changes: PlaybookIntentWorkflowChange[];
+  isDirectIntentFallback: false;
+}
+
+export type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
+
+export interface RequestPlaybookIntentData {
+  intent: string;
+  selectedTaskId?: string;
+}
+
+export interface PlaybookIntentResponse {
+  suggestions: PlaybookIntentSuggestion[];
   model: string;
   settings: EffectivePlaybookDesignSettings;
 }
@@ -1296,7 +1356,7 @@ export interface PlaybookActions {
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
-  requestNodeSuggestions: (playbookId: string, taskId: string, data: RequestNodeSuggestionsData) => Promise<NodeSuggestionsResponse>;
+  requestPlaybookIntent: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;
   setCopilotMode: (mode: PlaybookCopilotMode) => void;

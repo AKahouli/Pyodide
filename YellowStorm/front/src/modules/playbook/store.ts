@@ -43,7 +43,7 @@ import type {
   UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ToolBinding,
-  RequestNodeSuggestionsData,
+  RequestPlaybookIntentData,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -2815,8 +2815,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      requestNodeSuggestions: async (playbookId: string, taskId: string, data: RequestNodeSuggestionsData) => {
-        return api.requestNodeSuggestions(playbookId, taskId, data);
+      requestPlaybookIntent: async (playbookId: string, data: RequestPlaybookIntentData) => {
+        return api.requestPlaybookIntent(playbookId, data);
       },
 
       revertToSnapshot: async (playbookId, messageId) => {

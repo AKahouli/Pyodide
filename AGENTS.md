@@ -332,14 +332,21 @@ See the `maintainer` agent file for the full memory procedure.
 | Signal | Action |
 |--------|--------|
 | Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
-| Vague bug or unclear failure | `diagnostics` first |
-| Any code change | `reviewer` after (mandatory, blocking) |
 | Frontend-visible UI/layout/interaction/runtime/a11y change | `frontend-qa` after (mandatory, blocking) |
-| Proto/API change or cross-service edit | Run explicit contract validation after implementation |
-| Cross-service change needing E2E verification | Run explicit integration verification after contract validation |
-| Full/Light memory tier and reviewed | `maintainer` last |
 | Need current external library/framework/API docs | context7 skill |
 | Single-file, no interface change | `build` directly → `reviewer` → `maintainer` only if Full/Light |
+
+### Explicit Agent Capabilities
+
+| Agent | Role | Trigger Conditions | Output Format | Key Skills | Dependencies |
+|-------|------|--------------------|---------------|------------|--------------|
+| plan | Task decomposition | >1 file, ambiguity, cross-service | Structured plan | File search, tool calling, dependency analysis | n/a |
+| build | Implementation | Code generation/mod | Code + verification | File writing, git, testing, tool integration | plan (for complex tasks) |
+| reviewer | Code review | Any code change | PASS/FAIL + findings | Code reading, logic analysis, test validation | build |
+| diagnostics | Test gaps | Test failures, incompleteness | Test plan + fixes | Test writing, scenario modeling | reviewer |
+| frontend-qa | UI testing | Frontend changes | PASS/FAIL + browser evidence | Browser automation, visual regression | build |
+| maintainer | Memory sync | Full/Light memory tier | Memory updates | Obsidian MCP tools, documentation | reviewer |
+
 
 ---
 
@@ -485,3 +492,31 @@ npx ctx7@latest docs <libraryId> "<question>"
 6. `reviewer` validates → **must PASS**
 7. `diagnostics` if test gaps
 8. must always call the `maintainer` agent to syncs Obsidian vault memory with relevant changes
+
+## Prompting Improvements for Better Agent Performance
+
+1. **Explicit Agent Capabilities**: Add a section "When to use which agent" with a table clearly outlining what each agent does, when to call them, and what tools/skills they have access to.
+
+2. **Step-by-Step Task Decomposition**: When invoking an agent for a complex task, guide it through a structured thinking process.
+
+3. **Structured Output Format**: Define a clear template for agent outputs (e.g., using JSON schema or Markdown sections) including "Status", "Findings", "Required Actions", "Files Modified", and "Files Created".
+
+4. **Contextual Information**: Include relevant context in the invocation prompt, such as:
+    - The specific task or bug description
+    - Any relevant error messages or logs
+    - Affected file paths or modules
+    - Previous conversation history if relevant
+
+5. **Success Criteria**: Clearly define what constitutes a successful outcome for the agent's task.
+
+6. **Constraints and Rules**: Explicitly state any constraints the agent must follow, such as:
+    - Coding standards
+    - Security policies
+    - Tool usage restrictions
+    - Time/resource limitations
+
+7. **Iterative Refinement**: Encourage an iterative workflow where agents can request clarification or additional information if needed, and humans can provide feedback to refine the task.
+
+## Code patterns
+
+- When generating Python code for dynamic prompts, always prioritize f-strings (string interpolation) over concatenation or .format(). Ensure all variables are wrapped in {} and the string is prefixed with f. This maintains clarity and let the user set the prompt template dynamically from the ui without breaking the code.

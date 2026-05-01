@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -5,6 +6,16 @@ import { PlaybookToolbar } from './PlaybookToolbar';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
+}));
+
+vi.mock('@/components/ui/select', () => ({
+  Select: ({ value, onValueChange, children }: { value?: string; onValueChange?: (value: string) => void; children: ReactNode }) => (
+    <div data-value={value} data-on-change={onValueChange ? 'yes' : 'no'}>{children}</div>
+  ),
+  SelectTrigger: ({ children }: { children: ReactNode }) => <button type="button">{children}</button>,
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SelectItem: ({ value, children }: { value: string; children: ReactNode }) => <div data-value={value}>{children}</div>,
 }));
 
 const defaultProps = {
@@ -107,5 +118,47 @@ describe('PlaybookToolbar', () => {
     render(<PlaybookToolbar {...defaultProps} />);
     await userEvent.click(screen.getByText('toolbar.runSettings'));
     expect(screen.queryByText('toolbar.triggers')).not.toBeInTheDocument();
+  });
+
+  it('renders playbook AI override controls when design settings are provided', async () => {
+    const onDesignSettingsChange = vi.fn();
+    render(
+      <PlaybookToolbar
+        {...defaultProps}
+        designSettings={{
+          inferenceModelId: null,
+          nodeSuggestionsMode: 'inherit',
+          approvalSuggestionMode: 'manual',
+        }}
+        onDesignSettingsChange={onDesignSettingsChange}
+      />,
+    );
+
+    await userEvent.click(screen.getByText('toolbar.runSettings'));
+
+    expect(screen.getByText('toolbar.aiDefaults.title')).toBeInTheDocument();
+    expect(screen.getByText('toolbar.aiDefaults.nodeSuggestions')).toBeInTheDocument();
+    expect(screen.getByText('toolbar.aiDefaults.approvals')).toBeInTheDocument();
+  });
+
+  it('renders node suggestion override options when design settings are provided', async () => {
+    const onDesignSettingsChange = vi.fn();
+    render(
+      <PlaybookToolbar
+        {...defaultProps}
+        designSettings={{
+          inferenceModelId: null,
+          nodeSuggestionsMode: 'inherit',
+          approvalSuggestionMode: 'manual',
+        }}
+        onDesignSettingsChange={onDesignSettingsChange}
+      />,
+    );
+
+    await userEvent.click(screen.getByText('toolbar.runSettings'));
+
+    expect(screen.getAllByText('toolbar.aiDefaults.inherit').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('toolbar.aiDefaults.manual').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('toolbar.aiDefaults.auto').length).toBeGreaterThan(0);
   });
 });

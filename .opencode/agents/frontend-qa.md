@@ -27,7 +27,6 @@ Use the configured vision-capable model for screenshots and browser snapshots wh
 
 After any frontend-visible change that affects UI, layout, styling, interaction, navigation, forms, browser runtime behavior, responsive behavior, or accessibility. `build` delegates to you post-implementation and cannot close the task until you return PASS or the user explicitly accepts the risk.
 
-Before validating, read `YellowStorm/front/FRONTEND_GUIDELINES.md` through the available read-only exploration path and apply those rules to the QA pass.
 
 ## What you validate
 

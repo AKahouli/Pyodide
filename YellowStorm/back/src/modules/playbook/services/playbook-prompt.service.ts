@@ -11,9 +11,20 @@ import {
   UpsertPlaybookPromptTemplateRequest,
 } from '../interfaces/playbook-prompt.interface';
 
-type PromptDefaultsEntry = Pick<PlaybookPromptTemplateResponse, 'key' | 'title' | 'category' | 'description' | 'systemTemplate' | 'userTemplate' | 'enabled' | 'isBuiltIn'>;
+type PromptDefaultsEntry = Pick<PlaybookPromptTemplateResponse, 'key' | 'title' | 'category' | 'description' | 'systemTemplate' | 'userTemplate' | 'enabled' | 'isBuiltIn' | 'version'>;
 
 const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
+  {
+    key: 'intent.analyze',
+    title: 'Canvas intent analysis',
+    category: 'intent',
+    description: 'Prompt for the canvas-level AI intent bar that turns user intent into explicit playbook operations.',
+    systemTemplate: 'You are a workflow design assistant for business users. Return JSON only with a top-level suggestions array. Keep suggestions explicit, business-readable, fast to apply, and safe. Prefer a workflow_plan when the user intent needs multiple steps or affects an existing workflow. Use single_change only for truly small one-step edits. Allowed single_change operationType values: create_node, insert_before, insert_after, update_node, delete_node. A workflow_plan must include kind="workflow_plan", label, summary, reason, confidence, impact, and ordered changes. Allowed workflow_plan change types: create_node, update_node, delete_node. For create_node changes include nodeRef, task { title, description }, and anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs? }. Semantics: after = insert a step in sequence immediately after a parent and before its current downstream; append = add a new downstream child without rewiring existing downstream; append with null targetTaskId and null nodeRef creates a new root step; as_input = connect the new step into an existing downstream step as an additional prerequisite without rewiring other parents; targetTaskIds/nodeRefs are for merge steps that depend on multiple parents. Do not silently mutate the graph; describe business impact and affected existing task ids.',
+    userTemplate: 'Playbook name: {playbook_name}\nPlaybook description: {playbook_description}\n\nUser intent:\n{intent_text}\n\nSelected task id: {selected_task_id}\nSelected task title: {selected_task_title}\nSelected task description:\n{selected_task_description}\n\nSelected task context JSON:\n{selected_task_context}\n\nWorkflow summary JSON:\n{workflow_summary}\n\nWhen no task is selected, suggest a concise workflow_plan when the intent describes a business outcome that needs more than one step. When a task is selected, suggest either an update_node single_change or a workflow_plan that inserts upstream/downstream steps around that selected task. You may create sequential chains and parallel branches. Rules: 1) Use after for true sequence. 2) Use append to add a sibling/parallel branch without breaking an existing chain. 3) If two branches are independent from the start, create separate root nodes with append + null targetTaskId + null nodeRef. 4) If a new task should feed an already existing downstream step, use as_input with that targetTaskId. 5) If a step depends on outputs from multiple earlier steps, use nodeRefs or targetTaskIds arrays on the anchor. 6) Do not describe a branch as parallel if you encoded it as a sequence. Example sequential chain: A root, then B after A, then C after B. Example parallel-with-merge: A root with append null; B root with append null; C after nodeRefs [A,B] so C waits for both. Example adding a missing prerequisite to an existing report step: create Intel research with as_input targetTaskId report-step-id, then update the report step description. Keep suggestions business-readable and focused on quick results. Return JSON like: {"suggestions":[{"kind":"workflow_plan","label":"Expand comparative workflow","summary":"Adds Intel research as a new prerequisite and updates the final report step.","reason":"The requested comparison needs one more source before the existing report step.","confidence":0.82,"impact":{"nodesToCreate":1,"nodesToUpdate":1,"nodesToDelete":0,"edgesToCreate":1,"edgesToDelete":0,"affectedTaskIds":["report-step-id"],"businessOutcome":"Business users get a fuller comparison without rebuilding the workflow."},"changes":[{"type":"create_node","nodeRef":"intel","anchor":{"mode":"as_input","targetTaskId":"report-step-id","nodeRef":null},"task":{"title":"Research Intel Corp context","description":"Collect recent public business and financial context for Intel."}},{"type":"update_node","targetTaskId":"report-step-id","task":{"title":"Generate comparative findings report","description":"Compare the existing sources plus Intel and produce a concise business report."}}]}]}',
+    enabled: true,
+    isBuiltIn: true,
+    version: 5,
+  },
   {
     key: 'playbook.generate',
     title: 'Playbook generation preprompt',
@@ -23,6 +34,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: '',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'design.max_description_length',
@@ -33,6 +45,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: '',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'task.system',
@@ -43,6 +56,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: '',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'task.user.footer',
@@ -53,6 +67,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Please complete this task and provide a clear output.',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'task.output_ports.note',
@@ -63,6 +78,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Declared output ports are semantic targets. When multiple ports share a kind, use the port name and description to decide the right target. If you produce structured outputs, set `output_port_id` to a declared id.',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'task.clarification',
@@ -73,6 +89,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: '',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'replay.final_synthesis',
@@ -83,6 +100,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Use the following replayed tool execution results to produce the final answer.\n\n{{synthesisContext}}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'replay.adaptive_tool_args',
@@ -93,6 +111,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Tool name: {{toolName}}\nOriginal args JSON:\n{{originalArgsJson}}\n\nReference task title: {{referenceTaskTitle}}\nReference task description: {{referenceTaskDescription}}\n\nCurrent task title: {{taskTitle}}\nCurrent task description: {{taskDescription}}\nCurrent user query: {{currentQuery}}\nDependency context: {{dependencyContext}}\n\nPrevious replay tool outputs:\n{{previousOutputs}}\n\nReturn the adapted args as JSON with the same top-level keys as the original args.',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'evaluation.task.system',
@@ -103,6 +122,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: '',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'evaluation.task.user',
@@ -113,6 +133,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Evaluation task title: {{taskTitle}}\nEvaluation task description: {{taskDescription}}\n\nExpected result:\n{{expectation}}\n\nReference baseline:\n{{baselineSummary}}\n\nConnected inputs JSON:\n{{inputsJson}}\n\nRubric JSON:\n{{rubricJson}}\n\nReturn JSON with this exact shape:\n{\n  "score": 0,\n  "verdict": "pass|warning|fail",\n  "summary": "",\n  "semanticScore": 0,\n  "referenceScore": 0,\n  "artifactScore": 0,\n  "formatScore": 0,\n  "evidenceScore": 0,\n  "executionHealthScore": 0,\n  "findings": [\n    {\n      "severity": "info|warning|error",\n      "category": "semantic|reference|artifact|format|evidence|execution",\n      "sourceTaskId": "",\n      "message": ""\n    }\n  ]\n}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'design.prompt_rewrite',
@@ -123,6 +144,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: '',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'judge.node_reflection',
@@ -133,6 +155,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Task title: {{taskTitle}}\nTask description: {{taskDescription}}\n\nWorkflow goal: {{workflowGoal}}\n\nExpected result source: {{expectedResultSource}}\n\nExpected result:\n{{expectedResult}}\n\nEvaluate whether the task output and artifacts satisfy the expected result semantically. The expected result may be a concrete expected value, a description of how numbers should be presented, a requirement to generate a document or other artifact, a natural-language semantic expectation, or a baseline output from a previous golden execution. Do not require exact text equality unless the expectation is clearly an exact value. If the expected result source is none, return a resultMatchingScore of 0, expectedResultType of none, expectedResultMatched of false, and explain that no expected result was available.\n\nUpstream context JSON:\n{{upstreamContextJson}}\n\nTask output:\n{{taskOutput}}\n\nTask artifacts JSON:\n{{artifactsJson}}\n\nTool trace JSON:\n{{toolTraceJson}}\n\nPrompt trace JSON:\n{{promptTraceJson}}\n\nReturn JSON with this exact shape:\n{\n  "accuracyScore": 0,\n  "completenessScore": 0,\n  "resultMatchingScore": 0,\n  "overallScore": 0,\n  "confidence": 0,\n  "toolUsageScore": 0,\n  "expectedResultSource": "node_field|golden_baseline|none",\n  "expectedResultType": "exact_value|semantic_description|numeric_presentation|document_generation|baseline_comparison|none",\n  "expectedResultMatched": false,\n  "expectedResultReason": "",\n  "missingFacts": [],\n  "incoherences": [],\n  "unsupportedClaims": [],\n  "handoffRisks": [],\n  "rewriteHints": [],\n  "toolSelectionIssues": [],\n  "missingToolCalls": [],\n  "redundantToolCalls": [],\n  "toolOutputUseIssues": [],\n  "toolSequencingIssues": [],\n  "toolUsageStrengths": [],\n  "toolUsageRecommendation": "",\n  "safeAutoFixType": "optimize_step|none",\n  "recommendation": "none|update_current_playbook|generate_new_optimized_playbook",\n  "reason": ""\n}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'judge.execution_summary',
@@ -143,6 +166,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Workflow goal: {{workflowGoal}}\n\nExecution summary JSON:\n{{executionSummaryJson}}\n\nPlaybook Advisor findings JSON:\n{{nodeFindingsJson}}\n\nReturn JSON with this exact shape:\n{\n  "overallScore": 0,\n  "confidence": 0,\n  "structuralIssues": [],\n  "promptIssues": [],\n  "contractIssues": [],\n  "handoffIssues": [],\n  "toolUsageIssues": [],\n  "crossStepToolPatterns": [],\n  "rootCauseTaskIds": [],\n  "highImpactRecommendations": [],\n  "recommendation": "update_current_playbook|generate_new_optimized_playbook",\n  "reason": ""\n}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'judge.rewrite_current_playbook',
@@ -153,6 +177,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Original playbook JSON:\n{{playbookJson}}\n\nJudge summary JSON:\n{{judgeSummaryJson}}\n\nApply only the selected remediation hints appended to this request. When those hints require structural changes, update tasks and edges so the playbook remains executable.\n\nReturn JSON with this exact shape:\n{\n  "name": "",\n  "description": "",\n  "tasks": [],\n  "edges": []\n}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'judge.generate_optimized_playbook',
@@ -163,6 +188,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Original playbook JSON:\n{{playbookJson}}\n\nJudge summary JSON:\n{{judgeSummaryJson}}\n\nReturn JSON with this exact shape:\n{\n  "name": "",\n  "description": "",\n  "tasks": [],\n  "edges": [],\n  "workspaces": []\n}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
   {
     key: 'judge.optimize_step',
@@ -173,6 +199,7 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     userTemplate: 'Original playbook JSON:\n{{playbookJson}}\n\nSelected task JSON:\n{{taskJson}}\n\nJudge summary JSON:\n{{judgeSummaryJson}}\n\nNode reflection JSON:\n{{judgeResultJson}}\n\nUpstream context JSON:\n{{upstreamContextJson}}\n\nReturn JSON with this exact shape:\n{\n  "task": {\n    "id": "",\n    "title": "",\n    "description": "",\n    "assignedAgentId": null,\n    "executionOrder": 0,\n    "positionX": 0,\n    "positionY": 0,\n    "interruptBefore": false,\n    "interruptAfter": false,\n    "allowClarification": false,\n    "clarificationPrompt": "",\n    "maxClarifications": 3,\n    "inputKeys": [],\n    "outputKey": "",\n    "enabled": true,\n    "notifyOnComplete": false,\n    "notifyEmails": [],\n    "stepReplayMode": "live",\n    "inputFiles": [],\n    "taskType": "generic",\n    "inputPorts": [],\n    "outputPorts": []\n  }\n}',
     enabled: true,
     isBuiltIn: true,
+    version: 1,
   },
 ];
 
@@ -212,21 +239,37 @@ export class PlaybookPromptService {
   }
 
   private async seedDefaultsIfNeeded(): Promise<void> {
-    const existing = await this.promptModel.find({ key: { $in: DEFAULT_PROMPTS.map((item) => item.key) } }).select('key').lean().exec();
+    const existing = await this.promptModel.find({ key: { $in: DEFAULT_PROMPTS.map((item) => item.key) } }).select('key version isBuiltIn').lean().exec();
+    const existingByKey = new Map(existing.map((item) => [item.key, item]));
     const existingKeys = new Set(existing.map((item) => item.key));
     const missing = DEFAULT_PROMPTS.filter((item) => !existingKeys.has(item.key));
-    if (!missing.length) return;
 
-    await this.promptModel.insertMany(
-      missing.map((item) => ({
-        ...item,
-        version: 1,
-        createdBy: null,
-        updatedBy: null,
-      })),
-      { ordered: false },
-    );
-    this.invalidateCache();
+    if (missing.length) {
+      await this.promptModel.insertMany(
+        missing.map((item) => ({
+          ...item,
+          createdBy: null,
+          updatedBy: null,
+        })),
+        { ordered: false },
+      );
+    }
+
+    const builtInUpdates = DEFAULT_PROMPTS.filter((item) => {
+      const existingItem = existingByKey.get(item.key) as { version?: number; isBuiltIn?: boolean } | undefined;
+      return existingItem?.isBuiltIn === true && (existingItem.version || 1) < item.version;
+    });
+
+    if (builtInUpdates.length) {
+      await Promise.all(builtInUpdates.map((item) => this.promptModel.updateOne(
+        { key: item.key, isBuiltIn: true, version: { $lt: item.version } },
+        { $set: { ...item, updatedBy: null } },
+      ).exec()));
+    }
+
+    if (missing.length || builtInUpdates.length) {
+      this.invalidateCache();
+    }
   }
 
   async findAll(): Promise<PlaybookPromptTemplateListResponse> {

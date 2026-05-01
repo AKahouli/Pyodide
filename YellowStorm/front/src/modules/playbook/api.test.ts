@@ -150,6 +150,18 @@ describe('playbook api', () => {
     });
   });
 
+  it('requests playbook intent suggestions', async () => {
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { suggestions: [], model: 'gpt-test', settings: { nodeSuggestionsMode: 'manual', approvalSuggestionMode: 'auto', inferenceModelId: null, resolvedInferenceModelId: null } } } });
+
+    const { requestPlaybookIntent } = await import('./api');
+    await requestPlaybookIntent('p1', { intent: 'add a review step', selectedTaskId: 'task-1' });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.intent('p1'), {
+      intent: 'add a review step',
+      selectedTaskId: 'task-1',
+    });
+  });
+
   it('executes and gets execution details', async () => {
     apiClientMock.post.mockResolvedValueOnce({ data: { data: { executionId: 'e1' } } });
     const started = await executePlaybook('p1', { query: 'test run' });

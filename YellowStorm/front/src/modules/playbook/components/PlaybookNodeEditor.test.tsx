@@ -9,13 +9,11 @@ const fetchTaskReplays = vi.fn().mockResolvedValue([]);
 const activateTaskReplay = vi.fn();
 const updateTaskReplayFormatGuide = vi.fn();
 const fetchEvaluationBaseline = vi.fn();
-const requestNodeSuggestions = vi.fn().mockResolvedValue({ suggestions: [] });
 const storeState = {
   fetchTaskReplays,
   activateTaskReplay,
   updateTaskReplayFormatGuide,
   fetchEvaluationBaseline,
-  requestNodeSuggestions,
   currentPlaybook: {
     id: 'playbook-1',
     effectiveDesignSettings: {
@@ -243,48 +241,4 @@ describe('PlaybookNodeEditor', () => {
     });
   });
 
-  it('requests node suggestions when asked explicitly', async () => {
-    requestNodeSuggestions.mockResolvedValueOnce({
-      suggestions: [
-        {
-          id: 'suggestion-1',
-          kind: 'downstream',
-          title: 'Generate report',
-          description: 'Summarize contract risks for the legal team.',
-          reason: 'A risk review usually ends with a report.',
-          confidence: 0.84,
-          position: 'after',
-          connectsFromTaskId: 'task-1',
-          connectsToTaskId: null,
-        },
-      ],
-    });
-
-    const onApplySuggestion = vi.fn();
-
-    render(
-      <PlaybookNodeEditor
-        playbookId="playbook-1"
-        task={genericTask}
-        open
-        onOpenChange={vi.fn()}
-        onSave={vi.fn()}
-        onApplySuggestion={onApplySuggestion}
-      />,
-    );
-
-    fireEvent.click(screen.getByText('nodeEditor.aiSuggestions.action'));
-
-    await waitFor(() => {
-      expect(requestNodeSuggestions).toHaveBeenCalledWith('playbook-1', 'task-1', {
-        title: 'Analyze contract',
-        description: 'Review supplier contract clauses and identify important risk indicators.',
-        expectedResult: null,
-      });
-    });
-
-    fireEvent.click(screen.getByText('nodeEditor.aiSuggestions.addStep'));
-
-    expect(onApplySuggestion).toHaveBeenCalled();
-  });
 });

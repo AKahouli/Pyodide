@@ -21,7 +21,6 @@ import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
 import type {
   PlaybookTask,
-  PlaybookNodeSuggestion,
   ValidatedTaskReplay,
   TaskInputPort,
   TaskOutputPort,
@@ -132,12 +131,11 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (taskId: string, data: Partial<PlaybookTask>) => void;
-  onApplySuggestion?: (taskId: string, suggestion: PlaybookNodeSuggestion) => void;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSave, onApplySuggestion }: Props) {
+export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSave }: Props) {
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
@@ -148,8 +146,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
   const createEvaluationBaselineFromCurrentExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromCurrentExecution);
   const deleteEvaluationBaseline = usePlaybookStore((s) => s.deleteEvaluationBaseline);
-  const requestNodeSuggestions = usePlaybookStore((s) => s.requestNodeSuggestions);
-  const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const { user } = useAuth();
   const { t } = useModuleTranslation('playbook');
 
@@ -205,9 +201,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const [viewBaselineDialogOpen, setViewBaselineDialogOpen] = useState(false);
   const [advancedEvaluationOpen, setAdvancedEvaluationOpen] = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
-  const [suggestions, setSuggestions] = useState<PlaybookNodeSuggestion[]>([]);
-  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
-  const [suggestionsError, setSuggestionsError] = useState('');
   const isDragging = useRef(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
@@ -251,66 +244,9 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
       setEmailInput('');
       setEmailError('');
       setHasInitializedDraft(false);
-      setSuggestions([]);
-      setSuggestionsError('');
       lastSuggestionSignatureRef.current = '';
     }
   }, [task]);
-
-  const effectiveDesignSettings = currentPlaybook?.id === playbookId
-    ? currentPlaybook.effectiveDesignSettings
-    : null;
-
-  const fetchSuggestions = useCallback(async (force = false) => {
-    if (!open || !task || !playbookId) return;
-
-    const signature = JSON.stringify({
-      id: task.id,
-      title: draft.title.trim(),
-      description: draft.description.trim(),
-      expectedResult: draft.expectedResult ?? null,
-    });
-
-    if (!force && lastSuggestionSignatureRef.current === signature) {
-      return;
-    }
-
-    const meaningfulText = draft.description.trim() || draft.title.trim();
-    if (meaningfulText.length < 10) {
-      setSuggestions([]);
-      setSuggestionsError('');
-      return;
-    }
-
-    setSuggestionsLoading(true);
-    setSuggestionsError('');
-    try {
-      const result = await requestNodeSuggestions(playbookId, task.id, {
-        title: draft.title,
-        description: draft.description,
-        expectedResult: draft.expectedResult ?? null,
-      });
-      lastSuggestionSignatureRef.current = signature;
-      setSuggestions(result.suggestions || []);
-    } catch (error) {
-      setSuggestions([]);
-      setSuggestionsError(error instanceof Error ? error.message : t('nodeEditor.aiSuggestions.error'));
-    } finally {
-      setSuggestionsLoading(false);
-    }
-  }, [draft.description, draft.expectedResult, draft.title, open, playbookId, requestNodeSuggestions, t, task]);
-
-  useEffect(() => {
-    if (!open || !task || effectiveDesignSettings?.nodeSuggestionsMode !== 'auto') {
-      return;
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      void fetchSuggestions(false);
-    }, 900);
-
-    return () => window.clearTimeout(timeoutId);
-  }, [draft.description, draft.expectedResult, draft.title, effectiveDesignSettings?.nodeSuggestionsMode, fetchSuggestions, open, task]);
 
   useEffect(() => {
     if (!open || !task || !hasInitializedDraft) return;
@@ -455,13 +391,6 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   const handleEmailBlur = useCallback(() => {
     if (emailInput.trim()) addEmail(emailInput);
   }, [emailInput, addEmail]);
-
-  const handleDescriptionKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      void fetchSuggestions(true);
-    }
-  }, [fetchSuggestions]);
 
   if (!task || !open) return null;
 
@@ -661,58 +590,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               placeholder={t('nodeEditor.descriptionPlaceholder')}
               rows={10}
               maxLength={20000}
-              onKeyDown={handleDescriptionKeyDown}
             />
-          </div>
-
-          <div className="space-y-3 rounded-md border border-dashed p-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="space-y-1">
-                <div className="text-sm font-medium">{t('nodeEditor.aiSuggestions.title')}</div>
-                <p className="text-xs text-muted-foreground">{t('nodeEditor.aiSuggestions.description')}</p>
-              </div>
-              <Button type="button" variant="outline" size="sm" onClick={() => void fetchSuggestions(true)} disabled={suggestionsLoading}>
-                {suggestionsLoading ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
-                {t('nodeEditor.aiSuggestions.action')}
-              </Button>
-            </div>
-
-            {effectiveDesignSettings ? (
-              <p className="text-xs text-muted-foreground">
-                {t('nodeEditor.aiSuggestions.mode', {
-                  mode: effectiveDesignSettings.nodeSuggestionsMode === 'auto'
-                    ? t('nodeEditor.aiSuggestions.modeAuto')
-                    : t('nodeEditor.aiSuggestions.modeManual'),
-                })}
-              </p>
-            ) : null}
-
-            {suggestionsError ? (
-              <p className="text-xs text-destructive">{suggestionsError}</p>
-            ) : null}
-
-            {!suggestionsLoading && suggestions.length === 0 && !suggestionsError ? (
-              <p className="text-xs text-muted-foreground">{t('nodeEditor.aiSuggestions.empty')}</p>
-            ) : null}
-
-            {suggestions.map((suggestion) => (
-              <div key={suggestion.id} className="space-y-2 rounded-md border bg-muted/30 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-medium">{suggestion.title}</div>
-                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t(`nodeEditor.aiSuggestions.kind.${suggestion.kind}`)}</div>
-                  </div>
-                  <Badge variant="outline">{Math.round(suggestion.confidence * 100)}%</Badge>
-                </div>
-                {suggestion.description ? <p className="text-sm text-muted-foreground">{suggestion.description}</p> : null}
-                <p className="text-xs text-muted-foreground">{suggestion.reason}</p>
-                <div className="flex justify-end">
-                  <Button type="button" size="sm" onClick={() => onApplySuggestion?.(task.id, suggestion)}>
-                    {t('nodeEditor.aiSuggestions.addStep')}
-                  </Button>
-                </div>
-              </div>
-            ))}
           </div>
 
           {!isEvaluationTask && (

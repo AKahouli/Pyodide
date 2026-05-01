@@ -3,8 +3,15 @@ import { Play, Save, Check, Loader2, History, Settings2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useModuleTranslation } from '@/modules/localization';
-import type { PlaybookPageMode } from '../types';
+import type { PlaybookDesignSettings, PlaybookPageMode } from '../types';
 
 interface Props {
   pageMode: PlaybookPageMode;
@@ -25,6 +32,8 @@ interface Props {
   /** Opens triggers dialog (design mode). */
   onTriggers?: () => void;
   triggersOpen?: boolean;
+  designSettings?: PlaybookDesignSettings;
+  onDesignSettingsChange?: (settings: Partial<PlaybookDesignSettings>) => void;
 }
 
 export function PlaybookToolbar({
@@ -45,6 +54,8 @@ export function PlaybookToolbar({
   onAdvisorAutopilotChange,
   onTriggers,
   triggersOpen = false,
+  designSettings,
+  onDesignSettingsChange,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
@@ -106,6 +117,43 @@ export function PlaybookToolbar({
             <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
               <span>{t('toolbar.stepAutopilot')}</span>
               <Switch checked={advisorAutopilotEnabled} onCheckedChange={onAdvisorAutopilotChange} />
+            </div>
+          )}
+          {designSettings && onDesignSettingsChange && (
+            <div className="space-y-3 rounded-md border px-3 py-3">
+              <div className="text-sm font-medium">{t('toolbar.aiDefaults.title')}</div>
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground">{t('toolbar.aiDefaults.nodeSuggestions')}</div>
+                <Select
+                  value={designSettings.nodeSuggestionsMode}
+                  onValueChange={(value: PlaybookDesignSettings['nodeSuggestionsMode']) => onDesignSettingsChange({ nodeSuggestionsMode: value })}
+                >
+                  <SelectTrigger className="h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">{t('toolbar.aiDefaults.inherit')}</SelectItem>
+                    <SelectItem value="manual">{t('toolbar.aiDefaults.manual')}</SelectItem>
+                    <SelectItem value="auto">{t('toolbar.aiDefaults.auto')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <div className="text-xs text-muted-foreground">{t('toolbar.aiDefaults.approvals')}</div>
+                <Select
+                  value={designSettings.approvalSuggestionMode}
+                  onValueChange={(value: PlaybookDesignSettings['approvalSuggestionMode']) => onDesignSettingsChange({ approvalSuggestionMode: value })}
+                >
+                  <SelectTrigger className="h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="inherit">{t('toolbar.aiDefaults.inherit')}</SelectItem>
+                    <SelectItem value="manual">{t('toolbar.aiDefaults.manual')}</SelectItem>
+                    <SelectItem value="auto">{t('toolbar.aiDefaults.auto')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           )}
         </PopoverContent>

@@ -88,7 +88,8 @@ import { PlaybookExecutionBufferService } from './services/playbook-execution-bu
 import { PlaybookExecutionAdvisorService } from './services/playbook-execution-advisor.service';
 import { PlaybookRepeatabilityService } from './services/playbook-repeatability.service';
 import { PlaybookSettingsService } from './services/playbook-settings.service';
-import { PlaybookNodeSuggestionsService } from './services/playbook-node-suggestions.service';
+import { PlaybookIntentService } from './services/playbook-intent.service';
+import { PlaybookPromptTemplateRendererService } from './services/playbook-prompt-template-renderer.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -179,7 +180,8 @@ import playbookConfig from './config/playbook.config';
     PlaybookExecutionAdvisorService,
     PlaybookRepeatabilityService,
     PlaybookSettingsService,
-    PlaybookNodeSuggestionsService,
+    PlaybookIntentService,
+    PlaybookPromptTemplateRendererService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],
