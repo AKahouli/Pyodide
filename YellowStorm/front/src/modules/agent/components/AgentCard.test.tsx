@@ -23,6 +23,7 @@ vi.mock('@/components/ui/button', () => ({
 const baseAgent: Agent = {
   id: '1',
   name: 'Agent',
+  slug: 'agent',
   agentType: { id: 'type-1', name: 'Manager' },
   role: '',
   description: 'desc',

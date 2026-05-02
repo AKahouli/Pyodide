@@ -5,6 +5,7 @@
 export interface Agent {
   id: string;
   name: string;
+  slug: string;
   agentType: { id: string; name: string };
   role: string;
   description: string;
@@ -157,6 +158,7 @@ export type AgentStore = AgentState & AgentActions;
 
 export interface CreateAgentData {
   name: string;
+  slug: string;
   agentType: string;
   role: string;
   description?: string;
@@ -175,6 +177,7 @@ export interface CreateAgentData {
 
 export interface UpdateAgentData {
   name?: string;
+  slug?: string;
   agentType?: string;
   role?: string;
   description?: string;

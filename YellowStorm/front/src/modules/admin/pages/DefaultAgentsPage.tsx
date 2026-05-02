@@ -77,6 +77,7 @@ export function DefaultAgentsPage() {
       if (editingAgent) {
         await updateAdminAgent(editingAgent.id, {
           name: data.name,
+          slug: data.slug,
           agentType: data.agentType,
           role: data.role,
           description: data.description,
@@ -97,6 +98,7 @@ export function DefaultAgentsPage() {
       } else {
         await createAdminAgent({
           name: data.name,
+          slug: data.slug,
           agentType: data.agentType,
           role: data.role,
           description: data.description,

@@ -9,6 +9,7 @@ describe('PlaybookIntentService', () => {
   const resolveInferenceModel = jest.fn();
   const findByKey = jest.fn();
   const render = jest.fn();
+  const findDefaultAgents = jest.fn();
 
   const service = new PlaybookIntentService(
     { findById } as any,
@@ -16,6 +17,7 @@ describe('PlaybookIntentService', () => {
     { resolveEffectiveSettings, resolveInferenceModel } as any,
     { findByKey } as any,
     { render } as any,
+    { findDefaultAgents } as any,
   );
 
   beforeEach(() => {
@@ -30,6 +32,7 @@ describe('PlaybookIntentService', () => {
     resolveInferenceModel.mockResolvedValue('gpt-test');
     findByKey.mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'user-template' });
     render.mockReturnValue('rendered-user-prompt');
+    findDefaultAgents.mockResolvedValue({ data: [{ id: 'agent-1', slug: 'research-agent', name: 'Research Agent', role: 'Research', description: 'Research tasks', agentType: { id: 'type-1', name: 'Research' } }], meta: { total: 1, page: 1, limit: 100, totalPages: 1 } });
     findById.mockResolvedValue({
       id: 'playbook-1',
       name: 'PB',
@@ -91,7 +94,7 @@ describe('PlaybookIntentService', () => {
                     type: 'create_node',
                     nodeRef: 'new-1',
                     anchor: { mode: 'after', targetTaskId: 'task-1', nodeRef: null },
-                    task: { title: 'Draft review', description: 'Create a first review.' },
+                    task: { title: 'Draft review', description: 'Create a first review.', agentSlug: 'research-agent' },
                   },
                   {
                     type: 'create_node',
@@ -112,12 +115,22 @@ describe('PlaybookIntentService', () => {
     expect(result.suggestions[1]).toMatchObject({
       kind: 'workflow_plan',
       label: 'Add review workflow',
-      impact: { nodesToCreate: 2, businessOutcome: 'A complete review flow can be applied in one approval.' },
-      changes: [
-        { type: 'create_node', nodeRef: 'new-1', anchor: { mode: 'after', targetTaskId: 'task-1' } },
+        impact: { nodesToCreate: 2, businessOutcome: 'A complete review flow can be applied in one approval.' },
+        changes: [
+        { type: 'create_node', nodeRef: 'new-1', anchor: { mode: 'after', targetTaskId: 'task-1' }, task: { agentSlug: 'research-agent' } },
         { type: 'create_node', nodeRef: 'new-2', anchor: { mode: 'after', nodeRef: 'new-1' } },
       ],
     });
+  });
+
+  it('passes default agents into prompt rendering context', async () => {
+    post.mockResolvedValue({ data: { choices: [{ message: { content: JSON.stringify({ suggestions: [] }) } }] } });
+
+    await service.analyze('playbook-1', { intent: 'Add research step' });
+
+    expect(render).toHaveBeenCalledWith('user-template', expect.objectContaining({
+      default_agents: expect.stringContaining('research-agent'),
+    }));
   });
 
   it('infers workflow plan suggestions without an explicit kind for update-only plans', async () => {

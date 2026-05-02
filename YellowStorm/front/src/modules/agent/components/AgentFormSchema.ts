@@ -14,6 +14,11 @@ export const userAgentFormSchema = z.object({
     .min(2, tAgent("form.validation.nameMin", "Name must be at least 2 characters"))
     .max(50, tAgent("form.validation.nameMax", "Name must be at most 50 characters"))
     .regex(/^[a-zA-Z0-9 ]+$/, tAgent("form.validation.namePattern", "Name must contain only letters, numbers, and spaces")),
+  slug: z
+    .string()
+    .min(1, tAgent("form.validation.slugRequired", "Slug is required"))
+    .max(100, tAgent("form.validation.slugMax", "Slug must be at most 100 characters"))
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, tAgent("form.validation.slugPattern", "Slug must contain only lowercase letters, numbers, and hyphens")),
   agentType: z.string().min(1, tAgent("form.validation.agentTypeRequired", "Agent type is required")),
   role: z.string().min(1, tAgent("form.validation.roleRequired", "Role is required")).max(50000, tAgent("form.validation.roleMax", "Role must be at most 50000 characters")),
   description: z.string().max(1000, tAgent("form.validation.descriptionMax", "Description must be at most 1000 characters")).optional().default(""),
@@ -34,6 +39,7 @@ export type UserAgentFormValues = z.infer<typeof userAgentFormSchema>;
 
 export const defaultFormValues: UserAgentFormValues = {
   name: "",
+  slug: "",
   agentType: "",
   role: "",
   description: "",

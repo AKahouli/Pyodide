@@ -21,6 +21,13 @@ export class CreateAgentDto {
   @Matches(/^[a-zA-Z0-9 ]+$/, { message: 'Name must contain only letters, numbers, and spaces' })
   name!: string;
 
+  @ApiProperty({ description: 'Agent slug', minLength: 1, maxLength: 100 })
+  @IsString()
+  @MinLength(1)
+  @MaxLength(100)
+  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, { message: 'Slug must contain only lowercase letters, numbers, and hyphens' })
+  slug!: string;
+
   @ApiProperty({ description: 'Agent type ID (MongoDB ObjectId)' })
   @IsMongoId()
   agentType!: string;

@@ -27,6 +27,18 @@ import { useModelsStore } from '@/modules/models/store';
 import { scrollToFirstError } from '@/lib/form-utils';
 import { useModuleTranslation } from '@/modules/localization';
 
+function slugifyAgentName(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 interface CreateEditAgentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -44,6 +56,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   const [availableConnectors, setAvailableConnectors] = useState<ConnectorOption[]>([]);
   const models = useModels();
   const [loading, setLoading] = useState(false);
+  const slugEditedRef = useRef(false);
   const loadedAgentTypeId = useRef<string | null>(null);
   const schema = useMemo(() => createAgentFormSchema(t), [t]);
 
@@ -62,6 +75,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   useEffect(() => {
     if (open) {
       loadedAgentTypeId.current = agent ? agent.agentType.id : null;
+      slugEditedRef.current = false;
       setLoading(true);
 
       Promise.all([
@@ -83,6 +97,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
           if (agent) {
             reset({
               name: agent.name,
+              slug: agent.slug,
               agentType: agent.agentType.id,
               role: agent.role,
               description: agent.description || '',
@@ -108,6 +123,7 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   }, [open, agent, reset]);
 
   const selectedAgentTypeId = watch('agentType');
+  const watchedName = watch('name');
   useEffect(() => {
     if (!selectedAgentTypeId || !availableTools.length) return;
     if (loadedAgentTypeId.current) {
@@ -126,6 +142,11 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
+
+  useEffect(() => {
+    if (slugEditedRef.current) return;
+    setValue('slug', slugifyAgentName(watchedName), { shouldValidate: true });
+  }, [watchedName, setValue]);
 
   useEffect(() => {
     const validDisabledSkills = watchedDisabledSkills.filter((id) => inheritedSkillIds.includes(id));
@@ -153,8 +174,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                 <TabsTrigger value='identity'>{t('defaultAgents.form.tabs.identity')}</TabsTrigger>
                 <TabsTrigger value='behaviour'>{t('defaultAgents.form.tabs.behaviour')}</TabsTrigger>
                 <TabsTrigger value='tools'>{t('defaultAgents.form.tabs.tools')}</TabsTrigger>
-                <TabsTrigger value='skills'>Skills</TabsTrigger>
-                <TabsTrigger value='connectors'>Connectors</TabsTrigger>
+                <TabsTrigger value='skills'>{t('defaultAgents.form.tabs.skills')}</TabsTrigger>
+                <TabsTrigger value='connectors'>{t('defaultAgents.form.tabs.connectors')}</TabsTrigger>
               </TabsList>
 
               <ScrollArea className='flex-1 min-h-0 mt-4'>
@@ -165,6 +186,21 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                         <Label htmlFor='agent-name'>{t('defaultAgents.form.name.label')}</Label>
                         <Input id='agent-name' placeholder={t('defaultAgents.form.name.placeholder')} {...register('name')} />
                         {errors.name && <p className='text-xs text-destructive'>{errors.name.message}</p>}
+                      </div>
+
+                      <div className='space-y-2'>
+                        <Label htmlFor='agent-slug'>{t('defaultAgents.form.slug.label')}</Label>
+                        <Input
+                          id='agent-slug'
+                          placeholder={t('defaultAgents.form.slug.placeholder')}
+                          {...register('slug', {
+                            onChange: () => {
+                              slugEditedRef.current = true;
+                            },
+                          })}
+                        />
+                        <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.slug.helper')}</p>
+                        {errors.slug && <p className='text-xs text-destructive'>{errors.slug.message}</p>}
                       </div>
 
                       <div className='space-y-2' data-field='agentType'>
@@ -285,8 +321,8 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                   <TabsContent value='connectors' forceMount className='mt-0 data-[state=inactive]:hidden'>
                     <div className='grid gap-4'>
                       <div className='space-y-2'>
-                        <Label>Connectors</Label>
-                        <p className='text-xs text-muted-foreground'>Attach MCP connectors to this agent. They will be available on every playbook step that uses this agent.</p>
+                        <Label>{t('defaultAgents.form.connectors.label')}</Label>
+                        <p className='text-xs text-muted-foreground'>{t('defaultAgents.form.connectors.helper')}</p>
                         <MultiSelect
                           options={availableConnectors.map((connector) => ({
                             value: connector.id,
@@ -295,9 +331,9 @@ export function CreateEditAgentDialog({ open, onOpenChange, agent, onSave, savin
                           }))}
                           value={watchedConnectors}
                           onValueChange={(val) => setValue('connectors', val)}
-                          placeholder='Select connectors'
-                          searchPlaceholder='Search connectors'
-                          emptyText='No connectors found'
+                          placeholder={t('defaultAgents.form.connectors.selectPlaceholder')}
+                          searchPlaceholder={t('defaultAgents.form.connectors.searchPlaceholder')}
+                          emptyText={t('defaultAgents.form.connectors.emptyText')}
                         />
                       </div>
                     </div>

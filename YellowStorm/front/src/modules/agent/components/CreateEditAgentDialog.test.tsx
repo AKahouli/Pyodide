@@ -7,9 +7,15 @@ const fetchAgentTypesMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined
 const fetchModelsMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 const getActiveToolsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const getWorkspacesMock = vi.hoisted(() => vi.fn().mockResolvedValue({ workspaces: [] }));
+const getActiveSkillsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const getActiveConnectorsMock = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 
 vi.mock('../store', () => ({
   useAgentTypes: () => [{ id: 'type-1', name: 'Manager' }],
+  useEvaluationDatasets: () => [],
+  useEvaluations: () => [],
+  useEvaluationScenarios: () => [],
+  useEvaluationLoading: () => false,
   useAgentStore: {
     getState: () => ({ fetchAgentTypes: fetchAgentTypesMock }),
   },
@@ -24,6 +30,8 @@ vi.mock('@/modules/models/store', () => ({
 
 vi.mock('../api', () => ({
   getActiveTools: getActiveToolsMock,
+  getActiveSkills: getActiveSkillsMock,
+  getActiveConnectors: getActiveConnectorsMock,
 }));
 
 vi.mock('@/modules/workspace', () => ({
@@ -104,6 +112,10 @@ vi.mock('@/components/ui/searchable-select', () => ({
   SearchableSelect: ({ value }: { value: string }) => <div>searchable-{value}</div>,
 }));
 
+vi.mock('./EvaluationTab', () => ({
+  EvaluationTab: () => <div>evaluation-tab</div>,
+}));
+
 vi.mock('@/lib/form-utils', () => ({
   scrollToFirstError: vi.fn(),
 }));
@@ -133,6 +145,7 @@ describe('CreateEditAgentDialog', () => {
         agent={{
           id: 'a1',
           name: 'Agent',
+          slug: 'agent',
           agentType: { id: 'type-1', name: 'Manager' },
           role: 'role',
           description: '',

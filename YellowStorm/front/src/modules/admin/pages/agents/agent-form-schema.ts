@@ -5,6 +5,7 @@ type Translator = (key: ModuleTranslationKey<'admin'>, params?: TranslationParam
 
 export interface AgentFormValues {
   name: string;
+  slug: string;
   agentType: string;
   role: string;
   description: string;
@@ -27,6 +28,11 @@ export function createAgentFormSchema(t: Translator) {
       .min(2, t('defaultAgents.form.validation.nameMin'))
       .max(50, t('defaultAgents.form.validation.nameMax'))
       .regex(/^[a-zA-Z0-9 ]+$/, t('defaultAgents.form.validation.namePattern')),
+    slug: z
+      .string()
+      .min(1, t('defaultAgents.form.validation.slugRequired'))
+      .max(100, t('defaultAgents.form.validation.slugMax'))
+      .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, t('defaultAgents.form.validation.slugPattern')),
     agentType: z.string().min(1, t('defaultAgents.form.validation.agentTypeRequired')),
     role: z.string().min(1, t('defaultAgents.form.validation.roleRequired')).max(50000, t('defaultAgents.form.validation.roleMax')),
     description: z.string().max(1000, t('defaultAgents.form.validation.descriptionMax')).optional().default(''),
@@ -45,6 +51,7 @@ export function createAgentFormSchema(t: Translator) {
 
 export const defaultFormValues: AgentFormValues = {
   name: '',
+  slug: '',
   agentType: '',
   role: '',
   description: '',

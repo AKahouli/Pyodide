@@ -7,12 +7,14 @@ import { PlaybookService } from './playbook.service';
 import { PlaybookSettingsService } from './playbook-settings.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookPromptTemplateRendererService } from './playbook-prompt-template-renderer.service';
+import { AgentService } from '../../agent/agent.service';
 
 type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
 
 interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
+  agentSlug?: string | null;
 }
 
 interface PlaybookIntentSingleChangeSuggestion {
@@ -87,6 +89,7 @@ export class PlaybookIntentService {
     private readonly playbookSettingsService: PlaybookSettingsService,
     private readonly playbookPromptService: PlaybookPromptService,
     private readonly promptRenderer: PlaybookPromptTemplateRendererService,
+    private readonly agentService: AgentService,
   ) {}
 
   async analyze(playbookId: string, dto: RequestPlaybookIntentDto): Promise<PlaybookIntentResponse> {
@@ -107,6 +110,7 @@ export class PlaybookIntentService {
     const effectiveSettings = await this.playbookSettingsService.resolveEffectiveSettings(playbook.designSettings);
     const model = await this.playbookSettingsService.resolveInferenceModel(playbook.designSettings);
     const prompt = await this.playbookPromptService.findByKey('intent.analyze');
+    const defaultAgents = await this.agentService.findDefaultAgents({ page: 1, limit: 100, isActive: true });
     const systemPrompt = prompt?.systemTemplate?.trim() || 'Return JSON only with a top-level suggestions array.';
     const userPrompt = this.promptRenderer.render(prompt?.userTemplate || '', {
       playbook_name: playbook.name,
@@ -114,9 +118,16 @@ export class PlaybookIntentService {
       workflow_summary: JSON.stringify({
         taskCount: playbook.tasks.length,
         edgeCount: playbook.edges.length,
-        tasks: playbook.tasks.map((task) => ({ id: task.id, title: task.title, description: task.description })),
+        tasks: playbook.tasks.map((task) => ({ id: task.id, title: task.title, description: task.description, assignedAgentId: task.assignedAgentId })),
         edges: playbook.edges.map((edge) => ({ sourceId: edge.sourceId, targetId: edge.targetId })),
       }, null, 2),
+      default_agents: JSON.stringify(defaultAgents.data.map((agent) => ({
+        slug: agent.slug,
+        name: agent.name,
+        role: agent.role,
+        description: agent.description,
+        agentType: agent.agentType,
+      })), null, 2),
       intent_text: dto.intent.trim(),
       selected_task_title: selectedTask?.title || '',
       selected_task_description: selectedTask?.description || '',
@@ -197,6 +208,7 @@ export class PlaybookIntentService {
     const operationType = this.normalizeOperationType(item.operationType, selectedTaskId);
     const taskTitle = this.normalizeText(item.taskTitle) || label;
     const taskDescription = this.normalizeText(item.taskDescription) || this.normalizeText(item.summary);
+    const agentSlug = this.normalizeText(item.agentSlug);
 
     return {
       id: `intent-${index}`,
@@ -206,7 +218,7 @@ export class PlaybookIntentService {
       reason: this.normalizeText(item.reason) || '',
       confidence: this.normalizeConfidence(item.confidence),
       operationType,
-      task: operationType === 'delete_node' ? null : { title: taskTitle, description: taskDescription },
+      task: operationType === 'delete_node' ? null : { title: taskTitle, description: taskDescription, agentSlug: agentSlug || null },
       targetTaskId: this.normalizeText(item.targetTaskId) || selectedTaskId,
       isDirectIntentFallback: false,
     };
@@ -294,16 +306,19 @@ export class PlaybookIntentService {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
-    return title ? { title, description } : null;
+    const agentSlug = this.normalizeText(item.agentSlug);
+    return title ? { title, description, ...(agentSlug ? { agentSlug } : {}) } : null;
   }
 
   private normalizePartialTaskDraft(value: unknown, fallbackTitle = '', fallbackDescription = ''): Partial<PlaybookIntentTaskDraft> {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
+    const agentSlug = this.normalizeText(item.agentSlug);
     return {
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
+      ...(agentSlug ? { agentSlug } : {}),
     };
   }
 

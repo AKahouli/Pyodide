@@ -1094,6 +1094,7 @@ export interface AgentTypeQueryParams {
 export interface AgentResponse {
   id: string;
   name: string;
+  slug: string;
   agentType: { id: string; name: string };
   role: string;
   description: string;
@@ -1126,6 +1127,7 @@ export interface AgentListResponse {
 
 export interface CreateAgentRequest {
   name: string;
+  slug: string;
   agentType: string;
   role: string;
   description?: string;
@@ -1144,6 +1146,7 @@ export interface CreateAgentRequest {
 
 export interface UpdateAgentRequest {
   name?: string;
+  slug?: string;
   agentType?: string;
   role?: string;
   description?: string;

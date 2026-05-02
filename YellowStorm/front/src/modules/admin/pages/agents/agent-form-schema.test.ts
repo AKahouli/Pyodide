@@ -8,6 +8,7 @@ describe('agent form schema', () => {
     const schema = createAgentFormSchema(t);
     const parsed = schema.parse({
       name: 'Agent 1',
+      slug: 'agent-1',
       agentType: 'type-1',
       role: 'assistant',
     });
@@ -21,5 +22,10 @@ describe('agent form schema', () => {
     const schema = createAgentFormSchema(t);
     expect(() => schema.parse({ name: 'Agent@', agentType: 'x', role: 'r' })).toThrow();
     expect(defaultFormValues.isDefaultForType).toBe(false);
+  });
+
+  it('rejects invalid slug pattern', () => {
+    const schema = createAgentFormSchema(t);
+    expect(() => schema.parse({ name: 'Agent 1', slug: 'Agent 1', agentType: 'x', role: 'r' })).toThrow();
   });
 });

@@ -55,7 +55,7 @@ import {
 } from '../store';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
-import { useAgentStore } from '@/modules/agent/store';
+import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, tasksToNodes, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
 import { useAutosave } from '../hooks/useAutosave';
@@ -301,6 +301,8 @@ function PlaybookCanvasInner() {
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
+  const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
+  const defaultAgents = useDefaultAgents();
   const addIntentSuggestionHistoryEntry = usePlaybookStore((s) => s.addIntentSuggestionHistoryEntry);
   const intentHistory = useIntentSuggestionHistory(id);
   const [intentValue, setIntentValue] = useState('');
@@ -1240,31 +1242,77 @@ function PlaybookCanvasInner() {
       };
     });
 
-    const createIntentTask = (title: string, description: string, anchorTask: PlaybookTask | null, order: number): PlaybookTask => ({
-      id: crypto.randomUUID(),
-      title,
-      description,
-      assignedAgentId: null,
-      executionMode: 'agent',
-      selectedAction: undefined,
-      executionOrder: order,
-      positionX: (anchorTask?.positionX || 0) + 320,
-      positionY: anchorTask?.positionY || 0,
-      interruptBefore: false,
-      interruptAfter: false,
-      allowClarification: false,
-      clarificationPrompt: '',
-      maxClarifications: 3,
-      inputKeys: [],
-      outputKey: '',
-      enabled: true,
-      notifyOnComplete: false,
-      notifyEmails: [],
-      inputFiles: [],
-      taskType: 'generic',
-      inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
-      outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
-    });
+    const resolveAssignedAgentId = (agentSlug?: string | null): string | null => {
+      if (!agentSlug) {
+        return null;
+      }
+
+      const storeAgents = useAgentStore.getState().agents;
+      const matchingAgent = defaultAgents.find((agent) => agent.slug === agentSlug)
+        || storeAgents.find((agent) => agent.isDefault && agent.slug === agentSlug)
+        || storeAgents.find((agent) => agent.slug === agentSlug);
+
+      return matchingAgent?.id || null;
+    };
+
+    const clonePortSet = <T extends { id: string }>(ports: T[] | undefined, fallback: T[]): T[] => {
+      if (!ports || ports.length === 0) {
+        return fallback;
+      }
+      return ports.map((port) => ({ ...port }));
+    };
+
+    const findMatchingTemplate = (title: string, description: string) => {
+      const normalizedTitle = title.trim().toLowerCase();
+      const normalizedDescription = description.trim().toLowerCase();
+
+      return nodeTemplates.find((template) => {
+        const templateTitle = template.title.trim().toLowerCase();
+        const templateDescription = (template.description || '').trim().toLowerCase();
+        return templateTitle === normalizedTitle
+          || (templateTitle && normalizedTitle.startsWith(templateTitle))
+          || (templateDescription && templateDescription === normalizedDescription);
+      }) || null;
+    };
+
+    const getPreferredInputPortId = (task: PlaybookTask, index = 0) => task.inputPorts?.[index]?.id || task.inputPorts?.[0]?.id || 'default';
+    const getPreferredOutputPortId = (task: PlaybookTask) => task.outputPorts?.[0]?.id || 'default';
+
+    const createIntentTask = (title: string, description: string, agentSlug: string | null | undefined, anchorTask: PlaybookTask | null, order: number): PlaybookTask => {
+      const matchedTemplate = findMatchingTemplate(title, description);
+
+      return {
+        id: crypto.randomUUID(),
+        title,
+        description,
+        assignedAgentId: matchedTemplate?.executionMode === 'agent'
+          ? (matchedTemplate.assignedAgentId ?? resolveAssignedAgentId(agentSlug))
+          : resolveAssignedAgentId(agentSlug),
+        executionMode: (matchedTemplate?.executionMode as PlaybookTask['executionMode']) ?? 'agent',
+        selectedAction: matchedTemplate?.executionMode === 'action' ? (matchedTemplate.selectedAction ?? undefined) : undefined,
+        executionOrder: order,
+        positionX: (anchorTask?.positionX || 0) + 320,
+        positionY: anchorTask?.positionY || 0,
+        interruptBefore: false,
+        interruptAfter: false,
+        allowClarification: false,
+        clarificationPrompt: '',
+        maxClarifications: 3,
+        inputKeys: [],
+        outputKey: '',
+        enabled: true,
+        notifyOnComplete: false,
+        notifyEmails: [],
+        inputFiles: [],
+        taskType: matchedTemplate?.type || 'generic',
+        inputPorts: matchedTemplate
+          ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
+          : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
+        outputPorts: matchedTemplate
+          ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
+          : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
+      };
+    };
 
     const changedNodeIds = new Set<string>();
     const changedEdgeIds = new Set<string>();
@@ -1341,6 +1389,7 @@ function PlaybookCanvasInner() {
     const applyCreate = (
       taskTitle: string,
       taskDescription: string,
+      agentSlug: string | null | undefined,
       mode: 'append' | 'before' | 'after' | 'as_input',
       targetTaskId: string | null,
       nodeRef: string | null,
@@ -1353,7 +1402,7 @@ function PlaybookCanvasInner() {
       const anchorTasks = anchorTaskIds.map((id) => nextTasks.find((task) => task.id === id)).filter((task): task is PlaybookTask => Boolean(task));
       const anchorTask = hasExplicitAnchors ? (anchorTasks[0] || null) : null;
       if (hasExplicitAnchors && anchorTasks.length === 0) {
-        const newTask = createIntentTask(taskTitle, taskDescription, null, nextTasks.length);
+        const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, null, nextTasks.length);
         nextTasks = [...nextTasks, newTask];
         changedNodeIds.add(newTask.id);
         if (newNodeRef) {
@@ -1362,7 +1411,7 @@ function PlaybookCanvasInner() {
         return true;
       }
 
-      const newTask = createIntentTask(taskTitle, taskDescription, anchorTask, nextTasks.length);
+      const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, anchorTask, nextTasks.length);
       nextTasks = [...nextTasks, newTask];
       changedNodeIds.add(newTask.id);
       if (newNodeRef) {
@@ -1373,44 +1422,44 @@ function PlaybookCanvasInner() {
         return true;
       }
 
-      if (anchorTasks.length > 1) {
-        nextEdges = [
-          ...nextEdges,
-          ...anchorTasks.map((task) => markEdgeChanged(createProgrammaticEdge(task.id, newTask.id))),
+        if (anchorTasks.length > 1) {
+          nextEdges = [
+            ...nextEdges,
+          ...anchorTasks.map((task, index) => markEdgeChanged(createProgrammaticEdge(task.id, newTask.id, getPreferredOutputPortId(task), getPreferredInputPortId(newTask, index)))),
         ];
         return true;
       }
 
-      if (mode === 'as_input') {
-        nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id))];
-        return true;
-      }
+        if (mode === 'as_input') {
+          nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id, getPreferredOutputPortId(newTask), getPreferredInputPortId(anchorTask)))];
+          return true;
+        }
 
       if (mode === 'before') {
         const incomingEdges = nextEdges.filter((edge) => edge.target === anchorTask.id);
         const untouchedEdges = nextEdges.filter((edge) => edge.target !== anchorTask.id);
-        const rewiredIncoming = incomingEdges.map((edge) => {
-          const data = (edge.data || {}) as { sourceOutputPortId?: string };
-          return markEdgeChanged(createProgrammaticEdge(edge.source, newTask.id, data.sourceOutputPortId || edge.sourceHandle || 'default', 'default'));
-        });
-        nextEdges = [...untouchedEdges, ...rewiredIncoming, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id))];
-        return true;
-      }
+          const rewiredIncoming = incomingEdges.map((edge) => {
+            const data = (edge.data || {}) as { sourceOutputPortId?: string };
+            return markEdgeChanged(createProgrammaticEdge(edge.source, newTask.id, data.sourceOutputPortId || edge.sourceHandle || 'default', getPreferredInputPortId(newTask)));
+          });
+        nextEdges = [...untouchedEdges, ...rewiredIncoming, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id, getPreferredOutputPortId(newTask), getPreferredInputPortId(anchorTask)))];
+          return true;
+        }
 
-      if (mode === 'after') {
-        const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
-        const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
-        const rewiredOutgoing = outgoingEdges.map((edge) => {
-          const data = (edge.data || {}) as { targetInputPortId?: string };
-          return markEdgeChanged(createProgrammaticEdge(newTask.id, edge.target, 'default', data.targetInputPortId || edge.targetHandle || 'default'));
-        });
-        nextEdges = [...untouchedEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id)), ...rewiredOutgoing];
-        return true;
-      }
+        if (mode === 'after') {
+          const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
+          const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
+          const rewiredOutgoing = outgoingEdges.map((edge) => {
+            const data = (edge.data || {}) as { targetInputPortId?: string };
+            return markEdgeChanged(createProgrammaticEdge(newTask.id, edge.target, getPreferredOutputPortId(newTask), data.targetInputPortId || edge.targetHandle || 'default'));
+          });
+        nextEdges = [...untouchedEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id, getPreferredOutputPortId(anchorTask), getPreferredInputPortId(newTask))), ...rewiredOutgoing];
+          return true;
+        }
 
-      nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id))];
-      return true;
-    };
+        nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id, getPreferredOutputPortId(anchorTask), getPreferredInputPortId(newTask)))];
+        return true;
+      };
 
     const deleteTaskAndBridgeEdges = (taskId: string) => {
       const deletedTask = nextTasks.find((task) => task.id === taskId) || null;
@@ -1459,13 +1508,18 @@ function PlaybookCanvasInner() {
           return;
         }
         if (!change.task) return;
-        nextTasks = nextTasks.map((task) => task.id === targetTask.id ? { ...task, title: change.task?.title || task.title, description: change.task?.description || task.description } : task);
+        nextTasks = nextTasks.map((task) => task.id === targetTask.id ? {
+          ...task,
+          title: change.task?.title || task.title,
+          description: change.task?.description || task.description,
+          assignedAgentId: change.task?.agentSlug ? resolveAssignedAgentId(change.task.agentSlug) : task.assignedAgentId,
+        } : task);
         changedNodeIds.add(targetTask.id);
         commitGraph(nextTasks, nextEdges);
         return;
       }
       if (!change.task) return;
-      applyCreate(change.task.title, change.task.description, change.anchorMode, change.targetTaskId, null, null);
+      applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.anchorMode, change.targetTaskId, null, null);
       commitGraph(nextTasks, nextEdges);
       return;
     }
@@ -1480,6 +1534,7 @@ function PlaybookCanvasInner() {
         applyCreate(
           change.task.title,
           change.task.description,
+          change.task.agentSlug,
           change.anchor.mode,
           change.anchor.targetTaskId,
           change.anchor.nodeRef,
@@ -1490,10 +1545,15 @@ function PlaybookCanvasInner() {
         continue;
       }
 
-      if (change.type === 'update_node') {
-        if (nextTasks.some((task) => task.id === change.targetTaskId)) {
-          nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? { ...task, ...change.task } : task);
-          changedNodeIds.add(change.targetTaskId);
+        if (change.type === 'update_node') {
+          if (nextTasks.some((task) => task.id === change.targetTaskId)) {
+            nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? {
+              ...task,
+              ...(change.task.title ? { title: change.task.title } : {}),
+              ...(change.task.description ? { description: change.task.description } : {}),
+              assignedAgentId: change.task.agentSlug ? resolveAssignedAgentId(change.task.agentSlug) : task.assignedAgentId,
+            } : task);
+            changedNodeIds.add(change.targetTaskId);
         }
         continue;
       }
@@ -1504,7 +1564,7 @@ function PlaybookCanvasInner() {
     }
 
     commitGraph(nextTasks, nextEdges);
-  }, [captureSnapshot, createProgrammaticEdge, edges, focusChangedArea, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
+  }, [captureSnapshot, createProgrammaticEdge, defaultAgents, edges, focusChangedArea, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
 
   const canvasNodes = useMemo(() => liveNodes.map((node) => ({
     ...node,

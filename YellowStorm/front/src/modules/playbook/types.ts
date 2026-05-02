@@ -223,6 +223,7 @@ export type PlaybookIntentSuggestionKind = 'single_change' | 'workflow_plan';
 export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
+  agentSlug?: string | null;
 }
 
 export interface PlaybookIntentSingleChangeSuggestion {

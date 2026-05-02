@@ -333,6 +333,7 @@ const Input = memo(function Input({ onSubmit: externalSubmit, onStop, status: ex
     try {
       await useAgentStore.getState().createAgent({
         name: data.name,
+        slug: data.slug,
         agentType: data.agentType,
         role: data.role,
         description: data.description,

@@ -46,6 +46,18 @@ import type { SkillOption } from '../types';
 import { scrollToFirstError } from "@/lib/form-utils";
 import { useModuleTranslation } from "@/modules/localization";
 
+function slugifyAgentName(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
 interface CreateEditAgentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -68,6 +80,7 @@ export function CreateEditAgentDialog({
   const [availableConnectors, setAvailableConnectors] = useState<ConnectorOption[]>([]);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(false);
+  const slugEditedRef = useRef(false);
   const loadedAgentTypeId = useRef<string | null>(null);
   const { t } = useModuleTranslation('agent');
 
@@ -86,6 +99,7 @@ export function CreateEditAgentDialog({
   useEffect(() => {
     if (open) {
       loadedAgentTypeId.current = agent ? agent.agentType.id : null;
+      slugEditedRef.current = false;
       setLoading(true);
 
       Promise.all([
@@ -104,6 +118,7 @@ export function CreateEditAgentDialog({
         if (agent) {
           reset({
             name: agent.name,
+            slug: agent.slug,
             agentType: agent.agentType.id,
             role: agent.role,
             description: agent.description || "",
@@ -145,12 +160,18 @@ export function CreateEditAgentDialog({
   }, [selectedAgentTypeId, availableTools, agentTypes, setValue]);
 
   const temperature = watch("temperature");
+  const watchedName = watch("name");
   const watchedTools = watch("tools");
   const watchedKBs = watch("knowledgeBases");
   const watchedSkills = watch('skills');
   const watchedDisabledSkills = watch('disabledSkills');
   const watchedConnectors = watch('connectors');
   const inheritedSkillIds = agentTypes.find((at) => at.id === selectedAgentTypeId)?.skills || [];
+
+  useEffect(() => {
+    if (slugEditedRef.current) return;
+    setValue('slug', slugifyAgentName(watchedName), { shouldValidate: true });
+  }, [watchedName, setValue]);
 
   useEffect(() => {
     const validDisabledSkills = watchedDisabledSkills.filter((id) => inheritedSkillIds.includes(id));
@@ -188,8 +209,8 @@ export function CreateEditAgentDialog({
                 <TabsTrigger value="behaviour">{t('createEdit.tabs.behaviour')}</TabsTrigger>
                 <TabsTrigger value="knowledge">{t('createEdit.tabs.knowledge')}</TabsTrigger>
                 <TabsTrigger value="tools">{t('createEdit.tabs.tools')}</TabsTrigger>
-                <TabsTrigger value="skills">Skills</TabsTrigger>
-                <TabsTrigger value="connectors">Connectors</TabsTrigger>
+                <TabsTrigger value="skills">{t('createEdit.tabs.skills')}</TabsTrigger>
+                <TabsTrigger value="connectors">{t('createEdit.tabs.connectors')}</TabsTrigger>
                 <TabsTrigger value="evaluation">{t('createEdit.tabs.evaluation')}</TabsTrigger>
               </TabsList>
               <ScrollArea className="flex-1 min-h-0 mt-4">
@@ -207,6 +228,23 @@ export function CreateEditAgentDialog({
                         />
                         {errors.name && (
                           <p className="text-xs text-destructive">{errors.name.message}</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="user-agent-slug">{t('createEdit.fields.slug')}</Label>
+                        <Input
+                          id="user-agent-slug"
+                          placeholder={t('createEdit.fields.slugPlaceholder')}
+                          {...register("slug", {
+                            onChange: () => {
+                              slugEditedRef.current = true;
+                            },
+                          })}
+                        />
+                        <p className="text-xs text-muted-foreground">{t('createEdit.fields.slugHelper')}</p>
+                        {errors.slug && (
+                          <p className="text-xs text-destructive">{errors.slug.message}</p>
                         )}
                       </div>
 
@@ -439,10 +477,10 @@ export function CreateEditAgentDialog({
                 <TabsContent value="connectors" forceMount className="mt-0 data-[state=inactive]:hidden">
                   <div className="grid gap-4">
                     <div className="space-y-2">
-                      <Label>Connectors</Label>
-                      <p className="text-xs text-muted-foreground">
-                        Attach MCP connectors to this agent. They will be available on every playbook step that uses this agent.
-                      </p>
+                        <Label>{t('createEdit.fields.connectors')}</Label>
+                        <p className="text-xs text-muted-foreground">
+                          {t('createEdit.fields.connectorsDescription')}
+                        </p>
                       <MultiSelect
                         options={availableConnectors.map((connector) => ({
                           value: connector.id,
@@ -451,9 +489,9 @@ export function CreateEditAgentDialog({
                         }))}
                         value={watchedConnectors}
                         onValueChange={(val) => setValue('connectors', val)}
-                        placeholder="Select connectors"
-                        searchPlaceholder="Search connectors"
-                        emptyText="No connectors found"
+                        placeholder={t('createEdit.fields.selectConnectors')}
+                        searchPlaceholder={t('createEdit.fields.searchConnectors')}
+                        emptyText={t('createEdit.fields.noConnectorsFound')}
                       />
                     </div>
                   </div>

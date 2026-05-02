@@ -98,10 +98,10 @@ describe('AgentList', () => {
 
   it('renders personal and default agent sections', () => {
     personalAgents = [
-      { id: 'p1', name: 'Personal', agentType: { id: 't1', name: 'Type' }, role: '', description: '', temperature: 0.1, instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], isDefault: false, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '' },
+      { id: 'p1', name: 'Personal', slug: 'personal', agentType: { id: 't1', name: 'Type' }, role: '', description: '', temperature: 0.1, instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], isDefault: false, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '' },
     ];
     defaultAgents = [
-      { id: 'd1', name: 'Default', agentType: { id: 't1', name: 'Type' }, role: '', description: '', temperature: 0.1, instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], isDefault: true, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '' },
+      { id: 'd1', name: 'Default', slug: 'default', agentType: { id: 't1', name: 'Type' }, role: '', description: '', temperature: 0.1, instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], isDefault: true, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '' },
     ];
 
     render(<AgentList />);
@@ -122,7 +122,7 @@ describe('AgentList', () => {
 
   it('confirms deletion through alert dialog', async () => {
     personalAgents = [
-      { id: 'p1', name: 'Personal', agentType: { id: 't1', name: 'Type' }, role: '', description: '', temperature: 0.1, instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], isDefault: false, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '' },
+      { id: 'p1', name: 'Personal', slug: 'personal', agentType: { id: 't1', name: 'Type' }, role: '', description: '', temperature: 0.1, instruction: '', ignorePrePrompt: false, knowledgeBases: [], tools: [], isDefault: false, isDefaultForType: false, isActive: true, createdBy: '', createdAt: '', updatedAt: '' },
     ];
     deleteAgent.mockResolvedValue(undefined);
 
