@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
-import type { PlaybookTask } from '../types';
+import type { PlaybookTask, IntentSuggestionHistoryEntry, PlaybookIntentSuggestion } from '../types';
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string, options?: Record<string, string>) => {
@@ -11,6 +11,20 @@ vi.mock('@/modules/localization', () => ({
     return key;
   } }),
 }));
+
+const defaultProps = {
+  playbookId: 'playbook-1',
+  playbookName: 'Test Playbook',
+  loading: false,
+  value: 'Add a review step',
+  suggestions: [] as PlaybookIntentSuggestion[],
+  error: '',
+  history: [] as IntentSuggestionHistoryEntry[],
+  onValueChange: vi.fn(),
+  onSubmit: vi.fn(),
+  onApplySuggestion: vi.fn(),
+  onRecordHistory: vi.fn(),
+};
 
 describe('PlaybookIntentBar', () => {
   const selectedTask: PlaybookTask = {
@@ -38,14 +52,9 @@ describe('PlaybookIntentBar', () => {
 
     render(
       <PlaybookIntentBar
+        {...defaultProps}
         selectedTask={null}
-        loading={false}
-        value="Add a review step"
-        suggestions={[]}
-        error=""
-        onValueChange={vi.fn()}
         onSubmit={onSubmit}
-        onApplySuggestion={vi.fn()}
       />,
     );
 
@@ -56,9 +65,8 @@ describe('PlaybookIntentBar', () => {
   it('renders a localized fallback label when suggestion label is empty', () => {
     render(
       <PlaybookIntentBar
+        {...defaultProps}
         selectedTask={null}
-        loading={false}
-        value="Add a review step"
         suggestions={[
           {
             id: 'fallback',
@@ -73,10 +81,6 @@ describe('PlaybookIntentBar', () => {
             isDirectIntentFallback: true,
           },
         ]}
-        error=""
-        onValueChange={vi.fn()}
-        onSubmit={vi.fn()}
-        onApplySuggestion={vi.fn()}
       />,
     );
 
@@ -88,8 +92,8 @@ describe('PlaybookIntentBar', () => {
 
     render(
       <PlaybookIntentBar
+        {...defaultProps}
         selectedTask={selectedTask}
-        loading={false}
         value="Improve this step"
         suggestions={[
           {
@@ -105,9 +109,6 @@ describe('PlaybookIntentBar', () => {
             isDirectIntentFallback: false,
           },
         ]}
-        error=""
-        onValueChange={vi.fn()}
-        onSubmit={vi.fn()}
         onApplySuggestion={onApplySuggestion}
       />,
     );
@@ -119,8 +120,8 @@ describe('PlaybookIntentBar', () => {
   it('renders workflow plan impact details', () => {
     render(
       <PlaybookIntentBar
+        {...defaultProps}
         selectedTask={selectedTask}
-        loading={false}
         value="Create a review workflow"
         suggestions={[
           {
@@ -150,14 +151,85 @@ describe('PlaybookIntentBar', () => {
             ],
           },
         ]}
-        error=""
-        onValueChange={vi.fn()}
-        onSubmit={vi.fn()}
-        onApplySuggestion={vi.fn()}
       />,
     );
 
     expect(screen.getByText('intentBar.planBadge')).toBeInTheDocument();
     expect(screen.getByText('Business users get the full review path in one approval.')).toBeInTheDocument();
+  });
+
+  it('shows applied suggestions in the inline history panel with the same card layout', () => {
+    const onApplySuggestion = vi.fn();
+    const onRecordHistory = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={selectedTask}
+        value="Improve this step"
+        suggestions={[
+          {
+            id: 's1',
+            kind: 'single_change',
+            label: 'Add validation step',
+            summary: 'Add a validation checkpoint after this step.',
+            reason: 'Helps confirm output quality.',
+            confidence: 0.8,
+            operationType: 'insert_after',
+            task: { title: 'Validate output', description: 'Review and validate the generated output.' },
+            targetTaskId: 'task-1',
+            isDirectIntentFallback: false,
+          },
+        ]}
+        history={[
+          {
+            id: 'hist-1',
+            suggestion: {
+              id: 's1',
+              kind: 'single_change',
+              label: 'Add validation step',
+              summary: 'Add a validation checkpoint after this step.',
+              reason: 'Helps confirm output quality.',
+              confidence: 0.8,
+              operationType: 'insert_after',
+              task: { title: 'Validate output', description: 'Review and validate the generated output.' },
+              targetTaskId: 'task-1',
+              isDirectIntentFallback: false,
+            },
+            appliedAt: Date.now(),
+            intent: 'Improve this step',
+            playbookId: 'playbook-1',
+            playbookName: 'Test Playbook',
+          },
+        ]}
+        onApplySuggestion={onApplySuggestion}
+        onRecordHistory={onRecordHistory}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('Add validation step'));
+    expect(onApplySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
+    expect(onRecordHistory).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }), 'Improve this step');
+
+    fireEvent.click(screen.getByRole('button', { name: 'intentBar.history.title' }));
+
+    expect(screen.getByText('intentBar.history.title')).toBeInTheDocument();
+    expect(screen.getByText('Add validation step')).toBeInTheDocument();
+    expect(screen.getAllByText('Improve this step').length).toBeGreaterThanOrEqual(2);
+
+    fireEvent.click(screen.getByText('Add validation step'));
+    expect(onApplySuggestion).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows empty state when intent is typed but no suggestions are returned', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        value="Some intent"
+      />,
+    );
+
+    expect(screen.getByText('intentBar.emptyState')).toBeInTheDocument();
   });
 });

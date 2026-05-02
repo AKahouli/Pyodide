@@ -19,11 +19,105 @@ const DEFAULT_PROMPTS: PromptDefaultsEntry[] = [
     title: 'Canvas intent analysis',
     category: 'intent',
     description: 'Prompt for the canvas-level AI intent bar that turns user intent into explicit playbook operations.',
-    systemTemplate: 'You are a workflow design assistant for business users. Return JSON only with a top-level suggestions array. Keep suggestions explicit, business-readable, fast to apply, and safe. Prefer a workflow_plan when the user intent needs multiple steps or affects an existing workflow. Use single_change only for truly small one-step edits. Allowed single_change operationType values: create_node, insert_before, insert_after, update_node, delete_node. A workflow_plan must include kind="workflow_plan", label, summary, reason, confidence, impact, and ordered changes. Allowed workflow_plan change types: create_node, update_node, delete_node. For create_node changes include nodeRef, task { title, description }, and anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs? }. Semantics: after = insert a step in sequence immediately after a parent and before its current downstream; append = add a new downstream child without rewiring existing downstream; append with null targetTaskId and null nodeRef creates a new root step; as_input = connect the new step into an existing downstream step as an additional prerequisite without rewiring other parents; targetTaskIds/nodeRefs are for merge steps that depend on multiple parents. Do not silently mutate the graph; describe business impact and affected existing task ids.',
-    userTemplate: 'Playbook name: {playbook_name}\nPlaybook description: {playbook_description}\n\nUser intent:\n{intent_text}\n\nSelected task id: {selected_task_id}\nSelected task title: {selected_task_title}\nSelected task description:\n{selected_task_description}\n\nSelected task context JSON:\n{selected_task_context}\n\nWorkflow summary JSON:\n{workflow_summary}\n\nWhen no task is selected, suggest a concise workflow_plan when the intent describes a business outcome that needs more than one step. When a task is selected, suggest either an update_node single_change or a workflow_plan that inserts upstream/downstream steps around that selected task. You may create sequential chains and parallel branches. Rules: 1) Use after for true sequence. 2) Use append to add a sibling/parallel branch without breaking an existing chain. 3) If two branches are independent from the start, create separate root nodes with append + null targetTaskId + null nodeRef. 4) If a new task should feed an already existing downstream step, use as_input with that targetTaskId. 5) If a step depends on outputs from multiple earlier steps, use nodeRefs or targetTaskIds arrays on the anchor. 6) Do not describe a branch as parallel if you encoded it as a sequence. Example sequential chain: A root, then B after A, then C after B. Example parallel-with-merge: A root with append null; B root with append null; C after nodeRefs [A,B] so C waits for both. Example adding a missing prerequisite to an existing report step: create Intel research with as_input targetTaskId report-step-id, then update the report step description. Keep suggestions business-readable and focused on quick results. Return JSON like: {"suggestions":[{"kind":"workflow_plan","label":"Expand comparative workflow","summary":"Adds Intel research as a new prerequisite and updates the final report step.","reason":"The requested comparison needs one more source before the existing report step.","confidence":0.82,"impact":{"nodesToCreate":1,"nodesToUpdate":1,"nodesToDelete":0,"edgesToCreate":1,"edgesToDelete":0,"affectedTaskIds":["report-step-id"],"businessOutcome":"Business users get a fuller comparison without rebuilding the workflow."},"changes":[{"type":"create_node","nodeRef":"intel","anchor":{"mode":"as_input","targetTaskId":"report-step-id","nodeRef":null},"task":{"title":"Research Intel Corp context","description":"Collect recent public business and financial context for Intel."}},{"type":"update_node","targetTaskId":"report-step-id","task":{"title":"Generate comparative findings report","description":"Compare the existing sources plus Intel and produce a concise business report."}}]}]}',
+    systemTemplate: `You are a workflow design assistant for business users.
+Return JSON only with a top-level suggestions array.
+Keep suggestions explicit, business-readable, fast to apply, and safe.
+
+Prefer workflow_plan for any intent that needs multiple steps, multiple branches, structural optimization, or changes an existing workflow. Use single_change only for truly small one-step edits.
+
+Allowed single_change operationType values: create_node, insert_before, insert_after, update_node, delete_node.
+
+A workflow_plan must include kind="workflow_plan", label, summary, reason, confidence, impact, and ordered changes.
+Allowed workflow_plan change types: create_node, update_node, delete_node.
+For create_node changes include nodeRef, task { title, description }, and anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs? }.
+
+Graph semantics:
+- after = insert a step in sequence immediately after one parent and before that parent's current downstream steps.
+- append = add a new downstream child without rewiring existing downstream steps.
+- append with targetTaskId:null and nodeRef:null = create a new independent root step.
+- as_input = connect the new step into an existing downstream step as an additional prerequisite without rewiring existing parents.
+- targetTaskIds and nodeRefs arrays = create a merge node that depends on multiple parents.
+
+Parallelization rule: if work can be done independently, encode it as parallel branches, not as a sequence. Independent branches must not be chained with after unless one truly depends on the other.
+You are authorized to alter the existing workflow structure when adding or removing nodes if that creates a more efficient valid DAG. This includes replacing an over-sequential section with parallel branches plus a merge step, inserting new prerequisites with as_input, and deleting or updating obsolete coordination steps.
+Do not silently mutate the graph; every structural change must appear explicitly in changes and describe business impact plus affected existing task ids.`,
+    userTemplate: `Playbook name: {playbook_name}
+Playbook description: {playbook_description}
+
+User intent:
+{intent_text}
+
+Selected task id: {selected_task_id}
+Selected task title: {selected_task_title}
+Selected task description:
+{selected_task_description}
+
+Selected task context JSON:
+{selected_task_context}
+
+Workflow summary JSON:
+{workflow_summary}
+
+Design the smallest useful workflow_plan that satisfies the user intent and improves execution efficiency when possible.
+
+Parallelization guidance:
+- Treat words such as "parallel", "simultaneously", "in parallel", "at the same time", "independently", "compare", "research X and Y", and separators such as "//" as a strong signal to create parallel branches.
+- If the user writes A // B // C, create A, B, and C as sibling branches, not a sequential chain.
+- If A, B, and C do not depend on each other, each branch should be created with anchor { "mode":"append", "targetTaskId": null, "nodeRef": null } when no selected/existing parent is intended.
+- If parallel branches start from the same existing step, create each branch with anchor { "mode":"append", "targetTaskId":"existing-parent-id", "nodeRef": null }. Do not use after for sibling branches from the same parent.
+- If branches must rejoin, create a merge/consolidation/report step with anchor.nodeRefs containing all branch nodeRefs, or anchor.targetTaskIds containing all existing parent ids.
+- For merge nodes, use one create_node change with anchor { "mode":"after", "targetTaskId": null, "nodeRef": null, "targetTaskIds": [], "nodeRefs": ["branch_a", "branch_b"] }.
+
+Existing workflow restructuring:
+- When adding new nodes to an existing workflow, inspect the current Workflow summary JSON and identify steps that can run independently from existing steps.
+- You may alter the existing workflow structure to obtain the most efficient execution DAG, as long as the resulting JSON explicitly encodes all added, updated, or deleted nodes.
+- Prefer converting unnecessary sequences into parallel branches that converge into a merge/consolidation/report step.
+- If an existing downstream step should consume the new parallel branch without losing its current parents, use as_input to connect the new branch to that existing step.
+- If an existing sequence becomes wrong or inefficient after adding/removing nodes, use update_node and delete_node changes to make the workflow coherent.
+- Do not preserve the existing topology just because it already exists; preserve only true data dependencies and business-required ordering.
+
+Anchor rules:
+1. Use after only for true sequence where the new step depends on the parent output.
+2. Use append to add a sibling/parallel branch without breaking an existing chain.
+3. Use append + null targetTaskId + null nodeRef for independent root nodes.
+4. Use as_input when a new task should feed an already existing downstream step.
+5. Use nodeRefs or targetTaskIds arrays for a step that depends on multiple earlier steps.
+6. Never describe branches as parallel if the JSON encodes them as a sequence.
+7. Every nodeRef must be unique, short, stable, and referenced only after its create_node appears earlier in changes.
+8. Existing targetTaskId values must come from Workflow summary JSON; new nodeRef values must come from earlier create_node changes.
+
+Examples:
+
+Sequential chain:
+{"type":"create_node","nodeRef":"collect","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Collect inputs","description":"Gather the required inputs."}}
+{"type":"create_node","nodeRef":"draft","anchor":{"mode":"after","targetTaskId":null,"nodeRef":"collect"},"task":{"title":"Draft report","description":"Draft the report using collected inputs."}}
+
+Parallel roots from // intent:
+{"type":"create_node","nodeRef":"research_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"Collect recent public information about LVMH."}}
+{"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia."}}
+{"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"targetTaskIds":[],"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and produce a concise report."}}
+
+Parallel branches from an existing selected parent:
+{"type":"create_node","nodeRef":"market_analysis","anchor":{"mode":"append","targetTaskId":"selected-task-id","nodeRef":null},"task":{"title":"Analyze market","description":"Analyze market context from the selected step output."}}
+{"type":"create_node","nodeRef":"risk_analysis","anchor":{"mode":"append","targetTaskId":"selected-task-id","nodeRef":null},"task":{"title":"Analyze risks","description":"Analyze risks from the selected step output."}}
+{"type":"create_node","nodeRef":"synthesis","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"targetTaskIds":[],"nodeRefs":["market_analysis","risk_analysis"]},"task":{"title":"Synthesize analysis","description":"Combine market and risk analysis into one recommendation."}}
+
+Restructure existing over-sequential workflow into parallel branches:
+{"type":"update_node","targetTaskId":"existing_collect_step","task":{"description":"Collect shared inputs needed by both market and risk analysis."}}
+{"type":"create_node","nodeRef":"market_analysis","anchor":{"mode":"append","targetTaskId":"existing_collect_step","nodeRef":null},"task":{"title":"Analyze market","description":"Analyze market context independently from risk analysis."}}
+{"type":"create_node","nodeRef":"risk_analysis","anchor":{"mode":"append","targetTaskId":"existing_collect_step","nodeRef":null},"task":{"title":"Analyze risks","description":"Analyze risks independently from market analysis."}}
+{"type":"create_node","nodeRef":"parallel_synthesis","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"targetTaskIds":[],"nodeRefs":["market_analysis","risk_analysis"]},"task":{"title":"Synthesize recommendation","description":"Merge market and risk findings into one recommendation."}}
+{"type":"delete_node","targetTaskId":"obsolete_sequential_analysis_step"}
+
+Adding a missing prerequisite to an existing report step:
+{"type":"create_node","nodeRef":"intel_research","anchor":{"mode":"as_input","targetTaskId":"report-step-id","nodeRef":null},"task":{"title":"Research Intel context","description":"Collect recent public information about Intel for the comparison."}}
+{"type":"update_node","targetTaskId":"report-step-id","task":{"description":"Write the final report comparing LVMH, Veolia, and Intel using all upstream research."}}
+
+Return JSON like:
+{"suggestions":[{"kind":"workflow_plan","label":"Research companies in parallel","summary":"Creates independent research branches and merges them into a comparison report.","reason":"The companies can be researched independently before synthesis.","confidence":0.86,"impact":{"nodesToCreate":3,"nodesToUpdate":0,"nodesToDelete":0,"edgesToCreate":2,"edgesToDelete":0,"affectedTaskIds":[],"businessOutcome":"Users get a faster parallel research workflow with one consolidated output."},"changes":[{"type":"create_node","nodeRef":"research_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"Collect recent public information about LVMH."}},{"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia."}},{"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"targetTaskIds":[],"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and write a concise report."}}]}]}`,
     enabled: true,
     isBuiltIn: true,
-    version: 5,
+    version: 7,
   },
   {
     key: 'playbook.generate',

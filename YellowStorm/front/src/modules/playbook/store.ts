@@ -44,6 +44,8 @@ import type {
   UpsertPlaybookScheduleData,
   ToolBinding,
   RequestPlaybookIntentData,
+  IntentSuggestionHistoryEntry,
+  PlaybookIntentSuggestion,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -67,6 +69,8 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
 
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
+const INTENT_HISTORY_KEY = 'ys_playbook_intent_history';
+const MAX_INTENT_HISTORY_PER_PLAYBOOK = 20;
 const JUDGE_REFRESH_INTERVAL_MS = 1500;
 const JUDGE_REFRESH_MAX_ATTEMPTS = 12;
 
@@ -76,6 +80,33 @@ function persistPanelOpen(open: boolean) {
 
 function persistWorkspaceExplorerOpen(open: boolean) {
   try { localStorage.setItem(WORKSPACE_EXPLORER_KEY, open ? '1' : '0'); } catch { /* noop */ }
+}
+
+function isValidHistoryEntry(entry: unknown): entry is IntentSuggestionHistoryEntry {
+  if (!entry || typeof entry !== 'object') return false;
+  const e = entry as Record<string, unknown>;
+  return typeof e.id === 'string' && !!e.suggestion && typeof e.suggestion === 'object' && typeof e.appliedAt === 'number';
+}
+
+function loadIntentHistory(): Record<string, IntentSuggestionHistoryEntry[]> {
+  try {
+    const raw = localStorage.getItem(INTENT_HISTORY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const result: Record<string, IntentSuggestionHistoryEntry[]> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (Array.isArray(val)) {
+        const valid = val.filter(isValidHistoryEntry);
+        if (valid.length > 0) result[key] = valid;
+      }
+    }
+    return result;
+  } catch { return {}; }
+}
+
+function persistIntentHistory(history: Record<string, IntentSuggestionHistoryEntry[]>) {
+  try { localStorage.setItem(INTENT_HISTORY_KEY, JSON.stringify(history)); } catch { /* noop */ }
 }
 
 function appendEvaluationHistory(
@@ -139,6 +170,7 @@ const initialState: PlaybookState = {
   evaluationBaselinesByTask: {},
   repeatability: null,
   repeatabilityLoading: false,
+  intentSuggestionHistory: loadIntentHistory(),
 };
 
 // ===== Stable empty references =====
@@ -3056,6 +3088,23 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
 
+      addIntentSuggestionHistoryEntry: (playbookId, playbookName, suggestion, intent) => {
+        const { intentSuggestionHistory } = get();
+        const existing = intentSuggestionHistory[playbookId] || [];
+        const entry: IntentSuggestionHistoryEntry = {
+          id: `${Date.now()}-${suggestion.id}-${existing.length}`,
+          suggestion,
+          appliedAt: Date.now(),
+          intent,
+          playbookId,
+          playbookName,
+        };
+        const updated = [entry, ...existing].slice(0, MAX_INTENT_HISTORY_PER_PLAYBOOK);
+        const nextHistory = { ...intentSuggestionHistory, [playbookId]: updated };
+        persistIntentHistory(nextHistory);
+        set({ intentSuggestionHistory: nextHistory });
+      },
+
       // ===== Node Templates =====
 
       fetchNodeTemplates: async () => {
@@ -3215,3 +3264,16 @@ export const useWorkspaceExplorerOpen = () => usePlaybookStore((s) => s.workspac
 
 export const useCanUndo = () => usePlaybookStore((s) => s.undoStack.length > 0);
 export const useCanRedo = () => usePlaybookStore((s) => s.redoStack.length > 0);
+
+export const useIntentSuggestionHistory = (playbookId: string | undefined) =>
+  usePlaybookStore(useShallow((s) => {
+    if (!playbookId) return [];
+    const perPlaybook = s.intentSuggestionHistory[playbookId];
+    if (perPlaybook && perPlaybook.length > 0) return perPlaybook;
+    const all: IntentSuggestionHistoryEntry[] = [];
+    for (const entries of Object.values(s.intentSuggestionHistory)) {
+      for (const entry of entries) all.push(entry);
+    }
+    all.sort((a, b) => b.appliedAt - a.appliedAt);
+    return all.slice(0, MAX_INTENT_HISTORY_PER_PLAYBOOK);
+  }));

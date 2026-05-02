@@ -289,6 +289,15 @@ export interface PlaybookIntentWorkflowPlanSuggestion {
 
 export type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
 
+export interface IntentSuggestionHistoryEntry {
+  id: string;
+  suggestion: PlaybookIntentSuggestion;
+  appliedAt: number;
+  intent: string;
+  playbookId: string;
+  playbookName: string;
+}
+
 export interface RequestPlaybookIntentData {
   intent: string;
   selectedTaskId?: string;
@@ -1235,6 +1244,7 @@ export interface PlaybookState {
   evaluationBaselinesByTask: Record<string, PlaybookEvaluationBaseline | null>;
   repeatability: PlaybookRepeatabilitySummary | null;
   repeatabilityLoading: boolean;
+  intentSuggestionHistory: Record<string, IntentSuggestionHistoryEntry[]>;
 }
 
 export interface PlaybookActions {
@@ -1390,6 +1400,9 @@ export interface PlaybookActions {
   undo: () => void;
   redo: () => void;
   clearUndoHistory: () => void;
+
+  // Intent Suggestion History
+  addIntentSuggestionHistoryEntry: (playbookId: string, playbookName: string, suggestion: PlaybookIntentSuggestion, intent: string) => void;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;

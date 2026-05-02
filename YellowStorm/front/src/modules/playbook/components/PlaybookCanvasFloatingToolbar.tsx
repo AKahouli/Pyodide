@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2 } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -36,6 +36,8 @@ interface Props {
   canDownloadAllResults?: boolean;
   onToggleDesigner?: () => void;
   designerOpen?: boolean;
+  onRemoveAllTasks?: () => void;
+  taskCount?: number;
 }
 
 type Position = { x: number; y: number };
@@ -61,6 +63,8 @@ export function PlaybookCanvasFloatingToolbar({
   canDownloadAllResults = false,
   onToggleDesigner,
   designerOpen = false,
+  onRemoveAllTasks,
+  taskCount = 0,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
@@ -219,6 +223,14 @@ export function PlaybookCanvasFloatingToolbar({
       disabled: false,
       active: designerOpen,
       hidden: !onToggleDesigner,
+    },
+    {
+      key: 'removeAll',
+      label: t('toolbar.removeAllTasks'),
+      icon: Trash2,
+      onClick: onRemoveAllTasks,
+      disabled: taskCount === 0,
+      hidden: !onRemoveAllTasks,
     },
   ];
 

@@ -51,6 +51,7 @@ import {
   useSelectedStep,
   useCanUndo,
   useCanRedo,
+  useIntentSuggestionHistory,
 } from '../store';
 import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
@@ -257,6 +258,8 @@ function PlaybookCanvasInner() {
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
+  const addIntentSuggestionHistoryEntry = usePlaybookStore((s) => s.addIntentSuggestionHistoryEntry);
+  const intentHistory = useIntentSuggestionHistory(id);
   const [intentValue, setIntentValue] = useState('');
   const [intentSuggestions, setIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
@@ -1136,7 +1139,14 @@ function PlaybookCanvasInner() {
       setIntentSuggestions([]);
     };
 
-    const selectedTask = playbook.tasks.find((task) => task.id === selectedStepId) || null;
+    const selectedTask = selectedStepId
+      ? playbook.tasks.find((task) => task.id === selectedStepId) || null
+      : null;
+
+    if (selectedStepId && !selectedTask) {
+      selectStep(null);
+    }
+
     const singleChanges = suggestion.kind === 'single_change'
       ? [{
           type: suggestion.operationType === 'insert_before' || suggestion.operationType === 'insert_after' ? 'create_node' as const : suggestion.operationType,
@@ -1154,17 +1164,25 @@ function PlaybookCanvasInner() {
     let nextEdges = [...edges];
     const createdNodeRefs = new Map<string, string>();
 
+    const resolveTaskReference = (reference: string | null | undefined) => {
+      if (!reference) return null;
+      if (nextTasks.some((task) => task.id === reference)) {
+        return reference;
+      }
+      return createdNodeRefs.get(reference) || null;
+    };
+
     const resolveAnchorTask = (targetTaskId: string | null, nodeRef: string | null) => {
-      const resolvedId = targetTaskId || (nodeRef ? createdNodeRefs.get(nodeRef) || null : null);
+      const resolvedId = resolveTaskReference(targetTaskId) || resolveTaskReference(nodeRef);
       return resolvedId ? nextTasks.find((task) => task.id === resolvedId) || null : null;
     };
 
     const resolveAnchorTaskIds = (targetTaskId: string | null, nodeRef: string | null, targetTaskIds?: string[], nodeRefs?: string[]) => {
       const resolvedIds = [
-        ...(targetTaskId ? [targetTaskId] : []),
-        ...(nodeRef && createdNodeRefs.get(nodeRef) ? [createdNodeRefs.get(nodeRef) as string] : []),
-        ...((targetTaskIds || []).filter(Boolean)),
-        ...((nodeRefs || []).map((ref) => createdNodeRefs.get(ref) || '').filter(Boolean)),
+        ...(resolveTaskReference(targetTaskId) ? [resolveTaskReference(targetTaskId) as string] : []),
+        ...(resolveTaskReference(nodeRef) ? [resolveTaskReference(nodeRef) as string] : []),
+        ...((targetTaskIds || []).map((ref) => resolveTaskReference(ref)).filter((ref): ref is string => Boolean(ref))),
+        ...((nodeRefs || []).map((ref) => resolveTaskReference(ref)).filter((ref): ref is string => Boolean(ref))),
       ];
 
       return [...new Set(resolvedIds)].filter((id) => nextTasks.some((task) => task.id === id));
@@ -1185,7 +1203,12 @@ function PlaybookCanvasInner() {
       const anchorTasks = anchorTaskIds.map((id) => nextTasks.find((task) => task.id === id)).filter((task): task is PlaybookTask => Boolean(task));
       const anchorTask = hasExplicitAnchors ? (anchorTasks[0] || null) : null;
       if (hasExplicitAnchors && anchorTasks.length === 0) {
-        return false;
+        const newTask = createIntentTask(taskTitle, taskDescription, null, nextTasks.length);
+        nextTasks = [...nextTasks, newTask];
+        if (newNodeRef) {
+          createdNodeRefs.set(newNodeRef, newTask.id);
+        }
+        return true;
       }
 
       const newTask = createIntentTask(taskTitle, taskDescription, anchorTask, nextTasks.length);
@@ -1261,22 +1284,26 @@ function PlaybookCanvasInner() {
       const change = singleChanges[0];
       const targetTask = change.targetTaskId ? nextTasks.find((task) => task.id === change.targetTaskId) || null : selectedTask;
       if (change.type === 'delete_node') {
-        if (!targetTask) return;
+        if (!targetTask) {
+          commitGraph(nextTasks, nextEdges);
+          return;
+        }
         deleteTaskAndBridgeEdges(targetTask.id);
         commitGraph(nextTasks, nextEdges);
         return;
       }
       if (change.type === 'update_node') {
-        if (!targetTask || !change.task) return;
+        if (!targetTask) {
+          commitGraph(nextTasks, nextEdges);
+          return;
+        }
+        if (!change.task) return;
         nextTasks = nextTasks.map((task) => task.id === targetTask.id ? { ...task, title: change.task?.title || task.title, description: change.task?.description || task.description } : task);
         commitGraph(nextTasks, nextEdges);
         return;
       }
       if (!change.task) return;
-      if (!applyCreate(change.task.title, change.task.description, change.anchorMode, change.targetTaskId, null, null)) {
-        showError(t('intentBar.invalidPlan'));
-        return;
-      }
+      applyCreate(change.task.title, change.task.description, change.anchorMode, change.targetTaskId, null, null);
       commitGraph(nextTasks, nextEdges);
       return;
     }
@@ -1288,7 +1315,7 @@ function PlaybookCanvasInner() {
 
     for (const change of orderedChanges) {
       if (change.type === 'create_node') {
-        if (!applyCreate(
+        applyCreate(
           change.task.title,
           change.task.description,
           change.anchor.mode,
@@ -1297,31 +1324,24 @@ function PlaybookCanvasInner() {
           change.nodeRef,
           change.anchor.targetTaskIds,
           change.anchor.nodeRefs,
-        )) {
-          showError(t('intentBar.invalidPlan'));
-          return;
-        }
+        );
         continue;
       }
 
       if (change.type === 'update_node') {
-        if (!nextTasks.some((task) => task.id === change.targetTaskId)) {
-          showError(t('intentBar.invalidPlan'));
-          return;
+        if (nextTasks.some((task) => task.id === change.targetTaskId)) {
+          nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? { ...task, ...change.task } : task);
         }
-        nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? { ...task, ...change.task } : task);
         continue;
       }
 
-      if (!nextTasks.some((task) => task.id === change.targetTaskId)) {
-        showError(t('intentBar.invalidPlan'));
-        return;
+      if (nextTasks.some((task) => task.id === change.targetTaskId)) {
+        deleteTaskAndBridgeEdges(change.targetTaskId);
       }
-      deleteTaskAndBridgeEdges(change.targetTaskId);
     }
 
     commitGraph(nextTasks, nextEdges);
-  }, [captureSnapshot, createProgrammaticEdge, edges, playbook, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
+  }, [captureSnapshot, createProgrammaticEdge, edges, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
 
   const canvasNodes = liveNodes;
 
@@ -1430,6 +1450,17 @@ function PlaybookCanvasInner() {
     setNodes(tasksToNodes(layoutedTasks));
     updateTasks(layoutedTasks);
   }, [playbook, updateTasks, setNodes, captureSnapshot]);
+
+  const handleRemoveAllTasks = useCallback(() => {
+    if (!playbook || playbook.tasks.length === 0) return;
+    if (!window.confirm(t('toolbar.confirmRemoveAllTitle') + '\n' + t('toolbar.confirmRemoveAllDescription'))) return;
+    captureSnapshot();
+    const includeTrigger = playbook.automatedTriggerType === 'mail';
+    setNodes(includeTrigger ? [tasksToNodes([], true)[0]] : []);
+    setEdges([]);
+    updateTasks([]);
+    updateEdges([]);
+  }, [playbook, updateTasks, updateEdges, setNodes, setEdges, captureSnapshot, t]);
 
   const handleToggleCopilot = useCallback(() => {
     const newOpen = !designerOpen;
@@ -1723,14 +1754,22 @@ function PlaybookCanvasInner() {
                   <Controls />
                 </Canvas>
                 <PlaybookIntentBar
+                  playbookId={playbook?.id || ''}
+                  playbookName={playbook?.name || ''}
                   selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}
                   loading={intentLoading}
                   value={intentValue}
                   suggestions={intentSuggestions}
                   error={intentError}
+                  history={intentHistory}
                   onValueChange={setIntentValue}
                   onSubmit={() => void handleSubmitIntent()}
                   onApplySuggestion={handleApplyIntentSuggestion}
+                  onRecordHistory={(suggestion, intent) => {
+                    if (playbook) {
+                      addIntentSuggestionHistoryEntry(playbook.id, playbook.name, suggestion, intent);
+                    }
+                  }}
                 />
                 <PlaybookCanvasFloatingToolbar
                   containerRef={canvasChromeRef}
@@ -1750,6 +1789,8 @@ function PlaybookCanvasInner() {
                   canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
                   onToggleDesigner={handleToggleCopilot}
                   designerOpen={designerOpen}
+                  onRemoveAllTasks={handleRemoveAllTasks}
+                  taskCount={playbook.tasks.length}
                 />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>
