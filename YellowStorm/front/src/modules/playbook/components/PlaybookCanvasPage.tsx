@@ -262,6 +262,7 @@ function PlaybookCanvasInner() {
   const intentHistory = useIntentSuggestionHistory(id);
   const [intentValue, setIntentValue] = useState('');
   const [intentSuggestions, setIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
+  const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
 
@@ -1388,7 +1389,9 @@ function PlaybookCanvasInner() {
         intent: normalizedIntent,
         selectedTaskId: resolvedSelectedTaskId,
       });
-      setIntentSuggestions(result.suggestions || []);
+      const newSuggestions = result.suggestions || [];
+      setIntentSuggestions(newSuggestions);
+      setLastIntentSuggestions(newSuggestions);
     } catch (error) {
       setIntentSuggestions([]);
       setIntentError(error instanceof Error ? error.message : t('intentBar.error'));
@@ -1473,6 +1476,22 @@ function PlaybookCanvasInner() {
 
   const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
+
+  const handleIntentBarClick = useCallback(() => {
+    setWorkspaceExplorerOpen(false);
+    setConnectorSidebarOpen(false);
+    setExecutionPanelOpen(false);
+    setExecutionPanelCollapsed(true);
+    if (intentSuggestions.length === 0 && lastIntentSuggestions.length > 0) {
+      setIntentSuggestions(lastIntentSuggestions);
+    }
+  }, [
+    intentSuggestions.length,
+    lastIntentSuggestions,
+    setConnectorSidebarOpen,
+    setExecutionPanelOpen,
+    setWorkspaceExplorerOpen,
+  ]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
@@ -1754,8 +1773,6 @@ function PlaybookCanvasInner() {
                   <Controls />
                 </Canvas>
                 <PlaybookIntentBar
-                  playbookId={playbook?.id || ''}
-                  playbookName={playbook?.name || ''}
                   selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}
                   loading={intentLoading}
                   value={intentValue}
@@ -1770,6 +1787,7 @@ function PlaybookCanvasInner() {
                       addIntentSuggestionHistoryEntry(playbook.id, playbook.name, suggestion, intent);
                     }
                   }}
+                  onBarClick={handleIntentBarClick}
                 />
                 <PlaybookCanvasFloatingToolbar
                   containerRef={canvasChromeRef}

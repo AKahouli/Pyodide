@@ -13,8 +13,6 @@ vi.mock('@/modules/localization', () => ({
 }));
 
 const defaultProps = {
-  playbookId: 'playbook-1',
-  playbookName: 'Test Playbook',
   loading: false,
   value: 'Add a review step',
   suggestions: [] as PlaybookIntentSuggestion[],
@@ -87,7 +85,7 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getByText('intentBar.fallbackLabel')).toBeInTheDocument();
   });
 
-  it('applies a suggestion when a suggestion card is clicked', () => {
+  it('applies a suggestion when the apply button is clicked', () => {
     const onApplySuggestion = vi.fn();
 
     render(
@@ -113,11 +111,11 @@ describe('PlaybookIntentBar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('Add validation step'));
+    fireEvent.click(screen.getByText('intentBar.actions.apply'));
     expect(onApplySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
   });
 
-  it('renders workflow plan impact details', () => {
+  it('renders workflow plan badges while hiding business outcome by default', () => {
     render(
       <PlaybookIntentBar
         {...defaultProps}
@@ -155,7 +153,84 @@ describe('PlaybookIntentBar', () => {
     );
 
     expect(screen.getByText('intentBar.planBadge')).toBeInTheDocument();
+    expect(screen.queryByText('Business users get the full review path in one approval.')).not.toBeInTheDocument();
+  });
+
+  it('renders reason and business outcome only after show more is clicked', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={selectedTask}
+        suggestions={[
+          {
+            id: 'plan-1',
+            kind: 'workflow_plan',
+            label: 'Create review workflow',
+            summary: 'This summary is intentionally long enough to trigger the show more action in the suggestion card layout for the test.',
+            reason: 'Hidden reason until expanded.',
+            confidence: 0.9,
+            isDirectIntentFallback: false,
+            impact: {
+              nodesToCreate: 2,
+              nodesToUpdate: 1,
+              nodesToDelete: 0,
+              edgesToCreate: 2,
+              edgesToDelete: 0,
+              affectedTaskIds: ['task-1'],
+              businessOutcome: 'Business users get the full review path in one approval.',
+            },
+            changes: [],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText('Hidden reason until expanded.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Business users get the full review path in one approval.')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('intentBar.showMore'));
+    expect(screen.getByText('Hidden reason until expanded.')).toBeInTheDocument();
     expect(screen.getByText('Business users get the full review path in one approval.')).toBeInTheDocument();
+  });
+
+  it('restores suggestions when the textarea gets focus', () => {
+    const onBarClick = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={selectedTask}
+        onBarClick={onBarClick}
+      />,
+    );
+
+    fireEvent.focus(screen.getByPlaceholderText('Improve or extend "Analyze contract"'));
+    expect(onBarClick).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes accessible header controls and calls onBarClick on title click but not on drag', () => {
+    const onBarClick = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={selectedTask}
+        onBarClick={onBarClick}
+      />,
+    );
+
+    const headerTrigger = screen.getByRole('button', { name: 'intentBar.title' });
+    const collapseTrigger = screen.getByRole('button', { name: 'intentBar.actions.collapse' });
+    const dragHandle = screen.getByTestId('intent-bar-drag-handle');
+
+    expect(collapseTrigger).toBeInTheDocument();
+
+    fireEvent.click(headerTrigger);
+    expect(onBarClick).toHaveBeenCalledTimes(1);
+
+    fireEvent.pointerDown(dragHandle, { button: 0, pointerId: 2, clientX: 100, clientY: 100 });
+    fireEvent.pointerMove(dragHandle, { pointerId: 2, clientX: 130, clientY: 125 });
+    fireEvent.pointerUp(dragHandle, { pointerId: 2, clientX: 130, clientY: 125 });
+    expect(onBarClick).toHaveBeenCalledTimes(1);
   });
 
   it('shows applied suggestions in the inline history panel with the same card layout', () => {
@@ -207,7 +282,7 @@ describe('PlaybookIntentBar', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('Add validation step'));
+    fireEvent.click(screen.getByText('intentBar.actions.apply'));
     expect(onApplySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
     expect(onRecordHistory).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }), 'Improve this step');
 
