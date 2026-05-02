@@ -1046,7 +1046,7 @@ def build_task_prompt(
     )
 
     lines = [
-        f"Task: {task_config.get('title', '')}\n\nDescription:\n{task_config.get('description', '')}",
+        f"Task Description:\n{task_config.get('description', '')}",
     ]
 
     if prompt_context.get("resolved_inputs"):

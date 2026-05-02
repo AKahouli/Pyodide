@@ -18,7 +18,9 @@ const defaultProps = {
   suggestions: [] as PlaybookIntentSuggestion[],
   error: '',
   history: [] as IntentSuggestionHistoryEntry[],
+  autoApply: true,
   onValueChange: vi.fn(),
+  onAutoApplyChange: vi.fn(),
   onSubmit: vi.fn(),
   onApplySuggestion: vi.fn(),
   onRecordHistory: vi.fn(),
@@ -58,6 +60,17 @@ describe('PlaybookIntentBar', () => {
 
     fireEvent.click(screen.getByText('intentBar.actions.suggest'));
     expect(onSubmit).toHaveBeenCalled();
+  });
+
+  it('renders auto-apply enabled by default', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+      />,
+    );
+
+    expect(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' })).toHaveAttribute('data-state', 'checked');
   });
 
   it('renders a localized fallback label when suggestion label is empty', () => {

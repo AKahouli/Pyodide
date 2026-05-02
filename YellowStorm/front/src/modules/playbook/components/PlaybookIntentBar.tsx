@@ -3,6 +3,7 @@ import { ChevronDown, Clock, GripVertical, Loader2, Sparkles } from 'lucide-reac
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
@@ -14,7 +15,9 @@ interface Props {
   suggestions: PlaybookIntentSuggestion[];
   error: string;
   history: IntentSuggestionHistoryEntry[];
+  autoApply: boolean;
   onValueChange: (value: string) => void;
+  onAutoApplyChange: (value: boolean) => void;
   onSubmit: () => void;
   onApplySuggestion: (suggestion: PlaybookIntentSuggestion) => void;
   onRecordHistory: (suggestion: PlaybookIntentSuggestion, intent: string) => void;
@@ -34,7 +37,9 @@ export function PlaybookIntentBar({
   suggestions,
   error,
   history,
+  autoApply,
   onValueChange,
+  onAutoApplyChange,
   onSubmit,
   onApplySuggestion,
   onRecordHistory,
@@ -257,10 +262,15 @@ export function PlaybookIntentBar({
                 rows={2}
                 className="min-h-[52px] max-h-44 resize-y"
               />
-              <div className="flex items-center justify-end gap-2">
-                <Button
-                  type="button"
-                  variant={historyOpen ? 'secondary' : 'outline'}
+                <div className="flex items-center justify-between gap-2">
+                  <label htmlFor="intent-bar-auto-apply" className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Switch id="intent-bar-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
+                    <span>{t('intentBar.actions.autoApply')}</span>
+                  </label>
+                  <div className="flex items-center justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant={historyOpen ? 'secondary' : 'outline'}
                   size="icon"
                   disabled={history.length === 0}
                   title={t('intentBar.history.title')}
@@ -270,11 +280,12 @@ export function PlaybookIntentBar({
                 >
                   <Clock className="h-4 w-4" />
                 </Button>
-                <Button type="button" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
-                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                  {t('intentBar.actions.suggest')}
-                </Button>
-              </div>
+                  <Button type="button" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
+                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {t('intentBar.actions.suggest')}
+                  </Button>
+                  </div>
+                </div>
             </div>
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -282,7 +293,7 @@ export function PlaybookIntentBar({
             {showHistory ? (
               <div className="flex min-h-0 flex-1 flex-col space-y-1.5">
                 <p className="px-1 text-xs font-medium text-muted-foreground">{t('intentBar.history.title')}</p>
-                <div className="min-h-0 flex-1 overflow-y-auto pr-3">
+                <div className="min-h-0 max-h-[20rem] flex-1 overflow-y-auto pr-3">
                   <div className="space-y-2">
                     {history.map((entry) => (
                       <button

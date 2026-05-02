@@ -1893,6 +1893,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
             skipStepExecution,
           });
           await get().fetchExecution(playbookId, executionId);
+          const exec = get().executionCache[executionId];
+          if (exec && !isActiveExecutionStatus(exec.status)) {
+            set((state) => ({
+              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
+            }));
+          }
         } catch (err) {
           if (!skipStepExecution) {
             set((state) => ({

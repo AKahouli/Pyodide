@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, BarChart3, Loader2, Share2, Copy, PanelRightOpen } from 'lucide-react';
-import { ReactFlowProvider, useReactFlow, type Edge } from '@xyflow/react';
+import { ReactFlowProvider, useReactFlow, getNodesBounds, type Edge } from '@xyflow/react';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import '@xyflow/react/dist/style.css';
 
@@ -57,7 +57,7 @@ import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
-import { usePlaybookCanvas, tasksToNodes } from '../hooks/usePlaybookCanvas';
+import { usePlaybookCanvas, tasksToNodes, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
@@ -75,7 +75,7 @@ import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability } from '../api';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -85,6 +85,9 @@ import { showError } from '@/lib/notifications';
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
 }
+
+const AUTO_APPLY_MIN_CONFIDENCE = 0.75;
+const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
 
 // Edge colors per step status
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
@@ -205,12 +208,52 @@ function PlaybookCanvasInner() {
   const repeatability = usePlaybookStore((s) => s.repeatability);
   const repeatabilityLoading = usePlaybookStore((s) => s.repeatabilityLoading);
   const fetchRepeatability = usePlaybookStore((s) => s.fetchRepeatability);
+  const clearPlaybookTriggerMail = usePlaybookStore((s) => s.clearPlaybookTriggerMail);
+  const upsertPlaybookTriggerMail = usePlaybookStore((s) => s.upsertPlaybookTriggerMail);
   const { refreshUsage } = useUsage();
 
   const isGeneratingRoute = id === 'generating';
 
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
+
+  const handleToggleTriggerEnabled = useCallback(
+    async (playbookId: string, currentlyEnabled: boolean) => {
+      const mailTrigger = playbook?.triggers.find((tr) => tr.type === 'mail') as
+        | (PlaybookTrigger & { type: 'mail' })
+        | undefined;
+      if (!mailTrigger?.config) return;
+      await upsertPlaybookTriggerMail(playbookId, {
+        enabled: !currentlyEnabled,
+        mailboxAppKey: mailTrigger.config.mailboxAppKey ?? undefined,
+        autoRenewUntil: mailTrigger.config.autoRenewUntil,
+        attachmentImportEnabled: mailTrigger.config.attachmentImportEnabled,
+        allowedAttachmentExtensions: mailTrigger.config.allowedAttachmentExtensions,
+        filters: {
+          from: mailTrigger.config.filters.from,
+          subjectContains: mailTrigger.config.filters.subjectContains,
+          bodyContains: mailTrigger.config.filters.bodyContains,
+          hasAttachments: mailTrigger.config.filters.hasAttachments,
+        },
+      });
+    },
+    [playbook?.triggers, upsertPlaybookTriggerMail],
+  );
+
+  const triggerNodeActions: TriggerNodeActions = useMemo(
+    () => ({
+      onDelete: async (playbookId: string) => {
+        await clearPlaybookTriggerMail(playbookId);
+      },
+      onToggleEnabled: async (playbookId: string, currentlyEnabled: boolean) => {
+        await handleToggleTriggerEnabled(playbookId, currentlyEnabled);
+      },
+      onEdit: () => {
+        setTriggersSheetOpen(true);
+      },
+    }),
+    [clearPlaybookTriggerMail, handleToggleTriggerEnabled],
+  );
 
   const {
     nodes,
@@ -224,7 +267,7 @@ function PlaybookCanvasInner() {
     updateNodeData,
     setNodes,
     setEdges,
-  } = usePlaybookCanvas();
+  } = usePlaybookCanvas(triggerNodeActions);
 
   const { saveNow } = useAutosave();
 
@@ -265,6 +308,11 @@ function PlaybookCanvasInner() {
   const [lastIntentSuggestions, setLastIntentSuggestions] = useState<PlaybookIntentSuggestion[]>([]);
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
+  const [intentAutoApply, setIntentAutoApply] = useState(true);
+  const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
+  const [recentlyChangedEdgeIds, setRecentlyChangedEdgeIds] = useState<string[]>([]);
+  const [highlightDismissArmed, setHighlightDismissArmed] = useState(false);
+  const highlightTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (id && !isGeneratingRoute) {
@@ -450,8 +498,26 @@ function PlaybookCanvasInner() {
   }, [executionTaskResults]);
 
   // Overlay step statuses onto nodes.
+  const TRIGGER_NODE_ID = '__trigger__';
+  const mailTrigger = playbook?.triggers.find((tr) => tr.type === 'mail');
+
   const liveNodes = useMemo(() => {
     return nodes.map((node) => {
+      if (node.id === TRIGGER_NODE_ID) {
+        const nextSelected = node.id === selectedStepId;
+        const triggerData = {
+          ...(node.data as Record<string, unknown>),
+          triggerActions: triggerNodeActions,
+          playbookId: playbook?.id,
+          enabled: mailTrigger?.enabled !== false,
+        };
+        return {
+          ...node,
+          selected: nextSelected,
+          data: triggerData,
+        };
+      }
+
       const status = stepStatusMap.get(node.id);
       const semanticMatch = stepSemanticMatchMap.get(node.id);
       const judgeStatus = stepJudgeStatusMap.get(node.id);
@@ -481,20 +547,35 @@ function PlaybookCanvasInner() {
         data: nextData,
       };
     });
-  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap]);
+  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
   // Style edges based on source node status
   const liveEdges = useMemo(() => {
-    if (stepStatusMap.size === 0) return edges;
+    if (stepStatusMap.size === 0 && recentlyChangedEdgeIds.length === 0) return edges;
     return edges.map((edge): Edge => {
       const sourceStatus = stepStatusMap.get(edge.source) ?? 'pending';
       const style = EDGE_STYLES[sourceStatus] || EDGE_STYLES.pending;
-      if (!hasEdgeStyleChanged(edge, style)) {
+      const isRecent = recentlyChangedEdgeIds.includes(edge.id);
+      const nextStyle = isRecent
+        ? {
+            ...style,
+            strokeDasharray: '10 6',
+            animation: 'ys-edge-build 1.4s ease-out 1',
+          }
+        : style;
+      if (!hasEdgeStyleChanged(edge, nextStyle) && (edge.data as Record<string, unknown> | undefined)?.isRecentlyChanged === isRecent) {
         return edge;
       }
-      return { ...edge, style };
+      return {
+        ...edge,
+        style: nextStyle,
+        data: {
+          ...(edge.data || {}),
+          isRecentlyChanged: isRecent,
+        },
+      };
     });
-  }, [edges, stepStatusMap]);
+  }, [edges, recentlyChangedEdgeIds, stepStatusMap]);
 
   const handleAddStep = useCallback(() => {
     const taskId = crypto.randomUUID();
@@ -741,7 +822,7 @@ function PlaybookCanvasInner() {
       }
 
       try {
-        if (targetExecution && (requiresExistingExecution || canReuseExecutionForTask(targetExecution, task))) {
+        if (targetExecution) {
           await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
           return;
         }
@@ -1061,12 +1142,16 @@ function PlaybookCanvasInner() {
 
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
+      if (node.id === '__trigger__') {
+        setTriggersSheetOpen(true);
+        return;
+      }
       const taskFromPlaybook = playbook?.tasks.find((t) => t.id === node.id) ?? null;
       setEditingTask(taskFromPlaybook || node.data);
       setEditorOpen(true);
       setDesignerOpen(false);
     },
-    [playbook?.tasks, setDesignerOpen],
+    [playbook?.tasks, setDesignerOpen, setTriggersSheetOpen],
   );
 
   const handleNodeSave = useCallback(
@@ -1089,6 +1174,57 @@ function PlaybookCanvasInner() {
       isTypeMatch: undefined,
     },
   }), []);
+
+  const clearChangeFeedback = useCallback(() => {
+    setRecentlyChangedNodeIds([]);
+    setRecentlyChangedEdgeIds([]);
+    setHighlightDismissArmed(false);
+  }, []);
+
+  const scheduleChangeFeedbackCleanup = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+    highlightTimeoutRef.current = window.setTimeout(() => {
+      setHighlightDismissArmed(true);
+    }, CHANGE_HIGHLIGHT_DURATION_MS);
+  }, []);
+
+  const focusChangedArea = useCallback((layoutedTasks: PlaybookTask[], changedNodeIds: string[], fallbackBounds?: { x: number; y: number; width: number; height: number } | null) => {
+    const changedNodes = layoutedTasks.filter((task) => changedNodeIds.includes(task.id)).map((task) => ({
+      id: task.id,
+      position: { x: task.positionX, y: task.positionY },
+      width: 280,
+      height: 180,
+    }));
+
+    const bounds = changedNodes.length > 0
+      ? getNodesBounds(changedNodes as Parameters<typeof getNodesBounds>[0])
+      : fallbackBounds;
+
+    if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+      return;
+    }
+
+    if (changedNodes.length > 0) {
+      void reactFlow.fitView({
+        nodes: changedNodes.map((node) => ({ id: node.id })),
+        padding: 0.35,
+        duration: 700,
+        maxZoom: 1.35,
+      });
+    } else {
+      void reactFlow.setCenter(bounds.x + (bounds.width / 2), bounds.y + (bounds.height / 2), {
+        zoom: 1.1,
+        duration: 700,
+      });
+    }
+
+    scheduleChangeFeedbackCleanup();
+  }, [reactFlow, scheduleChangeFeedbackCleanup]);
 
   const handleApplyIntentSuggestion = useCallback((suggestion: PlaybookIntentSuggestion) => {
     if (!playbook) return;
@@ -1130,6 +1266,14 @@ function PlaybookCanvasInner() {
       outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
     });
 
+    const changedNodeIds = new Set<string>();
+    const changedEdgeIds = new Set<string>();
+
+    const markEdgeChanged = (edge: Edge) => {
+      changedEdgeIds.add(edge.id);
+      return edge;
+    };
+
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[]) => {
       const layoutedTasks = autoLayoutTasks(nextTasks, toPlaybookEdges(nextEdges));
       captureSnapshot();
@@ -1138,6 +1282,10 @@ function PlaybookCanvasInner() {
       updateTasks(layoutedTasks);
       updateEdges(toPlaybookEdges(nextEdges));
       setIntentSuggestions([]);
+      const changedIds = layoutedTasks.filter((task) => changedNodeIds.has(task.id)).map((task) => task.id);
+      setRecentlyChangedNodeIds(changedIds);
+      setRecentlyChangedEdgeIds(Array.from(changedEdgeIds));
+      focusChangedArea(layoutedTasks, changedIds, deletedBounds);
     };
 
     const selectedTask = selectedStepId
@@ -1164,6 +1312,7 @@ function PlaybookCanvasInner() {
     let nextTasks = [...playbook.tasks];
     let nextEdges = [...edges];
     const createdNodeRefs = new Map<string, string>();
+    let deletedBounds: { x: number; y: number; width: number; height: number } | null = null;
 
     const resolveTaskReference = (reference: string | null | undefined) => {
       if (!reference) return null;
@@ -1206,6 +1355,7 @@ function PlaybookCanvasInner() {
       if (hasExplicitAnchors && anchorTasks.length === 0) {
         const newTask = createIntentTask(taskTitle, taskDescription, null, nextTasks.length);
         nextTasks = [...nextTasks, newTask];
+        changedNodeIds.add(newTask.id);
         if (newNodeRef) {
           createdNodeRefs.set(newNodeRef, newTask.id);
         }
@@ -1214,6 +1364,7 @@ function PlaybookCanvasInner() {
 
       const newTask = createIntentTask(taskTitle, taskDescription, anchorTask, nextTasks.length);
       nextTasks = [...nextTasks, newTask];
+      changedNodeIds.add(newTask.id);
       if (newNodeRef) {
         createdNodeRefs.set(newNodeRef, newTask.id);
       }
@@ -1225,13 +1376,13 @@ function PlaybookCanvasInner() {
       if (anchorTasks.length > 1) {
         nextEdges = [
           ...nextEdges,
-          ...anchorTasks.map((task) => createProgrammaticEdge(task.id, newTask.id)),
+          ...anchorTasks.map((task) => markEdgeChanged(createProgrammaticEdge(task.id, newTask.id))),
         ];
         return true;
       }
 
       if (mode === 'as_input') {
-        nextEdges = [...nextEdges, createProgrammaticEdge(newTask.id, anchorTask.id)];
+        nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id))];
         return true;
       }
 
@@ -1240,9 +1391,9 @@ function PlaybookCanvasInner() {
         const untouchedEdges = nextEdges.filter((edge) => edge.target !== anchorTask.id);
         const rewiredIncoming = incomingEdges.map((edge) => {
           const data = (edge.data || {}) as { sourceOutputPortId?: string };
-          return createProgrammaticEdge(edge.source, newTask.id, data.sourceOutputPortId || edge.sourceHandle || 'default', 'default');
+          return markEdgeChanged(createProgrammaticEdge(edge.source, newTask.id, data.sourceOutputPortId || edge.sourceHandle || 'default', 'default'));
         });
-        nextEdges = [...untouchedEdges, ...rewiredIncoming, createProgrammaticEdge(newTask.id, anchorTask.id)];
+        nextEdges = [...untouchedEdges, ...rewiredIncoming, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id))];
         return true;
       }
 
@@ -1251,29 +1402,38 @@ function PlaybookCanvasInner() {
         const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
         const rewiredOutgoing = outgoingEdges.map((edge) => {
           const data = (edge.data || {}) as { targetInputPortId?: string };
-          return createProgrammaticEdge(newTask.id, edge.target, 'default', data.targetInputPortId || edge.targetHandle || 'default');
+          return markEdgeChanged(createProgrammaticEdge(newTask.id, edge.target, 'default', data.targetInputPortId || edge.targetHandle || 'default'));
         });
-        nextEdges = [...untouchedEdges, createProgrammaticEdge(anchorTask.id, newTask.id), ...rewiredOutgoing];
+        nextEdges = [...untouchedEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id)), ...rewiredOutgoing];
         return true;
       }
 
-      nextEdges = [...nextEdges, createProgrammaticEdge(anchorTask.id, newTask.id)];
+      nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id))];
       return true;
     };
 
     const deleteTaskAndBridgeEdges = (taskId: string) => {
+      const deletedTask = nextTasks.find((task) => task.id === taskId) || null;
+      if (deletedTask) {
+        deletedBounds = {
+          x: deletedTask.positionX,
+          y: deletedTask.positionY,
+          width: 280,
+          height: 180,
+        };
+      }
       const incomingEdges = nextEdges.filter((edge) => edge.target === taskId);
       const outgoingEdges = nextEdges.filter((edge) => edge.source === taskId);
       const untouchedEdges = nextEdges.filter((edge) => edge.source !== taskId && edge.target !== taskId);
       const bridgedEdges = incomingEdges.flatMap((incomingEdge) => outgoingEdges.map((outgoingEdge) => {
         const incomingData = (incomingEdge.data || {}) as { sourceOutputPortId?: string };
         const outgoingData = (outgoingEdge.data || {}) as { targetInputPortId?: string };
-        return createProgrammaticEdge(
+        return markEdgeChanged(createProgrammaticEdge(
           incomingEdge.source,
           outgoingEdge.target,
           incomingData.sourceOutputPortId || incomingEdge.sourceHandle || 'default',
           outgoingData.targetInputPortId || outgoingEdge.targetHandle || 'default',
-        );
+        ));
       })).filter((edge) => edge.source !== edge.target);
       const edgeById = new Map<string, Edge>();
       [...untouchedEdges, ...bridgedEdges].forEach((edge) => edgeById.set(edge.id, edge));
@@ -1300,6 +1460,7 @@ function PlaybookCanvasInner() {
         }
         if (!change.task) return;
         nextTasks = nextTasks.map((task) => task.id === targetTask.id ? { ...task, title: change.task?.title || task.title, description: change.task?.description || task.description } : task);
+        changedNodeIds.add(targetTask.id);
         commitGraph(nextTasks, nextEdges);
         return;
       }
@@ -1332,6 +1493,7 @@ function PlaybookCanvasInner() {
       if (change.type === 'update_node') {
         if (nextTasks.some((task) => task.id === change.targetTaskId)) {
           nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? { ...task, ...change.task } : task);
+          changedNodeIds.add(change.targetTaskId);
         }
         continue;
       }
@@ -1342,9 +1504,15 @@ function PlaybookCanvasInner() {
     }
 
     commitGraph(nextTasks, nextEdges);
-  }, [captureSnapshot, createProgrammaticEdge, edges, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
+  }, [captureSnapshot, createProgrammaticEdge, edges, focusChangedArea, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
 
-  const canvasNodes = liveNodes;
+  const canvasNodes = useMemo(() => liveNodes.map((node) => ({
+    ...node,
+    data: {
+      ...(node.data as PlaybookNodeData),
+      isRecentlyChanged: recentlyChangedNodeIds.includes(node.id),
+    },
+  })), [liveNodes, recentlyChangedNodeIds]);
 
   const handleRun = useCallback(async () => {
     if (!id || !playbook) return;
@@ -1390,15 +1558,39 @@ function PlaybookCanvasInner() {
         selectedTaskId: resolvedSelectedTaskId,
       });
       const newSuggestions = result.suggestions || [];
-      setIntentSuggestions(newSuggestions);
       setLastIntentSuggestions(newSuggestions);
+      const topSuggestion = newSuggestions.reduce<PlaybookIntentSuggestion | null>((best, suggestion) => {
+        if (suggestion.isDirectIntentFallback) {
+          return best;
+        }
+        if (!best || suggestion.confidence > best.confidence) {
+          return suggestion;
+        }
+        return best;
+      }, null);
+      if (intentAutoApply && topSuggestion && topSuggestion.confidence >= AUTO_APPLY_MIN_CONFIDENCE) {
+        handleApplyIntentSuggestion(topSuggestion);
+        setIntentSuggestions([]);
+      } else {
+        setIntentSuggestions(newSuggestions);
+      }
     } catch (error) {
       setIntentSuggestions([]);
+      setLastIntentSuggestions([]);
       setIntentError(error instanceof Error ? error.message : t('intentBar.error'));
     } finally {
       setIntentLoading(false);
     }
-  }, [id, intentValue, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
+  }, [handleApplyIntentSuggestion, id, intentAutoApply, intentValue, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
+
+  useEffect(() => () => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (highlightTimeoutRef.current) {
+      window.clearTimeout(highlightTimeoutRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (!playbook) return;
@@ -1495,8 +1687,6 @@ function PlaybookCanvasInner() {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
-      selectStep(node.id);
-
       const executionForSelection =
         currentExecution?.playbookId === id
           ? currentExecution
@@ -1506,9 +1696,12 @@ function PlaybookCanvasInner() {
         setExecutionPanelCollapsed(false);
         setExecutionPanelOpen(true);
         viewExecutionInPanel(executionForSelection.id);
+        selectStep(node.id);
         setPageMode('run');
         return;
       }
+
+      selectStep(node.id);
 
       if (pageMode === 'design') {
         return;
@@ -1743,7 +1936,15 @@ function PlaybookCanvasInner() {
 
         {/* Canvas + Execution split */}
         <div className="relative flex flex-1 min-h-0 overflow-hidden" key={isExecutionPanelVisible ? `${pageMode}-split` : `${pageMode}-full`}>
-          <div ref={canvasChromeRef} className="relative flex-1 min-w-0 overflow-hidden">
+          <div
+            ref={canvasChromeRef}
+            className="relative flex-1 min-w-0 overflow-hidden"
+            onMouseMove={() => {
+              if (highlightDismissArmed) {
+                clearChangeFeedback();
+              }
+            }}
+          >
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
               <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
                 <Canvas
@@ -1757,6 +1958,11 @@ function PlaybookCanvasInner() {
                   onNodeDoubleClick={handleNodeDoubleClick}
                   onEdgeDoubleClick={handleEdgeDoubleClick}
                   onPaneClick={() => { if (editorOpen) setEditorOpen(false); }}
+                  onPaneMouseMove={() => {
+                    if (highlightDismissArmed) {
+                      clearChangeFeedback();
+                    }
+                  }}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
                   connectionLineComponent={Connection}
@@ -1779,7 +1985,9 @@ function PlaybookCanvasInner() {
                   suggestions={intentSuggestions}
                   error={intentError}
                   history={intentHistory}
+                  autoApply={intentAutoApply}
                   onValueChange={setIntentValue}
+                  onAutoApplyChange={setIntentAutoApply}
                   onSubmit={() => void handleSubmitIntent()}
                   onApplySuggestion={handleApplyIntentSuggestion}
                   onRecordHistory={(suggestion, intent) => {
@@ -1842,8 +2050,8 @@ function PlaybookCanvasInner() {
                   setExecutionPanelCollapsed(false);
                   setExecutionPanelOpen(true);
                 }}
-                title="Open execution sidebar"
-                aria-label="Open execution sidebar"
+                title={t('execution.openSidebar')}
+                aria-label={t('execution.openSidebar')}
               >
                 <PanelRightOpen className="h-4 w-4" />
               </Button>

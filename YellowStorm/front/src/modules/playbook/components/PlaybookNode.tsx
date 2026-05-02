@@ -317,10 +317,14 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
   const isSelected = selected || selectedStepId === id;
+  const isRecentlyChanged = data.isRecentlyChanged === true;
   const selectedClass = isSelected
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
+  const recentlyChangedClass = isRecentlyChanged
+    ? 'ring-2 ring-primary/70 shadow-[0_0_12px_2px_rgba(59,130,246,0.15)] animate-[ys-node-flash_1.6s_ease-in-out_infinite]'
+    : '';
   const replayBadgeLabel = currentTask?.activeReplayLabel
     ? currentTask.activeReplayVersion
       ? t('baselineBadge.versionedLabel', { label: currentTask.activeReplayLabel, version: currentTask.activeReplayVersion })
@@ -471,10 +475,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <Node
           handles={false}
           className={cn(
-            'group transition-all duration-300',
+            'group',
             ringClass,
             selectedClass,
             disabledClass,
+            recentlyChangedClass,
             isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
             isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
             isDragOver && dragOverPortId && dragPortCompatible === false && 'ring-2 ring-red-400/50 ring-inset bg-red-50/20',

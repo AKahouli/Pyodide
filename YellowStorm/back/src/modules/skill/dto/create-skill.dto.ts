@@ -31,7 +31,7 @@ export class SkillFileDto {
   @ApiPropertyOptional({ description: 'Inline text content for the file' })
   @IsOptional()
   @IsString()
-  @MaxLength(200000)
+  @MaxLength(500000)
   content?: string;
 }
 

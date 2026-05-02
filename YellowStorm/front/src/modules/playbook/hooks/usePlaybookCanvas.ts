@@ -129,7 +129,13 @@ function deferStoreUpdate(fn: () => void) {
   setTimeout(fn, 0);
 }
 
-export function usePlaybookCanvas() {
+export interface TriggerNodeActions {
+  onDelete: (playbookId: string) => Promise<void>;
+  onToggleEnabled: (playbookId: string, enabled: boolean) => Promise<void>;
+  onEdit: () => void;
+}
+
+export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const playbook = useCurrentPlaybook();
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
@@ -211,34 +217,41 @@ export function usePlaybookCanvas() {
   // Store sync happens in onNodeDragStop.
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
-      const selectedNodeChange = changes.find((change) => change.type === 'select' && 'selected' in change);
-      if (selectedNodeChange && selectedNodeChange.id !== TRIGGER_NODE_ID) {
-        selectStep(selectedNodeChange.selected ? selectedNodeChange.id : null);
+      const selectChanges = changes.filter((change) => change.type === 'select' && 'selected' in change);
+      if (selectChanges.length > 0) {
+        const selectTrue = selectChanges.find((c) => c.selected === true);
+        selectStep(selectTrue ? selectTrue.id : null);
       }
 
       const removes = changes.filter((c) => c.type === 'remove');
       if (removes.length > 0) {
-        const removedIds = new Set(removes.map((r) => r.id).filter((id) => id !== TRIGGER_NODE_ID));
-        if (removedIds.size > 0) {
+        const triggerRemoved = removes.some((r) => r.id === TRIGGER_NODE_ID);
+        const removedIds = new Set(removes.map((r) => r.id));
+        if (triggerRemoved && playbook?.id && triggerActions) {
+          void triggerActions.onDelete(playbook.id);
+        }
+        const taskRemovedIds = new Set(removedIds);
+        if (triggerRemoved) taskRemovedIds.delete(TRIGGER_NODE_ID);
+        if (taskRemovedIds.size > 0) {
           captureSnapshot();
           setNodes((nds) => {
-            const updated = nds.filter((n) => !removedIds.has(n.id));
+            const updated = nds.filter((n) => !taskRemovedIds.has(n.id));
             deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
             return updated;
           });
           setEdges((eds) => {
             const updated = eds.filter(
-              (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
+              (e) => !taskRemovedIds.has(e.source) && !taskRemovedIds.has(e.target),
             );
             deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
             return updated;
           });
-          const nonRemoveChanges = changes.filter((c) => c.type !== 'remove');
-          if (nonRemoveChanges.length > 0) {
-            setNodes((nds) => applyNodeChanges(nonRemoveChanges, nds));
-          }
-          return;
         }
+        const nonRemoveChanges = changes.filter((c) => c.type !== 'remove');
+        if (nonRemoveChanges.length > 0) {
+          setNodes((nds) => applyNodeChanges(nonRemoveChanges, nds));
+        }
+        return;
       }
 
       setNodes((nds) => applyNodeChanges(changes, nds));
@@ -337,7 +350,11 @@ export function usePlaybookCanvas() {
 
   const removeNode = useCallback(
     (nodeId: string) => {
-      if (nodeId === TRIGGER_NODE_ID) return;
+      if (nodeId === TRIGGER_NODE_ID) {
+        if (!playbook?.id || !triggerActions) return;
+        void triggerActions.onDelete(playbook.id);
+        return;
+      }
       captureSnapshot();
       setNodes((nds) => {
         const updated = nds.filter((n) => n.id !== nodeId);
@@ -352,7 +369,7 @@ export function usePlaybookCanvas() {
         return updated;
       });
     },
-    [updateTasks, updateEdges, captureSnapshot],
+    [updateTasks, updateEdges, captureSnapshot, playbook?.id, triggerActions],
   );
 
   const updateNodeData = useCallback(
@@ -381,5 +398,6 @@ export function usePlaybookCanvas() {
     updateNodeData,
     setNodes,
     setEdges,
+    triggerActions: playbook?.id ? triggerActions : undefined,
   };
 }

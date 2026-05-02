@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -16,7 +16,7 @@ import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
-import { showError } from '@/lib/notifications';
+import { showError, showSuccess } from '@/lib/notifications';
 import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
@@ -128,7 +128,7 @@ function ArtifactListItem({
 import type { MessageComponent } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
-import { downloadStepResultHtml, downloadStepResultPdf } from '../utils/renderStepResultHtml';
+import { downloadStepResultHtml, downloadStepResultPdf, renderStepResultHtml } from '../utils/renderStepResultHtml';
 
 interface EvaluationArtifactPayload {
   type: 'playbook_evaluation_result';
@@ -387,6 +387,7 @@ export function ExecutionStepDetail({
   const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
   const [missingAdvisorTaskIds, setMissingAdvisorTaskIds] = useState<string[]>([]);
   const [runningAdvisorPreflight, setRunningAdvisorPreflight] = useState(false);
+  const [copiedToClipboard, setCopiedToClipboard] = useState(false);
   const executionSnapshotTask = useMemo(() => {
     const snapshot = execution?.playbookSnapshot as { tasks?: Array<Record<string, unknown>> } | null;
     const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
@@ -635,6 +636,49 @@ export function ExecutionStepDetail({
   const handleDownloadPdf = useCallback(() => {
     if (step) downloadStepResultPdf(step);
   }, [step]);
+
+  const handleCopyToClipboard = useCallback(async () => {
+    if (!step) return;
+    try {
+      const html = renderStepResultHtml(step)
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<pre[^>]*>[\s\S]*?<\/pre>/gi, '');
+      const plainText = html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      if (navigator.clipboard?.write) {
+        const htmlBlob = new Blob([html], { type: 'text/html' });
+        const textBlob = new Blob([plainText], { type: 'text/plain' });
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': htmlBlob,
+            'text/plain': textBlob,
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(plainText);
+      }
+
+      setCopiedToClipboard(true);
+      showSuccess(t('detail.actions.copiedToClipboard'));
+      window.setTimeout(() => setCopiedToClipboard(false), 2000);
+    } catch {
+      showError(t('detail.actions.copyToClipboardFailed'));
+    }
+  }, [step, t]);
 
   const handleApplyJudgeUpdate = useCallback(async () => {
     if (!execution || !currentPlaybook) return;
@@ -1031,6 +1075,10 @@ export function ExecutionStepDetail({
                       <Download className="mr-2 h-4 w-4" />
                       {t('detail.actions.downloadPdf')}
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void handleCopyToClipboard()}>
+                      <ClipboardCopy className="mr-2 h-4 w-4" />
+                      {t('detail.actions.copyToClipboard')}
+                    </DropdownMenuItem>
                   </>
                 )}
                 {execution && (
@@ -1082,6 +1130,10 @@ export function ExecutionStepDetail({
                 <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
                   <Download className="mr-1 h-4 w-4" />
                   {t('detail.actions.downloadPdf')}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
+                  {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
+                  {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
                 </Button>
               </div>
             )}

@@ -19,7 +19,7 @@ export class SkillFile {
   @Prop({ default: '', maxlength: 255 })
   mimeType!: string;
 
-  @Prop({ default: '', maxlength: 200000 })
+  @Prop({ default: '', maxlength: 500000 })
   content!: string;
 }
 
