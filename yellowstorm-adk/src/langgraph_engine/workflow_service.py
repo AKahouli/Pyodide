@@ -111,6 +111,29 @@ def _build_resume_state_update(
     return None
 
 
+def _validate_resume_interrupt(
+    interrupt_data: Optional[Dict[str, Any]],
+    *,
+    task_id: str = "",
+    interrupt_id: str = "",
+) -> None:
+    if not interrupt_data:
+        raise ValueError("No active interrupt found for this workflow thread.")
+
+    active_task_id = str(interrupt_data.get("task_id") or "").strip()
+    if task_id and active_task_id and active_task_id != str(task_id).strip():
+        raise ValueError(
+            f"Interrupt task mismatch: expected '{task_id}' but active interrupt belongs to '{active_task_id}'."
+        )
+
+    expected_interrupt_id = str(interrupt_id or "").strip()
+    active_interrupt_id = str(interrupt_data.get("interrupt_id") or "").strip()
+    if expected_interrupt_id and active_interrupt_id != expected_interrupt_id:
+        raise ValueError(
+            f"Interrupt mismatch: expected '{expected_interrupt_id}' but active interrupt is '{active_interrupt_id}'."
+        )
+
+
 def _citation_source_from_component(
     component: Dict[str, Any],
 ) -> Optional[Dict[str, Any]]:
@@ -511,17 +534,64 @@ async def run_playbook(
         remove_queue(thread_id)
 
 
+async def _get_or_rebuild_thread_graph(
+    *,
+    playbook_id: str,
+    thread_id: str,
+    tasks: Optional[List[TaskConfig]],
+    edges: Optional[List[EdgeConfig]],
+):
+    graph = get_thread_graph(thread_id)
+    if graph is not None:
+        return graph
+
+    rebuilt_tasks = list(tasks or [])
+    rebuilt_edges = list(edges or [])
+    if not rebuilt_tasks:
+        return None
+
+    validate_port_routing(rebuilt_tasks, rebuilt_edges)
+    checkpointer = await get_checkpointer()
+    on_step_update = _make_step_callback_for_thread(thread_id)
+    graph_info = get_or_create_graph(
+        playbook_id=playbook_id,
+        tasks=rebuilt_tasks,
+        edges=rebuilt_edges,
+        checkpointer=checkpointer,
+        on_step_update=on_step_update,
+        force_rebuild=True,
+    )
+    compiled = graph_info["compiled"]
+    store_thread_graph(thread_id, compiled)
+    logger.info(
+        "[resume_playbook] Rebuilt graph from persisted playbook snapshot",
+        playbook_id=playbook_id,
+        thread_id=thread_id,
+        task_count=len(rebuilt_tasks),
+        edge_count=len(rebuilt_edges),
+    )
+    return compiled
+
+
 async def resume_playbook(
     playbook_id: str,
     thread_id: str,
     human_response: dict,
     task_id: str = "",
     queue: Optional[asyncio.Queue] = None,
+    tasks: Optional[List[TaskConfig]] = None,
+    edges: Optional[List[EdgeConfig]] = None,
+    interrupt_id: str = "",
 ) -> Dict[str, Any]:
     """Resume an interrupted playbook with the human response."""
     from langgraph.types import Command
 
-    graph = get_thread_graph(thread_id)
+    graph = await _get_or_rebuild_thread_graph(
+        playbook_id=playbook_id,
+        thread_id=thread_id,
+        tasks=tasks,
+        edges=edges,
+    )
     if graph is None:
         logger.warning(
             "[resume_playbook] Graph not found for thread, attempting recovery",
@@ -549,6 +619,11 @@ async def resume_playbook(
         state_snapshot = await graph.aget_state(config)
         resume_interrupt_data = _extract_interrupt_from_snapshot(
             state_snapshot, thread_id
+        )
+        _validate_resume_interrupt(
+            resume_interrupt_data,
+            task_id=task_id,
+            interrupt_id=interrupt_id,
         )
         resume_state_update = _build_resume_state_update(resume_interrupt_data)
         interrupt_data, result = await _consume_graph_stream(
@@ -592,6 +667,24 @@ async def resume_playbook(
             "interrupt": None,
             "thread_id": thread_id,
             "error": result.get("error"),
+        }
+
+        await _send_sentinel(queue)
+        return response
+    except ValueError as e:
+        error_str = str(e)
+        logger.warning(
+            "[resume_playbook] Resume validation failed",
+            thread_id=thread_id,
+            error=error_str,
+        )
+
+        response = {
+            "status": "failed",
+            "task_results": [],
+            "interrupt": None,
+            "thread_id": thread_id,
+            "error": error_str,
         }
 
         await _send_sentinel(queue)

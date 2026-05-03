@@ -454,6 +454,62 @@ describe('playbook store', () => {
     expect(state.selectedStepId).toBe('task-1');
     expect(state.executingPlaybookIds).not.toContain('p1');
     expect(state.executionCache.e1.taskResults[0].components?.[0].type).toBe('humanFeedback');
+    expect(state.executionCache.e1.waitingForHumanInput).toBe(true);
+    expect(state.executionCache.e1.currentInterruptId).toBeNull();
+    expect(state.executionCache.e1.currentInterruptTaskId).toBe('task-1');
+    expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({ taskId: 'task-1', status: 'pending' });
+  });
+
+  it('resumes execution with interrupt id and clears waiting state optimistically', async () => {
+    apiMock.resumePlaybook.mockResolvedValueOnce({ status: 'resumed' });
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      hitlHistory: [{
+        interruptId: 'interrupt-1', taskId: 'task-1', type: 'clarification', taskTitle: 'Task 1', message: 'Need input', taskDescription: '', result: '', round: 1, payloadJson: '', resumableActions: ['reply'], status: 'pending', responseAction: null, responseMessage: null, responseApproved: null, responseReason: null, responseFeedback: null, respondedBy: null, respondedAt: null, createdAt: '2025-01-01T00:00:00.000Z',
+      }],
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        components: [{ type: 'humanFeedback', data: { status: 'pending', interruptId: 'interrupt-1' } }],
+      }],
+    });
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution }, executingPlaybookIds: [] });
+
+    await usePlaybookStore.getState().resumeExecution('p1', {
+      executionId: 'e1',
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Here you go',
+    });
+
+    expect(apiMock.resumePlaybook).toHaveBeenCalledWith('p1', expect.objectContaining({
+      executionId: 'e1',
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Here you go',
+    }));
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.status).toBe('running');
+    expect(updated.interruptPayload).toBeNull();
+    expect(updated.waitingForHumanInput).toBe(false);
+    expect(updated.currentInterruptId).toBeNull();
+    expect(updated.currentInterruptTaskId).toBeNull();
+    expect(updated.hitlHistory?.[0]).toMatchObject({ status: 'answered', responseAction: 'reply', responseMessage: 'Here you go' });
   });
 
   // ===== Execution Panel =====

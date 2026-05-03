@@ -85,6 +85,129 @@ async def test_resume_playbook_does_not_reinject_clarification_state(monkeypatch
     }
 
 
+@pytest.mark.asyncio
+async def test_resume_playbook_rebuilds_graph_when_cache_is_missing(monkeypatch) -> None:
+    captured = {}
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return object()
+
+    async def fake_send_sentinel(_queue) -> None:
+        return None
+
+    async def fake_consume_graph_stream(*, graph, graph_input, config, thread_id):
+        captured["graph"] = graph
+        captured["graph_input"] = graph_input
+        captured["config"] = config
+        captured["thread_id"] = thread_id
+        return None, {"status": "completed", "tasks": []}
+
+    async def fake_get_checkpointer():
+        return object()
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.get_thread_graph",
+        lambda _thread_id: None,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.get_checkpointer",
+        fake_get_checkpointer,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.get_or_create_graph",
+        lambda **_kwargs: {"compiled": FakeGraph()},
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.store_thread_graph",
+        lambda _thread_id, _graph: captured.setdefault("stored", True),
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",
+        lambda _snapshot, _thread_id: {
+            "type": "approval_request",
+            "task_id": "step_1",
+            "interrupt_id": "interrupt-1",
+        },
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        fake_consume_graph_stream,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._send_sentinel",
+        fake_send_sentinel,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.remove_queue",
+        lambda _thread_id: None,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        lambda _thread_id: None,
+    )
+
+    response = await resume_playbook(
+        playbook_id="pb-1",
+        thread_id="th-1",
+        human_response={"action": "approve"},
+        task_id="step_1",
+        interrupt_id="interrupt-1",
+        tasks=[{"id": "step_1", "title": "Step 1", "execution_order": 1}],
+        edges=[],
+    )
+
+    assert response["status"] == "completed"
+    assert captured["thread_id"] == "th-1"
+    assert captured["stored"] is True
+
+
+@pytest.mark.asyncio
+async def test_resume_playbook_rejects_stale_interrupt_id(monkeypatch) -> None:
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return object()
+
+    async def fake_send_sentinel(_queue) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.get_thread_graph",
+        lambda _thread_id: FakeGraph(),
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",
+        lambda _snapshot, _thread_id: {
+            "type": "approval_request",
+            "task_id": "step_1",
+            "interrupt_id": "interrupt-2",
+        },
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._send_sentinel",
+        fake_send_sentinel,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.remove_queue",
+        lambda _thread_id: None,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        lambda _thread_id: None,
+    )
+
+    response = await resume_playbook(
+        playbook_id="pb-1",
+        thread_id="th-1",
+        human_response={"action": "approve"},
+        task_id="step_1",
+        interrupt_id="interrupt-1",
+    )
+
+    assert response["status"] == "failed"
+    assert "Interrupt mismatch" in response["error"]
+
+
 def _citation_component(reference: str, source: str, content: str, parent_id: str = ""):
     return {
         "type": "citation",

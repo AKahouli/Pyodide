@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2 } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -19,11 +19,14 @@ interface Props {
   hasExecutionContext?: boolean;
   hasPendingInterrupt?: boolean;
   onRun: () => void;
+  onStop?: () => void;
   onSave: () => void;
   onViewExecutions: () => void;
   isDirty: boolean;
   isSaving: boolean;
   isExecuting: boolean;
+  hasActiveExecution?: boolean;
+  isStopping?: boolean;
   canRun: boolean;
   nodeReflectionEnabled: boolean;
   onNodeReflectionChange: (enabled: boolean) => void;
@@ -42,11 +45,14 @@ export function PlaybookToolbar({
   hasExecutionContext = false,
   hasPendingInterrupt = false,
   onRun,
+  onStop,
   onSave,
   onViewExecutions,
   isDirty,
   isSaving,
   isExecuting,
+  hasActiveExecution = false,
+  isStopping = false,
   canRun,
   nodeReflectionEnabled,
   onNodeReflectionChange,
@@ -176,14 +182,21 @@ export function PlaybookToolbar({
           {isSaving ? t('toolbar.saving') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
         </span>
       </Button>
-      <Button size="sm" onClick={onRun} disabled={!canRun || isExecuting} className="px-2 sm:px-3">
-        {isExecuting ? (
-          <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
-        ) : (
+      {isExecuting || hasActiveExecution ? (
+        <Button variant="destructive" size="sm" onClick={onStop} disabled={isStopping || !onStop} className="px-2 sm:px-3">
+          {isStopping ? (
+            <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
+          ) : (
+            <Square className="h-4 w-4 sm:mr-1" />
+          )}
+          <span className="hidden sm:inline">{isStopping ? t('toolbar.stopping') : t('toolbar.stop')}</span>
+        </Button>
+      ) : (
+        <Button size="sm" onClick={onRun} disabled={!canRun} className="px-2 sm:px-3">
           <Play className="h-4 w-4 sm:mr-1" />
-        )}
-        <span className="hidden sm:inline">{isExecuting ? t('toolbar.starting') : t('toolbar.run')}</span>
-      </Button>
+          <span className="hidden sm:inline">{t('toolbar.run')}</span>
+        </Button>
+      )}
     </div>
   );
 }

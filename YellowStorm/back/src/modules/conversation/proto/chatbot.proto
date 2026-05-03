@@ -552,6 +552,9 @@ message ResumePlaybookWorkflowRequest {
     string thread_id = 4;
     HumanResponse human_response = 5;
     string task_id = 6;
+    string interrupt_id = 7;
+    repeated PlaybookTaskConfig tasks = 8;
+    repeated PlaybookEdgeConfig edges = 9;
 }
 
 message RunStepRequest {

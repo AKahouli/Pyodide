@@ -81,9 +81,23 @@ describe('PlaybookToolbar', () => {
     expect(saveButton).toBeDisabled();
   });
 
-  it('shows starting label when executing', () => {
-    render(<PlaybookToolbar {...defaultProps} isExecuting={true} />);
-    expect(screen.getByText('toolbar.starting')).toBeInTheDocument();
+  it('shows stop button when executing', () => {
+    const onStop = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} isExecuting={true} onStop={onStop} />);
+    expect(screen.getByText('toolbar.stop')).toBeInTheDocument();
+  });
+
+  it('calls onStop when stop button is clicked', async () => {
+    const onStop = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} isExecuting={true} onStop={onStop} />);
+    await userEvent.click(screen.getByText('toolbar.stop'));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
+  it('shows stopping label when stopping', () => {
+    const onStop = vi.fn();
+    render(<PlaybookToolbar {...defaultProps} isExecuting={true} isStopping={true} onStop={onStop} />);
+    expect(screen.getByText('toolbar.stopping')).toBeInTheDocument();
   });
 
   it('calls onViewExecutions when executions button is clicked', async () => {

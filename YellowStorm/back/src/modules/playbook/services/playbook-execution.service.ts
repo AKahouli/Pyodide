@@ -608,6 +608,90 @@ export class PlaybookExecutionService {
     return dto.message?.trim() || dto.feedback?.trim() || dto.reason?.trim() || '';
   }
 
+  private buildInterruptPayload(interrupt: any, threadId = ''): Record<string, unknown> | null {
+    if (!interrupt) {
+      return null;
+    }
+
+    return {
+      type: interrupt.type || 'unknown',
+      taskId: interrupt.task_id || '',
+      taskTitle: interrupt.task_title || '',
+      message: interrupt.message || '',
+      threadId: threadId || interrupt.thread_id || '',
+      interruptId: interrupt.interrupt_id || '',
+      round: interrupt.round || 0,
+      payloadJson: interrupt.conversation_json || '',
+      resumableActions: interrupt.resumable_actions || [],
+      taskDescription: interrupt.task_description || '',
+      result: interrupt.result || '',
+    };
+  }
+
+  private buildHitlHistoryEntry(interrupt: any): Record<string, unknown> | null {
+    if (!interrupt) {
+      return null;
+    }
+
+    return {
+      interruptId: interrupt.interrupt_id || '',
+      taskId: interrupt.task_id || '',
+      type: interrupt.type || 'unknown',
+      taskTitle: interrupt.task_title || '',
+      message: interrupt.message || '',
+      taskDescription: interrupt.task_description || '',
+      result: interrupt.result || '',
+      round: interrupt.round || 0,
+      payloadJson: interrupt.conversation_json || '',
+      resumableActions: interrupt.resumable_actions || [],
+      status: 'pending',
+      responseAction: null,
+      responseMessage: null,
+      responseApproved: null,
+      responseReason: null,
+      responseFeedback: null,
+      respondedBy: null,
+      respondedAt: null,
+      createdAt: new Date(),
+    };
+  }
+
+  private async recordPendingInterrupt(executionId: string, interrupt: any, threadId = ''): Promise<void> {
+    const interruptPayload = this.buildInterruptPayload(interrupt, threadId);
+    const hitlHistoryEntry = this.buildHitlHistoryEntry(interrupt);
+
+    await this.executionModel.findByIdAndUpdate(executionId, {
+      $set: {
+        status: ExecutionStatus.INTERRUPTED,
+        threadId: threadId || interrupt?.thread_id || null,
+        interruptPayload,
+        waitingForHumanInput: true,
+        currentInterruptId: (interruptPayload?.interruptId as string) || null,
+        currentInterruptTaskId: (interruptPayload?.taskId as string) || null,
+      },
+      ...(hitlHistoryEntry
+        ? {
+            $push: {
+              hitlHistory: hitlHistoryEntry,
+            },
+          }
+        : {}),
+    });
+  }
+
+  private async clearPendingInterruptState(executionId: string, attemptNumber: number): Promise<void> {
+    await this.executionModel.findByIdAndUpdate(executionId, {
+      $set: {
+        status: ExecutionStatus.RUNNING,
+        interruptPayload: null,
+        waitingForHumanInput: false,
+        currentInterruptId: null,
+        currentInterruptTaskId: null,
+        currentAttemptNumber: attemptNumber,
+      },
+    });
+  }
+
   private async trySetExecutionTerminalState(
     executionId: string,
     status: ExecutionStatus,
@@ -667,6 +751,9 @@ export class PlaybookExecutionService {
         completedAt: null,
         threadId: null,
         interruptPayload: null,
+        waitingForHumanInput: false,
+        currentInterruptId: null,
+        currentInterruptTaskId: null,
         singleStepTaskId: taskId,
         currentAttemptNumber: attemptNumber,
       },
@@ -1125,6 +1212,10 @@ export class PlaybookExecutionService {
       taskResults,
       threadId: null,
       interruptPayload: null,
+      waitingForHumanInput: false,
+      currentInterruptId: null,
+      currentInterruptTaskId: null,
+      hitlHistory: [],
       error: null,
       durationMs: null,
       startedAt: new Date(),
@@ -2038,27 +2129,7 @@ export class PlaybookExecutionService {
     }
 
     const firstInterrupt = interrupts[0]?.interrupt;
-    await this.executionModel.findByIdAndUpdate(executionId, {
-      $set: {
-        status: ExecutionStatus.INTERRUPTED,
-        threadId: threadId || null,
-        interruptPayload: firstInterrupt
-          ? {
-              type: firstInterrupt.type,
-              taskId: firstInterrupt.task_id,
-              taskTitle: firstInterrupt.task_title,
-              message: firstInterrupt.message,
-              threadId: firstInterrupt.thread_id,
-              interruptId: firstInterrupt.interrupt_id || '',
-              round: firstInterrupt.round || 0,
-              payloadJson: firstInterrupt.conversation_json || '',
-              resumableActions: firstInterrupt.resumable_actions || [],
-              taskDescription: firstInterrupt.task_description || '',
-              result: firstInterrupt.result || '',
-            }
-          : null,
-      },
-    });
+    await this.recordPendingInterrupt(executionId, firstInterrupt, threadId || firstInterrupt?.thread_id || '');
   }
 
   /**
@@ -2513,22 +2584,11 @@ export class PlaybookExecutionService {
           threadId: response.thread_id,
         });
 
-        await this.executionModel.findByIdAndUpdate(executionId, {
-          $set: {
-            status: ExecutionStatus.INTERRUPTED,
-            threadId: response.thread_id || null,
-            interruptPayload: interrupt
-              ? {
-                  type: interrupt.type,
-                  taskId: interrupt.task_id,
-                  taskTitle: interrupt.task_title,
-                  message: interrupt.message,
-                  threadId: interrupt.thread_id,
-                  payloadJson: interrupt.payload_json,
-                }
-              : null,
-          },
-        });
+        await this.recordPendingInterrupt(
+          executionId,
+          interrupt,
+          response.thread_id || interrupt?.thread_id || '',
+        );
 
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_interrupt',
@@ -2613,24 +2673,11 @@ export class PlaybookExecutionService {
 
       if (outcome.outcome === 'interrupted') {
         const interrupt = outcome.response?.interrupt;
-        await this.executionModel
-          .findByIdAndUpdate(executionId, {
-            $set: {
-              status: ExecutionStatus.INTERRUPTED,
-              threadId: outcome.response?.thread_id || null,
-              interruptPayload: interrupt
-                ? {
-                    type: interrupt.type,
-                    taskId: interrupt.task_id,
-                    taskTitle: interrupt.task_title,
-                    message: interrupt.message,
-                    threadId: interrupt.thread_id,
-                    payloadJson: interrupt.payload_json,
-                  }
-                : null,
-            },
-          })
-          .exec();
+        await this.recordPendingInterrupt(
+          executionId,
+          interrupt,
+          outcome.response?.thread_id || interrupt?.thread_id || '',
+        );
         this.streamGateway.sendToUser(userId, {
           type: 'playbook_interrupt',
           data: {
@@ -2897,24 +2944,11 @@ export class PlaybookExecutionService {
 
     if (outcome.outcome === 'interrupted') {
       const interrupt = outcome.response?.interrupt;
-      await this.executionModel
-        .findByIdAndUpdate(executionId, {
-          $set: {
-            status: ExecutionStatus.INTERRUPTED,
-            threadId: outcome.response?.thread_id || null,
-            interruptPayload: interrupt
-              ? {
-                  type: interrupt.type,
-                  taskId: interrupt.task_id,
-                  taskTitle: interrupt.task_title,
-                  message: interrupt.message,
-                  threadId: interrupt.thread_id,
-                  payloadJson: interrupt.payload_json,
-                }
-              : null,
-          },
-        })
-        .exec();
+      await this.recordPendingInterrupt(
+        executionId,
+        interrupt,
+        outcome.response?.thread_id || interrupt?.thread_id || '',
+      );
       this.streamGateway.sendToUser(userId, {
         type: 'playbook_interrupt',
         data: {
@@ -3950,6 +3984,10 @@ export class PlaybookExecutionService {
         error,
         durationMs,
         completedAt: new Date(),
+        interruptPayload: null,
+        waitingForHumanInput: false,
+        currentInterruptId: null,
+        currentInterruptTaskId: null,
       },
     );
     if (!transitioned) {
@@ -4012,6 +4050,10 @@ export class PlaybookExecutionService {
       {
         durationMs,
         completedAt: new Date(),
+        interruptPayload: null,
+        waitingForHumanInput: false,
+        currentInterruptId: null,
+        currentInterruptTaskId: null,
       },
     );
     if (!transitioned) {
@@ -4073,6 +4115,10 @@ export class PlaybookExecutionService {
         error: 'Execution cancelled by user',
         durationMs,
         completedAt: new Date(),
+        interruptPayload: null,
+        waitingForHumanInput: false,
+        currentInterruptId: null,
+        currentInterruptTaskId: null,
       },
     );
     if (!transitioned) {
@@ -4527,7 +4573,7 @@ export class PlaybookExecutionService {
       throw new BadRequestException(ErrorCode.PLAYBOOK_EXECUTION_NOT_INTERRUPTED);
     }
 
-    const interruptTaskId = execution.interruptPayload?.taskId || '';
+    const interruptTaskId = execution.currentInterruptTaskId || execution.interruptPayload?.taskId || '';
     if (!interruptTaskId || interruptTaskId !== taskId) {
       throw new BadRequestException(
         ErrorCode.BAD_REQUEST,
@@ -4597,12 +4643,40 @@ export class PlaybookExecutionService {
     const isSingleStep = !!execution.singleStepTaskId;
     const evalEnabled = (execution as any).runEvaluation === true;
     const reflectionEnabled = (execution as any).reflectionEnabled !== false;
+    const activeInterruptPayload = execution.interruptPayload as any;
+    const activeInterruptTaskId =
+      execution.currentInterruptTaskId || activeInterruptPayload?.taskId || (activeInterruptPayload ? dto.taskId : '');
+    const activeInterruptId = execution.currentInterruptId || activeInterruptPayload?.interruptId || '';
+
+    if (!activeInterruptTaskId) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_EXECUTION_NOT_INTERRUPTED,
+        'Execution has no active interrupt to resume',
+      );
+    }
+
+    if (activeInterruptTaskId !== dto.taskId) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Only the currently interrupted step can be resumed',
+      );
+    }
+
+    if (dto.interruptId && activeInterruptId && dto.interruptId !== activeInterruptId) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'The interrupt is no longer active. Refresh the execution and try again.',
+      );
+    }
+
+    const interruptId = dto.interruptId || activeInterruptId;
 
     // Build structured HumanResponse for gRPC
     const grpcRequest = {
       user_context: { user_id: userId, username: userEmail },
       playbook_id: playbookId,
       thread_id: execution.threadId,
+      interrupt_id: interruptId,
       human_response: {
         action,
         message,
@@ -4619,16 +4693,6 @@ export class PlaybookExecutionService {
       threadId: execution.threadId,
     });
 
-    // Mark feedback as answered in DB
-    await this.updateHumanFeedbackResponse(executionId, dto.taskId, {
-      action,
-      message,
-      approved: dto.approved,
-      reason: dto.reason,
-      feedback: dto.feedback,
-    });
-    this.logger.debug('Human feedback response updated in DB', { executionId, taskId: dto.taskId });
-
     const attemptNumber = (execution.currentAttemptNumber ?? 1) + 1;
     await this.appendAttemptHistory(
       executionId,
@@ -4637,15 +4701,6 @@ export class PlaybookExecutionService {
       dto.taskId,
       execution.threadId || null,
     );
-
-    // Set status back to RUNNING
-    await this.executionModel.findByIdAndUpdate(executionId, {
-      $set: {
-        status: ExecutionStatus.RUNNING,
-        interruptPayload: null,
-        currentAttemptNumber: attemptNumber,
-      },
-    });
 
     if (isSingleStep) {
       // ResumeStep is still unary Ã¢â‚¬â€ process synchronously
@@ -4661,6 +4716,16 @@ export class PlaybookExecutionService {
         const resumeStartTime = Date.now();
         const response = await this.grpcService.resumeStep(grpcRequest);
         const resumeDurationMs = Date.now() - resumeStartTime;
+
+        await this.updateHumanFeedbackResponse(executionId, dto.taskId, {
+          action,
+          message,
+          approved: dto.approved,
+          reason: dto.reason,
+          feedback: dto.feedback,
+        }, interruptId, userId);
+        this.logger.debug('Human feedback response updated in DB', { executionId, taskId: dto.taskId });
+        await this.clearPendingInterruptState(executionId, attemptNumber);
 
         this.logger.debug(`${rpcName} gRPC response received`, {
           executionId,
@@ -4865,7 +4930,20 @@ export class PlaybookExecutionService {
         }
       : undefined;
 
-    const call = this.grpcService.resumePlaybookWorkflow(grpcRequest);
+    const call = this.grpcService.resumePlaybookWorkflow({
+      ...grpcRequest,
+      tasks: resumeSnapshot?.tasks || [],
+      edges: resumeSnapshot?.edges || [],
+    });
+    await this.updateHumanFeedbackResponse(executionId, dto.taskId, {
+      action,
+      message,
+      approved: dto.approved,
+      reason: dto.reason,
+      feedback: dto.feedback,
+    }, interruptId, userId);
+    this.logger.debug('Human feedback response updated in DB', { executionId, taskId: dto.taskId });
+    await this.clearPendingInterruptState(executionId, attemptNumber);
     this.consumePlaybookStream(
       userId,
       executionId,
@@ -4991,6 +5069,14 @@ export class PlaybookExecutionService {
         }),
         threadId: e.threadId,
         interruptPayload: e.interruptPayload,
+        waitingForHumanInput: e.waitingForHumanInput === true,
+        currentInterruptId: e.currentInterruptId ?? null,
+        currentInterruptTaskId: e.currentInterruptTaskId ?? null,
+        hitlHistory: (e.hitlHistory || []).map((entry: any) => ({
+          ...entry,
+          respondedAt: entry.respondedAt?.toISOString?.() || entry.respondedAt || null,
+          createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+        })),
         error: e.error,
         durationMs: e.durationMs,
         startedAt: e.startedAt?.toISOString?.() || e.startedAt,
@@ -5060,6 +5146,8 @@ export class PlaybookExecutionService {
       reason?: string;
       feedback?: string;
     },
+    interruptId?: string,
+    respondedBy?: string,
   ): Promise<void> {
     this.logger.debug('Updating humanFeedback response', {
       executionId,
@@ -5083,10 +5171,15 @@ export class PlaybookExecutionService {
     }
 
     const components = taskResult.components || [];
+    const normalizedInterruptId = interruptId?.trim() || '';
     // Find the last pending humanFeedback component
     for (let i = components.length - 1; i >= 0; i--) {
       const comp = components[i] as any;
-      if (comp.type === 'humanFeedback' && comp.data?.status === 'pending') {
+      if (
+        comp.type === 'humanFeedback'
+        && comp.data?.status === 'pending'
+        && (!normalizedInterruptId || (comp.data?.interruptId || '') === normalizedInterruptId)
+      ) {
         comp.data.status = 'answered';
         comp.data.action = response.action;
         comp.data.replyMessage = response.message || '';
@@ -5105,8 +5198,36 @@ export class PlaybookExecutionService {
       }
     }
 
+    const hitlHistory = Array.isArray((execution as any).hitlHistory)
+      ? [...((execution as any).hitlHistory as any[])]
+      : [];
+    for (let i = hitlHistory.length - 1; i >= 0; i--) {
+      const entry = hitlHistory[i];
+      if (entry?.status !== 'pending') {
+        continue;
+      }
+      if (entry?.taskId !== taskId) {
+        continue;
+      }
+      if (normalizedInterruptId && (entry?.interruptId || '') !== normalizedInterruptId) {
+        continue;
+      }
+
+      entry.status = 'answered';
+      entry.responseAction = response.action;
+      entry.responseMessage = response.message || '';
+      entry.responseApproved = response.approved ?? null;
+      entry.responseReason = response.reason || '';
+      entry.responseFeedback = response.feedback || '';
+      entry.respondedBy = respondedBy || null;
+      entry.respondedAt = new Date();
+      break;
+    }
+
     taskResult.components = components;
     execution.markModified('taskResults');
+    (execution as any).hitlHistory = hitlHistory;
+    execution.markModified('hitlHistory');
     await execution.save();
   }
 }

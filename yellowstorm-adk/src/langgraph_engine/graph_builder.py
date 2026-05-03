@@ -11,6 +11,7 @@ single streaming path (LangGraph ``astream``) is the only mechanism in use.
 from typing import Any, Callable, Dict, List, Optional
 from difflib import SequenceMatcher
 from pathlib import Path
+import re
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
@@ -76,6 +77,61 @@ def _get_clarification_context(
         description_overrides_by_task.get(task_id) or ""
     ).strip()
     return transcript, task_description_override
+
+
+def _build_clarification_pre_prompt(
+    task_config: Dict[str, Any],
+    task_description: str,
+    prompt_registry: Optional[Dict[str, Dict[str, Any]]],
+    user_language: str,
+    *,
+    user_query: str = "",
+    resolved_context: str = "",
+) -> str:
+    clarification_prompt = str(task_config.get("clarification_prompt") or "").strip()
+    if not clarification_prompt:
+        clarification_prompt = resolve_prompt_template(
+            prompt_registry,
+            "task.clarification",
+            field="systemTemplate",
+            fallback=(
+                "Review the task below and determine if you have enough information to complete it.\n"
+                f"Task: {task_config.get('title', '')}\n"
+                f"Description: {task_description}\n"
+                "If you need clarification, respond with one clear question only. "
+                "If everything is clear, respond with exactly 'CLEAR'."
+            ),
+        )
+    clarification_prompt = clarification_prompt.replace("{{UserLanguage}}", user_language or "en")
+    context_blocks: List[str] = [clarification_prompt]
+    context_blocks.append(f"Task title: {task_config.get('title', '')}")
+    context_blocks.append(f"Task description:\n{task_description}")
+    if user_query.strip():
+        context_blocks.append(f"User request:\n{user_query.strip()}")
+    if resolved_context.strip():
+        context_blocks.append(f"Available upstream context:\n{resolved_context.strip()}")
+    context_blocks.append(
+        "For this pre-check, treat missing company names, time ranges, targets, data sources, deliverable format, "
+        "or any other essential requirement as insufficient information. If anything essential is missing or ambiguous, "
+        "ask exactly one clarification question. Otherwise respond with exactly 'CLEAR'."
+    )
+    return "\n\n".join(context_blocks)
+
+
+def _build_execution_clarification_guidance(
+    task_config: Dict[str, Any],
+    task_description: str,
+    prompt_registry: Optional[Dict[str, Dict[str, Any]]],
+    user_language: str,
+) -> str:
+    return (
+        "If required information is genuinely missing, ask one concise clarification question "
+        "instead of inventing details. If the task is clear, complete the task normally.\n"
+        "Treat missing company names, time ranges, targets, data sources, deliverable format, "
+        "or other essential requirements as a reason to ask one question before proceeding.\n"
+        f"Task title: {task_config.get('title', '')}\n"
+        f"Task description:\n{task_description}"
+    )
 
 
 def _store_clarification_context(
@@ -941,30 +997,32 @@ class DynamicGraphBuilder:
                         int(task_config.get("max_clarifications") or 0), 0
                     )
                     clarification_resolved = False
+                    last_clarification_role = (
+                        clarification_transcript[-1].get("role", "")
+                        if clarification_transcript
+                        else ""
+                    )
+                    if last_clarification_role == "user":
+                        clarification_resolved = True
                     for round_number in range(1, clarification_limit + 1):
+                        if clarification_resolved:
+                            break
                         prior_turns = "\n".join(
                             f"{turn.get('role', 'user')}: {turn.get('content', '')}"
                             for turn in clarification_transcript
                         )
-                        clarification_prompt = task_config.get(
-                            "clarification_prompt"
-                        ) or resolve_prompt_template(
+                        clarification_prompt = _build_clarification_pre_prompt(
+                            task_config,
+                            task_for_execution["description"],
                             prompt_registry,
-                            "task.clarification",
-                            field="systemTemplate",
-                            fallback=(
-                                "Review the task below and determine if you have enough information to complete it.\n"
-                                f"Task: {task_config['title']}\n"
-                                f"Description: {task_for_execution['description']}\n"
-                                "If you need clarification, respond with one clear question only. "
-                                "If everything is clear, respond with exactly 'CLEAR'."
-                            ),
+                            state.get("user_language") or "en",
+                            user_query=state.get("query") or "",
+                            resolved_context="",
                         )
                         if prior_turns:
                             clarification_prompt += (
                                 f"\n\nPrior clarification turns:\n{prior_turns}"
                             )
-                        clarification_prompt = clarification_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
 
                         _store_clarification_context(
                             state,
@@ -1188,6 +1246,18 @@ class DynamicGraphBuilder:
                 ).replace("{{agentInstructions}}", agent_instructions).replace(
                     "{{UserLanguage}}", state.get("user_language") or "en"
                 )
+                if task_config.get("allow_clarification", False):
+                    clarification_guidance = _build_execution_clarification_guidance(
+                        task_config,
+                        task_for_execution["description"],
+                        prompt_registry,
+                        state.get("user_language") or "en",
+                    )
+                    system_prompt = (
+                        f"{system_prompt}\n\n"
+                        "Clarification behavior for task execution:\n"
+                        f"{clarification_guidance}"
+                    )
 
                 effective_workspace_context = list(state.get("workspace_context") or [])
                 if workspace_artifacts:
@@ -1673,9 +1743,9 @@ class DynamicGraphBuilder:
                                 clarification_transcript,
                                 task_description,
                             )
-                        user_prompt = _build_user_prompt(task_for_execution)
-                        user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
-                        continue
+                            user_prompt = _build_user_prompt(task_for_execution)
+                            user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
+                            continue
 
                     if not task_config.get("interrupt_after", False):
                         break

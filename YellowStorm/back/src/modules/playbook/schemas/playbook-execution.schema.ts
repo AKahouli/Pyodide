@@ -422,6 +422,68 @@ export class PlaybookJudgeSummary {
 
 export const PlaybookJudgeSummarySchema = SchemaFactory.createForClass(PlaybookJudgeSummary);
 
+@Schema({ _id: false })
+export class HitlHistoryEntry {
+  @Prop({ type: String, required: true })
+  interruptId!: string;
+
+  @Prop({ type: String, required: true })
+  taskId!: string;
+
+  @Prop({ type: String, required: true })
+  type!: string;
+
+  @Prop({ type: String, default: '' })
+  taskTitle!: string;
+
+  @Prop({ type: String, default: '' })
+  message!: string;
+
+  @Prop({ type: String, default: '' })
+  taskDescription!: string;
+
+  @Prop({ type: String, default: '' })
+  result!: string;
+
+  @Prop({ type: Number, default: 0 })
+  round!: number;
+
+  @Prop({ type: String, default: '' })
+  payloadJson!: string;
+
+  @Prop({ type: [String], default: [] })
+  resumableActions!: string[];
+
+  @Prop({ type: String, enum: ['pending', 'answered'], default: 'pending' })
+  status!: 'pending' | 'answered';
+
+  @Prop({ type: String, default: null })
+  responseAction!: string | null;
+
+  @Prop({ type: String, default: null })
+  responseMessage!: string | null;
+
+  @Prop({ type: Boolean, default: null })
+  responseApproved!: boolean | null;
+
+  @Prop({ type: String, default: null })
+  responseReason!: string | null;
+
+  @Prop({ type: String, default: null })
+  responseFeedback!: string | null;
+
+  @Prop({ type: String, default: null })
+  respondedBy!: string | null;
+
+  @Prop({ type: Date, default: null })
+  respondedAt!: Date | null;
+
+  @Prop({ type: Date, required: true })
+  createdAt!: Date;
+}
+
+export const HitlHistoryEntrySchema = SchemaFactory.createForClass(HitlHistoryEntry);
+
 @Schema({ timestamps: true, collection: 'playbook_executions' })
 export class PlaybookExecution extends Document {
   @Prop({ type: Types.ObjectId, ref: 'Playbook', required: true, index: true })
@@ -447,6 +509,18 @@ export class PlaybookExecution extends Document {
 
   @Prop({ type: Object, default: null })
   interruptPayload!: Record<string, unknown> | null;
+
+  @Prop({ type: Boolean, default: false })
+  waitingForHumanInput!: boolean;
+
+  @Prop({ type: String, default: null })
+  currentInterruptId!: string | null;
+
+  @Prop({ type: String, default: null })
+  currentInterruptTaskId!: string | null;
+
+  @Prop({ type: [HitlHistoryEntrySchema], default: [] })
+  hitlHistory!: HitlHistoryEntry[];
 
   @Prop({ type: Boolean, default: true })
   reflectionEnabled!: boolean;

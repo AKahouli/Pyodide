@@ -974,6 +974,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
               taskResults,
               threadId: null,
               interruptPayload: null,
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
+              hitlHistory: [],
               error: null,
               durationMs: null,
               startedAt: now,
@@ -996,6 +1000,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               pageMode: 'run',
             };
           });
+          return result.executionId;
         } catch (err) {
           set((state) => ({
             executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== id),
@@ -1767,13 +1772,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
       resumeExecution: async (id, data) => {
         const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');
         const message = data.message || data.feedback || data.reason || '';
+        const interruptId = data.interruptId || undefined;
         // Optimistically mark the humanFeedback component as answered
         set((state) => {
           if (!state.currentExecution) return state;
           const taskResults = state.currentExecution.taskResults.map((tr) => {
             if (tr.taskId !== data.taskId) return tr;
             const components = (tr.components || []).map((comp) => {
-              if (comp.type === 'humanFeedback' && (comp.data as any)?.status === 'pending') {
+              if (
+                comp.type === 'humanFeedback'
+                && (comp.data as any)?.status === 'pending'
+                && (!interruptId || ((comp.data as any)?.interruptId || '') === interruptId)
+              ) {
                 return {
                   ...comp,
                   data: {
@@ -1792,11 +1802,30 @@ export const usePlaybookStore = create<PlaybookStore>()(
             });
             return { ...tr, components };
           });
+          const hitlHistory = (state.currentExecution.hitlHistory || []).map((entry) => (
+            entry.status === 'pending'
+              && entry.taskId === data.taskId
+              && (!interruptId || entry.interruptId === interruptId)
+              ? {
+                  ...entry,
+                  status: 'answered' as const,
+                  responseAction: action,
+                  responseMessage: message || null,
+                  responseApproved: data.approved ?? null,
+                  responseReason: data.reason || null,
+                  responseFeedback: data.feedback || null,
+                }
+              : entry
+          ));
           const updatedExec: PlaybookExecution = {
             ...state.currentExecution,
             taskResults,
             status: 'running',
             interruptPayload: null,
+            waitingForHumanInput: false,
+            currentInterruptId: null,
+            currentInterruptTaskId: null,
+            hitlHistory,
             updatedAt: new Date().toISOString(),
           };
           return {
@@ -1847,6 +1876,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
               ...cachedExecution,
               status: 'running' as const,
               interruptPayload: null,
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
               taskResults: shouldPreserveOtherTaskResults
                 ? buildRerunStepTaskResults(cachedExecution.taskResults, taskId)
                 : buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
@@ -1917,6 +1949,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
               ...cachedExecution,
               status: 'running' as const,
               interruptPayload: null,
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
               taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
               updatedAt: new Date().toISOString(),
             }
@@ -1984,6 +2019,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           taskResults,
           threadId: null,
           interruptPayload: null,
+          waitingForHumanInput: false,
+          currentInterruptId: null,
+          currentInterruptTaskId: null,
+          hitlHistory: [],
           error: null,
           durationMs: null,
           startedAt: new Date().toISOString(),
@@ -2603,6 +2642,33 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ...cachedExec,
             taskResults,
             status: 'interrupted',
+            waitingForHumanInput: true,
+            currentInterruptId: data.interruptId || null,
+            currentInterruptTaskId: data.taskId,
+            hitlHistory: [
+              ...(cachedExec.hitlHistory || []).filter((entry) => !(entry.status === 'pending' && entry.interruptId === (data.interruptId || ''))),
+              {
+                interruptId: data.interruptId || '',
+                taskId: data.taskId,
+                type: data.type,
+                taskTitle: '',
+                message: data.message,
+                taskDescription: data.taskDescription || '',
+                result: data.result || '',
+                round: data.round || 0,
+                payloadJson: data.payloadJson || '',
+                resumableActions: data.resumableActions || [],
+                status: 'pending',
+                responseAction: null,
+                responseMessage: null,
+                responseApproved: null,
+                responseReason: null,
+                responseFeedback: null,
+                respondedBy: null,
+                respondedAt: null,
+                createdAt: new Date().toISOString(),
+              },
+            ],
             interruptPayload: {
               type: data.type,
               taskId: data.taskId,
@@ -2748,7 +2814,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const cached = get().executionCache[execId];
         set((state) => ({
           currentExecutionLoading: !cached,
-          currentExecution: state.currentPlaybook?.id === playbookId ? (cached || null) : state.currentExecution,
+          currentExecution: state.currentPlaybook?.id === playbookId || (!state.currentExecution && cached)
+            ? (cached || null)
+            : state.currentExecution,
           selectedStepId: state.currentPlaybook?.id === playbookId && cached ? state.selectedStepId : state.selectedStepId,
         }));
         try {
@@ -2791,7 +2859,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ? get().executingPlaybookIds
             : get().executingPlaybookIds.filter((pid) => pid !== playbookId);
           set((state) => ({
-            currentExecution: state.currentPlaybook?.id === playbookId ? merged : state.currentExecution,
+            currentExecution: state.currentPlaybook?.id === playbookId || !state.currentExecution || state.currentExecution.id === execId
+              ? merged
+              : state.currentExecution,
             currentExecutionLoading: false,
             executionCache,
             selectedStepId: state.currentPlaybook?.id === playbookId

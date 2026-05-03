@@ -1663,6 +1663,9 @@ class ChatbotServicer(
                     human_response=human_response,
                     task_id=request.task_id,
                     queue=queue,
+                    tasks=[_proto_task_to_dict(t) for t in request.tasks],
+                    edges=[_proto_edge_to_dict(e) for e in request.edges],
+                    interrupt_id=getattr(request, "interrupt_id", "") or "",
                 )
             )
             register_task(request.thread_id, bg_task)

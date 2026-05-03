@@ -99,6 +99,8 @@
   "toolbar.saving": "Enregistrement...",
   "toolbar.saved": "Enregistr\u00e9",
   "toolbar.run": "Ex\u00e9cuter",
+  "toolbar.stop": "Arr\u00eater",
+  "toolbar.stopping": "Arr\u00eat...",
   "toolbar.executions": "Ex\u00e9cutions",
   "toolbar.autoLayout": "Disposition auto",
   "toolbar.starting": "D\u00e9marrage...",

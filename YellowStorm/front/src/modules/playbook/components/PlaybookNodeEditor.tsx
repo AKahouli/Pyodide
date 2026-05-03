@@ -474,7 +474,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   return (
     <>
       <div
-        className="fixed right-0 top-0 z-50 flex h-full flex-col border-l bg-background shadow-xl"
+        className="fixed right-0 top-12 z-50 flex h-[calc(100vh-3rem)] flex-col border-l bg-background shadow-xl"
         style={{ width: panelWidth }}
       >
         <div

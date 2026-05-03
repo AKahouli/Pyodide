@@ -776,6 +776,10 @@ export interface PlaybookExecution {
   }>;
   threadId: string | null;
   interruptPayload: InterruptPayload | null;
+  waitingForHumanInput?: boolean;
+  currentInterruptId?: string | null;
+  currentInterruptTaskId?: string | null;
+  hitlHistory?: HitlHistoryEntry[];
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
@@ -901,6 +905,28 @@ export interface HumanFeedbackData {
   approved?: boolean;
   reason?: string;
   feedback?: string;
+}
+
+export interface HitlHistoryEntry {
+  interruptId: string;
+  taskId: string;
+  type: InterruptType | string;
+  taskTitle: string;
+  message: string;
+  taskDescription: string;
+  result: string;
+  round: number;
+  payloadJson: string;
+  resumableActions: string[];
+  status: 'pending' | 'answered';
+  responseAction: InterruptAction | string | null;
+  responseMessage: string | null;
+  responseApproved: boolean | null;
+  responseReason: string | null;
+  responseFeedback: string | null;
+  respondedBy: string | null;
+  respondedAt: string | null;
+  createdAt: string;
 }
 
 // ===== ReactFlow Node Data =====
@@ -1146,6 +1172,7 @@ export interface UpdateOutputFormatTemplateData {
 export interface ResumePlaybookData {
   executionId: string;
   taskId: string;
+  interruptId?: string;
   action?: InterruptAction;
   message?: string;
   approved?: boolean;

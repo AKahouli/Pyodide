@@ -99,6 +99,8 @@
   "toolbar.saving": "Saving...",
   "toolbar.saved": "Saved",
   "toolbar.run": "Run",
+  "toolbar.stop": "Stop",
+  "toolbar.stopping": "Stopping...",
   "toolbar.executions": "Executions",
   "toolbar.autoLayout": "Auto Layout",
   "toolbar.starting": "Starting...",

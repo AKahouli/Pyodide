@@ -16,6 +16,7 @@ import {
   upsertPlaybookTriggerSchedule,
   clearPlaybookTriggerSchedule,
   rerunPlaybookStep,
+  resumePlaybook,
   resumePlaybookFromStep,
   getPlaybookRepeatability,
   getTaskRepeatability,
@@ -237,6 +238,12 @@ describe('playbook api', () => {
 
   it('targets the rerun and resume-from-step routes', async () => {
     apiClientMock.post.mockResolvedValue({ data: { data: { status: 'running', executionId: 'e1' } } });
+
+    await resumePlaybook('p1', { executionId: 'e1', taskId: 't0', interruptId: 'interrupt-1', action: 'approve' });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.resume('p1'),
+      { executionId: 'e1', taskId: 't0', interruptId: 'interrupt-1', action: 'approve' },
+    );
 
     await rerunPlaybookStep('p1', 'e1', { taskId: 't1', runEvaluation: true, executionMode: 'live', streaming: false });
     expect(apiClientMock.post).toHaveBeenCalledWith(

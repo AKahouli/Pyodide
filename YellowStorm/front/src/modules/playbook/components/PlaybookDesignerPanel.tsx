@@ -85,7 +85,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   const prevScrollCount = useRef(0);
 
   const interruptedTask = currentExecution?.taskResults.find(
-    (taskResult) => taskResult.taskId === (currentExecution.interruptPayload?.taskId || selectedStepId),
+    (taskResult) => taskResult.taskId === (currentExecution.interruptPayload?.taskId || currentExecution.currentInterruptTaskId || selectedStepId),
   ) || null;
 
   const interruptEntries: InterruptEntry[] = ((interruptedTask?.components || [])
@@ -95,7 +95,24 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
       ...((component.data as unknown) as HumanFeedbackData),
     })));
 
-  const interruptPayload = currentExecution?.interruptPayload;
+  const pendingHistoryEntry = currentExecution?.waitingForHumanInput
+    ? currentExecution.hitlHistory?.find((entry) => entry.status === 'pending' && entry.taskId === (currentExecution.currentInterruptTaskId || entry.taskId))
+    : undefined;
+  const interruptPayload = currentExecution?.interruptPayload || (pendingHistoryEntry
+    ? {
+        type: pendingHistoryEntry.type,
+        taskId: pendingHistoryEntry.taskId,
+        taskTitle: pendingHistoryEntry.taskTitle,
+        message: pendingHistoryEntry.message,
+        threadId: currentExecution?.threadId || '',
+        interruptId: pendingHistoryEntry.interruptId,
+        round: pendingHistoryEntry.round,
+        payloadJson: pendingHistoryEntry.payloadJson,
+        resumableActions: pendingHistoryEntry.resumableActions,
+        taskDescription: pendingHistoryEntry.taskDescription,
+        result: pendingHistoryEntry.result,
+      }
+    : null);
   const activeInterruptEntry = interruptEntries.find((entry) => entry.status === 'pending')
     || (interruptPayload
       ? {
@@ -103,6 +120,7 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
           interruptType: interruptPayload.type,
           message: interruptPayload.message,
           status: 'pending' as const,
+          interruptId: interruptPayload.interruptId || '',
           taskDescription: interruptPayload.taskDescription || '',
           result: interruptPayload.result || '',
         }
@@ -130,11 +148,11 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
   }, [scrollCount]);
 
   useEffect(() => {
-    if (!designerOpen || copilotMode !== 'interrupt' || !currentExecution?.interruptPayload?.taskId) {
+    if (!designerOpen || copilotMode !== 'interrupt' || !interruptPayload?.taskId) {
       return;
     }
-    selectStep(currentExecution.interruptPayload.taskId);
-  }, [designerOpen, copilotMode, currentExecution?.interruptPayload?.taskId, selectStep]);
+    selectStep(interruptPayload.taskId);
+  }, [designerOpen, copilotMode, interruptPayload?.taskId, selectStep]);
 
   const handleSubmitDesign = useCallback(async (e: FormEvent) => {
     e.preventDefault();
@@ -171,7 +189,8 @@ export function PlaybookDesignerPanel({ playbookId }: Props) {
     try {
       await resumeExecution(playbookId, {
         executionId: currentExecution.id,
-        taskId: currentExecution.interruptPayload?.taskId || interruptedTask?.taskId || '',
+        taskId: interruptPayload?.taskId || interruptedTask?.taskId || '',
+        interruptId: interruptPayload?.interruptId || activeInterruptEntry.interruptId,
         action,
         message: extra?.message,
         approved: action === 'approve' ? true : action === 'reject' ? false : undefined,

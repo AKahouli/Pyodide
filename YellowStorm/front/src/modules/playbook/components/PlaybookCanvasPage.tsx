@@ -166,6 +166,7 @@ function PlaybookCanvasInner() {
   const isSaving = useIsSaving();
   const isGenerating = useIsGenerating();
   const isExecuting = useIsExecuting(id);
+  const isStopping = usePlaybookStore((s) => s.isStopping);
   const isDesigning = useIsDesigning();
   const designerOpen = useDesignerOpen();
   const hasActiveExecution = useHasActiveExecution(id);
@@ -193,6 +194,7 @@ function PlaybookCanvasInner() {
   const deleteOutputFormatTemplate = usePlaybookStore((s) => s.deleteOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
+  const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
   const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
   const skipExecutionStep = usePlaybookStore((s) => s.skipExecutionStep);
@@ -1648,6 +1650,16 @@ function PlaybookCanvasInner() {
     });
   }, [id, playbook, isDirty, saveNow, executePlaybook, nodeReflectionEnabled, setPageMode]);
 
+  const handleStop = useCallback(async () => {
+    const activeExec = currentExecution?.playbookId === id ? currentExecution : execution;
+    if (!id || !activeExec) return;
+    try {
+      await stopExecution(id, activeExec.id);
+    } catch {
+      // handled in store
+    }
+  }, [id, currentExecution, execution, stopExecution]);
+
   const handleSubmitIntent = useCallback(async () => {
     const normalizedIntent = intentValue.trim();
     if (!id || normalizedIntent.length < 3) {
@@ -1799,6 +1811,8 @@ function PlaybookCanvasInner() {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
+      if (editorOpen) setEditorOpen(false);
+
       const executionForSelection =
         currentExecution?.playbookId === id
           ? currentExecution
@@ -1821,7 +1835,7 @@ function PlaybookCanvasInner() {
 
       setExecutionPanelOpen(true);
     },
-    [currentExecution, execution, id, pageMode, selectStep, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
+    [currentExecution, editorOpen, execution, id, pageMode, selectStep, setEditorOpen, setExecutionPanelOpen, setPageMode, viewExecutionInPanel],
   );
 
   const handleEdgeDoubleClick = useCallback(
@@ -2002,11 +2016,14 @@ function PlaybookCanvasInner() {
             hasExecutionContext={Boolean(currentExecution || execution)}
             hasPendingInterrupt={Boolean(currentExecution?.interruptPayload)}
             onRun={handleRun}
+            onStop={handleStop}
             onSave={saveNow}
             onViewExecutions={handleViewExecutions}
             isDirty={isDirty}
             isSaving={isSaving}
             isExecuting={isExecuting}
+            hasActiveExecution={hasActiveExecution}
+            isStopping={isStopping}
             canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={handleNodeReflectionChange}
