@@ -783,6 +783,7 @@ class DynamicGraphBuilder:
             execution_mode_value = str(
                 task_config.get("execution_mode") or "agent"
             ).strip().lower()
+            prompt_registry = load_prompt_registry(state.get("prompt_overrides") or {})
 
             async def _push_step_update(status, result=None, interrupt_data=None):
                 update: StepUpdate = {
@@ -1142,9 +1143,6 @@ class DynamicGraphBuilder:
                 # === STEP 3: Build prompt context from resolved inputs ===
                 context, resolved_inputs, workspace_artifacts = (
                     self._build_structured_context(task_id, task_config, state)
-                )
-                prompt_registry = load_prompt_registry(
-                    state.get("prompt_overrides") or {}
                 )
 
                 workspace_context_for_hint = (

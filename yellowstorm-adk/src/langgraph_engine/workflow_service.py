@@ -105,30 +105,10 @@ def _extract_interrupt_from_stream_chunk(
 def _build_resume_state_update(
     interrupt_data: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    if not interrupt_data or interrupt_data.get("type") != "clarification":
-        return None
-
-    task_id = str(interrupt_data.get("task_id") or "").strip()
-    if not task_id:
-        return None
-
-    conversation_json = interrupt_data.get("conversation_json") or "[]"
-    try:
-        transcript = json.loads(conversation_json)
-    except (TypeError, ValueError):
-        transcript = []
-
-    if not isinstance(transcript, list):
-        transcript = []
-
-    task_description = str(interrupt_data.get("task_description") or "").strip()
-
-    update: Dict[str, Any] = {
-        "clarification_transcripts_by_task": {task_id: transcript},
-    }
-    if task_description:
-        update["task_description_overrides_by_task"] = {task_id: task_description}
-    return update
+    # Clarification resumes continue from the suspended interrupt() call with the
+    # human response supplied via Command(resume=...). Replaying transcript state
+    # here makes the node behave like it is starting clarification again.
+    return None
 
 
 def _citation_source_from_component(

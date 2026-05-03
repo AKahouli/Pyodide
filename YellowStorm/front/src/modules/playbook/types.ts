@@ -264,6 +264,13 @@ export type PlaybookIntentWorkflowChange =
   | {
       type: 'delete_node';
       targetTaskId: string;
+    }
+  | {
+      type: 'create_edge' | 'delete_edge';
+      sourceTaskId: string | null;
+      sourceNodeRef: string | null;
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
     };
 
 export interface PlaybookIntentWorkflowImpact {

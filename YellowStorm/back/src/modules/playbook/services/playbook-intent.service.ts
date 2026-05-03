@@ -32,26 +32,33 @@ interface PlaybookIntentSingleChangeSuggestion {
 
 type PlaybookIntentWorkflowChange =
   | {
-      type: 'create_node';
-      nodeRef: string;
-      anchor: {
-        mode: 'append' | 'before' | 'after' | 'as_input';
-        targetTaskId: string | null;
-        nodeRef: string | null;
-        targetTaskIds?: string[];
-        nodeRefs?: string[];
-      };
-      task: PlaybookIntentTaskDraft;
-    }
-  | {
-      type: 'update_node';
-      targetTaskId: string;
-      task: Partial<PlaybookIntentTaskDraft>;
-    }
-  | {
-      type: 'delete_node';
-      targetTaskId: string;
+    type: 'create_node';
+    nodeRef: string;
+    anchor: {
+      mode: 'append' | 'before' | 'after' | 'as_input';
+      targetTaskId: string | null;
+      nodeRef: string | null;
+      targetTaskIds?: string[];
+      nodeRefs?: string[];
     };
+    task: PlaybookIntentTaskDraft;
+  }
+  | {
+    type: 'update_node';
+    targetTaskId: string;
+    task: Partial<PlaybookIntentTaskDraft>;
+  }
+  | {
+    type: 'delete_node';
+    targetTaskId: string;
+  }
+  | {
+    type: 'create_edge' | 'delete_edge';
+    sourceTaskId: string | null;
+    sourceNodeRef: string | null;
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+  };
 
 interface PlaybookIntentWorkflowPlanSuggestion {
   id: string;
@@ -90,7 +97,7 @@ export class PlaybookIntentService {
     private readonly playbookPromptService: PlaybookPromptService,
     private readonly promptRenderer: PlaybookPromptTemplateRendererService,
     private readonly agentService: AgentService,
-  ) {}
+  ) { }
 
   async analyze(playbookId: string, dto: RequestPlaybookIntentDto): Promise<PlaybookIntentResponse> {
     const httpClient = this.liteLLMConnectionService.getHttpClient();
@@ -122,11 +129,9 @@ export class PlaybookIntentService {
         edges: playbook.edges.map((edge) => ({ sourceId: edge.sourceId, targetId: edge.targetId })),
       }, null, 2),
       default_agents: JSON.stringify(defaultAgents.data.map((agent) => ({
-        slug: agent.slug,
+        agentSlug: agent.slug,
         name: agent.name,
-        role: agent.role,
-        description: agent.description,
-        agentType: agent.agentType,
+        role: agent.role
       })), null, 2),
       intent_text: dto.intent.trim(),
       selected_task_title: selectedTask?.title || '',
@@ -287,6 +292,25 @@ export class PlaybookIntentService {
       return targetTaskId ? { type: 'delete_node', targetTaskId } : null;
     }
 
+    if (item.type === 'create_edge' || item.type === 'delete_edge') {
+      const sourceTaskId = this.normalizeText(item.sourceTaskId);
+      const sourceNodeRef = this.normalizeText(item.sourceNodeRef) || this.normalizeText(item.sourceRef) || this.normalizeText(item.fromNodeRef);
+      const targetTaskId = this.normalizeText(item.targetTaskId);
+      const targetNodeRef = this.normalizeText(item.targetNodeRef) || this.normalizeText(item.targetRef) || this.normalizeText(item.toNodeRef);
+
+      if (!(sourceTaskId || sourceNodeRef) || !(targetTaskId || targetNodeRef)) {
+        return null;
+      }
+
+      return {
+        type: item.type,
+        sourceTaskId: sourceTaskId || null,
+        sourceNodeRef: sourceNodeRef || null,
+        targetTaskId: targetTaskId || null,
+        targetNodeRef: targetNodeRef || null,
+      };
+    }
+
     return null;
   }
 
@@ -326,14 +350,17 @@ export class PlaybookIntentService {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const affectedTaskIds = Array.isArray(item.affectedTaskIds)
       ? item.affectedTaskIds.map((id) => this.normalizeText(id)).filter(Boolean).slice(0, 20)
-      : changes.flatMap((change) => 'targetTaskId' in change && change.targetTaskId ? [change.targetTaskId] : []);
+      : changes.flatMap((change) => [
+        ...('targetTaskId' in change && change.targetTaskId ? [change.targetTaskId] : []),
+        ...('sourceTaskId' in change && change.sourceTaskId ? [change.sourceTaskId] : []),
+      ]);
 
     return {
       nodesToCreate: this.normalizeCount(item.nodesToCreate, changes.filter((change) => change.type === 'create_node').length),
       nodesToUpdate: this.normalizeCount(item.nodesToUpdate, changes.filter((change) => change.type === 'update_node').length),
       nodesToDelete: this.normalizeCount(item.nodesToDelete, changes.filter((change) => change.type === 'delete_node').length),
-      edgesToCreate: this.normalizeCount(item.edgesToCreate, changes.filter((change) => change.type === 'create_node').length),
-      edgesToDelete: this.normalizeCount(item.edgesToDelete, 0),
+      edgesToCreate: this.normalizeCount(item.edgesToCreate, changes.filter((change) => change.type === 'create_edge').length),
+      edgesToDelete: this.normalizeCount(item.edgesToDelete, changes.filter((change) => change.type === 'delete_edge').length),
       affectedTaskIds: [...new Set(affectedTaskIds)],
       businessOutcome: this.normalizeText(item.businessOutcome),
     };

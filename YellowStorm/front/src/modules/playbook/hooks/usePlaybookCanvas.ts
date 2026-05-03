@@ -225,33 +225,27 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
       const removes = changes.filter((c) => c.type === 'remove');
       if (removes.length > 0) {
-        const triggerRemoved = removes.some((r) => r.id === TRIGGER_NODE_ID);
-        const removedIds = new Set(removes.map((r) => r.id));
-        if (triggerRemoved && playbook?.id && triggerActions) {
-          void triggerActions.onDelete(playbook.id);
-        }
-        const taskRemovedIds = new Set(removedIds);
-        if (triggerRemoved) taskRemovedIds.delete(TRIGGER_NODE_ID);
-        if (taskRemovedIds.size > 0) {
+        const removedIds = new Set(removes.map((r) => r.id).filter((id) => id !== TRIGGER_NODE_ID));
+        if (removedIds.size > 0) {
           captureSnapshot();
           setNodes((nds) => {
-            const updated = nds.filter((n) => !taskRemovedIds.has(n.id));
+            const updated = nds.filter((n) => !removedIds.has(n.id));
             deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
             return updated;
           });
           setEdges((eds) => {
             const updated = eds.filter(
-              (e) => !taskRemovedIds.has(e.source) && !taskRemovedIds.has(e.target),
+              (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
             );
             deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
             return updated;
           });
+          const nonRemoveChanges = changes.filter((c) => c.type !== 'remove');
+          if (nonRemoveChanges.length > 0) {
+            setNodes((nds) => applyNodeChanges(nonRemoveChanges, nds));
+          }
+          return;
         }
-        const nonRemoveChanges = changes.filter((c) => c.type !== 'remove');
-        if (nonRemoveChanges.length > 0) {
-          setNodes((nds) => applyNodeChanges(nonRemoveChanges, nds));
-        }
-        return;
       }
 
       setNodes((nds) => applyNodeChanges(changes, nds));

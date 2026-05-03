@@ -739,3 +739,102 @@ def test_workflow_task_node_builds_default_text_artifact_without_explicit_output
         ],
     }
     assert updates[-1]["result"]["artifacts"][0]["port_id"] == "default"
+
+
+def test_workflow_task_node_resolves_clarification_prompt_before_main_prompt_build(
+    monkeypatch,
+) -> None:
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            return SimpleNamespace(content="CLEAR")
+
+    async def fake_direct_call(*args, **kwargs):
+        raise RuntimeError("sentinel-direct-call")
+
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        SimpleNamespace(ChatOpenAI=FakeChatOpenAI),
+    )
+    monkeypatch.setattr(
+        DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+
+    updates = []
+
+    async def on_step_update(update):
+        updates.append(update)
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    node = builder._create_task_node(
+        "task-1",
+        {
+            "id": "task-1",
+            "title": "Task 1",
+            "description": "desc",
+            "assigned_agent_id": "agent-1",
+            "allow_clarification": True,
+            "max_clarifications": 1,
+            "output_key": "task_1_output",
+            "output_ports": [
+                {"id": "default", "name": "Default", "artifact_kind": "text"},
+            ],
+        },
+        on_step_update,
+    )
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {
+                    "agent-1": {
+                        "id": "agent-1",
+                        "name": "Agent",
+                        "instructions": "Do it",
+                        "tools": [],
+                    }
+                },
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+                "tasks": [{"id": "task-1", "title": "Task 1"}],
+                "edges": [],
+                "results": {},
+                "task_outputs": {},
+                "workspace_context": [],
+                "execution_mode": "live",
+                "validated_replays_by_task": {},
+                "step_execution_modes": {},
+                "prompt_overrides": {
+                    "task.clarification": {
+                        "systemTemplate": "Ask if anything is missing. {{UserLanguage}}"
+                    }
+                },
+                "query": "",
+                "current_task_ids": [],
+                "completed_task_ids": [],
+                "status": "in_progress",
+                "error": None,
+                "interrupt_payload": None,
+                "node_timings": {},
+                "evaluation_user_id": "unknown",
+                "artifacts_by_port": {},
+            },
+            {},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "sentinel-direct-call"
+    assert result["results"]["task-1"]["error"] == "sentinel-direct-call"
+    assert updates[-1]["status"] == "failed"

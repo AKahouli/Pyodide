@@ -297,4 +297,103 @@ describe('PlaybookIntentService', () => {
       ],
     });
   });
+
+  it('normalizes delete_edge workflow changes and impact counts', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Stop using classification in synthesis',
+                summary: 'Removes the classification dependency only.',
+                reason: 'Classification should not feed synthesis.',
+                confidence: 0.9,
+                impact: {
+                  nodesToCreate: 0,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 0,
+                  edgesToDelete: 1,
+                  affectedTaskIds: ['task-1', 'task-2'],
+                  businessOutcome: 'Synthesis excludes classification.',
+                },
+                changes: [
+                  {
+                    type: 'delete_edge',
+                    sourceTaskId: 'task-1',
+                    targetTaskId: 'task-2',
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Remove classification from synthesis' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      impact: { edgesToDelete: 1, nodesToDelete: 0 },
+      changes: [
+        { type: 'delete_edge', sourceTaskId: 'task-1', targetTaskId: 'task-2' },
+      ],
+    });
+  });
+
+  it('normalizes create_edge changes using node refs', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Reconnect branch into synthesis',
+                summary: 'Creates a dependency from a created node into synthesis.',
+                reason: 'The new branch should feed synthesis.',
+                confidence: 0.86,
+                impact: {
+                  nodesToCreate: 1,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 1,
+                  edgesToDelete: 0,
+                  affectedTaskIds: ['task-1'],
+                  businessOutcome: 'Synthesis consumes the new branch.',
+                },
+                changes: [
+                  {
+                    type: 'create_node',
+                    nodeRef: 'new-branch',
+                    anchor: { mode: 'append', targetTaskId: 'task-1', nodeRef: null },
+                    task: { title: 'New branch', description: 'Collect new evidence.' },
+                  },
+                  {
+                    type: 'create_edge',
+                    sourceNodeRef: 'new-branch',
+                    targetTaskId: 'task-1',
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Add a branch and connect it back' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      impact: { edgesToCreate: 1 },
+      changes: [
+        { type: 'create_node', nodeRef: 'new-branch' },
+        { type: 'create_edge', sourceNodeRef: 'new-branch', targetTaskId: 'task-1' },
+      ],
+    });
+  });
 });

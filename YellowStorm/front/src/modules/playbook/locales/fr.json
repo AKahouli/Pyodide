@@ -207,6 +207,8 @@
   "intentBar.impact.added": "+{{count}} étape(s)",
   "intentBar.impact.updated": "~{{count}} modifiée(s)",
   "intentBar.impact.deleted": "-{{count}} supprimée(s)",
+  "intentBar.impact.edgesAdded": "+{{count}} liaison(s)",
+  "intentBar.impact.edgesDeleted": "-{{count}} liaison(s)",
   "intentBar.impact.noStructuralChange": "Aucun changement de structure",
   "intentBar.confirmDeletePlan": "Cette suggestion supprime une ou plusieurs étapes. L'appliquer quand même ?",
   "intentBar.invalidPlan": "Cette suggestion référence des étapes absentes du workflow et ne peut pas être appliquée.",

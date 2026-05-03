@@ -1490,6 +1490,52 @@ function PlaybookCanvasInner() {
       nextEdges = Array.from(edgeById.values());
     };
 
+    const applyEdgeChange = (
+      type: 'create_edge' | 'delete_edge',
+      sourceTaskId: string | null,
+      sourceNodeRef: string | null,
+      targetTaskId: string | null,
+      targetNodeRef: string | null,
+    ) => {
+      const resolvedSourceId = resolveTaskReference(sourceTaskId) || resolveTaskReference(sourceNodeRef);
+      const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
+
+      if (!resolvedSourceId || !resolvedTargetId || resolvedSourceId === resolvedTargetId) {
+        return;
+      }
+
+      const sourceTask = nextTasks.find((task) => task.id === resolvedSourceId) || null;
+      const targetTask = nextTasks.find((task) => task.id === resolvedTargetId) || null;
+      if (!sourceTask || !targetTask) {
+        return;
+      }
+
+      if (type === 'delete_edge') {
+        nextEdges = nextEdges.filter((edge) => {
+          const shouldDelete = edge.source === resolvedSourceId && edge.target === resolvedTargetId;
+          if (shouldDelete) {
+            changedEdgeIds.add(edge.id);
+          }
+          return !shouldDelete;
+        });
+        return;
+      }
+
+      if (nextEdges.some((edge) => edge.source === resolvedSourceId && edge.target === resolvedTargetId)) {
+        return;
+      }
+
+      nextEdges = [
+        ...nextEdges,
+        markEdgeChanged(createProgrammaticEdge(
+          resolvedSourceId,
+          resolvedTargetId,
+          getPreferredOutputPortId(sourceTask),
+          getPreferredInputPortId(targetTask),
+        )),
+      ];
+    };
+
     if (suggestion.kind === 'single_change') {
       const change = singleChanges[0];
       const targetTask = change.targetTaskId ? nextTasks.find((task) => task.id === change.targetTaskId) || null : selectedTask;
@@ -1525,7 +1571,8 @@ function PlaybookCanvasInner() {
     }
 
     const orderedChanges = [
-      ...suggestion.changes.filter((change) => change.type !== 'delete_node'),
+      ...suggestion.changes.filter((change) => change.type !== 'delete_node' && change.type !== 'delete_edge'),
+      ...suggestion.changes.filter((change) => change.type === 'delete_edge'),
       ...suggestion.changes.filter((change) => change.type === 'delete_node'),
     ];
 
@@ -1545,6 +1592,11 @@ function PlaybookCanvasInner() {
         continue;
       }
 
+      if (change.type === 'create_edge' || change.type === 'delete_edge') {
+        applyEdgeChange(change.type, change.sourceTaskId, change.sourceNodeRef, change.targetTaskId, change.targetNodeRef);
+        continue;
+      }
+
         if (change.type === 'update_node') {
           if (nextTasks.some((task) => task.id === change.targetTaskId)) {
             nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? {
@@ -1558,7 +1610,7 @@ function PlaybookCanvasInner() {
         continue;
       }
 
-      if (nextTasks.some((task) => task.id === change.targetTaskId)) {
+      if (change.type === 'delete_node' && nextTasks.some((task) => task.id === change.targetTaskId)) {
         deleteTaskAndBridgeEdges(change.targetTaskId);
       }
     }

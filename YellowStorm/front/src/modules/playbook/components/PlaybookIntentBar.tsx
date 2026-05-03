@@ -178,6 +178,8 @@ export function PlaybookIntentBar({
       suggestion.impact.nodesToCreate ? t('intentBar.impact.added', { count: suggestion.impact.nodesToCreate }) : '',
       suggestion.impact.nodesToUpdate ? t('intentBar.impact.updated', { count: suggestion.impact.nodesToUpdate }) : '',
       suggestion.impact.nodesToDelete ? t('intentBar.impact.deleted', { count: suggestion.impact.nodesToDelete }) : '',
+      suggestion.impact.edgesToCreate ? t('intentBar.impact.edgesAdded', { count: suggestion.impact.edgesToCreate }) : '',
+      suggestion.impact.edgesToDelete ? t('intentBar.impact.edgesDeleted', { count: suggestion.impact.edgesToDelete }) : '',
     ].filter(Boolean);
 
     return counts.length ? counts.join(' · ') : t('intentBar.impact.noStructuralChange');

@@ -205,6 +205,47 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getByText('Business users get the full review path in one approval.')).toBeInTheDocument();
   });
 
+  it('does not show the no structural changes badge for edge-only workflow plans', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={selectedTask}
+        suggestions={[
+          {
+            id: 'plan-edge-1',
+            kind: 'workflow_plan',
+            label: 'Remove one dependency',
+            summary: 'Keeps both tasks but removes one dependency edge.',
+            reason: 'The downstream step should no longer consume that input.',
+            confidence: 0.9,
+            isDirectIntentFallback: false,
+            impact: {
+              nodesToCreate: 0,
+              nodesToUpdate: 0,
+              nodesToDelete: 0,
+              edgesToCreate: 0,
+              edgesToDelete: 1,
+              affectedTaskIds: ['task-1', 'task-2'],
+              businessOutcome: 'The workflow keeps both tasks while removing the unwanted dependency.',
+            },
+            changes: [
+              {
+                type: 'delete_edge',
+                sourceTaskId: 'task-1',
+                sourceNodeRef: null,
+                targetTaskId: 'task-2',
+                targetNodeRef: null,
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText('intentBar.impact.noStructuralChange')).not.toBeInTheDocument();
+    expect(screen.getByText('intentBar.impact.edgesDeleted')).toBeInTheDocument();
+  });
+
   it('restores suggestions when the textarea gets focus', () => {
     const onBarClick = vi.fn();
 

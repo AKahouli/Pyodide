@@ -3,33 +3,86 @@ import pytest
 from src.langgraph_engine.workflow_service import (
     _build_resume_state_update,
     _build_task_results,
+    resume_playbook,
     run_single_step_graph,
 )
 
 
-def test_build_resume_state_update_restores_clarification_context() -> None:
-    update = _build_resume_state_update({
-        "type": "clarification",
-        "task_id": "step_1",
-        "task_description": "Clarified task description",
-        "conversation_json": '[{"role": "assistant", "content": "Need scope?"}, {"role": "user", "content": "France 90 days"}]',
-    })
-
-    assert update == {
-        "clarification_transcripts_by_task": {
-            "step_1": [
-                {"role": "assistant", "content": "Need scope?"},
-                {"role": "user", "content": "France 90 days"},
-            ],
-        },
-        "task_description_overrides_by_task": {
-            "step_1": "Clarified task description",
-        },
-    }
+def test_build_resume_state_update_skips_clarification_replay() -> None:
+    assert _build_resume_state_update(
+        {
+            "type": "clarification",
+            "task_id": "step_1",
+            "task_description": "Clarified task description",
+            "conversation_json": '[{"role": "assistant", "content": "Need scope?"}, {"role": "user", "content": "France 90 days"}]',
+        }
+    ) is None
 
 
 def test_build_resume_state_update_ignores_non_clarification_interrupts() -> None:
     assert _build_resume_state_update({"type": "approval_request", "task_id": "step_1"}) is None
+
+
+@pytest.mark.asyncio
+async def test_resume_playbook_does_not_reinject_clarification_state(monkeypatch) -> None:
+    captured = {}
+
+    class FakeGraph:
+        async def aget_state(self, _config):
+            return object()
+
+    async def fake_send_sentinel(_queue) -> None:
+        return None
+
+    async def fake_consume_graph_stream(*, graph, graph_input, config, thread_id):
+        captured["graph"] = graph
+        captured["graph_input"] = graph_input
+        captured["config"] = config
+        captured["thread_id"] = thread_id
+        return None, {"status": "completed", "tasks": []}
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.get_thread_graph",
+        lambda _thread_id: FakeGraph(),
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",
+        lambda _snapshot, _thread_id: {
+            "type": "clarification",
+            "task_id": "step_1",
+            "task_description": "Clarified task description",
+            "conversation_json": '[{"role": "assistant", "content": "Need scope?"}]',
+        },
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        fake_consume_graph_stream,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._send_sentinel",
+        fake_send_sentinel,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.remove_queue",
+        lambda _thread_id: None,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        lambda _thread_id: None,
+    )
+
+    response = await resume_playbook(
+        playbook_id="pb-1",
+        thread_id="th-1",
+        human_response={"action": "reply", "message": "France 90 days"},
+    )
+
+    assert response["status"] == "completed"
+    assert captured["graph_input"].update is None
+    assert captured["graph_input"].resume == {
+        "action": "reply",
+        "message": "France 90 days",
+    }
 
 
 def _citation_component(reference: str, source: str, content: str, parent_id: str = ""):

@@ -28,11 +28,14 @@ Prefer workflow_plan for any intent that needs multiple steps, multiple branches
 Allowed single_change operationType values: create_node, insert_before, insert_after, update_node, delete_node.
 
 A workflow_plan must include kind="workflow_plan", label, summary, reason, confidence, impact, and ordered changes.
-Allowed workflow_plan change types: create_node, update_node, delete_node.
+Allowed workflow_plan change types: create_node, update_node, delete_node, create_edge, delete_edge.
 For create_node changes include nodeRef, task { title, description, agentSlug }, and anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs? }.
 For update_node changes, include task.agentSlug when the task currently has no assigned agent or when the user clearly requests reassignment.
 Every created task must have exactly one agentSlug chosen from the provided default agents. Never invent agent slugs.
 Prefer preserving existing assigned agents on updates unless reassignment is explicit or the current task has no agent.
+Use delete_edge when a dependency should be removed but both tasks should remain in the workflow.
+Use create_edge when connecting existing tasks or previously created nodeRefs without creating a new node.
+Do not use delete_node just to remove one dependency.
 
 Graph semantics:
 - after = insert a step in sequence immediately after one parent and before that parent's current downstream steps.
@@ -91,6 +94,7 @@ Anchor rules:
 6. Never describe branches as parallel if the JSON encodes them as a sequence.
 7. Every nodeRef must be unique, short, stable, and referenced only after its create_node appears earlier in changes.
 8. Existing targetTaskId values must come from Workflow summary JSON; new nodeRef values must come from earlier create_node changes.
+9. If the user wants to stop using one task output in another task but keep both tasks, emit delete_edge instead of delete_node.
 
 Examples:
 
@@ -118,6 +122,12 @@ Restructure existing over-sequential workflow into parallel branches:
 Adding a missing prerequisite to an existing report step:
 {"type":"create_node","nodeRef":"intel_research","anchor":{"mode":"as_input","targetTaskId":"report-step-id","nodeRef":null},"task":{"title":"Research Intel context","description":"Collect recent public information about Intel for the comparison."}}
 {"type":"update_node","targetTaskId":"report-step-id","task":{"description":"Write the final report comparing LVMH, Veolia, and Intel using all upstream research."}}
+
+Removing one dependency while keeping both tasks:
+{"type":"delete_edge","sourceTaskId":"classification-step-id","targetTaskId":"synthesis-step-id"}
+
+Connecting an existing task into an existing downstream task:
+{"type":"create_edge","sourceTaskId":"attachment-extraction-step-id","targetTaskId":"synthesis-step-id"}
 
 Return JSON like:
 {"suggestions":[{"kind":"workflow_plan","label":"Research companies in parallel","summary":"Creates independent research branches and merges them into a comparison report.","reason":"The companies can be researched independently before synthesis.","confidence":0.86,"impact":{"nodesToCreate":3,"nodesToUpdate":0,"nodesToDelete":0,"edgesToCreate":2,"edgesToDelete":0,"affectedTaskIds":[],"businessOutcome":"Users get a faster parallel research workflow with one consolidated output."},"changes":[{"type":"create_node","nodeRef":"research_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"Collect recent public information about LVMH.","agentSlug":"research-agent"}},{"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia.","agentSlug":"research-agent"}},{"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"targetTaskIds":[],"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and write a concise report.","agentSlug":"synthesis-agent"}}]}]}`,

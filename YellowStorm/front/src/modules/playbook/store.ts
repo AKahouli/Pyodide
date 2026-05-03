@@ -992,8 +992,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionCache: evictCache({ ...state.executionCache, [result.executionId]: optimisticExecution }),
               selectedStepId: data?.singleStepTaskId || sortedTasks[0]?.id || null,
               executionPanelOpen: true,
-              workspaceExplorerOpen: false,
-              connectorSidebarOpen: false,
               nodeEditorOpen: false,
               pageMode: 'run',
             };
