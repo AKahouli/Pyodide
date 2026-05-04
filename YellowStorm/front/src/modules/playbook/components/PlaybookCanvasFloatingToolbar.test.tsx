@@ -8,10 +8,29 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-vi.mock('../utils/task-template-registry', () => ({
-  TASK_TEMPLATES: [
-    { id: 'summarizer', type: 'summarizer', title: 'Summarizer', description: 'Summarize', icon: 'FileText', color: 'blue', category: 'content', inputPorts: [{ id: 'source', name: 'Source Content', artifactKind: 'text', required: true }], outputPorts: [{ id: 'summary', name: 'Summary', artifactKind: 'text' }], promptTemplate: '', recommendedAgentTypeSlug: null, requiredToolNames: [] },
-  ],
+const fetchNodeTemplatesMock = vi.fn();
+
+vi.mock('../store', () => ({
+  usePlaybookStore: (sel: any) => sel({
+    nodeTemplates: [
+      {
+        id: 'summarizer',
+        type: 'summarizer',
+        title: 'taskType.summarizer',
+        description: 'Summarize',
+        icon: 'FileText',
+        color: 'blue',
+        category: 'content',
+        inputPorts: [{ id: 'source', name: 'Source Content', artifactKind: 'text', required: true }],
+        outputPorts: [{ id: 'summary', name: 'Summary', artifactKind: 'text' }],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+      },
+    ],
+    nodeTemplatesLoading: false,
+    fetchNodeTemplates: fetchNodeTemplatesMock,
+  }),
 }));
 
 vi.mock('../utils/port-colors', () => ({
@@ -48,6 +67,8 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         connectorsOpen={false}
         canUndo
         canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
       />,
     );
 
@@ -83,6 +104,8 @@ describe('PlaybookCanvasFloatingToolbar', () => {
         connectorsOpen={false}
         canUndo
         canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
       />,
     );
 

@@ -75,7 +75,7 @@ import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability } from '../api';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -218,6 +218,7 @@ function PlaybookCanvasInner() {
 
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
+  const previousWaitingForHumanInputRef = useRef(false);
 
   const handleToggleTriggerEnabled = useCallback(
     async (playbookId: string, currentlyEnabled: boolean) => {
@@ -1790,6 +1791,8 @@ function PlaybookCanvasInner() {
     if (newOpen) setEditorOpen(false);
   }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen]);
 
+  const waitingForHumanInput = currentExecution?.playbookId === id && currentExecution?.waitingForHumanInput === true;
+
   const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
 
@@ -1808,6 +1811,18 @@ function PlaybookCanvasInner() {
     setExecutionPanelOpen,
     setWorkspaceExplorerOpen,
   ]);
+
+  useEffect(() => {
+    const wasWaitingForHumanInput = previousWaitingForHumanInputRef.current;
+    previousWaitingForHumanInputRef.current = Boolean(waitingForHumanInput);
+
+    if (!waitingForHumanInput || wasWaitingForHumanInput) {
+      return;
+    }
+
+    setDesignerOpen(true);
+    setCopilotMode('interrupt');
+  }, [setCopilotMode, setDesignerOpen, waitingForHumanInput]);
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: any) => {
@@ -2146,6 +2161,10 @@ function PlaybookCanvasInner() {
                   designerOpen={designerOpen}
                   onRemoveAllTasks={handleRemoveAllTasks}
                   taskCount={playbook.tasks.length}
+                  waitingForHumanInput={Boolean(waitingForHumanInput)}
+                  interruptType={currentExecution?.playbookId === id
+                    ? ((currentExecution?.interruptPayload?.type ?? null) as InterruptType | null)
+                    : null}
                 />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>

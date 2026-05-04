@@ -14,11 +14,14 @@ export function HumanFeedbackInline({ data, taskId }: Props) {
   const setDesignerOpen = usePlaybookStore((s) => s.setDesignerOpen);
   const setCopilotMode = usePlaybookStore((s) => s.setCopilotMode);
   const selectStep = usePlaybookStore((s) => s.selectStep);
+  const designerOpen = usePlaybookStore((s) => s.designerOpen);
+  const copilotMode = usePlaybookStore((s) => s.copilotMode);
 
   const isPending = data.status === 'pending';
   const isApproval = data.interruptType === 'approval_request';
   const isReview = data.interruptType === 'review_request';
   const isClarification = data.interruptType === 'clarification';
+  const interruptPanelOpen = designerOpen && copilotMode === 'interrupt';
 
   const openCopilot = () => {
     selectStep(taskId);
@@ -87,11 +90,18 @@ export function HumanFeedbackInline({ data, taskId }: Props) {
       {data.message && (
         <p className="text-sm text-muted-foreground mb-3">{data.message}</p>
       )}
-      <div className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
-        <p className="text-xs text-muted-foreground">{t('interrupt.answerInCopilot')}</p>
-        <Button size="sm" onClick={openCopilot}>
-          {t('interrupt.openCopilot')}
-        </Button>
+      <div className="space-y-2 rounded-md border bg-background px-3 py-3">
+        <p className="text-xs font-medium text-foreground">{t('interrupt.waitingForDecision')}</p>
+        <p className="text-xs text-muted-foreground">
+          {interruptPanelOpen ? t('interrupt.answerInCopilotOpen') : t('interrupt.answerInCopilot')}
+        </p>
+        {!interruptPanelOpen && (
+          <div className="flex justify-end">
+            <Button size="sm" onClick={openCopilot}>
+              {t('interrupt.openCopilot')}
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -16,7 +16,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 import { PORT_COLORS } from '../utils/port-colors';
 import { usePlaybookStore } from '../store';
-import type { TaskTemplate } from '../types';
+import type { InterruptType, TaskTemplate } from '../types';
 
 interface Props {
   containerRef: RefObject<HTMLElement>;
@@ -38,6 +38,8 @@ interface Props {
   designerOpen?: boolean;
   onRemoveAllTasks?: () => void;
   taskCount?: number;
+  waitingForHumanInput?: boolean;
+  interruptType?: InterruptType | null;
 }
 
 type Position = { x: number; y: number };
@@ -65,6 +67,8 @@ export function PlaybookCanvasFloatingToolbar({
   designerOpen = false,
   onRemoveAllTasks,
   taskCount = 0,
+  waitingForHumanInput = false,
+  interruptType = null,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
@@ -169,6 +173,14 @@ export function PlaybookCanvasFloatingToolbar({
     window.addEventListener('pointercancel', stopDragging);
   };
 
+  const designerLabel = waitingForHumanInput
+    ? interruptType === 'review_request'
+      ? t('interrupt.reviewTitle')
+      : interruptType === 'clarification'
+        ? t('interrupt.clarificationTitle')
+        : t('interrupt.approvalTitle')
+    : t('toolbar.designer');
+
   const actionButtons = [
     {
       key: 'undo',
@@ -217,7 +229,7 @@ export function PlaybookCanvasFloatingToolbar({
     },
     {
       key: 'designer',
-      label: t('toolbar.designer'),
+      label: designerLabel,
       icon: Wand2,
       onClick: onToggleDesigner,
       disabled: false,
@@ -323,10 +335,10 @@ export function PlaybookCanvasFloatingToolbar({
                   {nodeTemplatesLoading ? (
                     <DropdownMenuItem disabled>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Loading...
+                      {t('common.loading')}
                     </DropdownMenuItem>
                   ) : nodeTemplates.length === 0 ? (
-                    <DropdownMenuItem disabled>No templates available</DropdownMenuItem>
+                    <DropdownMenuItem disabled>{t('toolbar.noTemplatesAvailable')}</DropdownMenuItem>
                   ) : (
                     nodeTemplates.map((template) => {
                       const KindIcon = PORT_COLORS[template.inputPorts[0]?.artifactKind || 'text'].icon;
