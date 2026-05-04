@@ -805,6 +805,8 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         chunkCount++;
         console.log(chunk);
         // Capture time to first chunk
+
+        // Capture time to first
         if (chunkCount === 1) {
           timeToFirstChunk = Date.now() - startTime;
         }

@@ -144,6 +144,7 @@ export const DocumentRow = memo(function DocumentRow({
         </TableCell>
         <TableCell className='hidden lg:table-cell'>
           {!document.isFolder && <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />}
+          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} taskName={document.indexingTaskName} />
         </TableCell>
         <TableCell>
           <div className='flex gap-1 md:opacity-0 md:group-hover:opacity-100 transition-opacity'>

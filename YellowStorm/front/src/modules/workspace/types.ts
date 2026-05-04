@@ -82,10 +82,14 @@ export interface WorkspaceDocument {
   metadata?: Record<string, string>;
   indexingStatus: IndexingStatus;
   indexingError?: string;
+  indexingTaskName?: string;
+  indexingTaskId?: string;
   lastIndexedAt?: string;
   parentId?: string;
   isFolder: boolean;
   folderName?: string;
+  detected_language?: string;
+  chunk_size?: number;
   createdAt: string;
   updatedAt: string;
 }
