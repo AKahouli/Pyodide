@@ -79,6 +79,12 @@ export class WorkspaceDoc extends Document {
   @Prop({ type: String })
   indexingError?: string;
 
+  @Prop({ type: String })
+  indexingTaskName?: string;
+
+  @Prop({ type: String })
+  indexingTaskId?: string;
+
   @Prop({ type: Date })
   lastIndexedAt?: Date;
 

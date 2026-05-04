@@ -788,7 +788,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         resetIdleTimeout();
         chunkCount++;
 
-        // Capture time to first chunk
+        // Capture time to first
         if (chunkCount === 1) {
           timeToFirstChunk = Date.now() - startTime;
         }

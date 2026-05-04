@@ -49,7 +49,7 @@ export const DocumentRow = memo(function DocumentRow({ document, isSelected, onT
           </Badge>
         </TableCell>
         <TableCell className='hidden lg:table-cell'>
-          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />
+          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} taskName={document.indexingTaskName} />
         </TableCell>
         <TableCell className='text-muted-foreground hidden lg:table-cell'>{formatDate(document.uploadedAt || document.createdAt)}</TableCell>
         <TableCell>

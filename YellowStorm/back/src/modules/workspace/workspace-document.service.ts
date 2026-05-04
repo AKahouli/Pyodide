@@ -1303,6 +1303,8 @@ export class WorkspaceDocumentService {
       metadata: document.metadata,
       indexingStatus: document.indexingStatus || IndexingStatus.PENDING,
       indexingError: document.indexingError,
+      indexingTaskName: document.indexingTaskName,
+      indexingTaskId: document.indexingTaskId,
       lastIndexedAt: document.lastIndexedAt?.toISOString(),
       detected_language: document.detected_language,
       chunk_size: document.chunk_size,
