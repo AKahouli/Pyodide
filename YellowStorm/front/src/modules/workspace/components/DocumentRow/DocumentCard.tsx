@@ -56,7 +56,7 @@ export const DocumentCard = memo(function DocumentCard({ document, isSelected, o
           <Badge variant='outline' className='text-[10px] h-4 px-1.5'>
             {getFileTypeLabel(document.mimeType)}
           </Badge>
-          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} />
+          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} taskName={document.indexingTaskName} />
           <span className='text-xs text-muted-foreground'>{formatDate(document.uploadedAt || document.createdAt)}</span>
         </div>
       </div>

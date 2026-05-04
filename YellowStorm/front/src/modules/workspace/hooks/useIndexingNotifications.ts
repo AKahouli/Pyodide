@@ -12,8 +12,12 @@ interface IndexingNotificationData {
   workspaceId: string;
   indexingStatus: string;
   indexingError?: string;
+  indexingTaskName?: string;
+  indexingTaskId?: string;
   lastIndexedAt?: string;
   originalName: string;
+  detected_language?: string;
+  chunk_size?: number;
 }
 
 /**
@@ -35,7 +39,7 @@ export function useIndexingNotifications() {
       const data = notification.data as IndexingNotificationData | undefined;
       if (!data?.eventType || data.eventType !== 'indexing_status_change') return;
 
-      updateRef.current(data.documentId, data.indexingStatus, data.indexingError, data.lastIndexedAt);
+      updateRef.current(data.documentId, data.indexingStatus, data.indexingError, data.lastIndexedAt, data.indexingTaskName, data.indexingTaskId, data.detected_language, data.chunk_size);
     };
 
     const unsubscribe = notificationsService.subscribe(handleEvent);

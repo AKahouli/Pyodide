@@ -6,9 +6,10 @@ import type { IndexingStatus } from '../../types';
 type Props = Readonly<{
   status: IndexingStatus;
   error?: string;
+  taskName?: string;
 }>;
 
-export function IndexingStatusBadge({ status, error }: Props) {
+export function IndexingStatusBadge({ status, error, taskName }: Props) {
   const config: Record<IndexingStatus, { icon: React.ReactNode; label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
     none: { icon: <FileX className='h-3 w-3' />, label: 'Not Indexed', variant: 'outline' },
     pending: { icon: <Clock className='h-3 w-3' />, label: 'Pending', variant: 'secondary' },
@@ -18,11 +19,12 @@ export function IndexingStatusBadge({ status, error }: Props) {
   };
 
   const { icon, label, variant } = config[status] || config.pending;
+  const displayLabel = status === 'processing' && taskName ? taskName : label;
 
   const badge = (
-    <Badge variant={variant} className='text-[10px] h-5 px-1.5 gap-1'>
+     <Badge variant={variant} className='text-[10px] h-5 px-1.5 gap-1 max-w-40'>
       {icon}
-      {label}
+      <span className='truncate'>{displayLabel}</span>
     </Badge>
   );
 
