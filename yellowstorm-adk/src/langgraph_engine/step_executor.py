@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Awaitable, Callable, Dict, Any, Optional, List
 
 from structlog import get_logger
+from src.middleware.correlation import get_user
 
 from src.langgraph_engine.port_resolution import (
     resolve_task_inputs,
@@ -1175,6 +1176,7 @@ async def _execute_with_tools(
         api_key=settings.LITELLM_API_SECRET_KEY,
         model=model_name,
         temperature=temperature,
+        model_kwargs={"user": get_user()},
     )
     llm_with_tools = llm.bind_tools(tools)
 
@@ -1610,6 +1612,7 @@ async def _llm_call(
         api_key=settings.LITELLM_API_SECRET_KEY,
         model=model_name,
         temperature=temperature,
+        model_kwargs={"user": get_user()},
     )
     _append_prompt_trace(
         prompt_trace,

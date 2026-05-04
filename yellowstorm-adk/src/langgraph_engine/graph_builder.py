@@ -46,6 +46,7 @@ from src.langgraph_engine.port_resolution import (
     resolve_prompt_template,
 )
 from src.skills.runtime import inject_skill_catalog
+from src.middleware.correlation import get_user
 from datetime import datetime
 import json
 
@@ -989,6 +990,7 @@ class DynamicGraphBuilder:
                         api_key=settings.LITELLM_API_SECRET_KEY,
                         model=model_name,
                         temperature=0.0,
+                        model_kwargs={"user": get_user()},
                     )
 
                     from langchain_core.messages import HumanMessage
@@ -1990,6 +1992,7 @@ class DynamicGraphBuilder:
             api_key=settings.LITELLM_API_SECRET_KEY,
             model=model_name,
             temperature=temperature,
+            model_kwargs={"user": get_user()},
         )
         _append_prompt_trace(
             prompt_trace,

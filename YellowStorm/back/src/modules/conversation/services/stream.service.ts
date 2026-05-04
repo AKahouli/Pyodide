@@ -377,7 +377,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
             enable_extract_images: false,
             sheet_name: '',
             in_memory: false,
-            createdAt: doc.createdAt,  
+            createdAt: doc.createdAt,
           },
         };
       });
@@ -453,6 +453,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     request: StreamRequest,
     requestId?: string,
     userEmail: string = '',
+    username?: string,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -460,6 +461,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
       'Stream start requested',
       {
         userId,
+        username,
         conversationId,
         messageId,
         contentLength: request.content.length,
@@ -549,7 +551,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
     // Send stream_start event to all members
     await this.streamGateway.broadcastToConversation(
-    memberIds, {
+      memberIds, {
       type: 'stream_start',
       data: { conversationId, messageId },
     });
@@ -582,7 +584,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     ]);
 
     const grpcRequest = {
-      user_context: { user_id: userId, username: userEmail },
+      user_context: { user_id: userId, username: username || '' },
       conversation_id: conversationId,
       query: request.content,
       agents,
@@ -610,6 +612,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         timeoutMs,
         memberIds,
         requestId,
+        username,
       );
     } catch (error) {
       this.logger.error(
@@ -732,6 +735,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     timeoutMs: number,
     memberIds: string[],
     requestId?: string,
+    username?: string,
   ): Promise<void> {
     const logOpts: LogOptions = { requestId };
 
@@ -743,12 +747,18 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
           conversationId,
           messageId,
           timeoutMs,
+          username,
         },
         logOpts,
       );
 
+      // Create metadata with user header for LiteLLM logging
+      const metadata = new grpc.Metadata();
+      const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
+      metadata.set('user', userHeader);
+
       // No absolute deadline - we use idle timeout instead
-      const call = this.chatbotClient.RunAgentTeam(grpcRequest);
+      const call = this.chatbotClient.RunAgentTeam(grpcRequest, { metadata });
       this.activeCalls.set(streamKey, call);
 
       let totalInputTokens = 0;
@@ -829,7 +839,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Send chunk immediately to frontend (only id needed for delete)
               this.streamGateway.broadcastToConversation(
-              memberIds, {
+                memberIds, {
                 type: 'stream_chunk',
                 data: { conversationId, action, component: { id: comp.id } as MessageComponent },
               }).catch((err) => {
@@ -868,7 +878,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Send chunk immediately to frontend
               this.streamGateway.broadcastToConversation(
-              memberIds, {
+                memberIds, {
                 type: 'stream_chunk',
                 data: { conversationId, action, component: { id: comp.id, type, data } },
               }).catch((err) => {
@@ -993,7 +1003,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
           // Send complete event
           await this.streamGateway.broadcastToConversation(
-          memberIds, {
+            memberIds, {
             type: 'stream_complete',
             data: {
               conversationId,
@@ -1182,7 +1192,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private async sendErrorEvent(userId: string, conversationId: string, errorCode: ErrorCode): Promise<void> {
     const memberIds = await this.resolveMemberIds(conversationId);
     await this.streamGateway.broadcastToConversation(
-    memberIds, {
+      memberIds, {
       type: 'stream_error',
       data: {
         conversationId,
@@ -1382,9 +1392,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     conversationId: string,
     query: string,
     modelId?: string,
+    username?: string,
   ): void {
     // Fire and forget - don't await at call site
-    this.generateConversationName(userId, conversationId, query, modelId).catch((err) => {
+    this.generateConversationName(userId, conversationId, query, modelId, username).catch((err) => {
       this.logger.error('Failed to generate conversation name', {
         conversationId,
         error: (err as Error).message,
@@ -1397,6 +1408,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
     conversationId: string,
     query: string,
     modelId?: string,
+    username?: string,
   ): Promise<void> {
     try {
       // Resolve modelId to litellmModel from the database
@@ -1406,7 +1418,7 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         litellmModel = model?.litellmModel || '';
       }
 
-      const response = await this.callGenerateNameGrpc(query, litellmModel);
+      const response = await this.callGenerateNameGrpc(query, litellmModel, username);
       const generatedName = response.conversation_name || 'New Conversation';
 
       // Update conversation title in database
@@ -1439,16 +1451,23 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
   private callGenerateNameGrpc(
     query: string,
     modelId?: string,
+    username?: string,
   ): Promise<{ conversation_name: string }> {
     return new Promise((resolve, reject) => {
       if (!this.chatbotClient) {
         reject(new Error('gRPC client not initialized'));
         return;
       }
+
+      // Create metadata with user header for LiteLLM logging
+      const metadata = new grpc.Metadata();
+      const userHeader = username || 'SYSTEM'; // Use 'SYSTEM' for non-user requests
+      metadata.set('user', userHeader);
+
       const deadline = new Date(Date.now() + 60000); // 60s timeout
       this.chatbotClient.GenerateConversationName(
         { query, model: modelId || '' },
-        { deadline },
+        { deadline, metadata },
         (err: Error | null, response: { conversation_name: string }) => {
           if (err) reject(err);
           else resolve(response);
