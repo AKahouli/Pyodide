@@ -519,6 +519,7 @@ message GeneratePlaybookRequest {
     ExistingPlaybook existing_playbook = 4;   // Vide pour creation, rempli pour modification
     string model = 5;                         // Modele LLM (ex: "azure/gpt-4.1")
     map<string, string> prompt_overrides = 6;
+    UserContext user_context = 7;
 }
 
 message GeneratePlaybookResponse {
