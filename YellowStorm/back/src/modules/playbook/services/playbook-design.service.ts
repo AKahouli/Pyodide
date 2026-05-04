@@ -99,7 +99,7 @@ export class PlaybookDesignService {
     // Resolve all agents available to the user — fully built for gRPC
     const allAgents = await this.agentService.getAgentsForUser(userId);
     const allAgentIds = allAgents.map((a) => a.id);
-    const modelId = await this.playbookSettingsService.resolveInferenceModel();
+    const modelId = await this.playbookSettingsService.resolveInferenceModel() || '';
     const fallbackModelId = modelId;
     const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(userId, allAgentIds, fallbackModelId);
     await this.contextService.resolveAgentBrainContexts(grpcAgents);
@@ -110,6 +110,10 @@ export class PlaybookDesignService {
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     const grpcRequest = {
+      user_context: {
+        user_id: userId,
+        username: userEmail || userId,
+      },
       query: dto.prompt,
       available_agents: grpcAgents,
       workspace_context: workspaceContexts,
@@ -355,7 +359,7 @@ export class PlaybookDesignService {
     // Resolve all agents available to the user — fully built for gRPC
     const allAgents = await this.agentService.getAgentsForUser(userId);
     const allAgentIds = allAgents.map((a) => a.id);
-    const modelId = await this.playbookSettingsService.resolveInferenceModel(playbook.designSettings);
+    const modelId = await this.playbookSettingsService.resolveInferenceModel(playbook.designSettings) || '';
     const fallbackModelId = modelId;
     const grpcAgents = await this.agentService.buildGrpcAgentsForPlaybook(userId, allAgentIds, fallbackModelId);
     await this.contextService.resolveAgentBrainContexts(grpcAgents);
@@ -365,6 +369,10 @@ export class PlaybookDesignService {
     const promptOverrides = await this.promptService.getPromptOverridesPayload();
 
     const grpcRequest = {
+      user_context: {
+        user_id: userId,
+        username: userEmail || userId,
+      },
       query: dto.query,
       available_agents: grpcAgents,
       workspace_context: workspaceContexts,

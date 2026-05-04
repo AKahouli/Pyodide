@@ -1328,10 +1328,13 @@ class ChatbotServicer(
         an existing playbook (for modification). Returns a complete playbook with
         positioned nodes and edges.
         """
+        username = request.user_context.username or request.user_context.user_id or "unknown"
+        user_token = user_ctx.set(username)
         try:
             logger.info(
                 "[GeneratePlaybook] Request received",
                 model=request.model,
+                username=username,
                 agent_count=len(request.available_agents),
                 has_existing=request.HasField("existing_playbook"),
             )
@@ -1406,6 +1409,7 @@ class ChatbotServicer(
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
                 max_tokens=4096,
                 response_format={"type": "json_object"},
+                user=username,
             )
 
             raw = response.choices[0].message.content.strip()
@@ -1525,6 +1529,8 @@ class ChatbotServicer(
                 grpc.StatusCode.INTERNAL,
                 f"Failed to generate playbook: {exc}",
             )
+        finally:
+            user_ctx.reset(user_token)
 
     @staticmethod
     def _build_generate_playbook_prompt(
