@@ -1637,6 +1637,7 @@ function PlaybookCanvasInner() {
     }
     if (isDirty) await saveNow();
     setPageMode('run');
+    setExecutionPanelCollapsed(false);
     const stepExecutionModes: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> = {};
     for (const task of playbook.tasks) {
       if (task.enabled !== false) {
@@ -1895,12 +1896,17 @@ function PlaybookCanvasInner() {
     (mode: PlaybookPageMode) => {
       setPageMode(mode);
       if (mode === 'design') {
+        if (!waitingForHumanInput) {
+          setDesignerOpen(false);
+        }
+        setExecutionPanelCollapsed(true);
+        setExecutionPanelOpen(false);
         return;
       }
       setExecutionPanelCollapsed(false);
       setExecutionPanelOpen(true);
     },
-    [setExecutionPanelOpen, setPageMode],
+    [setExecutionPanelOpen, setPageMode, setDesignerOpen, waitingForHumanInput],
   );
 
   const handleNameBlur = useCallback(() => {

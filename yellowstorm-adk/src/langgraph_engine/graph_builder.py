@@ -1617,6 +1617,7 @@ class DynamicGraphBuilder:
                         {
                             "output": "" if is_visualizer else response,
                             "task_id": task_id,
+                            "status": "completed",
                             "task_title": task_config["title"],
                             "agent_name": agent["name"],
                             "components": components,

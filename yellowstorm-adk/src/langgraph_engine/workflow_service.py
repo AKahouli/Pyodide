@@ -920,15 +920,14 @@ async def resume_single_step(
             state_snapshot, task_id, thread_id
         )
         resume_state_update = _build_resume_state_update(resume_interrupt_data)
-        final_state = await graph.ainvoke(
-            Command(update=resume_state_update, resume=human_response), config
+        interrupt_data, final_state = await _consume_graph_stream(
+            graph=graph,
+            graph_input=Command(update=resume_state_update, resume=human_response),
+            config=config,
+            thread_id=thread_id,
         )
 
-        state_snapshot = await graph.aget_state(config)
-        if state_snapshot.next:
-            interrupt_data = extract_step_interrupt_from_snapshot(
-                state_snapshot, task_id, thread_id
-            )
+        if interrupt_data:
             logger.info(
                 "[resume_single_step] Graph suspended again (HITL)",
                 interrupt_type=interrupt_data.get("type") if interrupt_data else None,
@@ -946,7 +945,16 @@ async def resume_single_step(
                 "thread_id": thread_id,
             }
 
-        final_status = final_state.get("status", "completed")
+        final_state = final_state or {}
+
+        results = final_state.get("results", {})
+        task_result = results.get(task_id, {})
+        task_status = str(task_result.get("status") or "").strip().lower()
+        final_status = (
+            task_status
+            if task_status in {"completed", "failed", "skipped"}
+            else final_state.get("status", "completed")
+        )
         logger.info(
             "[resume_single_step] Resumed execution completed", status=final_status
         )
@@ -954,26 +962,23 @@ async def resume_single_step(
         if final_status in ("completed", "failed", "skipped"):
             cleanup_thread_graph(thread_id)
 
-        results = final_state.get("results", {})
-        task_result = results.get(task_id, {})
-
         return {
             "status": final_status,
             "result": {
                 "task_id": task_id,
-                "status": final_status,
-                "output": final_state.get("output", task_result.get("output", "")),
-                "error": final_state.get("error", task_result.get("error", "")),
+                "status": task_status or final_status,
+                "output": task_result.get("output", final_state.get("output", "")),
+                "error": task_result.get("error", final_state.get("error", "")),
                 "duration_ms": 0,
-                "components": final_state.get(
-                    "components", task_result.get("components", [])
+                "components": task_result.get(
+                    "components", final_state.get("components", [])
                 ),
-                "usage": final_state.get("usage", task_result.get("usage", {})),
-                "tool_trace": final_state.get(
-                    "tool_trace", task_result.get("tool_trace", [])
+                "usage": task_result.get("usage", final_state.get("usage", {})),
+                "tool_trace": task_result.get(
+                    "tool_trace", final_state.get("tool_trace", [])
                 ),
-                "semantic_match": final_state.get(
-                    "semantic_match", task_result.get("semantic_match")
+                "semantic_match": task_result.get(
+                    "semantic_match", final_state.get("semantic_match")
                 ),
             },
             "interrupt": None,
