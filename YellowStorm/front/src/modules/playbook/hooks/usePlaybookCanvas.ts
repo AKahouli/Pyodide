@@ -21,6 +21,11 @@ import { migrateEdge } from '../utils/migrate-ports';
 import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
 const TRIGGER_NODE_ID = '__trigger__';
+const ITERATOR_HEADER_HEIGHT = 56;
+const ITERATOR_PADDING = 32;
+const ITERATOR_MIN_WIDTH = 360;
+const ITERATOR_MIN_HEIGHT = 220;
+const ITERATOR_CHILD_STACK_OFFSET = 56;
 
 const MAIL_TRIGGER_PORTS = [
   { id: 'mail_data', name: 'Mail data', artifactKind: 'data' as ArtifactKind },
@@ -47,67 +52,108 @@ function getIteratorChildTasks(tasks: PlaybookTask[], iteratorId: string): Playb
 }
 
 function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask[]): Node {
-  const padding = 80;
-  const minWidth = 360;
-  const minHeight = 220;
   const bounds = childTasks.reduce(
     (acc, child) => {
-      acc.minX = Math.min(acc.minX, child.positionX);
-      acc.minY = Math.min(acc.minY, child.positionY);
-      acc.maxX = Math.max(acc.maxX, child.positionX);
-      acc.maxY = Math.max(acc.maxY, child.positionY);
+      const relativeX = child.positionX - task.positionX;
+      const relativeY = child.positionY - task.positionY;
+      acc.maxX = Math.max(acc.maxX, relativeX + ITERATOR_MIN_WIDTH / 2);
+      acc.maxY = Math.max(acc.maxY, relativeY + ITERATOR_CHILD_STACK_OFFSET);
       return acc;
     },
     {
-      minX: task.positionX,
-      minY: task.positionY,
-      maxX: task.positionX + minWidth,
-      maxY: task.positionY + minHeight,
+      maxX: ITERATOR_MIN_WIDTH,
+      maxY: ITERATOR_MIN_HEIGHT,
     },
   );
 
-  const width = Math.max(minWidth, bounds.maxX - bounds.minX + padding * 2);
-  const height = Math.max(minHeight, bounds.maxY - bounds.minY + padding * 2);
+  const width = Math.max(ITERATOR_MIN_WIDTH, bounds.maxX + ITERATOR_PADDING);
+  const height = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING + ITERATOR_HEADER_HEIGHT);
 
   return {
     id: task.id,
     type: 'playbookIteratorContainer',
-    position: { x: Math.min(task.positionX, bounds.minX - padding), y: Math.min(task.positionY, bounds.minY - padding) },
+    position: { x: task.positionX, y: task.positionY },
     data: { ...task, width, height, childTaskIds: childTasks.map((child) => child.id) } as PlaybookNodeData,
     style: { width, height },
   };
 }
 
-export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
-  const iteratorIds = new Set(tasks.filter((task) => task.taskType === 'iterator').map((task) => task.id));
-  const taskNodes: Node[] = tasks.flatMap((task): Node[] => {
-    if (task.taskType === 'iterator') {
-      const childTasks = getIteratorChildTasks(tasks, task.id);
-      return [buildIteratorContainerNode(task, childTasks)];
-    }
+function getIteratorNodeMap(tasks: PlaybookTask[]): Map<string, PlaybookTask> {
+  return new Map(tasks.filter((task) => task.taskType === 'iterator').map((task) => [task.id, task]));
+}
 
-    const parentIteratorId = task.containerConfig?.parentIteratorId;
-    return [{
-      id: task.id,
-      type: 'playbookStep',
-      position: { x: task.positionX, y: task.positionY },
-      parentId: parentIteratorId && iteratorIds.has(parentIteratorId) ? parentIteratorId : undefined,
-      extent: parentIteratorId && iteratorIds.has(parentIteratorId) ? 'parent' as const : undefined,
-      data: { ...task } as PlaybookNodeData,
-    }];
-  });
+function toAbsoluteTaskPosition(node: Node, nodeMap: Map<string, Node>): { x: number; y: number } {
+  if (!node.parentId) {
+    return { x: node.position.x, y: node.position.y };
+  }
+
+  const parentNode = nodeMap.get(node.parentId);
+  if (!parentNode) {
+    return { x: node.position.x, y: node.position.y };
+  }
+
+  return {
+    x: parentNode.position.x + node.position.x,
+    y: parentNode.position.y + node.position.y,
+  };
+}
+
+function buildChildFlowNode(task: PlaybookTask, iteratorTasks: Map<string, PlaybookTask>): Node {
+  const parentIteratorId = task.containerConfig?.parentIteratorId;
+  const parentIterator = parentIteratorId ? iteratorTasks.get(parentIteratorId) : null;
+  const isScoped = Boolean(parentIteratorId && parentIterator);
+
+  return {
+    id: task.id,
+    type: 'playbookStep',
+    position: isScoped && parentIterator
+      ? {
+          x: task.positionX - parentIterator.positionX,
+          y: task.positionY - parentIterator.positionY,
+        }
+      : { x: task.positionX, y: task.positionY },
+    parentId: isScoped ? parentIteratorId ?? undefined : undefined,
+    extent: isScoped ? 'parent' as const : undefined,
+    data: { ...task } as PlaybookNodeData,
+  };
+}
+
+function getAssignedChildAbsolutePosition(tasks: PlaybookTask[], iteratorId: string): { x: number; y: number } | null {
+  const iteratorTask = tasks.find((task) => task.id === iteratorId && task.taskType === 'iterator');
+  if (!iteratorTask) {
+    return null;
+  }
+
+  const siblingCount = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId).length;
+  return {
+    x: iteratorTask.positionX + ITERATOR_PADDING,
+    y: iteratorTask.positionY + ITERATOR_HEADER_HEIGHT + 16 + siblingCount * ITERATOR_CHILD_STACK_OFFSET,
+  };
+}
+
+export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
+  const iteratorTasks = getIteratorNodeMap(tasks);
+  const iteratorNodes = tasks
+    .filter((task) => task.taskType === 'iterator')
+    .map((task) => buildIteratorContainerNode(task, getIteratorChildTasks(tasks, task.id)));
+  const stepNodes = tasks
+    .filter((task) => task.taskType !== 'iterator')
+    .map((task) => buildChildFlowNode(task, iteratorTasks));
+  const taskNodes: Node[] = [...iteratorNodes, ...stepNodes];
 
   return includeTriggerNode ? [buildTriggerNode(), ...taskNodes] : taskNodes;
 }
 
 function nodesToTasks(nodes: Node[]): PlaybookTask[] {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
   return nodes.filter((node) => node.type === 'playbookStep' || node.type === 'playbookIteratorContainer').map((node) => {
     const data = node.data as PlaybookNodeData;
+    const absolutePosition = toAbsoluteTaskPosition(node, nodeMap);
     return {
       ...data,
       id: node.id,
-      positionX: node.position.x,
-      positionY: node.position.y,
+      positionX: absolutePosition.x,
+      positionY: absolutePosition.y,
       containerConfig:
         node.type === 'playbookStep'
           ? {
@@ -217,6 +263,50 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     );
   }
 
+  function preserveNodeUiState(nextNodes: Node[], previousNodes: Node[]): Node[] {
+    const previousById = new Map(previousNodes.map((node) => [node.id, node]));
+    return nextNodes.map((node) => {
+      const previous = previousById.get(node.id);
+      if (!previous) {
+        return node;
+      }
+      return {
+        ...node,
+        selected: previous.selected,
+        dragging: previous.dragging,
+      };
+    });
+  }
+
+  function applyTaskPatch(tasks: PlaybookTask[], taskId: string, patch: Partial<PlaybookTask>): PlaybookTask[] {
+    const previousTask = tasks.find((task) => task.id === taskId);
+    const nextParentIteratorId = patch.containerConfig
+      ? patch.containerConfig.parentIteratorId ?? null
+      : previousTask?.containerConfig?.parentIteratorId ?? null;
+
+    return tasks.map((task) => {
+      if (task.id !== taskId) {
+        return task;
+      }
+
+      const nextTask: PlaybookTask = {
+        ...task,
+        ...patch,
+        containerConfig: patch.containerConfig ?? task.containerConfig,
+      };
+
+      if (nextParentIteratorId && nextParentIteratorId !== task.containerConfig?.parentIteratorId) {
+        const assignedPosition = getAssignedChildAbsolutePosition(tasks, nextParentIteratorId);
+        if (assignedPosition) {
+          nextTask.positionX = assignedPosition.x;
+          nextTask.positionY = assignedPosition.y;
+        }
+      }
+
+      return nextTask;
+    });
+  }
+
   // Sync ReactFlow state when playbook is loaded/changed from the API
   useEffect(() => {
     if (!playbook) {
@@ -247,26 +337,19 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   useEffect(() => {
     if (!playbook) return;
 
-      const taskMap = new Map(playbook.tasks.map((task) => [task.id, task]));
-      setNodes((nds) => {
-        let changed = false;
-        const updated = nds.map((node) => {
-        const task = taskMap.get(node.id);
-        if (!task) return node;
+    setNodes((nds) => {
+      const rebuilt = preserveNodeUiState(
+        buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'),
+        nds,
+      );
 
-        const currentData = node.data as PlaybookNodeData;
-        const nextData = { ...currentData, ...task } as PlaybookNodeData;
-        if (JSON.stringify(currentData) === JSON.stringify(nextData)) {
-          return node;
-        }
+      if (JSON.stringify(rebuilt) === JSON.stringify(nds)) {
+        return nds;
+      }
 
-        changed = true;
-        return { ...node, data: nextData };
-      });
-
-      return changed ? updated : nds;
+      return rebuilt;
     });
-  }, [playbook?.tasks]);
+  }, [playbook?.tasks, playbook?.automatedTriggerType]);
 
   // Node position changes: just update local ReactFlow state (no store sync).
   // Store sync happens in onNodeDragStop.
@@ -381,24 +464,18 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
   const addNode = useCallback(
     (task: PlaybookTask) => {
-      const newNode: Node = task.taskType === 'iterator'
-        ? buildIteratorContainerNode(task, [])
-        : {
-            id: task.id,
-            type: 'playbookStep',
-            position: { x: task.positionX, y: task.positionY },
-            parentId: task.containerConfig?.parentIteratorId || undefined,
-            extent: task.containerConfig?.parentIteratorId ? 'parent' as const : undefined,
-            data: { ...task } as PlaybookNodeData,
-          };
       setNodes((nds) => {
-        const updated = [...nds, newNode];
+        const tasks = [...nodesToTasks(nds), task];
+        const updated = preserveNodeUiState(
+          buildNodesWithTrigger(tasks, playbook?.automatedTriggerType === 'mail'),
+          nds,
+        );
         captureSnapshot();
         deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
         return updated;
       });
     },
-    [updateTasks, captureSnapshot],
+    [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
 
   const removeNode = useCallback(
@@ -428,15 +505,17 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const updateNodeData = useCallback(
     (nodeId: string, data: Partial<PlaybookTask>) => {
       setNodes((nds) => {
-        const updated = nds.map((n) =>
-          n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n,
+        const patchedTasks = applyTaskPatch(nodesToTasks(nds), nodeId, data);
+        const updated = preserveNodeUiState(
+          buildNodesWithTrigger(patchedTasks, playbook?.automatedTriggerType === 'mail'),
+          nds,
         );
         captureSnapshot();
         updateTasks(nodesToTasks(updated));
         return updated;
       });
     },
-    [updateTasks, captureSnapshot],
+    [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
 
   return {

@@ -81,7 +81,35 @@ describe('usePlaybookCanvas', () => {
     ], false);
 
     expect(nodes[0]).toMatchObject({ id: 'iterator-1', type: 'playbookIteratorContainer' });
-    expect(nodes[1]).toMatchObject({ id: 'child-1', type: 'playbookStep', parentId: 'iterator-1', extent: 'parent' });
+    expect(nodes[1]).toMatchObject({
+      id: 'child-1',
+      type: 'playbookStep',
+      parentId: 'iterator-1',
+      extent: 'parent',
+      position: { x: 70, y: 80 },
+    });
+  });
+
+  it('keeps iterator container anchored to its persisted position', () => {
+    const nodes = tasksToNodes([
+      makeTask({
+        id: 'iterator-1',
+        taskType: 'iterator',
+        positionX: 50,
+        positionY: 60,
+      }),
+      makeTask({
+        id: 'child-1',
+        positionX: 140,
+        positionY: 220,
+        containerConfig: { parentIteratorId: 'iterator-1' },
+      }),
+    ], false);
+
+    expect(nodes[0]).toMatchObject({
+      id: 'iterator-1',
+      position: { x: 50, y: 60 },
+    });
   });
 
   it('persists edges from the synthetic trigger source', () => {
@@ -137,6 +165,53 @@ describe('usePlaybookCanvas', () => {
     });
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
+  });
+
+  it('persists parented child positions as absolute coordinates on drag stop', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({ id: 'iterator-1', taskType: 'iterator', positionX: 50, positionY: 60 }),
+        makeTask({
+          id: 'child-1',
+          positionX: 120,
+          positionY: 140,
+          containerConfig: { parentIteratorId: 'iterator-1' },
+        }),
+      ],
+      edges: [],
+    });
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.setNodes([
+        {
+          id: 'iterator-1',
+          type: 'playbookIteratorContainer',
+          position: { x: 50, y: 60 },
+          data: makeTask({ id: 'iterator-1', taskType: 'iterator', positionX: 50, positionY: 60 }),
+        } as any,
+        {
+          id: 'child-1',
+          type: 'playbookStep',
+          parentId: 'iterator-1',
+          extent: 'parent',
+          position: { x: 70, y: 80 },
+          data: makeTask({ id: 'child-1', positionX: 120, positionY: 140, containerConfig: { parentIteratorId: 'iterator-1' } }),
+        } as any,
+      ]);
+      result.current.onNodeDragStop({} as any, { id: 'child-1' } as any, [] as any);
+    });
+
+    expect(storeFns.updateTasks).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'child-1',
+          positionX: 120,
+          positionY: 140,
+          containerConfig: { parentIteratorId: 'iterator-1' },
+        }),
+      ]),
+    );
   });
 
   it('syncs react-flow selection changes back to the store', () => {
@@ -242,5 +317,138 @@ describe('usePlaybookCanvas', () => {
     });
 
     expect(storeFns.selectStep).toHaveBeenCalledWith('__trigger__');
+  });
+
+  it('assigns a task to an iterator and moves it inside the container', () => {
+    const iteratorTask = makeTask({
+      id: 'iterator-1',
+      taskType: 'iterator',
+      positionX: 50,
+      positionY: 60,
+    });
+    const childTask = makeTask({
+      id: 'child-1',
+      positionX: 320,
+      positionY: 180,
+      containerConfig: { parentIteratorId: null },
+    });
+    currentPlaybookState.value = makePlaybook({ tasks: [iteratorTask, childTask], edges: [] });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.updateNodeData('child-1', {
+        containerConfig: { parentIteratorId: 'iterator-1' },
+      });
+    });
+
+    const updatedChildNode = result.current.nodes.find((node) => node.id === 'child-1');
+    expect(updatedChildNode).toMatchObject({
+      parentId: 'iterator-1',
+      extent: 'parent',
+      position: { x: 32, y: 72 },
+    });
+    expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'child-1',
+          positionX: 82,
+          positionY: 132,
+          containerConfig: { parentIteratorId: 'iterator-1' },
+        }),
+      ]),
+    );
+  });
+
+  it('stacks a newly assigned task after existing iterator children', () => {
+    const iteratorTask = makeTask({
+      id: 'iterator-1',
+      taskType: 'iterator',
+      positionX: 100,
+      positionY: 120,
+    });
+    const existingChildTask = makeTask({
+      id: 'child-1',
+      positionX: 132,
+      positionY: 192,
+      containerConfig: { parentIteratorId: 'iterator-1' },
+    });
+    const newChildTask = makeTask({
+      id: 'child-2',
+      positionX: 420,
+      positionY: 260,
+      containerConfig: { parentIteratorId: null },
+    });
+    currentPlaybookState.value = makePlaybook({
+      tasks: [iteratorTask, existingChildTask, newChildTask],
+      edges: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.updateNodeData('child-2', {
+        containerConfig: { parentIteratorId: 'iterator-1' },
+      });
+    });
+
+    const updatedChildNode = result.current.nodes.find((node) => node.id === 'child-2');
+    expect(updatedChildNode).toMatchObject({
+      parentId: 'iterator-1',
+      extent: 'parent',
+      position: { x: 32, y: 128 },
+    });
+    expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'child-2',
+          positionX: 132,
+          positionY: 248,
+          containerConfig: { parentIteratorId: 'iterator-1' },
+        }),
+      ]),
+    );
+  });
+
+  it('unassigns a task from an iterator without losing its absolute position', () => {
+    const iteratorTask = makeTask({
+      id: 'iterator-1',
+      taskType: 'iterator',
+      positionX: 50,
+      positionY: 60,
+    });
+    const childTask = makeTask({
+      id: 'child-1',
+      positionX: 82,
+      positionY: 132,
+      containerConfig: { parentIteratorId: 'iterator-1' },
+    });
+    currentPlaybookState.value = makePlaybook({ tasks: [iteratorTask, childTask], edges: [] });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.updateNodeData('child-1', {
+        containerConfig: { parentIteratorId: null },
+      });
+    });
+
+    const updatedChildNode = result.current.nodes.find((node) => node.id === 'child-1');
+    expect(updatedChildNode).toMatchObject({
+      id: 'child-1',
+      parentId: undefined,
+      extent: undefined,
+      position: { x: 82, y: 132 },
+    });
+    expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 'child-1',
+          positionX: 82,
+          positionY: 132,
+          containerConfig: { parentIteratorId: null },
+        }),
+      ]),
+    );
   });
 });
