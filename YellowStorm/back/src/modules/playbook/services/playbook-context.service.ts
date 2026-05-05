@@ -24,6 +24,178 @@ export class PlaybookContextService {
     this.logger.setContext('PlaybookContextService');
   }
 
+  private mapWorkspaceDocument(doc: any, workspaceId: string): any {
+    return {
+      _id: doc.id,
+      filename: doc.originalName,
+      filepath: doc.path,
+      in_memory: false,
+      language: doc.detected_language || 'fr',
+      indexing_token: doc.chunk_size || 1200,
+      workspace_id: workspaceId,
+      createdAt: doc.createdAt,
+    };
+  }
+
+  /**
+   * Resolve a document-type input file to workspace document ids that ADK can
+   * hydrate from workspace_context. Prefer exact persisted ids before fallbacks.
+   */
+  private async resolveWorkspaceDocumentIdsForInputFile(
+    file: { type: string; id: string; name: string; workspaceId?: string; metadata?: any },
+  ): Promise<string[]> {
+    const normalizeFilename = (value: string): string =>
+      String(value || '')
+        .trim()
+        .replace(/_/g, ' ')
+        .replace(/[\r\n\f]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+
+    const basename = (value: string): string => {
+      const normalized = String(value || '').trim().replace(/\\/g, '/');
+      return normalized.includes('/') ? normalized.split('/').pop() || '' : normalized;
+    };
+
+    if (file.type !== 'document') {
+      return [];
+    }
+
+    const explicitWorkspaceId =
+      file.workspaceId || file.metadata?.workspaceId || file.metadata?.workspace_id;
+    const candidateIds = new Set<string>(
+      [
+        file.id,
+        file.metadata?.documentId,
+        file.metadata?.document_id,
+        file.metadata?.externalId,
+        file.metadata?.external_id,
+      ]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean),
+    );
+
+    const workspaceIds = new Set<string>();
+    if (explicitWorkspaceId) {
+      workspaceIds.add(String(explicitWorkspaceId));
+    }
+
+    const explicitPath = String(file.metadata?.path || file.metadata?.filepath || '').trim();
+    const explicitName = String(
+      file.metadata?.originalName || file.metadata?.filename || file.name || '',
+    ).trim();
+    const normalizedExplicitName = normalizeFilename(explicitName);
+    const explicitPathBasename = normalizeFilename(basename(explicitPath));
+
+    for (const workspaceId of workspaceIds) {
+      const result = await this.workspaceDocumentService.findAllByWorkspace(workspaceId, {
+        limit: 1000,
+        status: DocumentStatus.COMPLETED,
+      });
+
+      const findMatches = (matcher: (doc: any) => boolean): any[] =>
+        result.documents.filter((doc: any) => matcher(doc));
+
+      const matchesById = findMatches((doc: any) => {
+        const docIds = [
+          doc.id,
+          doc._id,
+          doc.externalId,
+          doc.external_id,
+          doc.documentId,
+          doc.document_id,
+        ]
+          .map((value) => String(value || '').trim())
+          .filter(Boolean);
+        return docIds.some((value) => candidateIds.has(value));
+      });
+
+      const matchesByExactPath =
+        matchesById.length > 0
+          ? []
+          : findMatches(
+              (doc: any) => Boolean(explicitPath) && String(doc.path || '').trim() === explicitPath,
+            );
+
+      const matchesByExactName =
+        matchesById.length > 0 || matchesByExactPath.length > 0
+          ? []
+          : findMatches(
+              (doc: any) =>
+                Boolean(explicitName) && String(doc.originalName || '').trim() === explicitName,
+            );
+
+      const matchesByBasename =
+        matchesById.length > 0 ||
+        matchesByExactPath.length > 0 ||
+        matchesByExactName.length > 0
+          ? []
+          : findMatches((doc: any) => {
+              const docPathBasename = normalizeFilename(
+                basename(String(doc.path || '').trim()),
+              );
+              return Boolean(explicitPathBasename) && docPathBasename === explicitPathBasename;
+            });
+
+      const matchesByNormalizedName =
+        matchesById.length > 0 ||
+        matchesByExactPath.length > 0 ||
+        matchesByExactName.length > 0 ||
+        matchesByBasename.length > 0
+          ? []
+          : findMatches((doc: any) => {
+              const normalizedDocName = normalizeFilename(String(doc.originalName || '').trim());
+              return Boolean(normalizedExplicitName) && normalizedDocName === normalizedExplicitName;
+            });
+
+      const matches =
+        matchesById.length > 0
+          ? matchesById
+          : matchesByExactPath.length > 0
+            ? matchesByExactPath
+            : matchesByExactName.length > 0
+              ? matchesByExactName
+              : matchesByBasename.length > 0
+                ? matchesByBasename
+                : matchesByNormalizedName;
+
+      if (matches.length > 0) {
+        this.logger.debug('Resolved playbook input file to workspace documents', {
+          workspaceId,
+          inputFileId: file.id,
+          inputFileName: file.name,
+          inputFileMetadata: file.metadata || {},
+          matchedDocumentIds: matches.map((doc: any) => doc.id || doc._id || ''),
+          matchedDocuments: matches.map((doc: any) => ({
+            id: doc.id || doc._id || '',
+            originalName: doc.originalName || '',
+            path: doc.path || '',
+            externalId: doc.externalId || doc.external_id || '',
+          })),
+        });
+        return matches
+          .map((doc: any) => String(doc.id || doc._id || '').trim())
+          .filter(Boolean);
+      }
+
+      this.logger.debug('No workspace document match for playbook input file', {
+        workspaceId,
+        inputFileId: file.id,
+        inputFileName: file.name,
+        inputFileMetadata: file.metadata || {},
+        candidateIds: Array.from(candidateIds),
+        sampledWorkspaceDocuments: result.documents.slice(0, 10).map((doc: any) => ({
+          id: doc.id || doc._id || '',
+          originalName: doc.originalName || '',
+          path: doc.path || '',
+          externalId: doc.externalId || doc.external_id || '',
+        })),
+      });
+    }
+
+    return Array.from(candidateIds);
+  }
+
   /**
    * Build workspace contexts from a playbook's linked workspace IDs.
    */
@@ -55,16 +227,7 @@ export class PlaybookContextService {
           hybrid_search: settings?.hybridSearch,
           instruction: settings?.instruction,
           tag: settings?.tag,
-          workspace_documents: result.documents.map((doc: any) => ({
-            _id: doc.id,
-            filename: doc.originalName,
-            filepath: doc.path,
-            in_memory: false,
-            language: doc.detected_language || 'fr',
-            indexing_token: doc.chunk_size || 1200,
-            workspace_id: workspaceId,
-            createdAt: doc.createdAt,
-          })),
+          workspace_documents: result.documents.map((doc: any) => this.mapWorkspaceDocument(doc, workspaceId)),
         });
       }
 
@@ -98,15 +261,12 @@ export class PlaybookContextService {
       const workspaceIdSet = new Set<string>();
       const documentIds: string[] = [];
 
-      // Separate workspace-type and document-type input files
       for (const file of inputFiles) {
         if (file.type === 'workspace') {
           workspaceIdSet.add(file.id);
         } else if (file.type === 'document') {
-          // For document type, we need to get the document by ID
-          // Store the document ID for fetching
-          documentIds.push(file.id);
-          // Also track the workspace for documents
+          const resolvedDocIds = await this.resolveWorkspaceDocumentIdsForInputFile(file);
+          documentIds.push(...resolvedDocIds);
           if (file.workspaceId) {
             workspaceIdSet.add(file.workspaceId);
           }
@@ -115,7 +275,6 @@ export class PlaybookContextService {
 
       const contexts: Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }> = [];
 
-      // Build contexts for workspaces (all documents from the workspace)
       for (const workspaceId of workspaceIdSet) {
         const workspace = await this.workspaceModel.findById(workspaceId).lean().exec();
         let settings: WorkspaceSettingDocument | null = null;
@@ -128,13 +287,10 @@ export class PlaybookContextService {
           status: DocumentStatus.COMPLETED,
         });
 
-        // Filter to only include documents that were specifically selected
         const selectedDocuments = result.documents.filter((doc: any) => {
-          // Include if this document ID is in the documentIds list
           if (documentIds.includes(doc.id)) {
             return true;
           }
-          // Include if this is a workspace-type input (include all documents)
           const hasWorkspaceInput = inputFiles.some(
             (f) => f.type === 'workspace' && f.id === workspaceId,
           );
@@ -148,16 +304,7 @@ export class PlaybookContextService {
             hybrid_search: settings?.hybridSearch,
             instruction: settings?.instruction,
             tag: settings?.tag,
-            workspace_documents: selectedDocuments.map((doc: any) => ({
-              _id: doc.id,
-              filename: doc.originalName,
-              filepath: doc.path,
-              in_memory: false,
-              language: doc.detected_language || 'fr',
-              indexing_token: doc.chunk_size || 1200,
-              workspace_id: workspaceId,
-              createdAt: doc.createdAt,
-            })),
+            workspace_documents: selectedDocuments.map((doc: any) => this.mapWorkspaceDocument(doc, workspaceId)),
           });
         }
       }
@@ -203,16 +350,7 @@ export class PlaybookContextService {
           hybrid_search: settings?.hybridSearch,
           instruction: settings?.instruction,
           tag: settings?.tag,
-          workspace_documents: result.documents.map((doc: any) => ({
-            _id: doc.id,
-            filename: doc.originalName,
-            filepath: doc.path,
-            in_memory: false,
-            language: doc.detected_language || 'fr',
-            indexing_token: doc.chunk_size || 1200,
-            workspace_id: wsId,
-            createdAt: doc.createdAt,
-          })),
+          workspace_documents: result.documents.map((doc: any) => this.mapWorkspaceDocument(doc, wsId)),
         });
       }),
     );
@@ -256,15 +394,13 @@ export class PlaybookContextService {
     try {
       for (const file of inputFiles) {
         if (file.type === 'document') {
-          // Direct document ID
-          documentIds.push(file.id);
+          const resolvedDocIds = await this.resolveWorkspaceDocumentIdsForInputFile(file);
+          documentIds.push(...resolvedDocIds);
         } else if (file.type === 'workspace') {
-          // Fetch all document IDs from this workspace
           const result = await this.workspaceDocumentService.findAllByWorkspace(file.id, {
             limit: 1000,
             status: DocumentStatus.COMPLETED,
           });
-          // Extract document IDs
           const workspaceDocIds = result.documents.map((doc: any) => doc.id);
           documentIds.push(...workspaceDocIds);
         }
@@ -307,7 +443,10 @@ export class PlaybookContextService {
         }
 
         if (file.type === 'document') {
-          portToDocIds.get(portId)!.add(file.id);
+          const resolvedDocIds = await this.resolveWorkspaceDocumentIdsForInputFile(file);
+          for (const docId of resolvedDocIds) {
+            portToDocIds.get(portId)!.add(docId);
+          }
         } else if (file.type === 'workspace') {
           const result = await this.workspaceDocumentService.findAllByWorkspace(file.id, {
             limit: 1000,

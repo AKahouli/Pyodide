@@ -202,6 +202,7 @@ class ExecutionState(TypedDict):
     node_timings: Annotated[Dict[str, NodeTiming], merge_timings]
     query: Optional[str]
     workspace_context: Optional[List[Dict[str, Any]]]
+    brain_documents: Optional[List[Dict[str, Any]]]
     trigger_context: Optional[Dict[str, Any]]
     evaluation_user_id: Optional[str]
     execution_mode: Optional[str]

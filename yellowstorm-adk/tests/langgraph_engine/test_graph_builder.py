@@ -880,6 +880,250 @@ def test_build_clarification_pre_prompt_includes_missing_requirement_guardrails(
     assert "Otherwise respond with exactly 'CLEAR'." in prompt
 
 
+def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> None:
+    prompts = []
+
+    async def fake_direct_call(*args, **kwargs):
+        prompts.append(args[3])
+        return f"processed-{len(prompts)}", {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+            "model": "test",
+        }
+
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setattr(
+        DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    iterator = {
+        "id": "iterator-1",
+        "title": "Iterator",
+        "description": "Loop items",
+        "task_type": "iterator",
+        "task_metadata": {
+            "iterator": {
+                "source": "items",
+                "mode": "item",
+                "itemVariable": "current_item",
+                "outputVariable": "processed_items",
+                "errorStrategy": "stop",
+            }
+        },
+    }
+    child = {
+        "id": "child-1",
+        "title": "Child",
+        "description": "Process current item",
+        "assigned_agent_id": "agent-1",
+        "execution_order": 1,
+        "input_keys": ["current_item"],
+        "output_key": "child_output",
+        "task_metadata": {
+            "container": {
+                "parentIteratorId": "iterator-1",
+            }
+        },
+        "output_ports": [
+            {"id": "default", "name": "Default", "artifact_kind": "text"},
+        ],
+    }
+    node = builder._create_task_node("iterator-1", iterator)
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {
+                    "agent-1": {
+                        "id": "agent-1",
+                        "name": "Agent",
+                        "instructions": "Do it",
+                        "tools": [],
+                    }
+                },
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+                "tasks": [iterator, child],
+                "edges": [],
+                "results": {},
+                "task_outputs": {"items": ["a", "b"]},
+                "workspace_context": [],
+                "execution_mode": "live",
+                "validated_replays_by_task": {},
+                "step_execution_modes": {},
+                "prompt_overrides": {},
+                "query": "",
+                "current_task_ids": [],
+                "completed_task_ids": [],
+                "status": "in_progress",
+                "error": None,
+                "interrupt_payload": None,
+                "node_timings": {},
+                "evaluation_user_id": "unknown",
+                "artifacts_by_port": {},
+                "node_inputs_by_port": {},
+            },
+            {},
+        )
+    )
+
+    aggregate = result["results"]["iterator-1"]["output"]
+    assert [item["current_item"] for item in aggregate] == ["a", "b"]
+    assert [item["output"] for item in aggregate] == ["processed-1", "processed-2"]
+    assert "child-1" in aggregate[0]["child_results"]
+    assert "child-1" not in result["results"]
+    assert result["task_outputs"]["processed_items"] == aggregate
+    assert len(prompts) == 2
+    assert "Input 'current_item':\na" in prompts[0]
+    assert "Input 'current_item':\nb" in prompts[1]
+
+
+def test_iterator_task_node_continue_strategy_records_failed_iteration(monkeypatch) -> None:
+    calls = 0
+
+    async def fake_direct_call(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("child boom")
+        return "processed", {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+            "model": "test",
+        }
+
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setattr(
+        DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    iterator = {
+        "id": "iterator-1",
+        "title": "Iterator",
+        "description": "Loop items",
+        "task_type": "iterator",
+        "task_metadata": {
+            "iterator": {
+                "source": "items",
+                "mode": "item",
+                "itemVariable": "current_item",
+                "outputVariable": "processed_items",
+                "errorStrategy": "continue",
+            }
+        },
+    }
+    child = {
+        "id": "child-1",
+        "title": "Child",
+        "description": "Process current item",
+        "assigned_agent_id": "agent-1",
+        "execution_order": 1,
+        "input_keys": ["current_item"],
+        "task_metadata": {
+            "container": {
+                "parentIteratorId": "iterator-1",
+            }
+        },
+        "output_ports": [
+            {"id": "default", "name": "Default", "artifact_kind": "text"},
+        ],
+    }
+    node = builder._create_task_node("iterator-1", iterator)
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {
+                    "agent-1": {
+                        "id": "agent-1",
+                        "name": "Agent",
+                        "instructions": "Do it",
+                        "tools": [],
+                    }
+                },
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+                "tasks": [iterator, child],
+                "edges": [],
+                "results": {},
+                "task_outputs": {"items": ["a", "b"]},
+                "workspace_context": [],
+                "execution_mode": "live",
+                "validated_replays_by_task": {},
+                "step_execution_modes": {},
+                "prompt_overrides": {},
+                "query": "",
+                "current_task_ids": [],
+                "completed_task_ids": [],
+                "status": "in_progress",
+                "error": None,
+                "interrupt_payload": None,
+                "node_timings": {},
+                "evaluation_user_id": "unknown",
+                "artifacts_by_port": {},
+                "node_inputs_by_port": {},
+            },
+            {},
+        )
+    )
+
+    aggregate = result["results"]["iterator-1"]["output"]
+    assert [item["status"] for item in aggregate] == ["completed", "failed"]
+    assert aggregate[0]["output"] == "processed"
+    assert aggregate[1]["error"] == "child boom"
+    assert calls == 2
+
+
+def test_top_level_graph_excludes_iterator_children() -> None:
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    tasks = [
+        {"id": "iterator-1", "execution_order": 1, "task_type": "iterator"},
+        {
+            "id": "child-1",
+            "execution_order": 2,
+            "task_metadata": {
+                "container": {
+                    "parentIteratorId": "iterator-1",
+                }
+            },
+        },
+        {"id": "after-1", "execution_order": 3},
+    ]
+    edges = [
+        {"source_id": "__trigger__", "target_id": "iterator-1"},
+        {"source_id": "iterator-1", "target_id": "child-1"},
+        {"source_id": "child-1", "target_id": "after-1"},
+        {"source_id": "iterator-1", "target_id": "after-1"},
+    ]
+
+    graph_tasks = builder._get_top_level_tasks(tasks)
+    graph_edges = builder._get_top_level_edges(tasks, edges)
+
+    assert [task["id"] for task in graph_tasks] == ["iterator-1", "after-1"]
+    assert graph_edges == [
+        {"source_id": "__trigger__", "target_id": "iterator-1"},
+        {"source_id": "iterator-1", "target_id": "after-1"},
+    ]
+
+
 def test_workflow_task_node_skips_reasking_after_user_clarification(monkeypatch) -> None:
     clarification_checks = []
 

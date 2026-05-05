@@ -182,6 +182,10 @@
             }
         }
     </style>
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
 </head>
 <body>
 <header>
@@ -200,9 +204,10 @@
             <li><a href="#auth">2. Authentification &amp; s&eacute;curit&eacute;</a></li>
             <li><a href="#sse">3. Format de r&eacute;ponse SSE</a></li>
             <li><a href="#errors">4. Gestion des erreurs</a></li>
-            <li><a href="#chatWithADK">5. POST /chatbots/chatWithADK</a></li>
-            <li><a href="#runAgentTeam">6. POST /agentic/run_agent_team</a></li>
-            <li><a href="#statusCodes">7. Codes HTTP</a></li>
+            <li><a href="#ragPipeline">5. Pipeline RAG &ndash; Indexation &amp; Recherche</a></li>
+            <li><a href="#chatWithADK">6. POST /chatbots/chatWithADK</a></li>
+            <li><a href="#runAgentTeam">7. POST /agentic/run_agent_team</a></li>
+            <li><a href="#statusCodes">8. Codes HTTP</a></li>
         </ul>
     </section>
 
@@ -313,7 +318,7 @@
 
     <section id="chatWithADK">
         <span class="tag">Chatbots</span>
-        <h2>5. <span class="http-method post">POST</span> /chatbots/chatWithADK</h2>
+        <h2>6. <span class="http-method post">POST</span> /chatbots/chatWithADK</h2>
         <p>
             Lance un dialogue RAG classique avec l&rsquo;ADK. Le service <code>ChatRAGService</code> orchestre les appels &agrave;
             l&rsquo;engine traditionnel et renvoie les contributions du manager en flux continu.<sup><a href="#ref-router">[1]</a></sup>
@@ -453,7 +458,7 @@ data: {"agent_name": "manager", "agent_type": "manager", "chunk": "end_of_messag
 
     <section id="runAgentTeam">
         <span class="tag">Agentic RAG</span>
-        <h2>6. <span class="http-method post">POST</span> /agentic/run_agent_team</h2>
+        <h2>7. <span class="http-method post">POST</span> /agentic/run_agent_team</h2>
         <p>
             Lance une orchestration multi-agents. Selon le mode (<code>auto</code> ou <code>manual</code>), la plateforme
             peut sugg&eacute;rer des agents sp&eacute;cialis&eacute;s ou exploiter une liste explicitement fournie.<sup><a href="#ref-router">[1]</a>, <a href="#ref-workflow">[5]</a></sup>
@@ -673,7 +678,7 @@ data: {"agent_name": "manager", "agent_type": "manager", "chunk": "end_of_messag
     </section>
 
     <section id="statusCodes">
-        <h2>7. Codes HTTP r&eacute;currents</h2>
+        <h2>8. Codes HTTP r&eacute;currents</h2>
         <div class="status-list">
             <div class="status-card">
                 <strong>200 OK</strong>
@@ -696,6 +701,380 @@ data: {"agent_name": "manager", "agent_type": "manager", "chunk": "end_of_messag
                 <p>Erreur serveur pendant le traitement asynchrone.</p>
             </div>
         </div>
+    </section>
+
+    <section id="ragPipeline">
+        <span class="tag">Pipeline RAG</span>
+        <h2>5. Pipeline RAG &ndash; Indexation &amp; Recherche</h2>
+
+        <h3>Vue d'ensemble</h3>
+        <p>
+            Le syst&egrave;me RAG (Retrieval Augmented Generation) expose une API REST compl&egrave;te pour l'indexation et la recherche de documents.
+            Il est organis&eacute; autour de deux phases principales : l'<strong>indexation</strong> (ingestion, traitement et stockage vectoriel) et la <strong>recherche</strong> (r&eacute;cup&eacute;ration intelligente via diff&eacute;rentes strat&eacute;gies).
+            L'orchestration asynchrone repose sur <strong>Celery</strong> et le backend de stockage sur <strong>Azure AI Search</strong>.
+        </p>
+
+        <pre class="mermaid">
+flowchart LR
+    A[Fichier source] --> B[Chargement]
+    B --> C[D&eacute;coupage]
+    C --> D[Vectorisation &amp; Stockage]
+    E[Requ&ecirc;te utilisateur] --> F[Recherche vectorielle]
+    E --> G[Recherche full-text]
+    F --> H[Fusion RRF]
+    G --> H
+    H --> I[R&eacute;sultats pertinents]
+        </pre>
+
+        <h3>5.1 Indexation</h3>
+
+        <h4>Architecture de l'indexation</h4>
+        <p>
+            L'indexation suit un pipeline asynchrone orchestr&eacute; par Celery. Chaque &eacute;tape est une t&acirc;che ind&eacute;pendante cha&icirc;n&eacute;e via <code>celery.chain</code>.
+        </p>
+
+        <pre class="mermaid">
+flowchart TD
+    A[Fichier source] --> B[Chargement]
+    B -- OCR optionnel --> C[D&eacute;coupage / Chunking]
+    C -- Style-aware configurable --> D[Vectorisation &amp; Stockage]
+    D --> E[Azure AI Search]
+    B -- Extraction d'images --> F[Pipeline images]
+    F -- YOLO / docseg --> G[Description LLM]
+    G --> D
+        </pre>
+
+        <h4>Points d'entr&eacute;e API</h4>
+
+        <p><strong>POST /index</strong> &ndash; Indexation d'un fichier upload&eacute; directement.</p>
+        <table>
+            <thead>
+                <tr><th>Param&egrave;tre</th><th>Description</th><th>D&eacute;faut</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>collection_name</td><td>Collection cible</td><td>"default"</td></tr>
+                <tr><td>chunk_size</td><td>Taille des chunks en tokens</td><td>1200</td></tr>
+                <tr><td>chunk_overlap</td><td>Chevauchement entre chunks</td><td>0</td></tr>
+                <tr><td>separators</td><td>S&eacute;parateurs de d&eacute;coupage JSON</td><td>["\n\n", "\n", " ", ""]</td></tr>
+                <tr><td>keep_separator</td><td>Conserver les s&eacute;parateurs</td><td>true</td></tr>
+                <tr><td>metadata</td><td>M&eacute;tadonn&eacute;es JSON personnalis&eacute;es</td><td>&mdash;</td></tr>
+                <tr><td>use_ocr</td><td>Activer l'OCR pour les PDF</td><td>false</td></tr>
+                <tr><td>save_images</td><td>Extraire et sauvegarder les images</td><td>false</td></tr>
+            </tbody>
+        </table>
+
+        <p><strong>Pipeline Celery ex&eacute;cut&eacute;</strong> :</p>
+        <pre class="mermaid">
+flowchart LR
+    A[load_document_task] --> B[split_documents_task]
+    B --> C[add_documents_task]
+        </pre>
+
+        <p><strong>POST /index-from-azure-datalake</strong> &ndash; Indexation depuis Azure Data Lake avec support avanc&eacute;.</p>
+        <p>Types de &laquo; brain &raquo; support&eacute;s :</p>
+        <ul>
+            <li><code>doc</code> : Indexation document classique</li>
+            <li><code>graph</code> : G&eacute;n&eacute;ration d'un graphe de connaissances</li>
+        </ul>
+
+        <p>Modes d'indexation sp&eacute;cialis&eacute;s (<code>brain_type="doc"</code>) :</p>
+        <table>
+            <thead>
+                <tr><th>Brain ID</th><th>Project</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>BRAIN_RM</td><td>rm</td><td>Indexation standard RM</td></tr>
+                <tr><td>BRAIN_IFRS</td><td>ifrs</td><td>Indexation standard IFRS</td></tr>
+                <tr><td>BRAIN_RM_CHAT</td><td>rm</td><td>Indexation chat RM avec external_id</td></tr>
+                <tr><td>BRAIN_IFRS_CHAT</td><td>ifrs</td><td>Indexation chat IFRS avec external_id</td></tr>
+                <tr><td>BRAIN_DPP_MOA</td><td>dpp_moa</td><td>Indexation DPP MOA</td></tr>
+            </tbody>
+        </table>
+
+        <p>Pour l'indexation standard, trois options sont disponibles :</p>
+        <ul>
+            <li><strong>Option 1 &ndash; Style-aware chunking (PDF)</strong> : d&eacute;coupage intelligent bas&eacute; sur la structure visuelle du PDF</li>
+            <li><strong>Option 2 &ndash; Chunking standard</strong> : t&eacute;l&eacute;chargement &rarr; chargement &rarr; d&eacute;coupage &rarr; stockage</li>
+            <li><strong>Option 3 &ndash; Avec description d'images</strong> : cha&icirc;ne principale + cha&icirc;ne images parall&egrave;le (YOLO &rarr; extraction &rarr; description LLM)</li>
+        </ul>
+
+        <h4>&Eacute;tapes du pipeline d'indexation</h4>
+
+        <p><strong>&Eacute;tape 1 : Chargement</strong> &ndash; Support multi-formats avec d&eacute;tection automatique :</p>
+        <table>
+            <thead>
+                <tr><th>Format</th><th>Extension</th><th>Traitement</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>PDF</td><td>.pdf</td><td>PyPDF / OCR optionnel, extraction d'images</td></tr>
+                <tr><td>Excel</td><td>.xls, .xlsx</td><td>Chargement cellule par cellule</td></tr>
+                <tr><td>PowerPoint</td><td>.ppt, .pptx</td><td>Extraction texte par slide</td></tr>
+                <tr><td>Word</td><td>.doc, .docx</td><td>Extraction texte structur&eacute;</td></tr>
+                <tr><td>Texte</td><td>autres</td><td>Chargement texte brut</td></tr>
+            </tbody>
+        </table>
+
+        <p><strong>&Eacute;tape 2 : D&eacute;coupage</strong> &ndash; Deux strat&eacute;gies disponibles :</p>
+        <ul>
+            <li><strong>Chunking standard</strong> : <code>RecursiveCharacterTextSplitter</code> avec taille, chevauchement et s&eacute;parateurs param&eacute;trables</li>
+            <li><strong>Chunking avec pr&eacute;servation de l'ordre</strong> : ajoute <code>metadata.order</code> et <code>metadata.start_index</code> pour la reconstruction post-recherche</li>
+            <li><strong>Style-aware chunking</strong> (PDF Azure Data Lake) : d&eacute;coupage bas&eacute; sur la structure visuelle (titres, sections, tableaux)</li>
+        </ul>
+
+        <p><strong>&Eacute;tape 3 : Stockage</strong> &ndash; Indexation unitaire ou par batch dans Azure AI Search avec support des champs vectoriels et textuels.</p>
+
+        <h4>Traitement avanc&eacute; des images</h4>
+        <p>Pour les PDF avec <code>image_description=true</code>, une cha&icirc;ne Celery parall&egrave;le traite les images :</p>
+
+        <pre class="mermaid">
+flowchart TD
+    A[PDF t&eacute;l&eacute;charg&eacute;] --> B[Conversion pages &rarr; images PNG]
+    B --> C[D&eacute;tection d'objets YOLO/docseg]
+    C --> D[Post-traitement &amp; fusion des bo&icirc;tes]
+    D --> E[Extraction des sous-images]
+    E --> F[Upload vers Azure Data Lake]
+    F --> G[Description LLM des images]
+    G --> H[Cr&eacute;ation documents avec m&eacute;tadonn&eacute;es]
+    H --> I[Indexation dans la m&ecirc;me collection]
+        </pre>
+
+        <p>M&eacute;tadonn&eacute;es d'image stock&eacute;es : <code>type</code>, <code>page</code>, <code>image_path</code>, <code>aspect_ratio</code>, plus les m&eacute;tadonn&eacute;es source du document parent.</p>
+
+        <h3>5.2 Recherche (Retrieval)</h3>
+
+        <h4>Strat&eacute;gies de recherche disponibles</h4>
+
+        <p><strong>Recherche vectorielle</strong> &ndash; Recherche s&eacute;mantique par similarit&eacute; vectorielle. Retourne les documents accompagn&eacute;s de leur score de distance.</p>
+        <p><strong>Recherche full-text</strong> &ndash; Recherche lexicale par mots-cl&eacute;s (BM25 sous Azure AI Search). Disponible uniquement avec le backend Azure AI Search.</p>
+        <p><strong>Recherche hybride</strong> &ndash; Combine recherche vectorielle et full-text via Reciprocal Rank Fusion (RRF) avec ex&eacute;cution parall&egrave;le des deux recherches.</p>
+
+        <pre class="mermaid">
+flowchart TD
+    A[Requ&ecirc;te utilisateur] --> B[Recherche vectorielle]
+    A --> C[Recherche full-text]
+    B --> D[Fusion RRF]
+    C --> D
+    D --> E[R&eacute;sultats rerank&e9;s]
+        </pre>
+
+        <p>Param&egrave;tres sp&eacute;cifiques de la recherche hybride :</p>
+        <table>
+            <thead>
+                <tr><th>Param&egrave;tre</th><th>Description</th><th>D&eacute;faut</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>rrf_k</td><td>Constante de fusion RRF</td><td>60</td></tr>
+                <tr><td>vector_search_top_k</td><td>Nombre de r&eacute;sultats vectoriels</td><td>&mdash;</td></tr>
+                <tr><td>full_text_search_top_k</td><td>Nombre de r&eacute;sultats full-text</td><td>&mdash;</td></tr>
+                <tr><td>vector_search_weight</td><td>Poids recherche vectorielle</td><td>1</td></tr>
+                <tr><td>full_text_search_weight</td><td>Poids recherche full-text</td><td>1</td></tr>
+            </tbody>
+        </table>
+
+        <p><strong>Recherche multilingue</strong> &ndash; Accepte un dictionnaire de requ&ecirc;tes par langue, ex&eacute;cute la recherche pour chaque langue et fusionne les r&eacute;sultats selon la strat&e9;gie configur&e9;e.</p>
+
+        <h4>Recherche multi-query</h4>
+        <p>Toutes les strat&eacute;gies supportent des variantes &laquo; multi &raquo; qui acceptent plusieurs requ&ecirc;tes simultan&eacute;es. Chaque requ&ecirc;te est ex&eacute;cut&e9;e en parall&egrave;le via des t&acirc;ches Celery distinctes, puis les r&eacute;sultats sont fusionn&eacute;s via RRF avec poids &eacute;gaux pour retourner le top-k global.</p>
+
+        <pre class="mermaid">
+flowchart LR
+    A[Requ&ecirc;te 1] --> B[T&acirc;che Celery 1]
+    C[Requ&ecirc;te 2] --> D[T&acirc;che Celery 2]
+    E[Requ&ecirc;te N] --> F[T&acirc;che Celery N]
+    B --> G[Fusion RRF]
+    D --> G
+    F --> G
+    G --> H[Top-k global]
+        </pre>
+
+        <h4>Filtres et m&eacute;tadonn&eacute;es</h4>
+        <p>Les filtres sont des dictionnaires traduits selon le backend :</p>
+        <ul>
+            <li><strong>Azure AI Search</strong> : syntaxe OData / filter Azure</li>
+        </ul>
+        <p>Exemples de filtres courants : <code>external_id</code>, <code>source</code>, <code>type</code> (text/image).</p>
+
+        <h3>5.3 Post-traitement</h3>
+
+        <p><strong>R&eacute;ordonnancement contextuel long</strong> &ndash; R&eacute;ordonne les documents pour optimiser la pertinence dans un contexte LLM long. La strat&e9;gie place les documents les plus pertinents au d&eacute;but et &agrave; la fin du contexte.</p>
+
+        <p><strong>Reconstruction de documents</strong> &ndash; Pour chaque document retourn&eacute;, le syst&egrave;me recherche tous les chunks du m&ecirc;me titre et external_id, les trie par <code>metadata.order</code> et les concat&egrave;ne dans l'ordre pour reconstruire le document complet. Une variante multilingue existe avec support de collection sp&eacute;cifique par langue.</p>
+
+        <h3>5.4 Gestion des collections</h3>
+
+        <p><strong>Requ&ecirc;tage par filtres</strong> &ndash; Recherche de documents par filtres sans requ&ecirc;te textuelle, avec projection de champs (<code>include</code> / <code>exclude</code>).</p>
+
+        <p><strong>Suppression</strong> &ndash; Trois endpoints sont disponibles :</p>
+        <ul>
+            <li><code>DELETE /delete-by-filter</code> : suppression par filtre</li>
+            <li><code>DELETE /delete-by-ids</code> : suppression par IDs</li>
+            <li><code>DELETE /delete-collection</code> : suppression d'une collection enti&egrave;re</li>
+        </ul>
+
+        <h3>5.5 Pr&eacute;traitement utilitaire</h3>
+
+        <p><strong>POST /split-documents</strong> &ndash; Endpoint synchrone pour d&eacute;couper des documents sans les indexer. Utile pour pr&eacute;visualiser le chunking avant indexation.</p>
+
+        <h3>5.6 Infrastructure et monitoring</h3>
+
+        <h4>T&acirc;ches asynchrones Celery</h4>
+
+        <pre class="mermaid">
+flowchart TD
+    A[Client API] -- Soumission --> B[Broker Redis]
+    B --> C[Workers Celery]
+    C -- R&eacute;sultat --> D[Backend Redis]
+    D --> E[GET /task/{task_id}]
+        </pre>
+
+        <p>Configuration Celery :</p>
+        <ul>
+            <li>Broker : Redis (<code>CELERY_BROKER_URL</code>)</li>
+            <li>Backend : Redis (<code>CELERY_RESULT_BACKEND</code>)</li>
+            <li>Queue <code>azure-search.low-priority</code> pour l'indexation</li>
+            <li>Queue <code>azure-search.high-priority</code> pour les recherches</li>
+            <li>Queue <code>default</code> pour les autres t&acirc;ches</li>
+        </ul>
+
+        <p><strong>Suivi des t&acirc;ches</strong> &ndash; <code>GET /task/{task_id}</code> retourne le statut (<code>PENDING</code>, <code>SUCCESS</code>, <code>FAILURE</code>) et le r&eacute;sultat.</p>
+
+        <p><strong>T&acirc;ches d'indexation principales</strong> :</p>
+        <table>
+            <thead>
+                <tr><th>Nom Celery</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>load-document</td><td>Chargement fichier &rarr; Documents</td></tr>
+                <tr><td>split-documents</td><td>D&eacute;coupage Documents &rarr; Chunks</td></tr>
+                <tr><td>azure-search.add-documents</td><td>Indexation chunks &rarr; Vector DB</td></tr>
+                <tr><td>download-from-azure-datalake</td><td>T&eacute;l&eacute;chargement depuis Azure Data Lake</td></tr>
+                <tr><td>style-aware-split-pdf-from-azure-datalake</td><td>D&eacute;coupage PDF intelligent</td></tr>
+                <tr><td>generation-graph</td><td>G&eacute;n&eacute;ration graphe de connaissances</td></tr>
+            </tbody>
+        </table>
+
+        <p><strong>T&acirc;ches de recherche Celery</strong> :</p>
+        <table>
+            <thead>
+                <tr><th>Nom Celery</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>azure-search.similarity-search.vector-search-with-score</td><td>Recherche vectorielle</td></tr>
+                <tr><td>azure-search.similarity-search.vector-search-with-relevance-scores</td><td>Recherche avec scores de pertinence</td></tr>
+                <tr><td>azure-search.similarity-search.full-text-search-with-score</td><td>Recherche full-text</td></tr>
+                <tr><td>azure-search.similarity-search.hybrid-search-with-score</td><td>Recherche hybride RRF</td></tr>
+                <tr><td>azure-search.similarity-search.multilingual-vector-search</td><td>Recherche multilingue</td></tr>
+            </tbody>
+        </table>
+
+        <p><strong>Health check</strong> &ndash; <code>GET /health</code> retourne <code>OK</code> pour le monitoring de disponibilit&e9;.</p>
+
+        <p><strong>Nettoyage automatique</strong> &ndash; T&acirc;che p&eacute;riodique Celery <code>delete_tmp_task</code> ex&eacute;cut&e9;e toutes les <code>TMP_DELETE_N_SECONDS</code> secondes pour supprimer les fichiers temporaires du dossier <code>./tmp/</code>.</p>
+
+        <h3>5.7 Flux complets d'utilisation</h3>
+
+        <h4>Indexation simple d'un fichier</h4>
+        <pre class="mermaid">
+sequenceDiagram
+    participant Client
+    participant API
+    participant Celery
+    participant Azure
+
+    Client->>API: POST /index (fichier + params)
+    API->>Celery: Soumission t&acirc;che
+    API->>Client: { task_id }
+    Celery->>Celery: load &rarr; split &rarr; add
+    Celery->>Azure: Stockage vecteurs
+    Client->>API: GET /task/{task_id}
+    API->>Client: { status: SUCCESS, result }
+        </pre>
+
+        <h4>Recherche hybride avec reconstruction</h4>
+        <pre class="mermaid">
+sequenceDiagram
+    participant Client
+    participant API
+    participant Azure
+
+    Client->>API: POST /hybrid-search-with-scores
+    API->>Azure: Recherche vectorielle + full-text
+    Azure->>API: R&eacute;sultats bruts
+    API->>API: Fusion RRF
+    API->>Client: Documents + scores
+
+    Client->>API: POST /documents-with-the-same-title
+    API->>Azure: R&eacute;cup&eacute;ration chunks li&eacute;s
+    API->>API: Tri par metadata.order
+    API->>Client: Documents reconstruits
+
+    Client->>API: POST /long-context-reorder
+    API->>Client: Documents r&eacute;ordonn&e9;s
+        </pre>
+
+        <h3>5.8 Mod&egrave;les de donn&eacute;es</h3>
+
+        <p><strong>DocumentModel</strong> &ndash; Repr&eacute;sente un chunk de document :</p>
+        <table>
+            <thead>
+                <tr><th>Champ</th><th>Type</th><th>Description</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>page_content</td><td>string</td><td>Contenu textuel du chunk</td></tr>
+                <tr><td>metadata.id</td><td>string</td><td>Identifiant unique du chunk</td></tr>
+                <tr><td>metadata.source</td><td>string</td><td>Nom du fichier source</td></tr>
+                <tr><td>metadata.external_id</td><td>string</td><td>UUID du document parent</td></tr>
+                <tr><td>metadata.title</td><td>string</td><td>Titre du document</td></tr>
+                <tr><td>metadata.order</td><td>integer</td><td>Position s&eacute;quentielle du chunk</td></tr>
+                <tr><td>metadata.start_index</td><td>integer</td><td>Index de d&eacute;but dans le document source</td></tr>
+                <tr><td>metadata.type</td><td>string</td><td>"text" ou "image"</td></tr>
+                <tr><td>metadata.page</td><td>integer</td><td>Num&eacute;ro de page (PDF)</td></tr>
+                <tr><td>metadata.image_path</td><td>string</td><td>Chemin de l'image (si type="image")</td></tr>
+                <tr><td>metadata.aspect_ratio</td><td>object</td><td>Dimensions de l'image</td></tr>
+            </tbody>
+        </table>
+
+        <p><strong>Sch&eacute;mas de requ&ecirc;te principaux</strong> :</p>
+        <table>
+            <thead>
+                <tr><th>Sch&eacute;ma</th><th>Champs cl&e9;s</th></tr>
+            </thead>
+            <tbody>
+                <tr><td>SimilaritySearchRequest</td><td>collection_name, query, top_k (d&eacute;faut: 4), filter</td></tr>
+                <tr><td>HybridSearchRequest</td><td>collection_name, query, top_k, filter, rrf_k (60), vector_search_top_k, full_text_search_top_k, vector_search_weight (1), full_text_search_weight (1)</td></tr>
+                <tr><td>MultiLingualSimilaritySearchRequest</td><td>collection_name, query_dict {lang: query}, top_k, filter, similarity_search_type, similarity_search_function_kwargs</td></tr>
+                <tr><td>AzureIndexingRequest</td><td>file_path, collection_name, brain_type (doc|graph), brain_id, metadata, splitting_parameters, enable_style_aware_chunking, chunk_styles, image_analyzer, image_description, use_ocr, save_images</td></tr>
+            </tbody>
+        </table>
+
+        <h3>5.9 Points d'attention et bonnes pratiques</h3>
+
+        <h4>Chunking</h4>
+        <ul>
+            <li><strong>Taille des chunks</strong> : 1200 tokens est la valeur par d&eacute;faut, &agrave; ajuster selon le mod&egrave;le LLM cible</li>
+            <li><strong>Chevauchement</strong> : 0 par d&eacute;faut, peut &ecirc;tre augment&e9; pour pr&eacute;server le contexte entre chunks</li>
+            <li><strong>S&eacute;parateurs</strong> : ordre d&e9;croissant de priorit&e9; pour pr&e9;server la structure du document</li>
+        </ul>
+
+        <h4>Performance</h4>
+        <ul>
+            <li>Les t&acirc;ches d'indexation sont asynchrones : utiliser <code>/task/{id}</code> pour le suivi</li>
+            <li>La recherche hybride ex&eacute;cute vector + full-text en parall&egrave;le</li>
+            <li>Le traitement d'images utilise un ThreadPoolExecutor configurable</li>
+        </ul>
+
+        <h4>Limitations connues</h4>
+        <ul>
+            <li>Suppression de collection non impl&e9;ment&e9;e pour Azure AI Search</li>
+            <li>La g&eacute;n&e9;ration de graphes (<code>brain_type="graph"</code>) n&eacute;cessite des param&egrave;tres <code>chunk_styles</code></li>
+        </ul>
+
+        <h4>S&eacute;curit&e9;</h4>
+        <ul>
+            <li>Les fichiers upload&e9;s sont stock&e9;s temporairement dans <code>./tmp/{uuid}/</code></li>
+            <li>Nettoyage automatique via t&acirc;che p&eacute;riodique Celery</li>
+            <li>Pas de validation de type MIME, seule l'extension est v&e9;rifi&e9;e</li>
+        </ul>
     </section>
 
     <section id="references">

@@ -1660,8 +1660,8 @@ export class PlaybookExecutionService {
                 weights: t.evaluationConfig.weights || {},
               }
             : null,
-          task_metadata:
-            t.taskType === 'iterator' && t.iteratorConfig
+          task_metadata: {
+            ...(t.taskType === 'iterator' && t.iteratorConfig
               ? {
                   iterator: {
                     source: t.iteratorConfig.source || '{{items}}',
@@ -1672,7 +1672,15 @@ export class PlaybookExecutionService {
                     errorStrategy: t.iteratorConfig.errorStrategy === 'continue' ? 'continue' : 'stop',
                   },
                 }
-              : {},
+              : {}),
+            ...(t.containerConfig?.parentIteratorId
+              ? {
+                  container: {
+                    parentIteratorId: t.containerConfig.parentIteratorId,
+                  },
+                }
+              : {}),
+          },
           tool_bindings: toolBindingsByTaskId.get(t.id) || [],
         };
       }),
@@ -1755,9 +1763,45 @@ export class PlaybookExecutionService {
             inputFilesByPort: t.input_files_by_port || [],
           })) || [],
     });
-    this.logger.debug('RunPlaybookWorkflow gRPC request body', {
+    this.logger.debug('RunPlaybookWorkflow bound document resolution summary', {
       executionId,
-      request: JSON.stringify(request),
+      playbookId,
+      tasks:
+        request.tasks
+          ?.filter((t: any) => t.input_files_by_port?.length > 0)
+          .map((t: any) => {
+            const boundIds = (t.input_files_by_port || []).flatMap(
+              (binding: any) => binding.document_ids || [],
+            );
+            const workspaceMatches = (request.workspace_context || []).map((ctx: any) => ({
+              workspaceId: ctx.workspace_id,
+              documents: (ctx.workspace_documents || [])
+                .filter((doc: any) => boundIds.includes(doc?._id || doc?.id))
+                .map((doc: any) => ({
+                  id: doc?._id || doc?.id || '',
+                  filename: doc?.filename || '',
+                  filepath: doc?.filepath || '',
+                })),
+            }));
+
+            return {
+              taskId: t.id,
+              inputFilesByPort: t.input_files_by_port || [],
+              boundIds,
+              workspaceMatches,
+            };
+          }) || [],
+    });
+    this.logger.debug('RunPlaybookWorkflow gRPC request body summary', {
+      executionId,
+      playbookId,
+      requestSize: JSON.stringify(request).length,
+      workspaceContextCount: request.workspace_context?.length || 0,
+      workspaceDocumentCount: (request.workspace_context || []).reduce(
+        (sum: number, ctx: any) => sum + ((ctx.workspace_documents || []).length || 0),
+        0,
+      ),
+      taskIds: (request.tasks || []).map((task: any) => task.id),
     });
 
     // Build task map for email notifications

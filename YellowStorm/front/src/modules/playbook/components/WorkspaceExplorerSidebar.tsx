@@ -224,32 +224,6 @@ export function WorkspaceExplorerSidebar() {
     setSelectedItems(state.selectedItems);
   }, []);
 
-  useEffect(() => {
-    saveExplorerState({ expandedWorkspaces, selectedItems });
-  }, [expandedWorkspaces, selectedItems]);
-
-  useEffect(() => {
-    async function fetchWorkspaces() {
-      setLoading(true);
-      try {
-        const result = await getWorkspaces({ limit: 50 });
-        const workspacesWithDocs: WorkspaceWithDocuments[] = result.workspaces.map((w) => ({
-          ...w,
-          documents: [],
-          documentsLoading: false,
-        }));
-        setWorkspaces(workspacesWithDocs);
-      } catch (err) {
-        console.error('Failed to fetch workspaces:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-    if (isOpen) {
-      fetchWorkspaces();
-    }
-  }, [isOpen]);
-
   const fetchDocuments = useCallback(async (workspaceId: string) => {
     const { getDocuments } = await import('@/modules/workspace/api');
     setWorkspaces((prev) =>
@@ -269,6 +243,39 @@ export function WorkspaceExplorerSidebar() {
       );
     }
   }, []);
+
+  useEffect(() => {
+    saveExplorerState({ expandedWorkspaces, selectedItems });
+  }, [expandedWorkspaces, selectedItems]);
+
+  useEffect(() => {
+    async function fetchWorkspaces() {
+      setLoading(true);
+      try {
+        const result = await getWorkspaces({ limit: 50 });
+        const workspacesWithDocs: WorkspaceWithDocuments[] = result.workspaces.map((w) => ({
+          ...w,
+          documents: [],
+          documentsLoading: false,
+        }));
+        setWorkspaces(workspacesWithDocs);
+        setLoading(false);
+
+        const currentExpanded = loadExplorerState().expandedWorkspaces;
+        for (const wid of currentExpanded) {
+          if (result.workspaces.some((w) => w.id === wid)) {
+            fetchDocuments(wid);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch workspaces:', err);
+        setLoading(false);
+      }
+    }
+    if (isOpen) {
+      fetchWorkspaces();
+    }
+  }, [isOpen, fetchDocuments]);
 
   const handleToggleExpand = useCallback((workspaceId: string) => {
     setExpandedWorkspaces((prev) => {

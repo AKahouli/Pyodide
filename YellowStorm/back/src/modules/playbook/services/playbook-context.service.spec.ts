@@ -517,4 +517,73 @@ describe('PlaybookContextService', () => {
       expect(resolvedDoc.indexing_token).toBe(1200);
     });
   });
+
+  describe('extractDocumentIdsByPort', () => {
+    it('should resolve document bindings to persisted workspace document ids', async () => {
+      workspaceDocumentService.findAllByWorkspace.mockResolvedValue(
+        mockPaginatedResult([
+          mockDocument({
+            id: 'persisted-doc-1',
+            originalName: 'Mapped file.docx',
+            path: '/docs/mapped-file.docx',
+          }),
+        ]) as any,
+      );
+
+      const result = await service.extractDocumentIdsByPort([
+        {
+          type: 'document',
+          id: '69f8be8a368a76f2f5d99f0f',
+          name: 'Mapped file.docx',
+          workspaceId: 'ws-1',
+          metadata: {
+            path: '/docs/mapped-file.docx',
+          },
+        },
+      ]);
+
+      expect(workspaceDocumentService.findAllByWorkspace).toHaveBeenCalledWith('ws-1', {
+        limit: 1000,
+        status: DocumentStatus.COMPLETED,
+      });
+      expect(result).toEqual([
+        {
+          port_id: 'default',
+          document_ids: ['persisted-doc-1'],
+        },
+      ]);
+    });
+
+    it('should resolve document bindings by normalized filename and filepath basename', async () => {
+      workspaceDocumentService.findAllByWorkspace.mockResolvedValue(
+        mockPaginatedResult([
+          mockDocument({
+            id: '69f9a8ec018a0028666e6f83',
+            originalName: 'cv_template.docx',
+            path: '6984/ws/69f9a8ec018a0028666e6f83/cv_template.docx',
+          }),
+        ]) as any,
+      );
+
+      const result = await service.extractDocumentIdsByPort([
+        {
+          type: 'document',
+          id: '69f9a23a018a0028666e5b32',
+          name: 'cv_template.docx',
+          workspaceId: 'ws-1',
+          metadata: {
+            filename: '69f9a23a018a0028666e5b32-cv_template.docx',
+            filepath: '6984/ws/69f9a23a018a0028666e5b32/cv_template.docx',
+          },
+        },
+      ]);
+
+      expect(result).toEqual([
+        {
+          port_id: 'default',
+          document_ids: ['69f9a8ec018a0028666e6f83'],
+        },
+      ]);
+    });
+  });
 });

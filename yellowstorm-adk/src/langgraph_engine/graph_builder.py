@@ -231,6 +231,55 @@ def _resolve_iterator_collection(iterator_config: Dict[str, Any], state: Executi
     return []
 
 
+def _get_parent_iterator_id(task_config: Dict[str, Any]) -> str:
+    metadata = task_config.get("task_metadata") or {}
+    container = metadata.get("container") if isinstance(metadata, dict) else None
+    parent_id = ""
+    if isinstance(container, dict):
+        parent_id = str(container.get("parentIteratorId") or "").strip()
+    if not parent_id:
+        container_config = task_config.get("container_config") or task_config.get(
+            "containerConfig"
+        )
+        if isinstance(container_config, dict):
+            parent_id = str(container_config.get("parentIteratorId") or "").strip()
+    return parent_id
+
+
+def _merge_local_state_update(
+    state: ExecutionState,
+    state_update: Dict[str, Any],
+) -> ExecutionState:
+    merged = dict(state)
+    if not state_update:
+        return merged
+
+    completed_ids = list(merged.get("completed_task_ids") or [])
+    for task_id in state_update.get("completed_task_ids") or []:
+        if task_id not in completed_ids:
+            completed_ids.append(task_id)
+    merged["completed_task_ids"] = completed_ids
+
+    for key in (
+        "results",
+        "task_outputs",
+        "node_timings",
+        "artifacts_by_port",
+        "node_inputs_by_port",
+    ):
+        if key in state_update:
+            merged[key] = {
+                **(merged.get(key) or {}),
+                **(state_update.get(key) or {}),
+            }
+
+    for key in ("status", "error", "interrupt_payload"):
+        if key in state_update:
+            merged[key] = state_update[key]
+
+    return merged
+
+
 def _reset_citation_parent(component: Dict[str, Any]) -> Dict[str, Any]:
     if component.get("type") != "citation":
         return dict(component)
@@ -893,6 +942,31 @@ class DynamicGraphBuilder:
                 item_variable = str(iterator_config.get("itemVariable") or "item").strip() or "item"
                 output_variable = str(iterator_config.get("outputVariable") or "processed_items").strip() or "processed_items"
 
+                child_tasks = self._get_iterator_child_tasks(task_id, state.get("tasks") or [])
+                nested_child = next(
+                    (
+                        child
+                        for child in child_tasks
+                        if str(child.get("task_type") or "") == "iterator"
+                    ),
+                    None,
+                )
+                if nested_child is not None:
+                    raise ValueError(
+                        f"Nested iterator child tasks are not supported yet: {nested_child.get('id')}"
+                    )
+                child_task_ids = {child.get("id") for child in child_tasks if child.get("id")}
+                child_edges = [
+                    edge
+                    for edge in state.get("edges") or []
+                    if edge.get("source_id") in child_task_ids
+                    and edge.get("target_id") in child_task_ids
+                ]
+                ordered_child_tasks = self._order_tasks_topologically(
+                    child_tasks,
+                    child_edges,
+                )
+
                 if mode == "batch":
                     iterables: List[Any] = [items[idx: idx + batch_size] for idx in range(0, len(items), batch_size)]
                 else:
@@ -901,9 +975,59 @@ class DynamicGraphBuilder:
                 aggregated: List[Dict[str, Any]] = []
                 for index, item in enumerate(iterables):
                     try:
+                        local_state: ExecutionState = {
+                            **state,
+                            "tasks": ordered_child_tasks,
+                            "edges": child_edges,
+                            "results": dict(state.get("results") or {}),
+                            "task_outputs": {
+                                **(state.get("task_outputs") or {}),
+                                item_variable: item,
+                            },
+                            "completed_task_ids": [],
+                            "node_timings": {},
+                            "artifacts_by_port": dict(state.get("artifacts_by_port") or {}),
+                            "node_inputs_by_port": dict(state.get("node_inputs_by_port") or {}),
+                        }
+                        child_results: Dict[str, Any] = {}
+                        child_artifacts: List[Dict[str, Any]] = []
+                        output = ""
+
+                        for child_task in ordered_child_tasks:
+                            child_id = str(child_task.get("id") or "").strip()
+                            if not child_id:
+                                continue
+                            child_node = self._create_task_node(
+                                child_id,
+                                child_task,
+                                on_step_update,
+                            )
+                            child_update = await child_node(local_state, config)
+                            local_state = _merge_local_state_update(
+                                local_state,
+                                child_update,
+                            )
+                            child_result = (child_update.get("results") or {}).get(
+                                child_id,
+                                {},
+                            )
+                            child_results[child_id] = child_result
+                            output = child_result.get("output") or output
+                            child_artifacts.extend(child_result.get("artifacts") or [])
+                            if child_result.get("status") == "failed":
+                                error_text = str(child_result.get("error") or "")
+                                raise RuntimeError(
+                                    error_text
+                                    or f"Iterator child task {child_id} failed"
+                                )
+
                         aggregated.append({
                             "index": index,
                             item_variable: item,
+                            "status": "completed",
+                            "output": output,
+                            "child_results": child_results,
+                            "artifacts": child_artifacts,
                         })
                     except Exception as exc:
                         if error_strategy != "continue":
@@ -911,6 +1035,9 @@ class DynamicGraphBuilder:
                         aggregated.append({
                             "index": index,
                             item_variable: item,
+                            "status": "failed",
+                            "output": "",
+                            "child_results": {},
                             "error": str(exc),
                         })
 
@@ -1283,6 +1410,29 @@ class DynamicGraphBuilder:
                 # === STEP 3: Build prompt context from resolved inputs ===
                 context, resolved_inputs, workspace_artifacts = (
                     self._build_structured_context(task_id, task_config, state)
+                )
+                logger.info(
+                    f"[{task_id}] PROMPT_DOCUMENT_RESOLUTION_DEBUG",
+                    resolved_input_ports=[
+                        {
+                            "port_id": port_id,
+                            "bound_document_ids": list(
+                                ((port_state.get("document_bindings") or {}).get("document_ids") or [])
+                            ),
+                            "resolved_documents": list(
+                                port_state.get("resolved_documents") or []
+                            ),
+                            "staged_files": list(port_state.get("staged_files") or []),
+                            "workspace_artifacts": len(
+                                port_state.get("workspace_artifacts") or []
+                            ),
+                        }
+                        for port_id, port_state in (resolved_inputs.get("ports") or {}).items()
+                    ],
+                    brain_documents_count=len(resolved_inputs.get("brain_documents") or []),
+                    workspace_context_count=len(
+                        resolved_inputs.get("playbook_workspace_context") or []
+                    ),
                 )
 
                 workspace_context_for_hint = (
@@ -2136,6 +2286,94 @@ class DynamicGraphBuilder:
 
         return exit_ids
 
+    def _get_iterator_child_tasks(
+        self,
+        iterator_id: str,
+        tasks: List[TaskConfig],
+    ) -> List[TaskConfig]:
+        return [
+            task
+            for task in tasks
+            if _get_parent_iterator_id(task) == iterator_id and task.get("id")
+        ]
+
+    def _order_tasks_topologically(
+        self,
+        tasks: List[TaskConfig],
+        edges: List[EdgeConfig],
+    ) -> List[TaskConfig]:
+        task_by_id = {task["id"]: task for task in tasks if task.get("id")}
+        ordered_ids = sorted(
+            task_by_id,
+            key=lambda task_id: (
+                task_by_id[task_id].get("execution_order", 999),
+                task_id,
+            ),
+        )
+        incoming_count = {task_id: 0 for task_id in ordered_ids}
+        outgoing: Dict[str, List[str]] = {task_id: [] for task_id in ordered_ids}
+
+        for edge in edges:
+            source_id = edge.get("source_id")
+            target_id = edge.get("target_id")
+            if source_id not in task_by_id or target_id not in task_by_id:
+                continue
+            outgoing[source_id].append(target_id)
+            incoming_count[target_id] += 1
+
+        ready = [task_id for task_id in ordered_ids if incoming_count[task_id] == 0]
+        result_ids: List[str] = []
+        while ready:
+            current_id = ready.pop(0)
+            result_ids.append(current_id)
+            for target_id in sorted(
+                outgoing[current_id],
+                key=lambda child_id: (
+                    task_by_id[child_id].get("execution_order", 999),
+                    child_id,
+                ),
+            ):
+                incoming_count[target_id] -= 1
+                if incoming_count[target_id] == 0:
+                    ready.append(target_id)
+            ready.sort(
+                key=lambda task_id: (
+                    task_by_id[task_id].get("execution_order", 999),
+                    task_id,
+                )
+            )
+
+        if len(result_ids) != len(task_by_id):
+            logger.warning(
+                "[DynamicGraphBuilder] Iterator child task cycle detected; "
+                "using execution_order fallback"
+            )
+            return [task_by_id[task_id] for task_id in ordered_ids]
+
+        return [task_by_id[task_id] for task_id in result_ids]
+
+    def _get_top_level_tasks(self, tasks: List[TaskConfig]) -> List[TaskConfig]:
+        return [task for task in tasks if not _get_parent_iterator_id(task)]
+
+    def _get_top_level_edges(
+        self,
+        tasks: List[TaskConfig],
+        edges: List[EdgeConfig],
+    ) -> List[EdgeConfig]:
+        top_level_ids = {task.get("id") for task in self._get_top_level_tasks(tasks)}
+        return [
+            edge
+            for edge in edges
+            if (
+                edge.get("source_id") == "__trigger__"
+                and edge.get("target_id") in top_level_ids
+            )
+            or (
+                edge.get("source_id") in top_level_ids
+                and edge.get("target_id") in top_level_ids
+            )
+        ]
+
     def build_execution_graph(
         self,
         tasks: List[TaskConfig],
@@ -2151,8 +2389,10 @@ class DynamicGraphBuilder:
             plain dict instead of monkey-patching the compiled graph object.
         """
         workflow = StateGraph(ExecutionState)
+        graph_tasks = self._get_top_level_tasks(tasks)
+        graph_edges = self._get_top_level_edges(tasks, edges)
 
-        for task in tasks:
+        for task in graph_tasks:
             task_id = task.get("id")
             if not task_id:
                 continue
@@ -2166,7 +2406,7 @@ class DynamicGraphBuilder:
                 title=task.get("title"),
             )
 
-        entry_task_ids = self._find_entry_tasks(tasks, edges)
+        entry_task_ids = self._find_entry_tasks(graph_tasks, graph_edges)
         logger.info("[DynamicGraphBuilder] Entry tasks", entry_ids=entry_task_ids)
 
         if len(entry_task_ids) == 1:
@@ -2183,7 +2423,7 @@ class DynamicGraphBuilder:
                 workflow.add_edge("__start_parallel__", f"task_{tid}")
 
         incoming_by_target: Dict[str, List[str]] = {}
-        for edge in edges:
+        for edge in graph_edges:
             source_id = edge["source_id"]
             target_id = edge["target_id"]
             if not source_id or not target_id:
@@ -2212,7 +2452,7 @@ class DynamicGraphBuilder:
                 target=target_node,
             )
 
-        exit_task_ids = self._find_exit_tasks(tasks, edges)
+        exit_task_ids = self._find_exit_tasks(graph_tasks, graph_edges)
         logger.info("[DynamicGraphBuilder] Exit tasks", exit_ids=exit_task_ids)
 
         async def completion_node(state: ExecutionState) -> Dict[str, Any]:
@@ -2234,15 +2474,15 @@ class DynamicGraphBuilder:
         logger.info(
             "[DynamicGraphBuilder] Compiled graph",
             playbook_id=playbook_id,
-            tasks=len(tasks),
-            edges=len(edges),
+            tasks=len(graph_tasks),
+            edges=len(graph_edges),
         )
 
         return {
             "compiled": compiled,
             "playbook_id": playbook_id,
-            "task_count": len(tasks),
-            "edge_count": len(edges),
+            "task_count": len(graph_tasks),
+            "edge_count": len(graph_edges),
         }
 
     def build_single_step_graph(

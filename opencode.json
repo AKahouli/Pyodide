@@ -9,23 +9,53 @@
         "apiKey": "sk-3996237592156101257"
       },
       "models": {
-        "MiniMax-M2.7": {
-          "name": "MiniMax-M2.7"
-        },
-        "gpt-5.4-medium-oc": {
-          "name": "GPT-5.4-Medium-OC"
-        },
         "gpt-5.4": {
-          "name": "GPT-5.4"
+          "name": "GPT-5.4",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
         },
-        "gpt-5.4-low-oc": {
-          "name": "GPT-5.4-Low-OC"
+        "gpt-5.5": {
+          "name": "gpt-5.5",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
         },
         "gpt-5.4-mini-oc": {
-          "name": "gpt-5.4-mini-oc"
+          "name": "gpt-5.4-mini-oc",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
         },
         "gpt-5.4-nano-oc": {
-          "name": "GPT-5.4-Nano-OC"
+          "name": "GPT-5.4-Nano-OC",
+          "modalities": {
+            "input": [
+              "text",
+              "image"
+            ],
+            "output": [
+              "text"
+            ]
+          }
         },
         "deepseek-v4-pro": {
           "name": "DeepSeek V4 Pro"

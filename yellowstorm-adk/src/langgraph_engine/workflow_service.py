@@ -436,6 +436,12 @@ async def run_playbook(
         "node_timings": {},
         "query": query,
         "workspace_context": workspace_context,
+        "brain_documents": [
+            doc
+            for agent in (agents or {}).values()
+            for doc in (agent.get("brain_documents") or [])
+            if isinstance(doc, dict)
+        ],
         "trigger_context": trigger_context,
         "evaluation_user_id": evaluation_user_id,
         "execution_mode": execution_mode,
@@ -786,6 +792,9 @@ async def run_single_step_graph(
         "node_timings": {},
         "query": "",
         "workspace_context": workspace_context,
+        "brain_documents": [
+            doc for doc in (agent.get("brain_documents") or []) if isinstance(doc, dict)
+        ],
         "trigger_context": trigger_context,
         "evaluation_user_id": evaluation_user_id,
         "execution_mode": execution_mode,
