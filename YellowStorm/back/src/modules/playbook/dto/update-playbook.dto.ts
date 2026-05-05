@@ -160,6 +160,38 @@ export class EvaluationConfigDto {
   weights?: EvaluationRubricWeightsDto;
 }
 
+export class IteratorConfigDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsIn(['item', 'batch'])
+  mode?: string;
+
+  @IsOptional()
+  @IsNumber()
+  batchSize?: number | null;
+
+  @IsOptional()
+  @IsString()
+  itemVariable?: string | null;
+
+  @IsOptional()
+  @IsString()
+  outputVariable?: string | null;
+
+  @IsOptional()
+  @IsIn(['stop', 'continue'])
+  errorStrategy?: string;
+}
+
+export class ContainerConfigDto {
+  @IsOptional()
+  @IsString()
+  parentIteratorId?: string | null;
+}
+
 export class UpdatePlaybookTaskDto {
   @IsString()
   id!: string;
@@ -262,7 +294,7 @@ export class UpdatePlaybookTaskDto {
   inputFiles?: InputFileDto[];
 
   @IsOptional()
-  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation'])
+  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation', 'iterator'])
   taskType?: string;
 
   @ApiPropertyOptional({ type: [TaskInputPortDto] })
@@ -297,6 +329,18 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested()
   @Type(() => EvaluationConfigDto)
   evaluationConfig?: EvaluationConfigDto | null;
+
+  @ApiPropertyOptional({ type: IteratorConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => IteratorConfigDto)
+  iteratorConfig?: IteratorConfigDto | null;
+
+  @ApiPropertyOptional({ type: ContainerConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ContainerConfigDto)
+  containerConfig?: ContainerConfigDto | null;
 
   @ApiPropertyOptional({ description: 'Expected result text for repeatability evaluation' })
   @IsOptional()

@@ -504,6 +504,23 @@ export class PlaybookExecutionGraphService {
       const targetPortExists =
         targetPorts.length === 0 || targetPorts.some((p: any) => p.id === targetPortId);
 
+      const sourceParentIteratorId = sourceTask?.containerConfig?.parentIteratorId || null;
+      const targetParentIteratorId = targetTask?.containerConfig?.parentIteratorId || null;
+      const sourceIsIterator = sourceTask?.taskType === 'iterator';
+      const targetIsIterator = targetTask?.taskType === 'iterator';
+
+      const isIteratorBoundaryEdge =
+        (sourceIsIterator && targetParentIteratorId === sourceId) ||
+        (targetIsIterator && sourceParentIteratorId === targetId);
+
+      const sharesSameIteratorScope =
+        sourceParentIteratorId !== null && sourceParentIteratorId === targetParentIteratorId;
+
+      const crossesDifferentIteratorScopes =
+        sourceParentIteratorId !== targetParentIteratorId &&
+        sourceParentIteratorId !== null &&
+        targetParentIteratorId !== null;
+
       if (!sourcePortExists || !targetPortExists) {
         this.logger.warn('Dropping edge with stale port reference', {
           edgeId: edge.id,
@@ -513,6 +530,34 @@ export class PlaybookExecutionGraphService {
           targetPortId,
           sourcePortIds: sourcePorts.map((p: any) => p.id),
           targetPortIds: targetPorts.map((p: any) => p.id),
+        });
+        return false;
+      }
+
+      if (crossesDifferentIteratorScopes) {
+        this.logger.warn('Dropping edge across different iterator scopes', {
+          edgeId: edge.id,
+          sourceId,
+          targetId,
+          sourceParentIteratorId,
+          targetParentIteratorId,
+        });
+        return false;
+      }
+
+      if (
+        (sourceIsIterator || targetIsIterator) &&
+        !isIteratorBoundaryEdge &&
+        !sharesSameIteratorScope
+      ) {
+        this.logger.warn('Dropping invalid iterator boundary edge', {
+          edgeId: edge.id,
+          sourceId,
+          targetId,
+          sourceIsIterator,
+          targetIsIterator,
+          sourceParentIteratorId,
+          targetParentIteratorId,
         });
         return false;
       }

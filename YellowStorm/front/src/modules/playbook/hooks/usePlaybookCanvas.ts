@@ -42,31 +42,86 @@ function buildTriggerNode(): Node {
   };
 }
 
-export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
-  const taskNodes = tasks.map((task) => ({
+function getIteratorChildTasks(tasks: PlaybookTask[], iteratorId: string): PlaybookTask[] {
+  return tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId);
+}
+
+function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask[]): Node {
+  const padding = 80;
+  const minWidth = 360;
+  const minHeight = 220;
+  const bounds = childTasks.reduce(
+    (acc, child) => {
+      acc.minX = Math.min(acc.minX, child.positionX);
+      acc.minY = Math.min(acc.minY, child.positionY);
+      acc.maxX = Math.max(acc.maxX, child.positionX);
+      acc.maxY = Math.max(acc.maxY, child.positionY);
+      return acc;
+    },
+    {
+      minX: task.positionX,
+      minY: task.positionY,
+      maxX: task.positionX + minWidth,
+      maxY: task.positionY + minHeight,
+    },
+  );
+
+  const width = Math.max(minWidth, bounds.maxX - bounds.minX + padding * 2);
+  const height = Math.max(minHeight, bounds.maxY - bounds.minY + padding * 2);
+
+  return {
     id: task.id,
-    type: 'playbookStep',
-    position: { x: task.positionX, y: task.positionY },
-    data: { ...task } as PlaybookNodeData,
-  }));
+    type: 'playbookIteratorContainer',
+    position: { x: Math.min(task.positionX, bounds.minX - padding), y: Math.min(task.positionY, bounds.minY - padding) },
+    data: { ...task, width, height, childTaskIds: childTasks.map((child) => child.id) } as PlaybookNodeData,
+    style: { width, height },
+  };
+}
+
+export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
+  const iteratorIds = new Set(tasks.filter((task) => task.taskType === 'iterator').map((task) => task.id));
+  const taskNodes: Node[] = tasks.flatMap((task): Node[] => {
+    if (task.taskType === 'iterator') {
+      const childTasks = getIteratorChildTasks(tasks, task.id);
+      return [buildIteratorContainerNode(task, childTasks)];
+    }
+
+    const parentIteratorId = task.containerConfig?.parentIteratorId;
+    return [{
+      id: task.id,
+      type: 'playbookStep',
+      position: { x: task.positionX, y: task.positionY },
+      parentId: parentIteratorId && iteratorIds.has(parentIteratorId) ? parentIteratorId : undefined,
+      extent: parentIteratorId && iteratorIds.has(parentIteratorId) ? 'parent' as const : undefined,
+      data: { ...task } as PlaybookNodeData,
+    }];
+  });
 
   return includeTriggerNode ? [buildTriggerNode(), ...taskNodes] : taskNodes;
 }
 
 function nodesToTasks(nodes: Node[]): PlaybookTask[] {
-  return nodes.filter((node) => node.type === 'playbookStep').map((node) => {
+  return nodes.filter((node) => node.type === 'playbookStep' || node.type === 'playbookIteratorContainer').map((node) => {
     const data = node.data as PlaybookNodeData;
     return {
       ...data,
       id: node.id,
       positionX: node.position.x,
       positionY: node.position.y,
+      containerConfig:
+        node.type === 'playbookStep'
+          ? {
+              parentIteratorId: node.parentId || null,
+            }
+          : data.containerConfig ?? null,
     };
   });
 }
 
 function playbookEdgesToFlowEdges(edges: PlaybookEdge[]): Edge[] {
-  return edges.map((edge) => ({
+  return edges
+    .filter((edge) => edge.sourceId !== edge.targetId)
+    .map((edge) => ({
     id: edge.id,
     source: edge.sourceId,
     target: edge.targetId,
@@ -192,10 +247,10 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   useEffect(() => {
     if (!playbook) return;
 
-    const taskMap = new Map(playbook.tasks.map((task) => [task.id, task]));
-    setNodes((nds) => {
-      let changed = false;
-      const updated = nds.map((node) => {
+      const taskMap = new Map(playbook.tasks.map((task) => [task.id, task]));
+      setNodes((nds) => {
+        let changed = false;
+        const updated = nds.map((node) => {
         const task = taskMap.get(node.id);
         if (!task) return node;
 
@@ -229,7 +284,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         if (removedIds.size > 0) {
           captureSnapshot();
           setNodes((nds) => {
-            const updated = nds.filter((n) => !removedIds.has(n.id));
+        const updated = nds.filter((n) => !removedIds.has(n.id));
             deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
             return updated;
           });
@@ -326,12 +381,16 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
   const addNode = useCallback(
     (task: PlaybookTask) => {
-      const newNode: Node = {
-        id: task.id,
-        type: 'playbookStep',
-        position: { x: task.positionX, y: task.positionY },
-        data: { ...task } as PlaybookNodeData,
-      };
+      const newNode: Node = task.taskType === 'iterator'
+        ? buildIteratorContainerNode(task, [])
+        : {
+            id: task.id,
+            type: 'playbookStep',
+            position: { x: task.positionX, y: task.positionY },
+            parentId: task.containerConfig?.parentIteratorId || undefined,
+            extent: task.containerConfig?.parentIteratorId ? 'parent' as const : undefined,
+            data: { ...task } as PlaybookNodeData,
+          };
       setNodes((nds) => {
         const updated = [...nds, newNode];
         captureSnapshot();

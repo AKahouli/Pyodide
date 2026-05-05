@@ -1660,6 +1660,19 @@ export class PlaybookExecutionService {
                 weights: t.evaluationConfig.weights || {},
               }
             : null,
+          task_metadata:
+            t.taskType === 'iterator' && t.iteratorConfig
+              ? {
+                  iterator: {
+                    source: t.iteratorConfig.source || '{{items}}',
+                    mode: t.iteratorConfig.mode === 'batch' ? 'batch' : 'item',
+                    batchSize: t.iteratorConfig.batchSize ?? 10,
+                    itemVariable: t.iteratorConfig.itemVariable || 'item',
+                    outputVariable: t.iteratorConfig.outputVariable || 'processed_items',
+                    errorStrategy: t.iteratorConfig.errorStrategy === 'continue' ? 'continue' : 'stop',
+                  },
+                }
+              : {},
           tool_bindings: toolBindingsByTaskId.get(t.id) || [],
         };
       }),

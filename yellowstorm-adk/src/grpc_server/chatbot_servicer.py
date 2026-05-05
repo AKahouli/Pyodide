@@ -2304,6 +2304,16 @@ def _proto_task_to_dict(proto_task) -> dict:
         if proto_task.input_files_by_port
         else None,
         "task_type": proto_task.task_type or None,
+        "task_metadata": _normalize_struct_like(
+            MessageToDict(
+                getattr(proto_task, "task_metadata", None),
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            )
+        )
+        if getattr(proto_task, "task_metadata", None)
+        and _struct_has_fields(getattr(proto_task, "task_metadata", None))
+        else None,
         "input_ports": [
             {
                 "id": p.id,

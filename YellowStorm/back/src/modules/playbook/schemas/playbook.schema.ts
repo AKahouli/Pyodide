@@ -189,6 +189,37 @@ export class PlaybookEvaluationConfig {
 export const PlaybookEvaluationConfigSchema = SchemaFactory.createForClass(PlaybookEvaluationConfig);
 
 @Schema({ _id: false })
+export class PlaybookIteratorConfig {
+  @Prop({ type: String, trim: true, default: '{{items}}' })
+  source!: string;
+
+  @Prop({ type: String, enum: ['item', 'batch'], default: 'item' })
+  mode!: string;
+
+  @Prop({ type: Number, default: 10, min: 1 })
+  batchSize!: number;
+
+  @Prop({ type: String, trim: true, default: 'item' })
+  itemVariable!: string;
+
+  @Prop({ type: String, trim: true, default: 'processed_items' })
+  outputVariable!: string;
+
+  @Prop({ type: String, enum: ['stop', 'continue'], default: 'stop' })
+  errorStrategy!: string;
+}
+
+export const PlaybookIteratorConfigSchema = SchemaFactory.createForClass(PlaybookIteratorConfig);
+
+@Schema({ _id: false })
+export class PlaybookContainerConfig {
+  @Prop({ type: String, default: null })
+  parentIteratorId!: string | null;
+}
+
+export const PlaybookContainerConfigSchema = SchemaFactory.createForClass(PlaybookContainerConfig);
+
+@Schema({ _id: false })
 export class PlaybookDesignSettings {
   @Prop({ type: String, default: null })
   inferenceModelId!: string | null;
@@ -267,7 +298,7 @@ export class PlaybookTask {
   @Prop({ type: [InputFileItemSchema], default: [], _id: false })
   inputFiles!: InputFileItem[];
 
-  @Prop({ type: String, enum: ['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation'], default: 'generic' })
+  @Prop({ type: String, enum: ['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation', 'iterator'], default: 'generic' })
   taskType!: string;
 
   @Prop({ type: [TaskInputPortSchemaDefinition], default: [], _id: false })
@@ -296,6 +327,12 @@ export class PlaybookTask {
 
   @Prop({ type: PlaybookEvaluationConfigSchema, default: null })
   evaluationConfig!: PlaybookEvaluationConfig | null;
+
+  @Prop({ type: PlaybookIteratorConfigSchema, default: null })
+  iteratorConfig!: PlaybookIteratorConfig | null;
+
+  @Prop({ type: PlaybookContainerConfigSchema, default: null })
+  containerConfig!: PlaybookContainerConfig | null;
 
   @Prop({ type: String, default: null })
   expectedResult!: string | null;

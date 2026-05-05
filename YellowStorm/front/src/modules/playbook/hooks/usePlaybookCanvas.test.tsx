@@ -62,6 +62,28 @@ describe('usePlaybookCanvas', () => {
     expect(nodes[0]).toMatchObject({ id: 't1', type: 'playbookStep' });
   });
 
+  it('projects iterator tasks as container nodes and child tasks as scoped steps', () => {
+    const nodes = tasksToNodes([
+      makeTask({
+        id: 'iterator-1',
+        taskType: 'iterator',
+        title: 'Loop documents',
+        positionX: 50,
+        positionY: 60,
+      }),
+      makeTask({
+        id: 'child-1',
+        title: 'Extract facts',
+        positionX: 120,
+        positionY: 140,
+        containerConfig: { parentIteratorId: 'iterator-1' },
+      }),
+    ], false);
+
+    expect(nodes[0]).toMatchObject({ id: 'iterator-1', type: 'playbookIteratorContainer' });
+    expect(nodes[1]).toMatchObject({ id: 'child-1', type: 'playbookStep', parentId: 'iterator-1', extent: 'parent' });
+  });
+
   it('persists edges from the synthetic trigger source', () => {
     currentPlaybookState.value = makePlaybook({ edges: [] });
     const { result } = renderHook(() => usePlaybookCanvas());

@@ -61,6 +61,7 @@ import { usePlaybookCanvas, tasksToNodes, type TriggerNodeActions } from '../hoo
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
+import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
@@ -450,7 +451,7 @@ function PlaybookCanvasInner() {
     prevIsDesigning.current = isDesigning;
   }, [currentExecution?.id, currentExecution?.status, currentExecution?.taskResults, execution?.id, execution?.status, execution?.taskResults, id, isGenerating, isDesigning, refreshUsage]);
 
-  const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode, playbookTrigger: PlaybookTriggerNode }), []);
+  const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode, playbookTrigger: PlaybookTriggerNode, playbookIteratorContainer: PlaybookIteratorContainerNode }), []);
   const edgeTypes = useMemo(() => ({
     animated: AiEdge.Animated,
     'animated-warning': AiEdge.AnimatedWarning,
@@ -2219,6 +2220,7 @@ function PlaybookCanvasInner() {
       <PlaybookNodeEditor
         playbookId={playbook.id}
         task={effectiveEditingTask}
+        allTasks={playbook.tasks}
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}

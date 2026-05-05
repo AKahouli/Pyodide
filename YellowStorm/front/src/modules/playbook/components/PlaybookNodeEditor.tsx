@@ -28,6 +28,7 @@ import type {
   SelectedAction,
   PlaybookEvaluationConfig,
   PlaybookNodeType,
+  PlaybookIteratorConfig,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -53,9 +54,19 @@ interface EditorDraft {
   inputPorts: TaskInputPort[];
   outputPorts: TaskOutputPort[];
   evaluationConfig: PlaybookEvaluationConfig | null;
+  iteratorConfig: PlaybookIteratorConfig | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
 }
+
+const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
+  source: '{{items}}',
+  mode: 'item',
+  batchSize: 10,
+  itemVariable: 'item',
+  outputVariable: 'processed_items',
+  errorStrategy: 'stop',
+};
 
 const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
   expectation: '',
@@ -77,6 +88,8 @@ const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
 function buildDraftFromTask(task: PlaybookTask): EditorDraft {
   const nodeType: PlaybookNodeType = task.taskType === 'evaluation'
     ? 'evaluation'
+    : task.taskType === 'iterator'
+      ? 'iterator'
     : task.executionMode === 'action'
       ? 'action'
       : 'agent';
@@ -98,6 +111,9 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
     evaluationConfig: task.evaluationConfig
       ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } }
       : { ...DEFAULT_EVALUATION_CONFIG, weights: { ...DEFAULT_EVALUATION_CONFIG.weights } },
+    iteratorConfig: task.iteratorConfig
+      ? { ...task.iteratorConfig }
+      : { ...DEFAULT_ITERATOR_CONFIG },
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
   };
@@ -107,9 +123,9 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
   return {
     title: draft.title,
     description: draft.description,
-    taskType: draft.nodeType === 'evaluation' ? 'evaluation' : 'generic',
-    assignedAgentId: draft.nodeType === 'action' ? null : draft.assignedAgentId,
-    executionMode: (draft.nodeType === 'evaluation' ? 'agent' : draft.executionMode) as import('../types').TaskExecutionMode | undefined,
+    taskType: draft.nodeType === 'evaluation' ? 'evaluation' : draft.nodeType === 'iterator' ? 'iterator' : 'generic',
+    assignedAgentId: draft.nodeType === 'action' || draft.nodeType === 'iterator' ? null : draft.assignedAgentId,
+    executionMode: (draft.nodeType === 'evaluation' || draft.nodeType === 'iterator' ? 'agent' : draft.executionMode) as import('../types').TaskExecutionMode | undefined,
     selectedAction: draft.nodeType === 'action' ? draft.selectedAction : undefined,
     interruptBefore: draft.interruptBefore,
     interruptAfter: draft.interruptAfter,
@@ -120,6 +136,7 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     inputPorts: [...draft.inputPorts],
     outputPorts: [...draft.outputPorts],
     evaluationConfig: draft.evaluationConfig,
+    iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
   };
@@ -128,6 +145,7 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
 interface Props {
   playbookId: string | null;
   task: PlaybookTask | null;
+  allTasks?: PlaybookTask[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (taskId: string, data: Partial<PlaybookTask>) => void;
@@ -135,7 +153,7 @@ interface Props {
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSave }: Props) {
+export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave }: Props) {
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
@@ -174,6 +192,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
     inputPorts: [],
     outputPorts: [],
     evaluationConfig: null,
+    iteratorConfig: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
   });
@@ -237,6 +256,15 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
   }, []);
 
   const isEvaluationTask = draft.nodeType === 'evaluation';
+  const isIteratorTask = draft.nodeType === 'iterator';
+  const iteratorChildren = useMemo(
+    () => (task ? allTasks.filter((candidate) => candidate.containerConfig?.parentIteratorId === task.id) : []),
+    [allTasks, task],
+  );
+  const iteratorCandidates = useMemo(
+    () => allTasks.filter((candidate) => candidate.id !== task?.id && candidate.taskType !== 'iterator'),
+    [allTasks, task?.id],
+  );
 
   useEffect(() => {
     if (task) {
@@ -520,11 +548,18 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
                 const patch: Partial<EditorDraft> = { nodeType: nextType };
                 if (nextType === 'evaluation') {
                   patch.executionMode = 'agent';
+                  patch.iteratorConfig = null;
                 } else if (nextType === 'action') {
                   patch.executionMode = 'action';
                   patch.assignedAgentId = null;
+                  patch.iteratorConfig = null;
+                } else if (nextType === 'iterator') {
+                  patch.executionMode = 'agent';
+                  patch.assignedAgentId = null;
+                  patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
                 } else {
                   patch.executionMode = 'agent';
+                  patch.iteratorConfig = null;
                 }
                 updateDraft(patch);
               }}
@@ -532,6 +567,7 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
             >
               <option value="agent">{t('nodeEditor.nodeTypeAgent')}</option>
               <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
+              <option value="iterator">{t('nodeEditor.nodeTypeIterator')}</option>
               <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
             </select>
           </div>
@@ -581,6 +617,102 @@ export function PlaybookNodeEditor({ playbookId, task, open, onOpenChange, onSav
               )}
             </div>
           ) : null}
+
+          {isIteratorTask && draft.iteratorConfig && (
+            <div className="space-y-4 rounded-md border p-3">
+              <div className="space-y-2">
+                <Label>{t('nodeEditor.iteratorSource')}</Label>
+                <Input
+                  value={draft.iteratorConfig.source}
+                  onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, source: e.target.value } })}
+                  placeholder="{{items}}"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.iteratorMode')}</Label>
+                  <select
+                    value={draft.iteratorConfig.mode}
+                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, mode: e.target.value as 'item' | 'batch' } })}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="item">{t('nodeEditor.iteratorModeItem')}</option>
+                    <option value="batch">{t('nodeEditor.iteratorModeBatch')}</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.iteratorErrorStrategy')}</Label>
+                  <select
+                    value={draft.iteratorConfig.errorStrategy ?? 'stop'}
+                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, errorStrategy: e.target.value as 'stop' | 'continue' } })}
+                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="stop">{t('nodeEditor.iteratorErrorStop')}</option>
+                    <option value="continue">{t('nodeEditor.iteratorErrorContinue')}</option>
+                  </select>
+                </div>
+              </div>
+              {draft.iteratorConfig.mode === 'batch' && (
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.iteratorBatchSize')}</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={draft.iteratorConfig.batchSize ?? 10}
+                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, batchSize: Number(e.target.value || 1) } })}
+                  />
+                </div>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.iteratorItemVariable')}</Label>
+                  <Input
+                    value={draft.iteratorConfig.itemVariable ?? ''}
+                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, itemVariable: e.target.value } })}
+                    placeholder="item"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>{t('nodeEditor.iteratorOutputVariable')}</Label>
+                  <Input
+                    value={draft.iteratorConfig.outputVariable ?? ''}
+                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, outputVariable: e.target.value } })}
+                    placeholder="processed_items"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>{t('nodeEditor.iteratorChildren')}</Label>
+                <div className="space-y-2 rounded-md border p-3">
+                  {iteratorCandidates.map((candidate) => {
+                    const checked = candidate.containerConfig?.parentIteratorId === task?.id;
+                    return (
+                      <label key={candidate.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            onSave(candidate.id, {
+                              containerConfig: {
+                                parentIteratorId: e.target.checked ? task?.id || null : null,
+                              },
+                            });
+                          }}
+                        />
+                        <span>{candidate.title}</span>
+                      </label>
+                    );
+                  })}
+                  {iteratorCandidates.length === 0 && (
+                    <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorChildrenEmpty')}</p>
+                  )}
+                </div>
+                {iteratorChildren.length > 0 && (
+                  <p className="text-xs text-muted-foreground">{t('iterator.childCount', { count: iteratorChildren.length })}</p>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <Label>{t('nodeEditor.description')}</Label>

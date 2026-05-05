@@ -88,7 +88,7 @@ User task
 - Task modifies an API contract, data schema, or architectural boundary
 - Task is ambiguous or underspecified
 
-**Skip when:** Single-file fix with no interface change. Pure formatting/typo/comment edit.
+**Skip when:** Single-file fix with no interface change. Pure formatting/typo/comment edit. implementation Plan has already been generated in the previous task.
 
 **Before planning**, read the relevant coding guidelines file per the Mandatory Guideline Loading table above. The action plan must account for guideline compliance.
 

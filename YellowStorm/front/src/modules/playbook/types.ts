@@ -76,7 +76,23 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
-export type PlaybookNodeType = 'agent' | 'action' | 'evaluation';
+export type PlaybookNodeType = 'agent' | 'action' | 'evaluation' | 'iterator';
+
+export type IteratorMode = 'item' | 'batch';
+export type IteratorErrorStrategy = 'stop' | 'continue';
+
+export interface PlaybookIteratorConfig {
+  source: string;
+  mode: IteratorMode;
+  batchSize?: number | null;
+  itemVariable?: string | null;
+  outputVariable?: string | null;
+  errorStrategy?: IteratorErrorStrategy;
+}
+
+export interface PlaybookContainerConfig {
+  parentIteratorId?: string | null;
+}
 
 export interface PlaybookEvaluationRubricWeights {
   semanticMatch: number;
@@ -196,6 +212,8 @@ export interface PlaybookTask {
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
+  iteratorConfig?: PlaybookIteratorConfig | null;
+  containerConfig?: PlaybookContainerConfig | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;

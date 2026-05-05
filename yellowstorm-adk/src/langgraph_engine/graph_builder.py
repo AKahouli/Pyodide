@@ -207,6 +207,30 @@ def _merge_unique_components(
     return merged
 
 
+def _resolve_iterator_collection(iterator_config: Dict[str, Any], state: ExecutionState) -> List[Any]:
+    source = str(iterator_config.get("source") or "").strip()
+    if not source:
+        return []
+
+    normalized = source
+    if normalized.startswith("{{") and normalized.endswith("}}"):
+        normalized = normalized[2:-2].strip()
+
+    task_outputs = state.get("task_outputs") or {}
+    results = state.get("results") or {}
+
+    if normalized in task_outputs:
+        value = task_outputs.get(normalized)
+        return value if isinstance(value, list) else []
+
+    if normalized in results:
+        candidate = results.get(normalized) or {}
+        output = candidate.get("output")
+        return output if isinstance(output, list) else []
+
+    return []
+
+
 def _reset_citation_parent(component: Dict[str, Any]) -> Dict[str, Any]:
     if component.get("type") != "citation":
         return dict(component)
@@ -858,6 +882,62 @@ class DynamicGraphBuilder:
                     logger.warning(
                         f"[{task_id}] step_update callback failed", exc_info=True
                     )
+
+            iterator_config = (task_config.get("task_metadata") or {}).get("iterator")
+            if str(task_config.get("task_type") or "") == "iterator" and isinstance(iterator_config, dict):
+                await _push_step_update("in_progress")
+                items = _resolve_iterator_collection(iterator_config, state)
+                mode = str(iterator_config.get("mode") or "item").strip().lower()
+                batch_size = max(int(iterator_config.get("batchSize") or 1), 1)
+                error_strategy = str(iterator_config.get("errorStrategy") or "stop").strip().lower()
+                item_variable = str(iterator_config.get("itemVariable") or "item").strip() or "item"
+                output_variable = str(iterator_config.get("outputVariable") or "processed_items").strip() or "processed_items"
+
+                if mode == "batch":
+                    iterables: List[Any] = [items[idx: idx + batch_size] for idx in range(0, len(items), batch_size)]
+                else:
+                    iterables = list(items)
+
+                aggregated: List[Dict[str, Any]] = []
+                for index, item in enumerate(iterables):
+                    try:
+                        aggregated.append({
+                            "index": index,
+                            item_variable: item,
+                        })
+                    except Exception as exc:
+                        if error_strategy != "continue":
+                            raise
+                        aggregated.append({
+                            "index": index,
+                            item_variable: item,
+                            "error": str(exc),
+                        })
+
+                duration_ms = int((time.time() - start_time) * 1000)
+                result_payload = {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "output": aggregated,
+                    "error": "",
+                    "duration_ms": duration_ms,
+                    "components": [],
+                    "tool_trace": [],
+                    "llm_prompt_trace": [],
+                    "semantic_match": None,
+                    "artifacts": [],
+                }
+                await _push_step_update("completed", result=result_payload)
+                return {
+                    "completed_task_ids": [task_id],
+                    "results": {
+                        task_id: result_payload,
+                    },
+                    "status": "completed",
+                    "task_outputs": {
+                        task_config.get("output_key") or output_variable: aggregated,
+                    },
+                }
 
             # === ACTION MODE: bypass agent execution ===
             if execution_mode_value == "action":

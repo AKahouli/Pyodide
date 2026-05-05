@@ -301,8 +301,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const agentId = effectiveTask.assignedAgentId;
   const agent = agentId ? getAgentById(agentId) : null;
   const isActionMode = effectiveTask.executionMode === 'action';
+  const isIteratorMode = effectiveTask.taskType === 'iterator';
   const isConfigured = effectiveTask.taskType === 'evaluation'
     ? !!(effectiveTask.assignedAgentId && (effectiveTask.evaluationConfig?.expectation || effectiveTask.evaluationConfig?.referenceBaselineId))
+    : isIteratorMode
+      ? Boolean(effectiveTask.iteratorConfig?.source?.trim())
     : isActionMode ? !!effectiveTask.selectedAction : !!effectiveTask.assignedAgentId;
   const selectedActionLabel = effectiveTask.selectedAction
     ? `${String(effectiveTask.selectedAction).charAt(0).toUpperCase()}${String(effectiveTask.selectedAction).slice(1)}`
@@ -593,6 +596,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground',
                   )}>
                     {selectedActionLabel || t('node.notConfigured')}
+                  </span>
+                </>
+              ) : isIteratorMode ? (
+                <>
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className={cn('truncate text-xs', effectiveTask.iteratorConfig?.source ? 'font-medium' : 'italic text-muted-foreground')}>
+                    {effectiveTask.iteratorConfig?.source || t('node.iteratorNotConfigured')}
                   </span>
                 </>
               ) : agent ? (

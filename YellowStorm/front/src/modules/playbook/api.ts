@@ -103,6 +103,21 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
             weights: { ...task.evaluationConfig.weights },
           }
         : null,
+      iteratorConfig: task.iteratorConfig
+        ? {
+            source: task.iteratorConfig.source,
+            mode: task.iteratorConfig.mode,
+            batchSize: task.iteratorConfig.batchSize ?? null,
+            itemVariable: task.iteratorConfig.itemVariable ?? null,
+            outputVariable: task.iteratorConfig.outputVariable ?? null,
+            errorStrategy: task.iteratorConfig.errorStrategy ?? 'stop',
+          }
+        : null,
+      containerConfig: task.containerConfig
+        ? {
+            parentIteratorId: task.containerConfig.parentIteratorId ?? null,
+          }
+        : null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
     }));
