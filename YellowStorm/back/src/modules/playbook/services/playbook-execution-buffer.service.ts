@@ -121,6 +121,8 @@ export class PlaybookExecutionBufferService {
       fields.llmPromptTrace = (buffered as any).llmPromptTrace;
     if ((buffered as any).artifacts !== undefined) fields.artifacts = (buffered as any).artifacts;
     if ((buffered as any).artifactsByPort !== undefined) fields.artifactsByPort = (buffered as any).artifactsByPort;
+    if ((buffered as any).iteratorIterations !== undefined)
+      fields.iteratorIterations = (buffered as any).iteratorIterations;
     if (buffered.components !== undefined) {
       fields.components = mergeWithExistingHumanFeedback(
         existingHumanFeedback,
@@ -251,6 +253,10 @@ export class PlaybookExecutionBufferService {
       stepExecutions: dbTr.stepExecutions || [],
       artifacts:
         (buffered as any).artifacts !== undefined ? (buffered as any).artifacts : dbTr.artifacts,
+      iteratorIterations:
+        (buffered as any).iteratorIterations !== undefined
+          ? (buffered as any).iteratorIterations
+          : dbTr.iteratorIterations,
     };
   }
 }

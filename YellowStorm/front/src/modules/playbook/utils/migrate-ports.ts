@@ -13,14 +13,23 @@ const DEFAULT_OUTPUT_PORT: TaskOutputPort = {
   artifactKind: 'text',
 };
 
+const DEFAULT_ITERATOR_INPUT_PORT: TaskInputPort = {
+  id: 'items',
+  name: 'Items',
+  artifactKind: 'data',
+  required: false,
+};
+
 export function migrateTask(task: any): PlaybookTask {
   const hasPorts = task.inputPorts?.length > 0 || task.outputPorts?.length > 0;
   if (hasPorts) return task as PlaybookTask;
 
+   const isIterator = task.taskType === 'iterator';
+
   return {
     ...task,
     taskType: task.taskType || 'generic',
-    inputPorts: [DEFAULT_INPUT_PORT],
+    inputPorts: [isIterator ? DEFAULT_ITERATOR_INPUT_PORT : DEFAULT_INPUT_PORT],
     outputPorts: [DEFAULT_OUTPUT_PORT],
   };
 }

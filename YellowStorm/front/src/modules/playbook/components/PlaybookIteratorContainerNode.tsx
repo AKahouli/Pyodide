@@ -1,4 +1,4 @@
-import { type NodeProps } from '@xyflow/react';
+import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
@@ -12,6 +12,17 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
 
   return (
     <div className={`h-full w-full overflow-hidden rounded-xl border-2 border-dashed transition-colors ${selected ? 'border-primary shadow-lg shadow-primary/20' : 'border-border'} ${isEmpty ? 'bg-muted/35' : 'bg-muted/20'}`}>
+      {(node.inputPorts || []).map((port) => (
+        <Handle
+          key={port.id}
+          id={port.id}
+          type="target"
+          position={Position.Left}
+          className="!h-3 !w-3 !border-2 !border-background !bg-primary"
+          style={{ top: 80 }}
+          aria-label={port.name}
+        />
+      ))}
       <div className="flex items-center justify-between border-b border-border/80 bg-background/70 px-4 py-2 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
@@ -19,7 +30,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
           </span>
           <div>
             <div className="text-sm font-semibold text-foreground">{node.title || t('nodeEditor.nodeTypeIterator')}</div>
-            <div className="text-xs text-muted-foreground">{node.iteratorConfig?.source || t('node.iteratorNotConfigured')}</div>
+            <div className="text-xs text-muted-foreground">{t('nodeEditor.iteratorPortHint')}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">

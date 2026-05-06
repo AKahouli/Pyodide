@@ -601,8 +601,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               ) : isIteratorMode ? (
                 <>
                   <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className={cn('truncate text-xs', effectiveTask.iteratorConfig?.source ? 'font-medium' : 'italic text-muted-foreground')}>
-                    {effectiveTask.iteratorConfig?.source || t('node.iteratorNotConfigured')}
+                  <span className={cn('truncate text-xs', effectiveTask.inputPorts?.length ? 'font-medium' : 'italic text-muted-foreground')}>
+                    {effectiveTask.inputPorts?.length ? t('node.iteratorInputReady') : t('node.iteratorNotConfigured')}
                   </span>
                 </>
               ) : agent ? (

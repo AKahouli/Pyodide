@@ -433,6 +433,94 @@ describe('playbook store', () => {
     expect(updated.output).toBe('fresh output');
   });
 
+  it('marks a running ancestor completed when a dependent step starts', () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+      ],
+      edges: [
+        { id: 'e1', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'default' },
+      ],
+    });
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 't1', status: 'running', startedAt: '2025-01-01T00:00:00.000Z' },
+        { ...makeExecution().taskResults[1], taskId: 't2', status: 'pending' },
+      ],
+    });
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionCache: { e1: execution }, currentExecution: execution });
+
+    usePlaybookStore.getState().onStepStart({ executionId: 'e1', taskId: 't2', status: 'running' });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(updated.find((task) => task.taskId === 't1')?.status).toBe('completed');
+    expect(updated.find((task) => task.taskId === 't2')?.status).toBe('running');
+  });
+
+  it('keeps unrelated parallel running tasks when another branch starts', () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Branch A', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Branch B', executionOrder: 2 }),
+      ],
+      edges: [],
+    });
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 't1', status: 'running', startedAt: '2025-01-01T00:00:00.000Z' },
+        { ...makeExecution().taskResults[1], taskId: 't2', status: 'pending' },
+      ],
+    });
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionCache: { e1: execution }, currentExecution: execution });
+
+    usePlaybookStore.getState().onStepStart({ executionId: 'e1', taskId: 't2', status: 'running' });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(updated.find((task) => task.taskId === 't1')?.status).toBe('running');
+    expect(updated.find((task) => task.taskId === 't2')?.status).toBe('running');
+  });
+
+  it('normalizes running ancestors from cached execution snapshots even when another playbook is open', () => {
+    const cachedExecution = makeExecution({
+      id: 'e1',
+      playbookId: 'p-cached',
+      playbookSnapshot: {
+        tasks: [
+          { id: 't1' },
+          { id: 't2' },
+        ],
+        edges: [
+          { id: 'e1', sourceId: 't1', targetId: 't2', sourceOutputPortId: 'default', targetInputPortId: 'default' },
+        ],
+      },
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 't1', status: 'running', startedAt: '2025-01-01T00:00:00.000Z' },
+        { ...makeExecution().taskResults[1], taskId: 't2', status: 'pending' },
+      ],
+    });
+
+    usePlaybookStore.setState({
+      currentPlaybook: makePlaybook({ id: 'p-other' }),
+      executionCache: { e1: cachedExecution },
+      currentExecution: null,
+    });
+
+    usePlaybookStore.getState().onStepStart({ executionId: 'e1', taskId: 't2', status: 'running' });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(updated.find((task) => task.taskId === 't1')?.status).toBe('completed');
+    expect(updated.find((task) => task.taskId === 't2')?.status).toBe('running');
+  });
+
   it('handles interrupt by appending pending human feedback and selecting step', () => {
     const execution = makeExecution({ id: 'e1', playbookId: 'p1', taskResults: [{ ...makeExecution().taskResults[0], taskId: 'task-1', components: [] }] });
     usePlaybookStore.setState({
@@ -649,6 +737,26 @@ describe('playbook store', () => {
       threadId: 'th-1',
     });
     expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
+  });
+
+  it('keeps the execution panel closed while selecting a node in design mode', () => {
+    const playbook = makePlaybook({ id: 'p1', tasks: [makeTask({ id: 't1' })] });
+    const execution = makeExecution({ id: 'e1', playbookId: 'p1' });
+
+    usePlaybookStore.setState({
+      currentPlaybook: playbook,
+      currentExecution: execution,
+      executionPanelOpen: false,
+      pageMode: 'design',
+      selectedStepId: null,
+    });
+
+    usePlaybookStore.getState().selectStep('t1');
+
+    const state = usePlaybookStore.getState();
+    expect(state.selectedStepId).toBe('t1');
+    expect(state.pageMode).toBe('design');
+    expect(state.executionPanelOpen).toBe(false);
   });
 
   it('prefers terminal api execution state over cached running state', async () => {

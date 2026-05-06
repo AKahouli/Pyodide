@@ -2314,6 +2314,16 @@ def _proto_task_to_dict(proto_task) -> dict:
         if getattr(proto_task, "task_metadata", None)
         and _struct_has_fields(getattr(proto_task, "task_metadata", None))
         else None,
+        "evaluation_config": _normalize_struct_like(
+            MessageToDict(
+                getattr(proto_task, "evaluation_config", None),
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            )
+        )
+        if getattr(proto_task, "evaluation_config", None)
+        and _struct_has_fields(getattr(proto_task, "evaluation_config", None))
+        else None,
         "input_ports": [
             {
                 "id": p.id,
@@ -2943,7 +2953,7 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
     )
 
     # 1. Text component from agent output (first in display order)
-    if output:
+    if isinstance(output, str) and output:
         text_component = chatbot_pb2.Component(
             id=str(uuid.uuid4()),
             text=chatbot_pb2.TextComponent(content=output),
@@ -3099,6 +3109,89 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
                 }
             )
         )
+
+    for iteration in tr.get("iterator_iterations", []) or []:
+        iteration_proto = chatbot_pb2.IteratorIterationResult(
+            index=int(iteration.get("index", 0) or 0),
+            status=str(iteration.get("status", "") or ""),
+            item_preview=str(iteration.get("item_preview", "") or ""),
+            output=str(iteration.get("output", "") or ""),
+            error=str(iteration.get("error", "") or ""),
+        )
+
+        for child in iteration.get("child_results", []) or []:
+            child_proto = chatbot_pb2.IteratorChildResult(
+                task_id=str(child.get("task_id", "") or ""),
+                task_title=str(child.get("task_title", "") or ""),
+                status=str(child.get("status", "") or ""),
+                output=str(child.get("output", "") or ""),
+                error=str(child.get("error", "") or ""),
+            )
+
+            for comp in child.get("components", []) or []:
+                child_proto.components.append(_dict_to_proto_component(comp))
+
+            for trace_item in child.get("tool_trace", []) or []:
+                args_struct = struct_pb2.Struct()
+                args = trace_item.get("args") or {}
+                if isinstance(args, dict):
+                    args_struct.update(args)
+                child_proto.tool_trace.append(
+                    chatbot_pb2.ToolTraceItem(
+                        call_index=int(trace_item.get("call_index", 0)),
+                        tool_name=str(trace_item.get("tool_name", "")),
+                        args=args_struct,
+                        output_summary=str(trace_item.get("output_summary", "")),
+                    )
+                )
+
+            for prompt_item in child.get("llm_prompt_trace", []) or []:
+                child_proto.llm_prompt_trace.append(
+                    chatbot_pb2.LLMPromptTraceItem(
+                        stage=str(prompt_item.get("stage", "") or ""),
+                        model=str(prompt_item.get("model", "") or ""),
+                        prompt=str(prompt_item.get("prompt", "") or ""),
+                    )
+                )
+
+            for artifact in child.get("artifacts", []) or []:
+                child_proto.artifacts.append(
+                    chatbot_pb2.TaskArtifact(
+                        port_id=str(artifact.get("port_id") or artifact.get("portId") or "default"),
+                        artifact_kind=str(
+                            artifact.get("artifact_kind")
+                            or artifact.get("artifactKind")
+                            or "text"
+                        ),
+                        content=str(artifact.get("content", "") or ""),
+                        url=str(artifact.get("url", "") or ""),
+                        filename=str(artifact.get("filename", "") or ""),
+                        mime_type=str(artifact.get("mime_type") or artifact.get("mimeType") or ""),
+                        size=int(artifact.get("size", 0) or 0),
+                    )
+                )
+                child_proto.emitted_payloads.append(_dict_to_proto_port_payload(artifact))
+
+            iteration_proto.child_results.append(child_proto)
+
+        for artifact in iteration.get("artifacts", []) or []:
+            iteration_proto.artifacts.append(
+                chatbot_pb2.TaskArtifact(
+                    port_id=str(artifact.get("port_id") or artifact.get("portId") or "default"),
+                    artifact_kind=str(
+                        artifact.get("artifact_kind")
+                        or artifact.get("artifactKind")
+                        or "text"
+                    ),
+                    content=str(artifact.get("content", "") or ""),
+                    url=str(artifact.get("url", "") or ""),
+                    filename=str(artifact.get("filename", "") or ""),
+                    mime_type=str(artifact.get("mime_type") or artifact.get("mimeType") or ""),
+                    size=int(artifact.get("size", 0) or 0),
+                )
+            )
+
+        task_result_proto.iterator_iterations.append(iteration_proto)
 
     return task_result_proto
 

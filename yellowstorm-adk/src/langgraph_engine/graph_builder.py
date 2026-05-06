@@ -231,6 +231,75 @@ def _resolve_iterator_collection(iterator_config: Dict[str, Any], state: Executi
     return []
 
 
+def _resolve_iterator_collection_from_inputs(
+    resolved_inputs: Dict[str, Any],
+) -> List[Any]:
+    ports = resolved_inputs.get("ports") or {}
+    if not ports:
+        return []
+
+    for port_id, port_state in ports.items():
+        input_port = port_state.get("input_port") or {}
+        artifact_kind = str(input_port.get("artifact_kind") or "").strip().lower()
+
+        if artifact_kind == "document":
+            documents = list(port_state.get("resolved_documents") or [])
+            if documents:
+                return documents
+            document_ids = list(
+                ((port_state.get("document_bindings") or {}).get("document_ids") or [])
+            )
+            document_items = [
+                {"document_id": doc_id} for doc_id in document_ids if str(doc_id).strip()
+            ]
+            if document_items:
+                return document_items
+
+        upstream_bindings = list(port_state.get("upstream_bindings") or [])
+        for binding in upstream_bindings:
+            for artifact in binding.get("artifacts") or []:
+                if not isinstance(artifact, dict):
+                    continue
+                if str(artifact.get("artifact_kind") or "").strip().lower() != "data":
+                    continue
+                data = artifact.get("data")
+                if isinstance(data, list):
+                    return data
+                if data is not None:
+                    return [data]
+                content = artifact.get("content")
+                if isinstance(content, str) and content.strip():
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, list):
+                            return parsed
+                        return [parsed]
+                    except Exception:
+                        return [content]
+
+        logger.info(
+            "Iterator input port resolved no iterable items",
+            input_port_id=port_id,
+            artifact_kind=artifact_kind,
+        )
+
+    return []
+
+
+def _build_iterator_item_preview(item: Any, max_length: int = 240) -> str:
+    if isinstance(item, str):
+        preview = item.strip()
+    else:
+        try:
+            preview = json.dumps(item, ensure_ascii=True, default=str)
+        except Exception:
+            preview = str(item)
+
+    if len(preview) <= max_length:
+        return preview
+    return preview[: max_length - 3].rstrip() + "..."
+
+
 def _get_parent_iterator_id(task_config: Dict[str, Any]) -> str:
     metadata = task_config.get("task_metadata") or {}
     container = metadata.get("container") if isinstance(metadata, dict) else None
@@ -935,7 +1004,10 @@ class DynamicGraphBuilder:
             iterator_config = (task_config.get("task_metadata") or {}).get("iterator")
             if str(task_config.get("task_type") or "") == "iterator" and isinstance(iterator_config, dict):
                 await _push_step_update("in_progress")
-                items = _resolve_iterator_collection(iterator_config, state)
+                resolved_inputs = resolve_task_inputs(task_id, task_config, state)
+                items = _resolve_iterator_collection_from_inputs(resolved_inputs)
+                if not items:
+                    items = _resolve_iterator_collection(iterator_config, state)
                 mode = str(iterator_config.get("mode") or "item").strip().lower()
                 batch_size = max(int(iterator_config.get("batchSize") or 1), 1)
                 error_strategy = str(iterator_config.get("errorStrategy") or "stop").strip().lower()
@@ -973,6 +1045,26 @@ class DynamicGraphBuilder:
                     iterables = list(items)
 
                 aggregated: List[Dict[str, Any]] = []
+
+                def _serialize_child_results(
+                    child_result_map: Dict[str, Any],
+                ) -> List[Dict[str, Any]]:
+                    return [
+                        {
+                            "task_id": child_id,
+                            "task_title": next(
+                                (
+                                    str(child_task.get("title") or "")
+                                    for child_task in ordered_child_tasks
+                                    if str(child_task.get("id") or "") == child_id
+                                ),
+                                "",
+                            ),
+                            **child_result,
+                        }
+                        for child_id, child_result in child_result_map.items()
+                    ]
+
                 for index, item in enumerate(iterables):
                     try:
                         local_state: ExecutionState = {
@@ -1023,10 +1115,11 @@ class DynamicGraphBuilder:
 
                         aggregated.append({
                             "index": index,
+                            "item_preview": _build_iterator_item_preview(item),
                             item_variable: item,
                             "status": "completed",
                             "output": output,
-                            "child_results": child_results,
+                            "child_results": _serialize_child_results(child_results),
                             "artifacts": child_artifacts,
                         })
                     except Exception as exc:
@@ -1034,10 +1127,12 @@ class DynamicGraphBuilder:
                             raise
                         aggregated.append({
                             "index": index,
+                            "item_preview": _build_iterator_item_preview(item),
                             item_variable: item,
                             "status": "failed",
                             "output": "",
-                            "child_results": {},
+                            "child_results": _serialize_child_results(child_results),
+                            "artifacts": child_artifacts,
                             "error": str(exc),
                         })
 
@@ -1053,6 +1148,7 @@ class DynamicGraphBuilder:
                     "llm_prompt_trace": [],
                     "semantic_match": None,
                     "artifacts": [],
+                    "iterator_iterations": aggregated,
                 }
                 await _push_step_update("completed", result=result_payload)
                 return {
@@ -2361,18 +2457,41 @@ class DynamicGraphBuilder:
         edges: List[EdgeConfig],
     ) -> List[EdgeConfig]:
         top_level_ids = {task.get("id") for task in self._get_top_level_tasks(tasks)}
-        return [
-            edge
-            for edge in edges
-            if (
-                edge.get("source_id") == "__trigger__"
-                and edge.get("target_id") in top_level_ids
-            )
-            or (
-                edge.get("source_id") in top_level_ids
-                and edge.get("target_id") in top_level_ids
-            )
-        ]
+        parent_iterator_by_task_id = {
+            str(task.get("id") or ""): _get_parent_iterator_id(task)
+            for task in tasks
+            if task.get("id")
+        }
+
+        normalized_edges: List[EdgeConfig] = []
+        seen_pairs: set[tuple[str, str]] = set()
+
+        for edge in edges:
+            raw_source_id = str(edge.get("source_id") or "")
+            raw_target_id = str(edge.get("target_id") or "")
+            source_id = parent_iterator_by_task_id.get(raw_source_id) or raw_source_id
+            target_id = parent_iterator_by_task_id.get(raw_target_id) or raw_target_id
+
+            if source_id == target_id:
+                continue
+
+            if source_id == "__trigger__":
+                if target_id not in top_level_ids:
+                    continue
+            elif source_id not in top_level_ids or target_id not in top_level_ids:
+                continue
+
+            edge_key = (source_id, target_id)
+            if edge_key in seen_pairs:
+                continue
+            seen_pairs.add(edge_key)
+
+            normalized_edge = dict(edge)
+            normalized_edge["source_id"] = source_id
+            normalized_edge["target_id"] = target_id
+            normalized_edges.append(normalized_edge)
+
+        return normalized_edges
 
     def build_execution_graph(
         self,

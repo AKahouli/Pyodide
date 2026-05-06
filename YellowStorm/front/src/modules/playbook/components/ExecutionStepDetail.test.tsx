@@ -139,6 +139,41 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Analyze Data')).toBeInTheDocument();
   });
 
+  it('renders iterator iteration results when present', async () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          output: null,
+          iteratorIterations: [
+            {
+              index: 0,
+              status: 'completed',
+              itemPreview: '{"company":"ACME"}',
+              output: 'Iteration output',
+              childResults: [
+                {
+                  taskId: 'child-1',
+                  taskTitle: 'Fetch account',
+                  status: 'completed',
+                  output: 'Child output',
+                  components: [],
+                  toolTrace: [],
+                  llmPromptTrace: [],
+                  artifacts: [],
+                },
+              ],
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText(/Fetch account/)).toBeInTheDocument();
+    expect(screen.getByText(/Child output/)).toBeInTheDocument();
+  });
+
   it('updates the step replay mode selector when the selected task mode changes', () => {
     storeState.currentPlaybook = {
       id: 'p1',

@@ -354,6 +354,70 @@ function hasRicherJudgeState(
   return (cachedTaskResult.judgeHistory?.length || 0) > (incomingTaskResult.judgeHistory?.length || 0);
 }
 
+function buildAncestorTaskIdSet(
+  graphSource: Pick<Playbook, 'edges'> | Pick<PlaybookExecution, 'playbookSnapshot'> | null,
+  taskId: string,
+): Set<string> {
+  let edges: PlaybookEdge[] = [];
+  if (graphSource) {
+    if ('playbookSnapshot' in graphSource) {
+      edges = ((graphSource.playbookSnapshot as { edges?: PlaybookEdge[] } | null)?.edges || []);
+    } else {
+      edges = graphSource.edges || [];
+    }
+  }
+
+  if (edges.length === 0) {
+    return new Set();
+  }
+
+  const ancestors = new Set<string>();
+  const queue = [taskId];
+  while (queue.length > 0) {
+    const currentTaskId = queue.shift()!;
+    for (const edge of edges) {
+      const sourceId = edge.sourceId;
+      const targetId = edge.targetId;
+      if (targetId !== currentTaskId || !sourceId || ancestors.has(sourceId)) {
+        continue;
+      }
+      ancestors.add(sourceId);
+      queue.push(sourceId);
+    }
+  }
+
+  return ancestors;
+}
+
+function normalizeRunningTaskResultsForStart(
+  taskResults: PlaybookExecution['taskResults'],
+  startedTaskId: string,
+  graphSource: Pick<Playbook, 'edges'> | Pick<PlaybookExecution, 'playbookSnapshot'> | null,
+): PlaybookExecution['taskResults'] {
+  const ancestorTaskIds = buildAncestorTaskIdSet(graphSource, startedTaskId);
+
+  return taskResults.map((taskResult) => {
+    if (taskResult.taskId === startedTaskId) {
+      return taskResult;
+    }
+
+    if (taskResult.status !== 'running') {
+      return taskResult;
+    }
+
+    if (!ancestorTaskIds.has(taskResult.taskId)) {
+      return taskResult;
+    }
+
+    return {
+      ...taskResult,
+      status: 'completed',
+      completedAt: taskResult.completedAt || new Date().toISOString(),
+      durationMs: taskResult.durationMs ?? null,
+    };
+  });
+}
+
 function shouldKeepCachedTaskResult(
   cachedTaskResult: PlaybookExecution['taskResults'][number],
   incomingTaskResult: PlaybookExecution['taskResults'][number],
@@ -494,6 +558,7 @@ function buildExecutionTaskResultsFromTasks(
     judgeHistory: [],
     evaluationHistory: [],
     stepExecutions: [],
+    iteratorIterations: [],
   } as PlaybookExecution['taskResults'][number]));
 }
 
@@ -2077,7 +2142,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const cached = state.executionCache[data.executionId];
           if (!cached) return state;
 
-          const existing = cached.taskResults;
+          const existing = normalizeRunningTaskResultsForStart(
+            cached.taskResults,
+            data.taskId,
+            state.currentPlaybook?.id === cached.playbookId ? state.currentPlaybook : cached,
+          );
           const found = existing.some((tr) => tr.taskId === data.taskId);
           const taskResults = found
             ? existing.map((tr) =>
@@ -2227,6 +2296,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
+                iteratorIterations: data.iteratorIterations ?? tr.iteratorIterations ?? [],
                 artifacts: data.artifacts ?? undefined,
                 isStale: false,
                 staleReason: null,
@@ -2265,6 +2335,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
+                iteratorIterations: data.iteratorIterations ?? [],
                 judgeHistory: [],
                 evaluationHistory: [],
                 stepExecutions: [],

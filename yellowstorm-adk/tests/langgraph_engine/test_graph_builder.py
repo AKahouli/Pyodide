@@ -12,6 +12,7 @@ from src.langgraph_engine.graph_builder import (
     _store_clarification_context,
     _resolve_output_port,
     _collect_prior_source_components,
+    _resolve_iterator_collection_from_inputs,
 )
 
 
@@ -258,7 +259,82 @@ def test_resolve_output_port_falls_back_to_first_port_when_no_default() -> None:
     )
 
     assert port is not None
-    assert port["id"] == "out-doc"
+
+
+def test_resolve_iterator_collection_from_inputs_uses_data_array() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": [
+                                        {"id": 1, "name": "Project Alpha"},
+                                        {"id": 2, "name": "Project Beta"},
+                                    ],
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"id": 1, "name": "Project Alpha"},
+        {"id": 2, "name": "Project Beta"},
+    ]
+
+
+def test_resolve_iterator_collection_from_inputs_uses_document_bindings() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "documents": {
+                    "input_port": {"id": "documents", "artifact_kind": "document"},
+                    "resolved_documents": [
+                        {"document_id": "doc-1", "filename": "A.docx"},
+                        {"document_id": "doc-2", "filename": "B.docx"},
+                    ],
+                    "document_bindings": {"document_ids": ["doc-1", "doc-2"]},
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"document_id": "doc-1", "filename": "A.docx"},
+        {"document_id": "doc-2", "filename": "B.docx"},
+    ]
+
+
+def test_resolve_iterator_collection_from_inputs_wraps_single_data_object() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": {"id": 1, "name": "Project Alpha"},
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [{"id": 1, "name": "Project Alpha"}]
 
 
 def test_extract_artifacts_from_components_falls_back_on_ambiguous_port() -> None:
@@ -979,7 +1055,8 @@ def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> 
     aggregate = result["results"]["iterator-1"]["output"]
     assert [item["current_item"] for item in aggregate] == ["a", "b"]
     assert [item["output"] for item in aggregate] == ["processed-1", "processed-2"]
-    assert "child-1" in aggregate[0]["child_results"]
+    assert aggregate[0]["child_results"][0]["task_id"] == "child-1"
+    assert result["results"]["iterator-1"]["iterator_iterations"][0]["item_preview"] == "a"
     assert "child-1" not in result["results"]
     assert result["task_outputs"]["processed_items"] == aggregate
     assert len(prompts) == 2
@@ -1120,6 +1197,35 @@ def test_top_level_graph_excludes_iterator_children() -> None:
     assert [task["id"] for task in graph_tasks] == ["iterator-1", "after-1"]
     assert graph_edges == [
         {"source_id": "__trigger__", "target_id": "iterator-1"},
+        {"source_id": "iterator-1", "target_id": "after-1"},
+    ]
+
+
+def test_top_level_graph_maps_external_edges_through_iterator_parent() -> None:
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    tasks = [
+        {"id": "before-1", "execution_order": 1},
+        {"id": "iterator-1", "execution_order": 2, "task_type": "iterator"},
+        {
+            "id": "child-1",
+            "execution_order": 3,
+            "task_metadata": {
+                "container": {
+                    "parentIteratorId": "iterator-1",
+                }
+            },
+        },
+        {"id": "after-1", "execution_order": 4},
+    ]
+    edges = [
+        {"source_id": "before-1", "target_id": "child-1"},
+        {"source_id": "child-1", "target_id": "after-1"},
+    ]
+
+    graph_edges = builder._get_top_level_edges(tasks, edges)
+
+    assert graph_edges == [
+        {"source_id": "before-1", "target_id": "iterator-1"},
         {"source_id": "iterator-1", "target_id": "after-1"},
     ]
 

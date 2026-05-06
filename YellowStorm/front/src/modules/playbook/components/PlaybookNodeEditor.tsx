@@ -68,6 +68,13 @@ const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
   errorStrategy: 'stop',
 };
 
+const DEFAULT_ITERATOR_INPUT_PORT: TaskInputPort = {
+  id: 'items',
+  name: 'Items',
+  artifactKind: 'data',
+  required: false,
+};
+
 const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
   expectation: '',
   referenceBaselineId: null,
@@ -106,7 +113,9 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
     enabled: task.enabled !== false,
     notifyOnComplete: task.notifyOnComplete ?? false,
     notifyEmails: task.notifyEmails ?? [],
-    inputPorts: task.inputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }],
+    inputPorts:
+      task.inputPorts?.map((p) => ({ ...p })) ??
+      [nodeType === 'iterator' ? { ...DEFAULT_ITERATOR_INPUT_PORT } : { id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }],
     outputPorts: task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }],
     evaluationConfig: task.evaluationConfig
       ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } }
@@ -120,6 +129,7 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
 }
 
 function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
+  const iteratorInputPorts = [{ ...DEFAULT_ITERATOR_INPUT_PORT }];
   return {
     title: draft.title,
     description: draft.description,
@@ -133,7 +143,7 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     enabled: draft.enabled,
     notifyOnComplete: draft.notifyOnComplete,
     notifyEmails: draft.notifyOnComplete ? draft.notifyEmails : [],
-    inputPorts: [...draft.inputPorts],
+    inputPorts: draft.nodeType === 'iterator' ? iteratorInputPorts : [...draft.inputPorts],
     outputPorts: [...draft.outputPorts],
     evaluationConfig: draft.evaluationConfig,
     iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
@@ -557,6 +567,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   patch.executionMode = 'agent';
                   patch.assignedAgentId = null;
                   patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
+                  patch.inputPorts = draft.inputPorts.length > 0 ? draft.inputPorts : [{ ...DEFAULT_ITERATOR_INPUT_PORT }];
                 } else {
                   patch.executionMode = 'agent';
                   patch.iteratorConfig = null;
@@ -627,6 +638,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, source: e.target.value } })}
                   placeholder="{{items}}"
                 />
+                <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorPortHint')}</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-2">
@@ -862,10 +874,13 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 variant="ghost"
                 size="sm"
                 className="h-7 px-2 text-xs"
-                onClick={() => {
-                  const id = `in-${crypto.randomUUID().slice(0, 8)}`;
-                  updateDraft({ inputPorts: [...draft.inputPorts, { id, name: 'Input', artifactKind: 'text', required: false }] });
-                }}
+                  onClick={() => {
+                    if (draft.nodeType === 'iterator') {
+                      return;
+                    }
+                    const id = `in-${crypto.randomUUID().slice(0, 8)}`;
+                    updateDraft({ inputPorts: [...draft.inputPorts, { id, name: 'Input', artifactKind: 'text', required: false }] });
+                  }}
               >
                 <Plus className="h-3.5 w-3.5 mr-1" />
                 {t('ports.addInput')}
@@ -881,6 +896,9 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   type="text"
                   value={port.name}
                   onChange={(e) => {
+                    if (draft.nodeType === 'iterator') {
+                      return;
+                    }
                     const updated = [...draft.inputPorts];
                     updated[idx] = { ...updated[idx], name: e.target.value };
                     updateDraft({ inputPorts: updated });
@@ -891,6 +909,9 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 <select
                   value={port.artifactKind}
                   onChange={(e) => {
+                    if (draft.nodeType === 'iterator') {
+                      return;
+                    }
                     const updated = [...draft.inputPorts];
                     updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
                     updateDraft({ inputPorts: updated });
@@ -904,6 +925,9 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 <button
                   type="button"
                   onClick={() => {
+                    if (draft.nodeType === 'iterator') {
+                      return;
+                    }
                     const updated = [...draft.inputPorts];
                     updated[idx] = { ...updated[idx], required: !updated[idx].required };
                     updateDraft({ inputPorts: updated });
@@ -918,7 +942,12 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => updateDraft({ inputPorts: draft.inputPorts.filter((_, i) => i !== idx) })}
+                  onClick={() => {
+                    if (draft.nodeType === 'iterator') {
+                      return;
+                    }
+                    updateDraft({ inputPorts: draft.inputPorts.filter((_, i) => i !== idx) });
+                  }}
                   title={t('ports.removePort')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />

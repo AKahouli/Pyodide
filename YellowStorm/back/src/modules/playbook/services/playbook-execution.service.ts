@@ -46,6 +46,7 @@ import {
   topologicalSortByLevel,
   mergeWithExistingHumanFeedback,
   extractArtifactsFromResult,
+  mapGrpcIteratorIterations,
   mapGrpcPortPayloads,
   mapGrpcTaskArtifacts,
   TaskArtifactEntry,
@@ -1918,6 +1919,7 @@ export class PlaybookExecutionService {
         const completedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const iteratorIterations = mapGrpcIteratorIterations(result?.iterator_iterations);
         const artifacts = this.mergeTaskArtifacts(
           grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(completedTask, grpcComps),
           emittedPayloadArtifacts,
@@ -1945,6 +1947,7 @@ export class PlaybookExecutionService {
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
           artifacts,
+          iteratorIterations,
           artifactsByPort: this.groupArtifactsByPort(artifacts),
           ...usageFields,
         } as any);
@@ -1957,6 +1960,7 @@ export class PlaybookExecutionService {
             output,
             components,
             artifacts,
+            iteratorIterations,
             toolTrace,
             llmPromptTrace,
             semanticMatch,
@@ -1995,6 +1999,7 @@ export class PlaybookExecutionService {
         const failedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const iteratorIterations = mapGrpcIteratorIterations(result?.iterator_iterations);
         const artifacts = this.mergeTaskArtifacts(
           grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(failedTask, grpcComps),
           emittedPayloadArtifacts,
@@ -2022,6 +2027,7 @@ export class PlaybookExecutionService {
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
           artifacts,
+          iteratorIterations,
           artifactsByPort: this.groupArtifactsByPort(artifacts),
           ...usageFields,
         } as any);
@@ -2033,6 +2039,7 @@ export class PlaybookExecutionService {
             status: 'failed',
             error,
             artifacts,
+            iteratorIterations,
             components,
             toolTrace,
             llmPromptTrace,
@@ -2063,6 +2070,7 @@ export class PlaybookExecutionService {
         const skippedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const iteratorIterations = mapGrpcIteratorIterations(result?.iterator_iterations);
         const artifacts = this.mergeTaskArtifacts(
           grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(skippedTask, grpcComps),
           emittedPayloadArtifacts,
@@ -2089,6 +2097,7 @@ export class PlaybookExecutionService {
           durationMs,
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
+          iteratorIterations,
           ...usageFields,
         });
         this.streamGateway.sendToUser(userId, {
@@ -2099,6 +2108,7 @@ export class PlaybookExecutionService {
             status: 'skipped',
             output: '',
             artifacts,
+            iteratorIterations,
             components,
             toolTrace,
             llmPromptTrace,
@@ -5117,6 +5127,25 @@ export class PlaybookExecutionService {
               ...entry,
               startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
               completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
+            })),
+            iteratorIterations: (merged.iteratorIterations || []).map((iteration: any) => ({
+              index: iteration.index ?? 0,
+              status: iteration.status || '',
+              itemPreview: iteration.itemPreview ?? '',
+              output: iteration.output ?? '',
+              error: iteration.error ?? '',
+              childResults: (iteration.childResults || []).map((child: any) => ({
+                taskId: child.taskId || '',
+                taskTitle: child.taskTitle || '',
+                status: child.status || '',
+                output: child.output ?? '',
+                error: child.error ?? '',
+                components: child.components || [],
+                toolTrace: child.toolTrace || [],
+                llmPromptTrace: child.llmPromptTrace || [],
+                artifacts: child.artifacts || [],
+              })),
+              artifacts: iteration.artifacts || [],
             })),
             attemptNumber: merged.attemptNumber ?? 1,
             isStale: merged.isStale ?? false,

@@ -1067,6 +1067,27 @@ describe('PlaybookExecutionService', () => {
           result: {
             components: [],
             duration_ms: '1500',
+            iterator_iterations: [
+              {
+                index: 0,
+                status: 'completed',
+                item_preview: '{"company":"ACME"}',
+                output: 'Iteration output',
+                child_results: [
+                  {
+                    task_id: 'child-1',
+                    task_title: 'Fetch account',
+                    status: 'completed',
+                    output: 'Child output',
+                    components: [],
+                    tool_trace: [],
+                    llm_prompt_trace: [],
+                    artifacts: [],
+                  },
+                ],
+                artifacts: [],
+              },
+            ],
             usage: {
               input_tokens: 100,
               output_tokens: 50,
@@ -1085,6 +1106,13 @@ describe('PlaybookExecutionService', () => {
             taskId: 'task-1',
             status: 'completed',
             durationMs: 1500,
+            iteratorIterations: [
+              expect.objectContaining({
+                index: 0,
+                status: 'completed',
+                itemPreview: '{"company":"ACME"}',
+              }),
+            ],
             inputTokens: 100,
             outputTokens: 50,
             totalTokens: 150,

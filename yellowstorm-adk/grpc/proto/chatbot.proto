@@ -407,6 +407,8 @@ message PlaybookTaskConfig {
     string task_type = 16;
     repeated PortDocumentBinding input_files_by_port = 17;  // Port-aware document bindings
     repeated ToolBinding tool_bindings = 18;
+    google.protobuf.Struct task_metadata = 21;
+    google.protobuf.Struct evaluation_config = 22;
 }
 
 message ToolBindingAction {
@@ -655,6 +657,30 @@ message PlaybookTaskResult {
     repeated LLMPromptTraceItem llm_prompt_trace = 10;
     repeated TaskArtifact artifacts = 11;
     repeated PortPayload emitted_payloads = 20;
+    repeated IteratorIterationResult iterator_iterations = 21;
+}
+
+message IteratorChildResult {
+    string task_id = 1;
+    string task_title = 2;
+    string status = 3;
+    string output = 4;
+    string error = 5;
+    repeated Component components = 6;
+    repeated ToolTraceItem tool_trace = 7;
+    repeated LLMPromptTraceItem llm_prompt_trace = 8;
+    repeated TaskArtifact artifacts = 9;
+    repeated PortPayload emitted_payloads = 10;
+}
+
+message IteratorIterationResult {
+    int32 index = 1;
+    string status = 2;
+    string item_preview = 3;
+    string output = 4;
+    string error = 5;
+    repeated IteratorChildResult child_results = 6;
+    repeated TaskArtifact artifacts = 7;
 }
 
 message InterruptPayload {

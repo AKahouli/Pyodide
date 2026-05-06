@@ -1835,7 +1835,7 @@ function PlaybookCanvasInner() {
           ? currentExecution
           : execution;
 
-      if (executionForSelection) {
+      if (executionForSelection && pageMode === 'run') {
         setExecutionPanelCollapsed(false);
         setExecutionPanelOpen(true);
         viewExecutionInPanel(executionForSelection.id);

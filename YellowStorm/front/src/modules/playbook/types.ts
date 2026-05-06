@@ -640,6 +640,28 @@ export interface StepExecutionHistoryEntry {
   artifacts?: TaskArtifact[];
 }
 
+export interface IteratorChildResult {
+  taskId: string;
+  taskTitle: string;
+  status: StepStatus;
+  output?: string | null;
+  error?: string | null;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  artifacts?: TaskArtifact[];
+}
+
+export interface IteratorIterationResult {
+  index: number;
+  status: StepStatus;
+  itemPreview?: string | null;
+  output?: string | null;
+  error?: string | null;
+  childResults: IteratorChildResult[];
+  artifacts?: TaskArtifact[];
+}
+
 export interface TaskResult {
   taskId: string;
   nodeTitle: string;
@@ -747,6 +769,7 @@ export interface TaskResult {
   isStale?: boolean;
   staleReason?: string | null;
   invalidatedByTaskId?: string | null;
+  iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
 }
 
@@ -1025,6 +1048,7 @@ export interface PlaybookStepCompleteEvent {
   totalTokens?: number;
   modelName?: string;
   semanticMatch?: SemanticMatchResult | null;
+  iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
 }
 
