@@ -245,7 +245,11 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
   const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
   const [deleteExecutionDialogOpen, setDeleteExecutionDialogOpen] = useState(false);
-  const [activeDetailTab, setActiveDetailTab] = useState('results');
+  const executionDetailTab = usePlaybookStore((s) => s.executionDetailTab);
+  const setExecutionDetailTab = usePlaybookStore((s) => s.setExecutionDetailTab);
+
+  const activeDetailTab = executionDetailTab || 'results';
+  const setActiveDetailTab = setExecutionDetailTab;
   const sidebarDragActive = useRef(false);
   const sidebarDragStartX = useRef(0);
   const sidebarDragStartWidth = useRef(0);

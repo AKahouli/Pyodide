@@ -3202,6 +3202,9 @@ def _build_step_update_chunk(update: Dict[str, Any]) -> chatbot_pb2.PlaybookStre
         task_id=update.get("task_id", ""),
         task_title=update.get("task_title", ""),
         status=update.get("status", ""),
+        scope=update.get("scope", ""),
+        parent_iterator_id=update.get("parent_iterator_id", ""),
+        iteration_index=int(update.get("iteration_index", 0) or 0),
     )
 
     result_data = update.get("result")

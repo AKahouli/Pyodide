@@ -1,68 +1,10 @@
+# Agent Instructions
 
+## External File Loading
 
-Behavioral guidelines to reduce common LLM coding mistakes. Merge with project-specific instructions as needed.
-
-**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
-
-## 1. Think Before Coding
-
-**Don't assume. Don't hide confusion. Surface tradeoffs.**
-
-Before implementing:
-- State your assumptions explicitly. If uncertain, ask.
-- If multiple interpretations exist, present them - don't pick silently.
-- If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
-
-## 2. Simplicity First
-
-**Minimum code that solves the problem. Nothing speculative.**
-
-- No features beyond what was asked.
-- No abstractions for single-use code.
-- No "flexibility" or "configurability" that wasn't requested.
-- No error handling for impossible scenarios.
-- If you write 200 lines and it could be 50, rewrite it.
-
-Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
-
-## 3. Surgical Changes
-
-**Touch only what you must. Clean up only your own mess.**
-
-When editing existing code:
-- Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
-- Match existing style, even if you'd do it differently.
-- If you notice unrelated dead code, mention it - don't delete it.
-
-When your changes create orphans:
-- Remove imports/variables/functions that YOUR changes made unused.
-- Don't remove pre-existing dead code unless asked.
-
-The test: Every changed line should trace directly to the user's request.
-
-## 4. Goal-Driven Execution
-
-**Define success criteria. Loop until verified.**
-
-Transform tasks into verifiable goals:
-- "Add validation" → "Write tests for invalid inputs, then make them pass"
-- "Fix the bug" → "Write a test that reproduces it, then make it pass"
-- "Refactor X" → "Ensure tests pass before and after"
-
-For multi-step tasks, state a brief plan:
-```
-1. [Step] → verify: [check]
-2. [Step] → verify: [check]
-3. [Step] → verify: [check]
-```
-
-Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+When you encounter a file reference (e.g., `@rules/general.md`), load it on demand using your Read tool. Treat loaded content as mandatory instructions that override defaults. Follow references recursively. Do NOT preemptively load all references.
 
 ---
-
-**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
 
 ## Repository & Stack
 
@@ -550,6 +492,30 @@ npx ctx7@latest docs <libraryId> "<question>"
 6. `reviewer` validates → **must PASS**
 7. `diagnostics` if test gaps
 8. must always call the `maintainer` agent to syncs Obsidian vault memory with relevant changes
+
+## Prompting Improvements for Better Agent Performance
+
+1. **Explicit Agent Capabilities**: Add a section "When to use which agent" with a table clearly outlining what each agent does, when to call them, and what tools/skills they have access to.
+
+2. **Step-by-Step Task Decomposition**: When invoking an agent for a complex task, guide it through a structured thinking process.
+
+3. **Structured Output Format**: Define a clear template for agent outputs (e.g., using JSON schema or Markdown sections) including "Status", "Findings", "Required Actions", "Files Modified", and "Files Created".
+
+4. **Contextual Information**: Include relevant context in the invocation prompt, such as:
+    - The specific task or bug description
+    - Any relevant error messages or logs
+    - Affected file paths or modules
+    - Previous conversation history if relevant
+
+5. **Success Criteria**: Clearly define what constitutes a successful outcome for the agent's task.
+
+6. **Constraints and Rules**: Explicitly state any constraints the agent must follow, such as:
+    - Coding standards
+    - Security policies
+    - Tool usage restrictions
+    - Time/resource limitations
+
+7. **Iterative Refinement**: Encourage an iterative workflow where agents can request clarification or additional information if needed, and humans can provide feedback to refine the task.
 
 ## Code patterns
 

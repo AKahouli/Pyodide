@@ -24,6 +24,9 @@ import type {
   PlaybookStepStartEvent,
   PlaybookStepUpdateEvent,
   PlaybookStepCompleteEvent,
+  PlaybookIteratorChildStepStartEvent,
+  PlaybookIteratorChildStepUpdateEvent,
+  PlaybookIteratorChildStepCompleteEvent,
   PlaybookStepEvaluationUpdatedEvent,
   PlaybookStepJudgeStartedEvent,
   PlaybookStepJudgeUpdatedEvent,
@@ -154,6 +157,7 @@ const initialState: PlaybookState = {
   designerOpen: false,
   copilotMode: 'design',
   executionPanelOpen: (() => { try { return localStorage.getItem(EXEC_PANEL_KEY) === '1'; } catch { return false; } })(),
+  executionDetailTab: 'results',
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
   connectorSidebarOpen: false,
   nodeEditorOpen: false,
@@ -416,6 +420,122 @@ function normalizeRunningTaskResultsForStart(
       durationMs: taskResult.durationMs ?? null,
     };
   });
+}
+
+function mergeIteratorChildTaskResult(
+  taskResults: PlaybookExecution['taskResults'],
+  data: {
+    parentIteratorId: string;
+    iterationIndex: number;
+    taskId: string;
+    taskTitle?: string;
+    status: 'running' | 'completed' | 'failed' | 'skipped';
+    output?: string | null;
+    error?: string | null;
+    components?: PlaybookExecution['taskResults'][number]['components'];
+    toolTrace?: PlaybookExecution['taskResults'][number]['toolTrace'];
+    llmPromptTrace?: PlaybookExecution['taskResults'][number]['llmPromptTrace'];
+    artifacts?: PlaybookExecution['taskResults'][number]['artifacts'];
+  },
+): PlaybookExecution['taskResults'] {
+  const resolveIterationStatus = (
+    childResults: NonNullable<PlaybookExecution['taskResults'][number]['iteratorIterations']>[number]['childResults'],
+  ): 'running' | 'completed' | 'failed' | 'skipped' => {
+    if (childResults.some((child) => child.status === 'running' || child.status === 'interrupted')) {
+      return 'running';
+    }
+    if (childResults.some((child) => child.status === 'failed')) {
+      return 'failed';
+    }
+    if (childResults.length > 0 && childResults.every((child) => child.status === 'skipped')) {
+      return 'skipped';
+    }
+    return 'completed';
+  };
+
+  return taskResults.map((taskResult) => {
+    if (taskResult.taskId !== data.parentIteratorId) {
+      return taskResult;
+    }
+
+    const iteratorIterations = [...(taskResult.iteratorIterations || [])];
+    const currentIteration = iteratorIterations.find((iteration) => iteration.index === data.iterationIndex);
+    const nextIteration = currentIteration
+      ? { ...currentIteration }
+      : {
+          index: data.iterationIndex,
+          status: 'running' as const,
+          itemPreview: null,
+          output: null,
+          error: null,
+          childResults: [],
+          artifacts: [],
+        };
+
+    const existingChildIndex = nextIteration.childResults.findIndex((child) => child.taskId === data.taskId);
+    const existingChild = existingChildIndex >= 0 ? nextIteration.childResults[existingChildIndex] : null;
+    const mergedChild = {
+      taskId: data.taskId,
+      taskTitle: data.taskTitle || existingChild?.taskTitle || '',
+      status: data.status,
+      output: data.output ?? existingChild?.output ?? null,
+      error: data.error ?? existingChild?.error ?? null,
+      components: data.components ?? existingChild?.components,
+      toolTrace: data.toolTrace ?? existingChild?.toolTrace,
+      llmPromptTrace: data.llmPromptTrace ?? existingChild?.llmPromptTrace,
+      artifacts: data.artifacts ?? existingChild?.artifacts,
+    };
+
+    const childResults = [...nextIteration.childResults];
+    if (existingChildIndex >= 0) {
+      childResults[existingChildIndex] = mergedChild;
+    } else {
+      childResults.push(mergedChild);
+    }
+
+    nextIteration.childResults = childResults;
+    nextIteration.status = resolveIterationStatus(childResults);
+
+    const iterationIndexInArray = iteratorIterations.findIndex((iteration) => iteration.index === data.iterationIndex);
+    if (iterationIndexInArray >= 0) {
+      iteratorIterations[iterationIndexInArray] = nextIteration;
+    } else {
+      iteratorIterations.push(nextIteration);
+      iteratorIterations.sort((left, right) => left.index - right.index);
+    }
+
+    return {
+      ...taskResult,
+      iteratorIterations,
+    };
+  });
+}
+
+function hasRicherIteratorData(
+  cachedTaskResult: PlaybookExecution['taskResults'][number],
+  incomingTaskResult: PlaybookExecution['taskResults'][number],
+): boolean {
+  const cachedIterations = cachedTaskResult.iteratorIterations || [];
+  const incomingIterations = incomingTaskResult.iteratorIterations || [];
+  if (cachedIterations.length === 0) return false;
+  if (incomingIterations.length === 0) return true;
+  const cachedTotalChildren = cachedIterations.reduce((sum, it) => sum + (it.childResults?.length || 0), 0);
+  const incomingTotalChildren = incomingIterations.reduce((sum, it) => sum + (it.childResults?.length || 0), 0);
+  return cachedTotalChildren > incomingTotalChildren;
+}
+
+function mergeRicherIteratorData(
+  cachedTaskResult: PlaybookExecution['taskResults'][number],
+  incomingTaskResult: PlaybookExecution['taskResults'][number],
+): PlaybookExecution['taskResults'][number] {
+  if (!hasRicherIteratorData(cachedTaskResult, incomingTaskResult)) {
+    return incomingTaskResult;
+  }
+
+  return {
+    ...incomingTaskResult,
+    iteratorIterations: cachedTaskResult.iteratorIterations,
+  };
 }
 
 function shouldKeepCachedTaskResult(
@@ -2363,6 +2483,77 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      onIteratorChildStepStart: (data: PlaybookIteratorChildStepStartEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = mergeIteratorChildTaskResult(cached.taskResults, {
+            parentIteratorId: data.parentIteratorId,
+            iterationIndex: data.iterationIndex,
+            taskId: data.taskId,
+            taskTitle: data.taskTitle,
+            status: 'running',
+          });
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onIteratorChildStepUpdate: (data: PlaybookIteratorChildStepUpdateEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = mergeIteratorChildTaskResult(cached.taskResults, {
+            parentIteratorId: data.parentIteratorId,
+            iterationIndex: data.iterationIndex,
+            taskId: data.taskId,
+            taskTitle: data.taskTitle,
+            status: 'running',
+            output: data.output ?? null,
+            components: data.components,
+            toolTrace: data.toolTrace,
+            llmPromptTrace: data.llmPromptTrace,
+            artifacts: data.artifacts,
+          });
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onIteratorChildStepComplete: (data: PlaybookIteratorChildStepCompleteEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = mergeIteratorChildTaskResult(cached.taskResults, {
+            parentIteratorId: data.parentIteratorId,
+            iterationIndex: data.iterationIndex,
+            taskId: data.taskId,
+            taskTitle: data.taskTitle,
+            status: data.status === 'failed' ? 'failed' : data.status === 'skipped' ? 'skipped' : 'completed',
+            output: data.output ?? null,
+            error: data.error ?? null,
+            components: data.components,
+            toolTrace: data.toolTrace,
+            llmPromptTrace: data.llmPromptTrace,
+            artifacts: data.artifacts,
+          });
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          return { executionCache, currentExecution };
+        });
+      },
+
       onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => {
         set((state) => {
           const cached = state.executionCache[data.executionId];
@@ -2797,6 +2988,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 if (cachedTr && shouldKeepCachedTaskResult(cachedTr, inTr)) {
                   return cachedTr;
                 }
+                if (cachedTr) {
+                  return mergeRicherIteratorData(cachedTr, inTr);
+                }
                 return inTr;
               });
               // Include any task results only present in the cache
@@ -2901,6 +3095,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
               const cachedTr = cachedResultMap.get(apiTr.taskId);
               if (cachedTr && shouldKeepCachedTaskResult(cachedTr, apiTr)) {
                 return cachedTr;
+              }
+              if (cachedTr) {
+                return mergeRicherIteratorData(cachedTr, apiTr);
               }
               return apiTr;
             });
@@ -3025,6 +3222,26 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set({ executionPanelOpen: false });
         }
         persistPanelOpen(open);
+      },
+
+      setExecutionDetailTab: (tab) => {
+        set({ executionDetailTab: tab });
+      },
+
+      openExecutionDetailTab: (tab, taskId) => {
+        const updates: Partial<PlaybookState> = {
+          executionDetailTab: tab,
+          executionPanelOpen: true,
+          workspaceExplorerOpen: false,
+          connectorSidebarOpen: false,
+          nodeEditorOpen: false,
+          pageMode: 'run',
+        };
+        if (taskId) {
+          updates.selectedStepId = taskId;
+        }
+        set(updates);
+        persistPanelOpen(true);
       },
 
       viewExecutionInPanel: (executionId: string) => {

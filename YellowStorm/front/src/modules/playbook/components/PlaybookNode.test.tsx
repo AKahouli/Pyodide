@@ -5,6 +5,7 @@ import { PlaybookNode } from './PlaybookNode';
 
 const storeState = vi.hoisted(() => ({
   currentPlaybook: {
+    id: 'playbook-1',
     tasks: [],
   },
   selectedStepId: null as string | null,
@@ -23,8 +24,10 @@ const storeState = vi.hoisted(() => ({
         ],
       },
     ],
+    playbookId: 'playbook-1',
   },
-}));
+  executionCache: {},
+} as any));
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -32,6 +35,8 @@ vi.mock('@/modules/localization', () => ({
 
 vi.mock('@/modules/agent/store', () => ({
   useAgentStore: (selector: any) => selector({ getAgentById: () => ({ name: 'Agent' }) }),
+  useAgentTypes: () => [],
+  useModels: () => [],
 }));
 
 vi.mock('../store', () => ({
@@ -88,6 +93,29 @@ vi.mock('./PortLabel', () => ({
 }));
 
 describe('PlaybookNode', () => {
+  beforeEach(() => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [],
+    };
+    storeState.currentExecution = {
+      playbookId: 'playbook-1',
+      taskResults: [
+        {
+          taskId: 'node-1',
+          artifacts: [
+            {
+              portId: 'out-1',
+              filename: 'report.pdf',
+              artifactKind: 'document',
+            },
+          ],
+        },
+      ],
+    };
+    storeState.executionCache = {};
+  });
+
   it('does not render the complementary artifacts pane', () => {
     render(
       <PlaybookNode
@@ -124,5 +152,126 @@ describe('PlaybookNode', () => {
 
     expect(screen.getByText('Summarize')).toBeInTheDocument();
     expect(screen.queryByText('artifacts.title')).not.toBeInTheDocument();
+  });
+
+  it('renders iterator child status from nested execution results', () => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [
+        { id: 'iterator-1' },
+        { id: 'child-1', containerConfig: { parentIteratorId: 'iterator-1' } },
+      ],
+    };
+    storeState.currentExecution = {
+      playbookId: 'playbook-1',
+      taskResults: [
+        {
+          taskId: 'iterator-1',
+          iteratorIterations: [
+            {
+              index: 0,
+              childResults: [
+                { taskId: 'child-1', status: 'running' },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <PlaybookNode
+        {...({
+          id: 'child-1',
+          selected: false,
+          data: {
+            id: 'child-1',
+            title: 'Iterator child',
+            description: 'Runs inside the iterator',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [],
+            outputPorts: [],
+            containerConfig: { parentIteratorId: 'iterator-1' },
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.getByText('Iterator child')).toBeInTheDocument();
+    expect(screen.getByText('running')).toBeInTheDocument();
+  });
+
+  it('falls back to the direct child task status when nested iterator results are missing', () => {
+    storeState.currentPlaybook = {
+      id: 'playbook-1',
+      tasks: [
+        { id: 'iterator-1' },
+        { id: 'child-1', containerConfig: { parentIteratorId: 'iterator-1' } },
+      ],
+    };
+    storeState.currentExecution = {
+      playbookId: 'playbook-1',
+      taskResults: [
+        {
+          taskId: 'iterator-1',
+          status: 'completed',
+          iteratorIterations: [],
+        },
+        {
+          taskId: 'child-1',
+          status: 'completed',
+        },
+      ],
+    };
+
+    render(
+      <PlaybookNode
+        {...({
+          id: 'child-1',
+          selected: false,
+          data: {
+            id: 'child-1',
+            title: 'Iterator child',
+            description: 'Runs inside the iterator',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [],
+            outputPorts: [],
+            containerConfig: { parentIteratorId: 'iterator-1' },
+          },
+        } as any)}
+      />,
+    );
+
+    expect(screen.getByText('completed')).toBeInTheDocument();
   });
 });

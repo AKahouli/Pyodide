@@ -1052,6 +1052,45 @@ export interface PlaybookStepCompleteEvent {
   artifacts?: TaskArtifact[];
 }
 
+export interface PlaybookIteratorChildStepStartEvent {
+  executionId: string;
+  parentIteratorId: string;
+  iterationIndex: number;
+  taskId: string;
+  taskTitle?: string;
+  status: string;
+}
+
+export interface PlaybookIteratorChildStepUpdateEvent {
+  executionId: string;
+  parentIteratorId: string;
+  iterationIndex: number;
+  taskId: string;
+  taskTitle?: string;
+  status: string;
+  output?: string;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  artifacts?: TaskArtifact[];
+}
+
+export interface PlaybookIteratorChildStepCompleteEvent {
+  executionId: string;
+  parentIteratorId: string;
+  iterationIndex: number;
+  taskId: string;
+  taskTitle?: string;
+  status: string;
+  output?: string;
+  error?: string;
+  durationMs?: number;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  artifacts?: TaskArtifact[];
+}
+
 export interface PlaybookStepEvaluationUpdatedEvent {
   executionId: string;
   taskId: string;
@@ -1303,6 +1342,7 @@ export interface PlaybookState {
   designerOpen: boolean;
   copilotMode: PlaybookCopilotMode;
   executionPanelOpen: boolean;
+  executionDetailTab: string;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
   nodeEditorOpen: boolean;
@@ -1421,6 +1461,9 @@ export interface PlaybookActions {
   onStepStart: (data: PlaybookStepStartEvent) => void;
   onStepUpdate: (data: PlaybookStepUpdateEvent) => void;
   onStepComplete: (data: PlaybookStepCompleteEvent) => void;
+  onIteratorChildStepStart: (data: PlaybookIteratorChildStepStartEvent) => void;
+  onIteratorChildStepUpdate: (data: PlaybookIteratorChildStepUpdateEvent) => void;
+  onIteratorChildStepComplete: (data: PlaybookIteratorChildStepCompleteEvent) => void;
   onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => void;
   onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => void;
   onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => void;
@@ -1448,6 +1491,8 @@ export interface PlaybookActions {
   setDesignerOpen: (open: boolean) => void;
   setCopilotMode: (mode: PlaybookCopilotMode) => void;
   setExecutionPanelOpen: (open: boolean) => void;
+  setExecutionDetailTab: (tab: string) => void;
+  openExecutionDetailTab: (tab: string, taskId?: string) => void;
   viewExecutionInPanel: (executionId: string) => void;
 
   // Node Editor

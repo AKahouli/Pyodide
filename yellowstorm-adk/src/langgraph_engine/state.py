@@ -70,6 +70,9 @@ class StepUpdate(TypedDict, total=False):
     status: str
     result: Optional[Dict[str, Any]]
     interrupt: Optional[Dict[str, Any]]
+    scope: str
+    parent_iterator_id: str
+    iteration_index: int
 
 
 StepCallback = Callable[[StepUpdate], Awaitable[None]]

@@ -1163,6 +1163,56 @@ describe('PlaybookExecutionService', () => {
       );
     });
 
+    it('should send scoped iterator child SSE events without top-level child step events', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution();
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'child-1',
+          task_title: 'Child 1',
+          status: 'in_progress',
+          scope: 'iterator_child',
+          parent_iterator_id: 'iterator-1',
+          iteration_index: 0,
+        },
+      });
+
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_iterator_child_step_start',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            parentIteratorId: 'iterator-1',
+            iterationIndex: 0,
+            taskId: 'child-1',
+            status: 'running',
+          }),
+        }),
+      );
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_step_start',
+          data: expect.objectContaining({ taskId: 'child-1' }),
+        }),
+      );
+    });
+
     it('should send SSE playbook_step_complete for failed status with error', async () => {
       const mockStream = createMockStream();
       mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);

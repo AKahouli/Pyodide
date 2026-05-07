@@ -81,6 +81,7 @@ describe('usePlaybookCanvas', () => {
     ], false);
 
     expect(nodes[0]).toMatchObject({ id: 'iterator-1', type: 'playbookIteratorContainer' });
+    expect(nodes[0]).toMatchObject({ style: { width: 486, height: 352 } });
     expect(nodes[1]).toMatchObject({
       id: 'child-1',
       type: 'playbookStep',

@@ -26,6 +26,8 @@ const ITERATOR_PADDING = 32;
 const ITERATOR_MIN_WIDTH = 360;
 const ITERATOR_MIN_HEIGHT = 220;
 const ITERATOR_CHILD_STACK_OFFSET = 56;
+const ITERATOR_CHILD_NODE_WIDTH = 384;
+const ITERATOR_CHILD_NODE_HEIGHT = 240;
 
 const MAIL_TRIGGER_PORTS = [
   { id: 'mail_data', name: 'Mail data', artifactKind: 'data' as ArtifactKind },
@@ -56,8 +58,8 @@ function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask
     (acc, child) => {
       const relativeX = child.positionX - task.positionX;
       const relativeY = child.positionY - task.positionY;
-      acc.maxX = Math.max(acc.maxX, relativeX + ITERATOR_MIN_WIDTH / 2);
-      acc.maxY = Math.max(acc.maxY, relativeY + ITERATOR_CHILD_STACK_OFFSET);
+      acc.maxX = Math.max(acc.maxX, relativeX + ITERATOR_CHILD_NODE_WIDTH);
+      acc.maxY = Math.max(acc.maxY, relativeY + ITERATOR_CHILD_NODE_HEIGHT);
       return acc;
     },
     {
@@ -67,7 +69,7 @@ function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask
   );
 
   const width = Math.max(ITERATOR_MIN_WIDTH, bounds.maxX + ITERATOR_PADDING);
-  const height = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING + ITERATOR_HEADER_HEIGHT);
+  const height = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING);
 
   return {
     id: task.id,

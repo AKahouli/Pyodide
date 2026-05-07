@@ -1842,14 +1842,78 @@ export class PlaybookExecutionService {
   ): void {
     const normalizedUpdate = this.normalizeStreamStepUpdate(update);
     const { task_id: taskId, status, result, interrupt } = normalizedUpdate;
+    const scope = normalizedUpdate?.scope || '';
+    const parentIteratorId = normalizedUpdate?.parent_iterator_id || '';
+    const iterationIndex = Number(normalizedUpdate?.iteration_index || 0);
+    const isIteratorChildUpdate = scope === 'iterator_child' && Boolean(parentIteratorId);
 
     this.logger.debug('Stream step update received', {
       executionId,
       taskId,
       status,
+      scope,
+      parentIteratorId,
+      iterationIndex,
       rawStatus: update?.status || '',
       resultStatus: update?.result?.status || '',
     });
+
+    if (isIteratorChildUpdate) {
+      const grpcComps = result?.components || [];
+      const components = mapGrpcComponents(grpcComps, taskId);
+      const output = extractTextFromComponents(grpcComps);
+      const toolTrace = this.mapGrpcToolTrace(result?.tool_trace || []);
+      const llmPromptTrace = this.mapGrpcLlmPromptTrace(result?.llm_prompt_trace || []);
+      const artifacts = mapGrpcTaskArtifacts(result?.artifacts);
+      const eventBase = {
+        executionId,
+        parentIteratorId,
+        iterationIndex,
+        taskId,
+        taskTitle: normalizedUpdate?.task_title || '',
+      };
+
+      if (status === 'in_progress') {
+        if (result && (grpcComps.length > 0 || toolTrace.length > 0 || llmPromptTrace.length > 0 || artifacts.length > 0)) {
+          this.streamGateway.sendToUser(userId, {
+            type: 'playbook_iterator_child_step_update',
+            data: {
+              ...eventBase,
+              status: 'running',
+              output: output || '',
+              components,
+              artifacts,
+              toolTrace,
+              llmPromptTrace,
+            },
+          });
+        } else {
+          this.streamGateway.sendToUser(userId, {
+            type: 'playbook_iterator_child_step_start',
+            data: { ...eventBase, status: 'running' },
+          });
+        }
+        return;
+      }
+
+      if (status === 'completed' || status === 'failed' || status === 'skipped') {
+        this.streamGateway.sendToUser(userId, {
+          type: 'playbook_iterator_child_step_complete',
+          data: {
+            ...eventBase,
+            status,
+            output: output || '',
+            error: result?.error || '',
+            durationMs: parseInt(result?.duration_ms || '0', 10),
+            components,
+            artifacts,
+            toolTrace,
+            llmPromptTrace,
+          },
+        });
+        return;
+      }
+    }
 
     switch (status) {
       case 'in_progress': {

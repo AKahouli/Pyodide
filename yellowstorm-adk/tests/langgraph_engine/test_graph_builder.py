@@ -958,6 +958,10 @@ def test_build_clarification_pre_prompt_includes_missing_requirement_guardrails(
 
 def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> None:
     prompts = []
+    step_updates = []
+
+    async def on_step_update(update):
+        step_updates.append(update)
 
     async def fake_direct_call(*args, **kwargs):
         prompts.append(args[3])
@@ -1013,7 +1017,7 @@ def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> 
             {"id": "default", "name": "Default", "artifact_kind": "text"},
         ],
     }
-    node = builder._create_task_node("iterator-1", iterator)
+    node = builder._create_task_node("iterator-1", iterator, on_step_update)
 
     result = asyncio.run(
         node(
@@ -1062,6 +1066,8 @@ def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> 
     assert len(prompts) == 2
     assert "Input 'current_item':\na" in prompts[0]
     assert "Input 'current_item':\nb" in prompts[1]
+    assert [update["task_id"] for update in step_updates] == ["iterator-1", "iterator-1"]
+    assert [update["status"] for update in step_updates] == ["in_progress", "completed"]
 
 
 def test_iterator_task_node_continue_strategy_records_failed_iteration(monkeypatch) -> None:

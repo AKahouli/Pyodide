@@ -14,7 +14,10 @@
 import { useEffect } from 'react';
 import { API_CONFIG, AUTH_STORAGE_KEYS, API_ENDPOINTS } from '@/lib/api/config';
 import { usePlaybookStore } from '../store';
-import type { PlaybookStepUpdateEvent } from '../types';
+import type {
+  PlaybookIteratorChildStepUpdateEvent,
+  PlaybookStepUpdateEvent,
+} from '../types';
 
 // ===== Constants =====
 
@@ -51,6 +54,7 @@ let electionTimer: ReturnType<typeof setTimeout> | null = null;
 let stepUpdateFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
 const pendingStepUpdates = new Map<string, PlaybookStepUpdateEvent>();
+const pendingIteratorChildStepUpdates = new Map<string, PlaybookIteratorChildStepUpdateEvent>();
 
 const SSE_EVENT_TYPES = [
   'playbook_connected',
@@ -59,6 +63,9 @@ const SSE_EVENT_TYPES = [
   'playbook_step_start',
   'playbook_step_update',
   'playbook_step_complete',
+  'playbook_iterator_child_step_start',
+  'playbook_iterator_child_step_update',
+  'playbook_iterator_child_step_complete',
   'playbook_step_judge_started',
   'playbook_step_judge_updated',
   'playbook_step_evaluation_updated',
@@ -92,7 +99,7 @@ function broadcast(msg: Record<string, unknown>) {
 
 function flushPendingStepUpdates() {
   clearTimer(stepUpdateFlushRef);
-  if (pendingStepUpdates.size === 0) return;
+  if (pendingStepUpdates.size === 0 && pendingIteratorChildStepUpdates.size === 0) return;
 
   const store = usePlaybookStore.getState();
   const updates = Array.from(pendingStepUpdates.values());
@@ -100,6 +107,13 @@ function flushPendingStepUpdates() {
 
   for (const update of updates) {
     store.onStepUpdate(update);
+  }
+
+  const childUpdates = Array.from(pendingIteratorChildStepUpdates.values());
+  pendingIteratorChildStepUpdates.clear();
+
+  for (const update of childUpdates) {
+    store.onIteratorChildStepUpdate(update);
   }
 }
 
@@ -129,6 +143,25 @@ function queueStepUpdate(data: PlaybookStepUpdateEvent) {
   scheduleStepUpdateFlush();
 }
 
+function queueIteratorChildStepUpdate(data: PlaybookIteratorChildStepUpdateEvent) {
+  const key = `${data.executionId}:${data.parentIteratorId}:${data.iterationIndex}:${data.taskId}`;
+  const existing = pendingIteratorChildStepUpdates.get(key);
+
+  pendingIteratorChildStepUpdates.set(key, existing
+    ? {
+        ...existing,
+        ...data,
+        output: data.output ?? existing.output,
+        components: data.components ?? existing.components,
+        toolTrace: data.toolTrace ?? existing.toolTrace,
+        llmPromptTrace: data.llmPromptTrace ?? existing.llmPromptTrace,
+        artifacts: data.artifacts ?? existing.artifacts,
+      }
+    : data);
+
+  scheduleStepUpdateFlush();
+}
+
 // ===== Event handling (shared by leader + follower) =====
 
 function handleSsePayload(raw: string) {
@@ -143,7 +176,7 @@ function handleSsePayload(raw: string) {
     const eventData = data || parsed;
     const store = usePlaybookStore.getState();
 
-    if (eventType !== 'playbook_step_update') {
+    if (eventType !== 'playbook_step_update' && eventType !== 'playbook_iterator_child_step_update') {
       flushPendingStepUpdates();
     }
 
@@ -169,6 +202,15 @@ function handleSsePayload(raw: string) {
         break;
       case 'playbook_step_complete':
         store.onStepComplete(eventData);
+        break;
+      case 'playbook_iterator_child_step_start':
+        store.onIteratorChildStepStart(eventData);
+        break;
+      case 'playbook_iterator_child_step_update':
+        queueIteratorChildStepUpdate(eventData);
+        break;
+      case 'playbook_iterator_child_step_complete':
+        store.onIteratorChildStepComplete(eventData);
         break;
       case 'playbook_step_judge_started':
         store.onStepJudgeStarted(eventData);

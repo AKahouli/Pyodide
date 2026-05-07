@@ -759,6 +759,41 @@ describe('playbook store', () => {
     expect(state.executionPanelOpen).toBe(false);
   });
 
+  it('openExecutionDetailTab opens panel in run mode with the specified tab and step', () => {
+    usePlaybookStore.setState({
+      executionPanelOpen: false,
+      pageMode: 'design',
+      executionDetailTab: 'results',
+      selectedStepId: null,
+    });
+
+    usePlaybookStore.getState().openExecutionDetailTab('judge', 'task-1');
+
+    const state = usePlaybookStore.getState();
+    expect(state.executionDetailTab).toBe('judge');
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.pageMode).toBe('run');
+    expect(state.selectedStepId).toBe('task-1');
+    expect(state.workspaceExplorerOpen).toBe(false);
+    expect(state.connectorSidebarOpen).toBe(false);
+    expect(state.nodeEditorOpen).toBe(false);
+  });
+
+  it('openExecutionDetailTab works without a taskId', () => {
+    usePlaybookStore.setState({
+      executionPanelOpen: false,
+      executionDetailTab: 'results',
+      selectedStepId: 'existing-step',
+    });
+
+    usePlaybookStore.getState().openExecutionDetailTab('evaluation');
+
+    const state = usePlaybookStore.getState();
+    expect(state.executionDetailTab).toBe('evaluation');
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.selectedStepId).toBe('existing-step');
+  });
+
   it('prefers terminal api execution state over cached running state', async () => {
     const cached = makeExecution({
       id: 'e1',
@@ -822,6 +857,256 @@ describe('playbook store', () => {
     expect(state.currentExecution?.status).toBe('running');
     expect(state.currentExecution?.taskResults[0].status).toBe('running');
     expect(state.executingPlaybookIds).toContain('p1');
+  });
+
+  it('preserves iterator childResults from SSE when fetchExecution returns a parent result without nested iterations', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      taskResults: [
+        {
+          ...makeExecution().taskResults[0],
+          taskId: 'iterator-1',
+          status: 'running',
+          iteratorIterations: [
+            {
+              index: 0,
+              status: 'running',
+              itemPreview: null,
+              output: null,
+              error: null,
+              artifacts: [],
+              childResults: [
+                { taskId: 'child-1', taskTitle: 'Child 1', status: 'running', output: null, error: null, artifacts: [] },
+              ],
+            },
+          ],
+        },
+        {
+          ...makeExecution().taskResults[1],
+          taskId: 'child-1',
+          status: 'completed',
+        },
+      ],
+    });
+
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentExecution: cached,
+    });
+
+    apiMock.getExecution.mockResolvedValueOnce(
+      makeExecution({
+        id: 'e1',
+        playbookId: 'p1',
+        status: 'running',
+        updatedAt: '2025-01-01T00:00:20.000Z',
+        taskResults: [
+          {
+            ...makeExecution().taskResults[0],
+            taskId: 'iterator-1',
+            status: 'running',
+            iteratorIterations: [],
+          },
+          {
+            ...makeExecution().taskResults[1],
+            taskId: 'child-1',
+            status: 'completed',
+          },
+        ],
+      }),
+    );
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const iteratorResult = usePlaybookStore.getState().executionCache.e1.taskResults.find((tr) => tr.taskId === 'iterator-1');
+    expect(iteratorResult?.iteratorIterations).toHaveLength(1);
+    expect(iteratorResult?.iteratorIterations?.[0].childResults).toEqual([
+      expect.objectContaining({ taskId: 'child-1', status: 'running' }),
+    ]);
+  });
+
+  it('preserves iterator childResults from SSE when hydrating active executions with thinner parent data', () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      taskResults: [
+        {
+          ...makeExecution().taskResults[0],
+          taskId: 'iterator-1',
+          status: 'running',
+          iteratorIterations: [
+            {
+              index: 0,
+              status: 'running',
+              itemPreview: null,
+              output: null,
+              error: null,
+              artifacts: [],
+              childResults: [
+                { taskId: 'child-1', taskTitle: 'Child 1', status: 'running', output: null, error: null, artifacts: [] },
+              ],
+            },
+          ],
+        },
+        {
+          ...makeExecution().taskResults[1],
+          taskId: 'child-1',
+          status: 'completed',
+        },
+      ],
+    });
+
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentPlaybook: makePlaybook({
+        id: 'p1',
+        tasks: [
+          makeTask({ id: 'iterator-1', taskType: 'iterator' as never }),
+          makeTask({ id: 'child-1', containerConfig: { parentIteratorId: 'iterator-1' } }),
+        ],
+      }),
+    });
+
+    usePlaybookStore.getState().hydrateActiveExecutions([
+      makeExecution({
+        id: 'e1',
+        playbookId: 'p1',
+        status: 'running',
+        updatedAt: '2025-01-01T00:00:20.000Z',
+        taskResults: [
+          {
+            ...makeExecution().taskResults[0],
+            taskId: 'iterator-1',
+            status: 'running',
+            iteratorIterations: [],
+          },
+          {
+            ...makeExecution().taskResults[1],
+            taskId: 'child-1',
+            status: 'completed',
+          },
+        ],
+      }),
+    ]);
+
+    const iteratorResult = usePlaybookStore.getState().executionCache.e1.taskResults.find((tr) => tr.taskId === 'iterator-1');
+    expect(iteratorResult?.iteratorIterations).toHaveLength(1);
+    expect(iteratorResult?.iteratorIterations?.[0].childResults).toEqual([
+      expect.objectContaining({ taskId: 'child-1', status: 'running' }),
+    ]);
+  });
+
+  it('preserves cached iterator childResults without keeping a stale running status during fetchExecution', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      taskResults: [
+        {
+          ...makeExecution().taskResults[0],
+          taskId: 'iterator-1',
+          status: 'running',
+          iteratorIterations: [
+            {
+              index: 0,
+              status: 'running',
+              itemPreview: null,
+              output: null,
+              error: null,
+              artifacts: [],
+              childResults: [
+                { taskId: 'child-1', taskTitle: 'Child 1', status: 'running', output: null, error: null, artifacts: [] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    usePlaybookStore.setState({ executionCache: { e1: cached }, currentExecution: cached });
+    apiMock.getExecution.mockResolvedValueOnce(
+      makeExecution({
+        id: 'e1',
+        playbookId: 'p1',
+        status: 'completed',
+        updatedAt: '2025-01-01T00:00:20.000Z',
+        taskResults: [
+          {
+            ...makeExecution().taskResults[0],
+            taskId: 'iterator-1',
+            status: 'completed',
+            iteratorIterations: [],
+          },
+        ],
+      }),
+    );
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const iteratorResult = usePlaybookStore.getState().executionCache.e1.taskResults.find((tr) => tr.taskId === 'iterator-1');
+    expect(iteratorResult?.status).toBe('completed');
+    expect(iteratorResult?.iteratorIterations?.[0].childResults).toEqual([
+      expect.objectContaining({ taskId: 'child-1', status: 'running' }),
+    ]);
+  });
+
+  it('preserves cached iterator childResults without keeping a stale running status during hydration', () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'running',
+      taskResults: [
+        {
+          ...makeExecution().taskResults[0],
+          taskId: 'iterator-1',
+          status: 'running',
+          iteratorIterations: [
+            {
+              index: 0,
+              status: 'running',
+              itemPreview: null,
+              output: null,
+              error: null,
+              artifacts: [],
+              childResults: [
+                { taskId: 'child-1', taskTitle: 'Child 1', status: 'running', output: null, error: null, artifacts: [] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+
+    usePlaybookStore.getState().hydrateActiveExecutions([
+      makeExecution({
+        id: 'e1',
+        playbookId: 'p1',
+        status: 'completed',
+        updatedAt: '2025-01-01T00:00:20.000Z',
+        taskResults: [
+          {
+            ...makeExecution().taskResults[0],
+            taskId: 'iterator-1',
+            status: 'completed',
+            iteratorIterations: [],
+          },
+        ],
+      }),
+    ]);
+
+    const iteratorResult = usePlaybookStore.getState().executionCache.e1.taskResults.find((tr) => tr.taskId === 'iterator-1');
+    expect(iteratorResult?.status).toBe('completed');
+    expect(iteratorResult?.iteratorIterations?.[0].childResults).toEqual([
+      expect.objectContaining({ taskId: 'child-1', status: 'running' }),
+    ]);
   });
 
   it('optimistically updates statuses when resuming from a step', async () => {

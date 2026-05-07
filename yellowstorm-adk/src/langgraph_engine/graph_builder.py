@@ -1039,6 +1039,27 @@ class DynamicGraphBuilder:
                     child_edges,
                 )
 
+                current_iteration_index = {"value": 0}
+
+                async def _push_child_step_update(child_update: StepUpdate) -> None:
+                    await on_step_update(
+                        {
+                            **child_update,
+                            "scope": "iterator_child",
+                            "parent_iterator_id": task_id,
+                            "iteration_index": current_iteration_index["value"],
+                        }
+                    )
+
+                body_subgraph = None
+                if ordered_child_tasks:
+                    body_subgraph = self._build_iterator_body_subgraph(
+                        task_id,
+                        ordered_child_tasks,
+                        child_edges,
+                        _push_child_step_update,
+                    )
+
                 if mode == "batch":
                     iterables: List[Any] = [items[idx: idx + batch_size] for idx in range(0, len(items), batch_size)]
                 else:
@@ -1085,21 +1106,16 @@ class DynamicGraphBuilder:
                         child_artifacts: List[Dict[str, Any]] = []
                         output = ""
 
+                        current_iteration_index["value"] = index
+
+                        if body_subgraph is not None:
+                            local_state = await body_subgraph.ainvoke(local_state, config)
+
                         for child_task in ordered_child_tasks:
                             child_id = str(child_task.get("id") or "").strip()
                             if not child_id:
                                 continue
-                            child_node = self._create_task_node(
-                                child_id,
-                                child_task,
-                                on_step_update,
-                            )
-                            child_update = await child_node(local_state, config)
-                            local_state = _merge_local_state_update(
-                                local_state,
-                                child_update,
-                            )
-                            child_result = (child_update.get("results") or {}).get(
+                            child_result = (local_state.get("results") or {}).get(
                                 child_id,
                                 {},
                             )
@@ -1123,6 +1139,8 @@ class DynamicGraphBuilder:
                             "artifacts": child_artifacts,
                         })
                     except Exception as exc:
+                        if "GraphInterrupt" in type(exc).__name__:
+                            raise
                         if error_strategy != "continue":
                             raise
                         aggregated.append({
@@ -2447,6 +2465,83 @@ class DynamicGraphBuilder:
             return [task_by_id[task_id] for task_id in ordered_ids]
 
         return [task_by_id[task_id] for task_id in result_ids]
+
+    def _build_iterator_body_subgraph(
+        self,
+        iterator_id: str,
+        child_tasks: List[TaskConfig],
+        child_edges: List[EdgeConfig],
+        child_step_callback: StepCallback = NoopStepCallback,
+    ):
+        """Build a compiled LangGraph subgraph for iterator body execution.
+
+        Each child task becomes a real LangGraph node. Children can emit
+        scoped nested iterator updates via ``child_step_callback``.
+        The subgraph is compiled without a checkpointer because it is
+        invoked fresh per iteration and never streamed.
+        """
+        workflow = StateGraph(ExecutionState)
+
+        child_task_ids = {str(t.get("id") or "") for t in child_tasks if t.get("id")}
+        for task in child_tasks:
+            task_id = str(task.get("id") or "")
+            if not task_id:
+                continue
+            node_func = self._create_task_node(task_id, task, child_step_callback)
+            workflow.add_node(f"task_{task_id}", node_func)
+
+        entry_ids = self._find_entry_tasks(child_tasks, child_edges)
+        exit_ids = self._find_exit_tasks(child_tasks, child_edges)
+
+        if len(entry_ids) == 1:
+            workflow.set_entry_point(f"task_{entry_ids[0]}")
+        elif entry_ids:
+            async def _iterator_start(state: ExecutionState) -> Dict[str, Any]:
+                return {}
+
+            workflow.add_node("__iterator_start__", _iterator_start)
+            workflow.set_entry_point("__iterator_start__")
+            for tid in entry_ids:
+                workflow.add_edge("__iterator_start__", f"task_{tid}")
+
+        incoming_by_target: Dict[str, List[str]] = {}
+        for edge in child_edges:
+            source_id = str(edge.get("source_id") or "")
+            target_id = str(edge.get("target_id") or "")
+            if source_id not in child_task_ids or target_id not in child_task_ids:
+                continue
+            incoming_by_target.setdefault(target_id, []).append(source_id)
+
+        for target_id, source_ids in incoming_by_target.items():
+            target_node = f"task_{target_id}"
+            source_nodes = [f"task_{source_id}" for source_id in source_ids]
+            if len(source_nodes) == 1:
+                workflow.add_edge(source_nodes[0], target_node)
+            else:
+                workflow.add_edge(source_nodes, target_node)
+
+        if len(exit_ids) == 1:
+            workflow.add_edge(f"task_{exit_ids[0]}", END)
+        elif exit_ids:
+            async def _iterator_completion(state: ExecutionState) -> Dict[str, Any]:
+                return {}
+
+            workflow.add_node("__iterator_completion__", _iterator_completion)
+            exit_nodes = [f"task_{tid}" for tid in exit_ids]
+            if len(exit_nodes) == 1:
+                workflow.add_edge(exit_nodes[0], "__iterator_completion__")
+            else:
+                workflow.add_edge(exit_nodes, "__iterator_completion__")
+            workflow.add_edge("__iterator_completion__", END)
+
+        compiled = workflow.compile()
+        logger.info(
+            "[DynamicGraphBuilder] Compiled iterator body subgraph",
+            iterator_id=iterator_id,
+            tasks=len(child_tasks),
+            edges=len(child_edges),
+        )
+        return compiled
 
     def _get_top_level_tasks(self, tasks: List[TaskConfig]) -> List[TaskConfig]:
         return [task for task in tasks if not _get_parent_iterator_id(task)]

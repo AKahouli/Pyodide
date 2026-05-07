@@ -711,6 +711,9 @@ message PlaybookStepUpdate {
     string status = 3;               // "in_progress" | "suspended" | "completed" | "failed"
     PlaybookTaskResult result = 4;   // Set when completed/failed
     InterruptPayload interrupt = 5;  // Set when suspended
+    string scope = 6;                // "" | "iterator_child"
+    string parent_iterator_id = 7;
+    int32 iteration_index = 8;
 }
 
 message PlaybookStreamChunk {

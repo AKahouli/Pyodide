@@ -153,6 +153,56 @@ function getSnapshotTask(execution?: PlaybookExecution | null, taskId?: string |
   return snapshotTasks.find((task) => task.id === taskId) || null;
 }
 
+function isIteratorChildTask(task: Pick<PlaybookTask, 'containerConfig'> | null | undefined): boolean {
+  return Boolean(task?.containerConfig?.parentIteratorId);
+}
+
+const STEP_STATUS_PRIORITY: Record<StepStatus, number> = {
+  running: 5,
+  interrupted: 4,
+  failed: 3,
+  completed: 2,
+  skipped: 1,
+  pending: 0,
+};
+
+export function buildCanvasStepStatusMap(
+  taskResults: PlaybookExecution['taskResults'] | null | undefined,
+  tasks: ReadonlyArray<Pick<PlaybookTask, 'id' | 'containerConfig'>>,
+): Map<string, StepStatus> {
+  const map = new Map<string, StepStatus>();
+  if (!taskResults) return map;
+
+  const iteratorChildTaskIds = new Set(
+    tasks
+      .filter(isIteratorChildTask)
+      .map((task) => task.id),
+  );
+
+  for (const tr of taskResults) {
+    for (const iteration of tr.iteratorIterations || []) {
+      for (const childResult of iteration.childResults || []) {
+        const currentStatus = map.get(childResult.taskId);
+        if (!currentStatus || STEP_STATUS_PRIORITY[childResult.status] > STEP_STATUS_PRIORITY[currentStatus]) {
+          map.set(childResult.taskId, childResult.status);
+        }
+      }
+    }
+  }
+
+  for (const tr of taskResults) {
+    if (iteratorChildTaskIds.has(tr.taskId) && map.has(tr.taskId)) {
+      continue;
+    }
+    const currentStatus = map.get(tr.taskId);
+    if (!currentStatus || STEP_STATUS_PRIORITY[tr.status] > STEP_STATUS_PRIORITY[currentStatus]) {
+      map.set(tr.taskId, tr.status);
+    }
+  }
+
+  return map;
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -351,6 +401,12 @@ function PlaybookCanvasInner() {
     void fetchRepeatability(id);
   }, [evaluationDialogOpen, id, isGeneratingRoute, fetchRepeatability]);
 
+  useEffect(() => {
+    if (executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
+      setExecutionPanelCollapsed(false);
+    }
+  }, [executionPanelOpen, pageMode, executionPanelCollapsed]);
+
   // Fallback polling while an execution is active or while the run view is
   // recovering from a missed realtime handoff. This keeps both the canvas and
   // the detail pane in sync if an SSE step-complete/execution-complete event
@@ -462,19 +518,16 @@ function PlaybookCanvasInner() {
       : execution;
   const executionTaskResults = executionForCanvas?.taskResults;
   const visibleExecutionStatus = getVisibleExecutionStatus(executionForCanvas);
+  const snapshotTasks = ((executionForCanvas?.playbookSnapshot as { tasks?: PlaybookTask[] } | null)?.tasks) || [];
+  const canvasStatusTasks = playbook?.tasks?.length ? playbook.tasks : snapshotTasks;
 
   // Build step status map from the selected execution for this playbook
   const isLiveExecution = executionForCanvas &&
     (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
 
   const stepStatusMap = useMemo(() => {
-    const map = new Map<string, StepStatus>();
-    if (!executionTaskResults) return map;
-    for (const tr of executionTaskResults) {
-      map.set(tr.taskId, tr.status);
-    }
-    return map;
-  }, [executionTaskResults]);
+    return buildCanvasStepStatusMap(executionTaskResults, canvasStatusTasks);
+  }, [executionTaskResults, canvasStatusTasks]);
 
   const stepSemanticMatchMap = useMemo(() => {
     const map = new Map<string, SemanticMatchResult | null>();
@@ -524,15 +577,15 @@ function PlaybookCanvasInner() {
         };
       }
 
+      const currentData = node.data as PlaybookNodeData;
       const status = stepStatusMap.get(node.id);
       const semanticMatch = stepSemanticMatchMap.get(node.id);
       const judgeStatus = stepJudgeStatusMap.get(node.id);
       const judgeResult = stepJudgeResultMap.get(node.id);
-      const currentData = node.data as PlaybookNodeData;
       const nextSelected = node.id === selectedStepId;
       const nextData = {
         ...currentData,
-        ...(status !== undefined ? { stepStatus: status } : {}),
+        stepStatus: status,
         ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
         ...(judgeStatus !== undefined ? { stepJudgeStatus: judgeStatus } : {}),
         ...(judgeResult !== undefined ? { stepJudgeResult: judgeResult } : {}),
@@ -1904,6 +1957,7 @@ function PlaybookCanvasInner() {
         setExecutionPanelOpen(false);
         return;
       }
+      setDesignerOpen(false);
       setExecutionPanelCollapsed(false);
       setExecutionPanelOpen(true);
     },
