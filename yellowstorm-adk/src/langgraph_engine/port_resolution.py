@@ -1075,6 +1075,7 @@ def build_task_prompt_context(
     user_query: str = "",
     workspace_file_hint: str = "",
     trigger_context: Optional[Dict[str, Any]] = None,
+    iterator_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     ports = resolved_inputs.get("ports") or {}
     output_ports = list(task_config.get("output_ports") or [])
@@ -1230,6 +1231,9 @@ def build_task_prompt_context(
         "trigger_context": trigger_context
         if isinstance(trigger_context, dict)
         else None,
+        "iterator_context": iterator_context
+        if isinstance(iterator_context, dict)
+        else None,
         "has_trigger_port_inputs": task_has_trigger_port_inputs(resolved_inputs),
     }
 
@@ -1242,6 +1246,7 @@ def build_task_prompt(
     user_query: str = "",
     workspace_file_hint: str = "",
     trigger_context: Optional[Dict[str, Any]] = None,
+    iterator_context: Optional[Dict[str, Any]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
     output_mode: str = "plain",
 ) -> str:
@@ -1255,6 +1260,7 @@ def build_task_prompt(
         user_query=user_query,
         workspace_file_hint=workspace_file_hint,
         trigger_context=trigger_context,
+        iterator_context=iterator_context,
     )
 
     lines = [
@@ -1266,6 +1272,16 @@ def build_task_prompt(
             "Structured inputs for this task JSON:\n"
             + json.dumps(
                 prompt_context.get("resolved_inputs") or [],
+                ensure_ascii=True,
+                indent=2,
+            )
+        )
+
+    if prompt_context.get("iterator_context"):
+        lines.append(
+            "Iterator context JSON:\n"
+            + json.dumps(
+                prompt_context.get("iterator_context") or {},
                 ensure_ascii=True,
                 indent=2,
             )
@@ -1297,7 +1313,7 @@ def build_task_prompt(
                 prompt_registry,
                 "task.output_ports.structured_response",
                 field="userTemplate",
-                fallback=(
+                fallback=(      
                     "Return JSON only with this exact shape:\n"
                     "{\n"
                     '  "display_text": "user-visible final answer",\n'
@@ -1319,7 +1335,7 @@ def build_task_prompt(
                     "- For data outputs, include the structured payload in `data`.\n"
                     "- For file outputs, reference only files you actually generated.\n"
                     "- If no routed output should be produced for a port, omit it.\n"
-                    "- Return JSON only and no markdown fences."
+                    "- Must never add or remove attributes, respect strictly the JSON structure specified above. Return JSON only and no markdown fences."
                 ),
             )
         else:

@@ -1109,6 +1109,12 @@ class DynamicGraphBuilder:
                             "node_timings": {},
                             "artifacts_by_port": dict(state.get("artifacts_by_port") or {}),
                             "node_inputs_by_port": dict(state.get("node_inputs_by_port") or {}),
+                            "iterator_context": {
+                                "parent_iterator_id": task_id,
+                                "iteration_index": index,
+                                "item_variable": item_variable,
+                                "item": item,
+                            },
                         }
                         child_results: Dict[str, Any] = {}
                         child_artifacts: List[Dict[str, Any]] = []
@@ -1577,6 +1583,7 @@ class DynamicGraphBuilder:
                         user_query=state.get("query", ""),
                         workspace_file_hint=workspace_file_hint,
                         trigger_context=state.get("trigger_context"),
+                        iterator_context=state.get("iterator_context"),
                         prompt_overrides=state.get("prompt_overrides") or {},
                         output_mode=output_mode,
                     )

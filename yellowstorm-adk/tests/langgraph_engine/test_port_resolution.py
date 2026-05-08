@@ -783,6 +783,38 @@ def test_build_task_prompt_context_includes_default_workspace_metadata() -> None
     }
 
 
+def test_build_task_prompt_context_includes_iterator_context() -> None:
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {},
+            "playbook_workspace_context": [],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+        iterator_context={
+            "parent_iterator_id": "iterator-1",
+            "iteration_index": 1,
+            "item_variable": "current_item",
+            "item": {"id": 2, "name": "Project Beta"},
+        },
+    )
+
+    assert prompt_context["iterator_context"] == {
+        "parent_iterator_id": "iterator-1",
+        "iteration_index": 1,
+        "item_variable": "current_item",
+        "item": {"id": 2, "name": "Project Beta"},
+    }
+
+
 def test_build_task_prompt_context_includes_normalized_retrieval_scope() -> None:
     prompt_context = build_task_prompt_context(
         {
@@ -1145,6 +1177,63 @@ def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_sect
     assert '"subject": "FW: Yellowsys.ai"' in prompt
     assert "Retrieval scope for MCP document tools JSON:" not in prompt
     assert "This playbook was triggered by an incoming email:" not in prompt
+
+
+def test_build_task_prompt_includes_iterator_context_even_with_port_sources() -> None:
+    prompt = build_task_prompt(
+        {
+            "id": "downstream",
+            "title": "Task",
+            "description": "Describe the current iterator item",
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        {
+            "task_id": "downstream",
+            "ports": {
+                "mail_in": {
+                    "input_port": {
+                        "id": "mail_in",
+                        "name": "Mail input",
+                        "artifact_kind": "data",
+                    },
+                    "upstream_bindings": [
+                        {
+                            "source_task_id": "__trigger__",
+                            "source_output_port_id": "mail_data",
+                            "artifact_kind": "data",
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": {"subject": "FW: Yellowsys.ai"},
+                                }
+                            ],
+                        }
+                    ],
+                    "resolved_documents": [],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                    "document_bindings": {},
+                }
+            },
+            "playbook_workspace_context": [],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": True,
+        },
+        iterator_context={
+            "parent_iterator_id": "iterator-1",
+            "iteration_index": 0,
+            "item_variable": "current_item",
+            "item": {"id": 1, "name": "Project Alpha"},
+        },
+    )
+
+    assert "Structured inputs for this task JSON:" in prompt
+    assert "Iterator context JSON:" in prompt
+    assert '"iteration_index": 0' in prompt
+    assert '"name": "Project Alpha"' in prompt
 
 
 def test_build_task_prompt_includes_mcp_retrieval_scope_guidance() -> None:

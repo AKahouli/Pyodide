@@ -1168,10 +1168,21 @@ def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> 
     assert "child-1" not in result["results"]
     assert result["task_outputs"]["processed_items"] == aggregate
     assert len(prompts) == 2
+    assert "Iterator context JSON:" in prompts[0]
+    assert '"iteration_index": 0' in prompts[0]
+    assert '"item_variable": "current_item"' in prompts[0]
+    assert '"item": "a"' in prompts[0]
+    assert '"iteration_index": 1' in prompts[1]
+    assert '"item": "b"' in prompts[1]
     assert "Input 'current_item':\na" in prompts[0]
     assert "Input 'current_item':\nb" in prompts[1]
-    assert [update["task_id"] for update in step_updates] == ["iterator-1", "iterator-1"]
-    assert [update["status"] for update in step_updates] == ["in_progress", "completed"]
+    iterator_updates = [
+        update for update in step_updates if update["task_id"] == "iterator-1"
+    ]
+    assert [update["status"] for update in iterator_updates] == [
+        "in_progress",
+        "completed",
+    ]
 
 
 def test_iterator_task_node_continue_strategy_records_failed_iteration(monkeypatch) -> None:
