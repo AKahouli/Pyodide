@@ -291,6 +291,110 @@ def test_resolve_iterator_collection_from_inputs_uses_data_array() -> None:
     ]
 
 
+def test_resolve_iterator_collection_from_inputs_unwraps_port_keyed_data_array() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": {
+                                        "items": [
+                                            {"id": 1, "name": "Project Alpha"},
+                                            {"id": 2, "name": "Project Beta"},
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"id": 1, "name": "Project Alpha"},
+        {"id": 2, "name": "Project Beta"},
+    ]
+
+
+def test_resolve_iterator_collection_from_inputs_uses_json_content_array() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "content": '[{"id": 1}, {"id": 2}]',
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [{"id": 1}, {"id": 2}]
+
+
+def test_resolve_iterator_collection_from_inputs_unwraps_port_keyed_json_content_array() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "content": '{"items": [{"id": 1}, {"id": 2}]}',
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [{"id": 1}, {"id": 2}]
+
+
+def test_resolve_iterator_collection_from_inputs_wraps_plain_content() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "content": "not-json",
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == ["not-json"]
+
+
 def test_resolve_iterator_collection_from_inputs_uses_document_bindings() -> None:
     items = _resolve_iterator_collection_from_inputs(
         {

@@ -2248,6 +2248,23 @@ class ChatbotServicer(
 # === Proto conversion helpers (playbook/langgraph) ===
 
 
+def _struct_has_fields(struct_msg) -> bool:
+    """Return True if a google.protobuf.Struct message has any fields.
+
+    Empty Struct messages are truthy in protobuf, so we have to inspect
+    `.fields` explicitly to decide whether the field is meaningful.
+    """
+    if struct_msg is None:
+        return False
+    fields = getattr(struct_msg, "fields", None)
+    if fields is None:
+        return False
+    try:
+        return len(fields) > 0
+    except TypeError:
+        return bool(fields)
+
+
 def _proto_task_to_dict(proto_task) -> dict:
     """Convert a PlaybookTaskConfig proto message to a TaskConfig dict."""
     tool_bindings = getattr(proto_task, "tool_bindings", None)

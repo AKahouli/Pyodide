@@ -21,7 +21,8 @@
       "Bash(xargs kill *)",
       "Bash(lsof -i:50051 -nP -t)",
       "Bash(lsof -tiTCP -i:50051 -sTCP:LISTEN -n)",
-      "Bash(awk '{print $2}')"
+      "Bash(awk '{print $2}')",
+      "mcp__code-review-graph__semantic_search_nodes_tool"
     ]
   }
 }

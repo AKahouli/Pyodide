@@ -1306,6 +1306,7 @@ def build_task_prompt(
                     '      "output_port_id": "declared-port-id",\n'
                     '      "artifact_kind": "text|code|document|image|data|dashboard",\n'
                     '      "content": "required for text/code outputs",\n'
+                    '      "data": {"required": "for data outputs"},\n'
                     '      "filename": "required for generated file outputs",\n'
                     '      "file_path": "optional exact file path when needed"\n'
                     "    }\n"
@@ -1315,6 +1316,7 @@ def build_task_prompt(
                     "- `display_text` is the final user-visible answer.\n"
                     "- Use only declared `output_port_id` values.\n"
                     "- For text/code outputs, include final downstream content in `content`.\n"
+                    "- For data outputs, include the structured payload in `data`.\n"
                     "- For file outputs, reference only files you actually generated.\n"
                     "- If no routed output should be produced for a port, omit it.\n"
                     "- Return JSON only and no markdown fences."

@@ -296,6 +296,17 @@ def test_determine_output_mode_uses_structured_for_duplicate_document_ports() ->
     ) == "structured_final_response"
 
 
+def test_determine_output_mode_uses_structured_for_multiple_distinct_ports() -> None:
+    assert _determine_output_mode(
+        {
+            "output_ports": [
+                {"id": "summary", "artifact_kind": "text"},
+                {"id": "metrics", "artifact_kind": "data"},
+            ]
+        }
+    ) == "structured_final_response"
+
+
 def test_build_task_artifacts_from_structured_outputs_routes_multiple_text_ports() -> None:
     artifacts = _build_task_artifacts_from_structured_outputs(
         {
@@ -411,6 +422,43 @@ def test_build_task_artifacts_from_structured_outputs_accepts_prefixed_declared_
     ]
 
 
+def test_build_task_artifacts_from_structured_outputs_routes_inline_data() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "summary", "artifact_kind": "text"},
+                {"id": "metrics", "artifact_kind": "data"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "summary",
+                "artifact_kind": "text",
+                "content": "Executive summary",
+            },
+            {
+                "output_port_id": "metrics",
+                "artifact_kind": "data",
+                "data": {"score": 88, "status": "ok"},
+            },
+        ],
+        [],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "summary",
+            "artifact_kind": "text",
+            "content": "Executive summary",
+        },
+        {
+            "port_id": "metrics",
+            "artifact_kind": "data",
+            "data": {"score": 88, "status": "ok"},
+        },
+    ]
+
+
 def test_validate_declared_output_ports_accepts_declared_ids() -> None:
     _validate_declared_output_ports(
         {"declared_output_ports": ["summary", "context"]},
@@ -516,6 +564,31 @@ def test_finalize_task_outputs_parses_structured_final_response() -> None:
     assert artifacts == [
         {"port_id": "summary", "artifact_kind": "text", "content": "Short"},
         {"port_id": "context", "artifact_kind": "text", "content": "Long"},
+    ]
+
+
+def test_finalize_task_outputs_parses_structured_text_and_data_outputs() -> None:
+    response, artifacts = _finalize_task_outputs(
+        {
+            "output_ports": [
+                {"id": "summary", "artifact_kind": "text"},
+                {"id": "metrics", "artifact_kind": "data"},
+            ],
+            "declared_output_ports": ["summary", "metrics"],
+        },
+        '{"display_text": "Done", "outputs": [{"output_port_id": "summary", "artifact_kind": "text", "content": "Short"}, {"output_port_id": "metrics", "artifact_kind": "data", "data": {"score": 88, "status": "ok"}}]}',
+        [],
+        "structured_final_response",
+    )
+
+    assert response == "Done"
+    assert artifacts == [
+        {"port_id": "summary", "artifact_kind": "text", "content": "Short"},
+        {
+            "port_id": "metrics",
+            "artifact_kind": "data",
+            "data": {"score": 88, "status": "ok"},
+        },
     ]
 
 

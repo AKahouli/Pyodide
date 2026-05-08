@@ -265,6 +265,10 @@ def _resolve_iterator_collection_from_inputs(
                 data = artifact.get("data")
                 if isinstance(data, list):
                     return data
+                if isinstance(data, dict):
+                    nested_items = data.get(port_id)
+                    if isinstance(nested_items, list):
+                        return nested_items
                 if data is not None:
                     return [data]
                 content = artifact.get("content")
@@ -273,6 +277,10 @@ def _resolve_iterator_collection_from_inputs(
                         parsed = json.loads(content)
                         if isinstance(parsed, list):
                             return parsed
+                        if isinstance(parsed, dict):
+                            nested_items = parsed.get(port_id)
+                            if isinstance(nested_items, list):
+                                return nested_items
                         return [parsed]
                     except Exception:
                         return [content]
@@ -2605,6 +2613,31 @@ class DynamicGraphBuilder:
         workflow = StateGraph(ExecutionState)
         graph_tasks = self._get_top_level_tasks(tasks)
         graph_edges = self._get_top_level_edges(tasks, edges)
+
+        logger.info(
+            "[ITERATOR_DEBUG build_execution_graph] inputs",
+            input_task_count=len(tasks),
+            input_tasks=[
+                {
+                    "id": t.get("id"),
+                    "title": t.get("title"),
+                    "task_type": t.get("task_type"),
+                    "parent_iterator_id": _get_parent_iterator_id(t),
+                    "task_metadata_keys": list((t.get("task_metadata") or {}).keys())
+                        if isinstance(t.get("task_metadata"), dict) else None,
+                }
+                for t in tasks
+            ],
+            input_edges=[
+                {"source_id": e.get("source_id"), "target_id": e.get("target_id")}
+                for e in edges
+            ],
+            top_level_task_ids=[t.get("id") for t in graph_tasks],
+            top_level_edges=[
+                {"source_id": e.get("source_id"), "target_id": e.get("target_id")}
+                for e in graph_edges
+            ],
+        )
 
         for task in graph_tasks:
             task_id = task.get("id")

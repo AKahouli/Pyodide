@@ -11,7 +11,6 @@ import json
 import re
 import time
 import uuid
-from collections import Counter
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, Any, Optional, List
 
@@ -64,10 +63,11 @@ def _task_requires_structured_output_synthesis(task: Dict[str, Any]) -> bool:
     if len(output_ports) <= 1:
         return False
 
-    kind_counts = Counter(
-        kind for kind in (_output_port_kind(port) for port in output_ports) if kind
-    )
-    return any(count > 1 for count in kind_counts.values())
+    # Any multi-port task needs explicit port routing in the model response.
+    # Duplicate kinds are one ambiguous case, but distinct kinds like
+    # text+data also need structured outputs so the runtime can bind each
+    # payload to the intended port instead of relying on post-hoc heuristics.
+    return True
 
 
 def _determine_output_mode(task: Dict[str, Any]) -> str:
@@ -230,6 +230,9 @@ def _build_task_artifacts_from_structured_outputs(
                 f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
             )
 
+        # Structured outputs are not uniformly file-backed: text/code/data
+        # should be emitted inline, while document/image-style outputs must
+        # reference a generated artifact.
         if output_kind in {"text", "code"}:
             content = str(output_spec.get("content") or "").strip()
             if not content:
@@ -239,6 +242,19 @@ def _build_task_artifacts_from_structured_outputs(
                     "port_id": str(port.get("id") or output_port_id),
                     "artifact_kind": output_kind,
                     "content": content,
+                }
+            )
+            continue
+
+        if output_kind == "data":
+            data_payload = output_spec.get("data")
+            if data_payload is None:
+                continue
+            artifacts.append(
+                {
+                    "port_id": str(port.get("id") or output_port_id),
+                    "artifact_kind": output_kind,
+                    "data": data_payload,
                 }
             )
             continue

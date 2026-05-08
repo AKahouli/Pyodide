@@ -509,9 +509,30 @@ export class PlaybookExecutionGraphService {
       const sourceIsIterator = sourceTask?.taskType === 'iterator';
       const targetIsIterator = targetTask?.taskType === 'iterator';
 
+      const isIteratorParentToOwnChild =
+        sourceIsIterator && targetParentIteratorId === sourceId;
+      const isOwnChildToIteratorParent =
+        targetIsIterator && sourceParentIteratorId === targetId;
+      const isExternalUpstreamToIterator =
+        targetIsIterator && !sourceIsIterator && sourceParentIteratorId === null;
+      const isIteratorToExternalDownstream =
+        sourceIsIterator && !targetIsIterator && targetParentIteratorId === null;
+      const isExternalUpstreamToChild =
+        targetParentIteratorId !== null &&
+        sourceParentIteratorId === null &&
+        !sourceIsIterator;
+      const isChildToExternalDownstream =
+        sourceParentIteratorId !== null &&
+        targetParentIteratorId === null &&
+        !targetIsIterator;
+
       const isIteratorBoundaryEdge =
-        (sourceIsIterator && targetParentIteratorId === sourceId) ||
-        (targetIsIterator && sourceParentIteratorId === targetId);
+        isIteratorParentToOwnChild ||
+        isOwnChildToIteratorParent ||
+        isExternalUpstreamToIterator ||
+        isIteratorToExternalDownstream ||
+        isExternalUpstreamToChild ||
+        isChildToExternalDownstream;
 
       const sharesSameIteratorScope =
         sourceParentIteratorId !== null && sourceParentIteratorId === targetParentIteratorId;

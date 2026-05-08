@@ -1044,6 +1044,23 @@ export class PlaybookExecutionService {
       return sourceAllowed && targetAllowed;
     });
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
+    this.logger.log('[ITERATOR_DEBUG executePlaybook] edges', {
+      playbookId,
+      iteratorTasks: enabledTasks
+        .filter((t: any) => t.taskType === 'iterator')
+        .map((t: any) => ({ id: t.id, title: t.title })),
+      childTasks: enabledTasks
+        .filter((t: any) => t.containerConfig?.parentIteratorId)
+        .map((t: any) => ({ id: t.id, parentIteratorId: t.containerConfig?.parentIteratorId })),
+      enabledEdges: enabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+      sanitizedEnabledEdges: sanitizedEnabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+    });
     const triggerContext = options?.triggerContext ?? null;
     this.logger.debug('////////////////////// [executePlaybook] trigger context input', {
       playbookId,
@@ -1524,6 +1541,22 @@ export class PlaybookExecutionService {
       return sourceAllowed && targetAllowed;
     });
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
+    this.logger.log('[ITERATOR_DEBUG runPlaybookWorkflow] edges', {
+      iteratorTasks: enabledTasks
+        .filter((t: any) => t.taskType === 'iterator')
+        .map((t: any) => ({ id: t.id, title: t.title })),
+      childTasks: enabledTasks
+        .filter((t: any) => t.containerConfig?.parentIteratorId)
+        .map((t: any) => ({ id: t.id, parentIteratorId: t.containerConfig?.parentIteratorId })),
+      enabledEdges: enabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+      sanitizedEnabledEdges: sanitizedEnabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+    });
 
     // Build RunPlaybookWorkflowRequest
     const stepExecutionModesForGrpc: Record<string, string> = {};
@@ -1661,7 +1694,7 @@ export class PlaybookExecutionService {
                 weights: t.evaluationConfig.weights || {},
               }
             : null,
-          task_metadata: {
+          task_metadata: this.toGrpcStruct({
             ...(t.taskType === 'iterator' && t.iteratorConfig
               ? {
                   iterator: {
@@ -1681,7 +1714,7 @@ export class PlaybookExecutionService {
                   },
                 }
               : {}),
-          },
+          }),
           tool_bindings: toolBindingsByTaskId.get(t.id) || [],
         };
       }),
