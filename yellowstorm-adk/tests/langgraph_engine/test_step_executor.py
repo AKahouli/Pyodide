@@ -7,6 +7,7 @@ import pytest
 from src.langgraph_engine.step_executor import (
     _execute_with_tools,
     _attach_result_text_for_citations,
+    _collect_generated_artifacts,
     _execute_evaluation_task,
     _build_plain_file_artifacts,
     _build_plain_text_artifact,
@@ -478,6 +479,24 @@ def test_build_task_artifacts_from_structured_outputs_rejects_old_data_field() -
         )
 
 
+def test_build_task_artifacts_from_structured_outputs_requires_artifact_kind() -> None:
+    with pytest.raises(ValueError, match="must include artifact_kind"):
+        _build_task_artifacts_from_structured_outputs(
+            {
+                "output_ports": [
+                    {"id": "summary", "artifact_kind": "text"},
+                ]
+            },
+            [
+                {
+                    "output_port_id": "summary",
+                    "content": "Executive summary",
+                },
+            ],
+            [],
+        )
+
+
 def test_build_task_artifacts_from_structured_outputs_rejects_old_file_fields() -> None:
     with pytest.raises(ValueError, match="references unknown artifact 'pdf'"):
         _build_task_artifacts_from_structured_outputs(
@@ -620,6 +639,62 @@ def test_build_plain_file_artifacts_maps_single_generated_file() -> None:
             "artifact_kind": "document",
             "url": "https://example.com/report.pdf",
             "filename": "report.pdf",
+            "mime_type": "application/pdf",
+        }
+    ]
+
+
+def test_build_plain_file_artifacts_prefers_explicit_output_port_metadata() -> None:
+    artifacts = _build_plain_file_artifacts(
+        {
+            "output_ports": [
+                {"id": "report", "artifact_kind": "document"},
+                {"id": "spreadsheet", "artifact_kind": "data"},
+            ]
+        },
+        [
+            {
+                "file_path": "https://example.com/report.xlsx",
+                "filename": "report.xlsx",
+                "output_port_id": "report",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            }
+        ],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "report",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.xlsx",
+            "filename": "report.xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+    ]
+
+
+def test_collect_generated_artifacts_preserves_explicit_output_metadata() -> None:
+    artifacts = _collect_generated_artifacts(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "file_path": "https://example.com/report.pdf",
+                    "filename": "report.pdf",
+                    "artifact_kind": "document",
+                    "output_port_id": "report",
+                    "mime_type": "application/pdf",
+                },
+            }
+        ]
+    )
+
+    assert artifacts == [
+        {
+            "file_path": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+            "artifact_kind": "document",
+            "output_port_id": "report",
             "mime_type": "application/pdf",
         }
     ]

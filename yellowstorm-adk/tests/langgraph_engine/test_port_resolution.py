@@ -1258,6 +1258,7 @@ def test_build_task_prompt_structured_output_contract_uses_content_only() -> Non
     )
 
     assert '"content": "artifact payload"' in prompt
+    assert "Every output object must include `artifact_kind`" in prompt
     assert "For data outputs, `content` is the structured JSON payload." in prompt
     assert "For file outputs, `content` is an object" in prompt
     assert "Do not use top-level `data`, `filename`, `file_path`, or `filePath`." in prompt

@@ -1,11 +1,20 @@
 import asyncio
+import sys
+from types import SimpleNamespace
 
 import pytest
+
+sys.modules.setdefault(
+    "src.smart_rag.tools.utilities.connector_tools",
+    SimpleNamespace(import_connector_items_to_workspace_request=lambda *args, **kwargs: None),
+)
 
 from src.langgraph_engine.playbook_tool_factory import (
     ToolResultCollector,
     _collect_connector_response_components,
+    _create_code_interpreter_tool,
     _create_connector_mcp_tools,
+    _select_generated_artifact_output_port,
 )
 
 
@@ -65,6 +74,119 @@ def test_collect_connector_response_components_emits_sources_and_citations() -> 
             },
         },
     ]
+
+
+def test_select_generated_artifact_output_port_falls_back_to_single_file_port() -> None:
+    selected_port = _select_generated_artifact_output_port(
+        [
+            {"id": "summary", "artifact_kind": "text"},
+            {"id": "report", "name": "Report", "artifact_kind": "document"},
+        ],
+        "iteration_summary.xlsx",
+        "data",
+    )
+
+    assert selected_port == {
+        "id": "report",
+        "name": "Report",
+        "artifact_kind": "document",
+    }
+
+
+def test_select_generated_artifact_output_port_matches_filename_to_port_name() -> None:
+    selected_port = _select_generated_artifact_output_port(
+        [
+            {"id": "attestation", "name": "Attestation", "artifact_kind": "document"},
+            {"id": "summary", "name": "Summary", "artifact_kind": "document"},
+        ],
+        "attestation_synthese.pdf",
+        "document",
+    )
+
+    assert selected_port == {
+        "id": "attestation",
+        "name": "Attestation",
+        "artifact_kind": "document",
+    }
+
+
+def test_select_generated_artifact_output_port_falls_back_to_default_port() -> None:
+    selected_port = _select_generated_artifact_output_port(
+        [
+            {"id": "default", "name": "Default", "artifact_kind": "document"},
+            {"id": "secondary", "name": "Secondary", "artifact_kind": "document"},
+        ],
+        "random_file.pdf",
+        "document",
+    )
+
+    assert selected_port == {
+        "id": "default",
+        "name": "Default",
+        "artifact_kind": "document",
+    }
+
+
+def test_code_interpreter_generated_xlsx_emits_explicit_output_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "stdout": "ok",
+                "stderr": "",
+                "time": 1,
+                "status": {"id": 3, "description": "ok"},
+                "generated_files": [
+                    {
+                        "azure_path": "https://example.com/iteration_summary.xlsx",
+                        "filename": "iteration_summary.xlsx",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(CODE_INTERPRETER_BACKEND_URL="https://sandbox.test"),
+    )
+    monkeypatch.setattr("requests.post", lambda *args, **kwargs: FakeResponse())
+
+    collector = ToolResultCollector()
+    tool = _create_code_interpreter_tool(
+        {
+            "agent_params": {
+                "session_id": "session-1",
+                "user_id": "user-1",
+            }
+        },
+        brain_ids=["workspace-1"],
+        code_interpreter_files=[],
+        collector=collector,
+        output_ports=[
+            {"id": "summary", "artifact_kind": "text"},
+            {"id": "report", "name": "Report", "artifact_kind": "document"},
+        ],
+        documents_by_port={},
+        output_workspace_id="workspace-1",
+        workspace_context_mode="resolved_inputs_only",
+    )
+
+    assert tool is not None
+    asyncio.run(tool.ainvoke({"code": "print('ok')", "timeout_seconds": 5}))
+    components = collector.get_and_clear()
+
+    assert components[1] == {
+        "type": "artifact",
+        "data": {
+            "file_path": "https://example.com/iteration_summary.xlsx",
+            "filename": "iteration_summary.xlsx",
+            "artifact_kind": "document",
+            "output_port_id": "report",
+        },
+    }
 
 
 def test_collect_connector_response_components_reuses_connector_references() -> None:
@@ -201,7 +323,12 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
         collector,
     )
 
-    result = asyncio.run(tools[0].ainvoke({"query": "revenue"}))
+    search_tool = next(
+        tool
+        for tool in tools
+        if tool.name == "sharepoint_searchv2_search_document_blocks"
+    )
+    result = asyncio.run(search_tool.ainvoke({"query": "revenue"}))
     components = collector.get_and_clear()
 
     assert "Use citation [1]" in result["text"]
@@ -267,7 +394,12 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
         external_ids=["doc-1", "doc-2"],
     )
 
-    result = asyncio.run(tools[0].ainvoke({"query": "revenue"}))
+    search_tool = next(
+        tool
+        for tool in tools
+        if tool.name == "sharepoint_searchv2_search_document_blocks"
+    )
+    result = asyncio.run(search_tool.ainvoke({"query": "revenue"}))
 
     assert result == {"text": "ok"}
     assert captured["params"] == {"query": "revenue"}
@@ -316,7 +448,12 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
         brain_ids=["agent-brain-1"],
     )
 
-    asyncio.run(tools[0].ainvoke({"query": "revenue"}))
+    search_tool = next(
+        tool
+        for tool in tools
+        if tool.name == "sharepoint_searchv2_search_document_blocks"
+    )
+    asyncio.run(search_tool.ainvoke({"query": "revenue"}))
 
     assert captured["auth_headers"] == {
         "Authorization": "Bearer token",

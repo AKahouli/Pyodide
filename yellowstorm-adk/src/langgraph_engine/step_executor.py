@@ -93,6 +93,9 @@ def _collect_generated_artifacts(
                 "artifact_kind": str(
                     data.get("artifact_kind") or data.get("artifactKind") or ""
                 ).strip(),
+                "output_port_id": str(
+                    data.get("output_port_id") or data.get("outputPortId") or ""
+                ).strip(),
                 "mime_type": str(
                     data.get("mime_type") or data.get("mimeType") or ""
                 ).strip(),
@@ -215,14 +218,13 @@ def _build_task_artifacts_from_structured_outputs(
             )
 
         port_kind = _output_port_kind(port)
-        output_kind = (
-            str(
-                output_spec.get("artifact_kind")
-                or output_spec.get("artifactKind")
-                or port_kind
-            ).strip()
-            or port_kind
-        )
+        output_kind = str(
+            output_spec.get("artifact_kind") or output_spec.get("artifactKind") or ""
+        ).strip()
+        if not output_kind:
+            raise ValueError(
+                f"Structured output for port '{output_port_id}' must include artifact_kind"
+            )
         if port_kind and output_kind and port_kind != output_kind:
             raise ValueError(
                 f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
@@ -357,7 +359,45 @@ def _build_plain_file_artifacts(
 
     artifacts: List[Dict[str, Any]] = []
     used_port_ids: set[str] = set()
+    port_by_id = {_normalize_port_id(port.get("id")): port for port in file_ports}
     for generated_artifact in generated_artifacts:
+        raw_output_port_id = str(generated_artifact.get("output_port_id") or "").strip()
+        explicit_port_id = (
+            _normalize_port_id(raw_output_port_id) if raw_output_port_id else ""
+        )
+        explicit_kind = str(generated_artifact.get("artifact_kind") or "").strip()
+        if explicit_port_id:
+            port = port_by_id.get(explicit_port_id)
+            if port is None:
+                raise ValueError(
+                    f"Generated artifact '{generated_artifact.get('filename') or generated_artifact.get('file_path') or 'unnamed'}' targets unknown output port '{explicit_port_id}'"
+                )
+            port_kind = _output_port_kind(port)
+            if explicit_kind and port_kind and explicit_kind != port_kind:
+                raise ValueError(
+                    f"Generated artifact '{generated_artifact.get('filename') or generated_artifact.get('file_path') or 'unnamed'}' targets output port '{explicit_port_id}' with incompatible kind '{explicit_kind}'"
+                )
+            if explicit_port_id in used_port_ids:
+                logger.warning(
+                    "Generated artifact targets an output port that already has an artifact; dropping duplicate",
+                    output_port_id=explicit_port_id,
+                    filename=str(generated_artifact.get("filename") or ""),
+                    file_path=str(generated_artifact.get("file_path") or ""),
+                )
+                continue
+            used_port_ids.add(explicit_port_id)
+            artifacts.append(
+                {
+                    "port_id": str(port.get("id") or explicit_port_id).strip()
+                    or explicit_port_id,
+                    "artifact_kind": explicit_kind or port_kind or "document",
+                    "url": str(generated_artifact.get("file_path") or ""),
+                    "filename": str(generated_artifact.get("filename") or ""),
+                    "mime_type": str(generated_artifact.get("mime_type") or ""),
+                }
+            )
+            continue
+
         compatible_ports = [
             port
             for port in file_ports
@@ -365,7 +405,7 @@ def _build_plain_file_artifacts(
             and (
                 not _output_port_kind(port)
                 or _output_port_kind(port)
-                == str(generated_artifact.get("artifact_kind") or "").strip()
+                == explicit_kind
             )
         ]
         if len(compatible_ports) != 1:
@@ -951,6 +991,7 @@ async def _execute_step_direct(
             input_files=input_files,
             documents_by_port=tool_scope["documents_by_port"],
             code_interpreter_files=code_interpreter_files,
+            output_ports=task.get("output_ports"),
             output_workspace_id=output_workspace_id,
             workspace_context_mode=tool_scope["workspace_context_mode"],
             step_connector_bindings=task.get("tool_bindings"),

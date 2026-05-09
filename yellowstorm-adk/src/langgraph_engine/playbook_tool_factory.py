@@ -8,6 +8,7 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 import copy
 import json
 import re
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Type
 
 from langchain_core.tools import StructuredTool
@@ -455,6 +456,7 @@ def create_langchain_tools(
     input_files: Optional[List[str]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     code_interpreter_files: Optional[List[Dict[str, str]]] = None,
+    output_ports: Optional[List[Dict[str, Any]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
@@ -580,6 +582,7 @@ def create_langchain_tools(
             brain_ids,
             code_interpreter_files or brain_documents,
             collector,
+            output_ports=output_ports,
             documents_by_port=documents_by_port,
             output_workspace_id=output_workspace_id,
             workspace_context_mode=workspace_context_mode,
@@ -776,6 +779,64 @@ def _infer_generated_artifact_kind(filename: str) -> Optional[str]:
         return None
     return _GENERATED_ARTIFACT_KIND_BY_EXTENSION.get(
         normalized[normalized.rfind(".") :]
+    )
+
+
+def _normalize_port_id(value: Any) -> str:
+    raw = str(value or "default").strip() or "default"
+    if raw.startswith(("in-", "out-")):
+        return raw.split("-", 1)[1] or "default"
+    return raw
+
+
+def _normalize_port_text(value: Any) -> str:
+    return str(value or "").strip().lower().replace(" ", "-")
+
+
+def _select_generated_artifact_output_port(
+    output_ports: Optional[List[Dict[str, Any]]],
+    filename: str,
+    inferred_kind: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Select the declared file-capable output port for a generated file.
+
+    When only one non-text/code port exists, that port wins even if the file
+    extension suggests a different kind. This keeps tool-generated files routed
+    to the task's only file output instead of failing on filename inference.
+    """
+    ports = [
+        port
+        for port in (output_ports or [])
+        if str(port.get("artifact_kind") or "").strip() not in {"text", "code"}
+    ]
+    if not ports:
+        return None
+
+    normalized_kind = str(inferred_kind or "").strip()
+    compatible_ports = [
+        port
+        for port in ports
+        if not normalized_kind
+        or str(port.get("artifact_kind") or "").strip() == normalized_kind
+    ]
+    if len(compatible_ports) == 1:
+        return compatible_ports[0]
+    if len(ports) == 1:
+        return ports[0]
+
+    stem = _normalize_port_text(Path(str(filename or "")).stem)
+    if stem:
+        for port in ports:
+            for field in ("id", "name"):
+                candidate = _normalize_port_text(port.get(field))
+                if candidate and (
+                    candidate == stem or stem in candidate or candidate in stem
+                ):
+                    return port
+
+    return next(
+        (port for port in ports if _normalize_port_id(port.get("id")) == "default"),
+        None,
     )
 
 
@@ -1145,6 +1206,7 @@ def _create_code_interpreter_tool(
     brain_ids: list,
     code_interpreter_files: list,
     collector: ToolResultCollector,
+    output_ports: Optional[List[Dict[str, Any]]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
@@ -1243,15 +1305,26 @@ def _create_code_interpreter_tool(
             # Collect artifact components for generated files
             for gf in result.get("generated_files", []):
                 generated_filename = gf.get("filename", gf.get("name", ""))
+                inferred_kind = (
+                    _infer_generated_artifact_kind(generated_filename) or "document"
+                )
+                selected_port = _select_generated_artifact_output_port(
+                    output_ports,
+                    generated_filename,
+                    inferred_kind,
+                )
                 collector.add_component(
                     "artifact",
                     {
                         "file_path": gf.get("azure_path", gf.get("file_path", "")),
                         "filename": generated_filename,
-                        "artifact_kind": _infer_generated_artifact_kind(
-                            generated_filename
-                        )
-                        or "document",
+                        "artifact_kind": str(
+                            (selected_port or {}).get("artifact_kind") or inferred_kind
+                        ).strip()
+                        or inferred_kind,
+                        "output_port_id": str(
+                            (selected_port or {}).get("id") or ""
+                        ).strip(),
                     },
                 )
 

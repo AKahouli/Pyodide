@@ -735,33 +735,40 @@ def _extract_artifacts_from_components(
             mime_type = str(data.get("mime_type") or data.get("mimeType") or "").strip()
             if not file_path or not filename:
                 continue
-            preferred_kind = (
-                str(
-                    data.get("artifact_kind")
-                    or data.get("artifactKind")
-                    or _infer_artifact_kind(filename, mime_type)
-                    or "document"
-                ).strip()
-                or "document"
-            )
+            explicit_port_id = str(
+                data.get("output_port_id") or data.get("outputPortId") or ""
+            ).strip()
+            explicit_kind = str(
+                data.get("artifact_kind") or data.get("artifactKind") or ""
+            ).strip()
+            fallback_kind = _infer_artifact_kind(filename, mime_type) or "document"
+            preferred_kind = explicit_kind or ("" if explicit_port_id else fallback_kind)
             selected_port = _resolve_output_port(
                 task_config,
                 output_ports,
                 preferred_kind=preferred_kind,
-                explicit_port_id=str(
-                    data.get("output_port_id") or data.get("outputPortId") or ""
-                ).strip(),
-                filename=filename,
+                explicit_port_id=explicit_port_id,
+                filename="" if explicit_port_id else filename,
+                skip_if_no_compatible=not explicit_port_id,
                 component_label=f"artifact '{filename or file_path or 'unnamed'}'",
             )
-            port_id = selected_port.get("id", "default") if selected_port else "default"
-            artifact_kind = (
-                str(
-                    selected_port.get("artifact_kind")
-                    if selected_port
-                    else preferred_kind
+            if selected_port is None:
+                logger.warning(
+                    "Generated artifact has no compatible declared output port; skipping artifact",
+                    task_id=str(task_config.get("id") or "unknown"),
+                    filename=filename,
+                    file_path=file_path,
+                    inferred_kind=fallback_kind,
                 )
-                or preferred_kind
+                continue
+            port_id = selected_port.get("id", "default") if selected_port else "default"
+            port_kind = str(
+                selected_port.get("artifact_kind") if selected_port else ""
+            ).strip()
+            artifact_kind = (
+                explicit_kind
+                or port_kind
+                or fallback_kind
             )
             artifacts.append(
                 {
@@ -1783,6 +1790,7 @@ class DynamicGraphBuilder:
                         input_files=input_files,
                         documents_by_port=tool_scope["documents_by_port"],
                         code_interpreter_files=code_interpreter_files,
+                        output_ports=task.get("output_ports"),
                         output_workspace_id=output_workspace_id,
                         workspace_context_mode=tool_scope["workspace_context_mode"],
                         step_connector_bindings=task.get("tool_bindings"),

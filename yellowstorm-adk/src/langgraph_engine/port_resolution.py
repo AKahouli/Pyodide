@@ -1328,6 +1328,7 @@ def build_task_prompt(
                     "Rules:\n"
                     "- `display_text` is the final user-visible answer.\n"
                     "- Use only declared `output_port_id` values.\n"
+                    "- Every output object must include `artifact_kind`; it must match the declared port kind.\n"
                     "- Every output object must use `content` for its payload.\n"
                     "- For text/code outputs, `content` is the final downstream string.\n"
                     "- For data outputs, `content` is the structured JSON payload.\n"

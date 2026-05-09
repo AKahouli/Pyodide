@@ -132,6 +132,85 @@ def test_extract_artifacts_routes_explicit_same_kind_outputs_by_port_id() -> Non
     ]
 
 
+def test_extract_artifacts_prefers_explicit_port_over_file_classification() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "output_port_id": "report",
+                    "file_path": "https://example.com/report.xlsx",
+                    "filename": "report.xlsx",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                },
+            },
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "report", "name": "Report", "artifact_kind": "document"},
+                {"id": "spreadsheet", "name": "Spreadsheet", "artifact_kind": "data"},
+            ],
+        },
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "report",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.xlsx",
+            "filename": "report.xlsx",
+            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+    ]
+
+
+def test_extract_artifacts_skips_untagged_xlsx_without_compatible_port() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
+            {
+                "type": "artifact",
+                "data": {
+                    "file_path": "https://example.com/leads.xlsx",
+                    "filename": "Leads.xlsx",
+                    "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                },
+            },
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "summary", "name": "Summary", "artifact_kind": "text"},
+            ],
+        },
+    )
+
+    assert artifacts == []
+
+
+def test_extract_artifacts_rejects_explicit_kind_mismatch() -> None:
+    with pytest.raises(ValueError, match="incompatible kind 'data'"):
+        _extract_artifacts_from_components(
+            [
+                {
+                    "type": "artifact",
+                    "data": {
+                        "artifact_kind": "data",
+                        "output_port_id": "report",
+                        "file_path": "https://example.com/report.xlsx",
+                        "filename": "report.xlsx",
+                    },
+                },
+            ],
+            {
+                "id": "task-1",
+                "output_ports": [
+                    {"id": "report", "name": "Report", "artifact_kind": "document"},
+                ],
+            },
+        )
+
+
 def test_extract_artifacts_routes_same_kind_outputs_by_filename() -> None:
     artifacts = _extract_artifacts_from_components(
         [
