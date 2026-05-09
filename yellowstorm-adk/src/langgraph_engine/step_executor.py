@@ -161,12 +161,10 @@ def _find_generated_artifact_match(
     generated_artifacts: List[Dict[str, Any]],
     used_indexes: set[int],
 ) -> Optional[Dict[str, Any]]:
-    requested_filename = str(output_spec.get("filename") or "").strip().lower()
-    requested_file_path = (
-        str(output_spec.get("file_path") or output_spec.get("filePath") or "")
-        .strip()
-        .lower()
-    )
+    content = output_spec.get("content")
+    metadata = content if isinstance(content, dict) else {}
+    requested_filename = str(metadata.get("filename") or "").strip().lower()
+    requested_file_path = str(metadata.get("file_path") or "").strip().lower()
 
     for index, artifact in enumerate(generated_artifacts):
         if index in used_indexes:
@@ -230,31 +228,33 @@ def _build_task_artifacts_from_structured_outputs(
                 f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
             )
 
-        # Structured outputs are not uniformly file-backed: text/code/data
-        # should be emitted inline, while document/image-style outputs must
-        # reference a generated artifact.
+        content = output_spec.get("content")
+
+        # The model-facing schema always uses `content`; the runtime converts
+        # it back into the existing internal artifact shape for each kind.
         if output_kind in {"text", "code"}:
-            content = str(output_spec.get("content") or "").strip()
-            if not content:
+            text_content = str(content or "").strip()
+            if not text_content:
                 continue
             artifacts.append(
                 {
                     "port_id": str(port.get("id") or output_port_id),
                     "artifact_kind": output_kind,
-                    "content": content,
+                    "content": text_content,
                 }
             )
             continue
 
         if output_kind == "data":
-            data_payload = output_spec.get("data")
-            if data_payload is None:
-                continue
+            if content is None:
+                raise ValueError(
+                    f"Structured output for port '{output_port_id}' must include content"
+                )
             artifacts.append(
                 {
                     "port_id": str(port.get("id") or output_port_id),
                     "artifact_kind": output_kind,
-                    "data": data_payload,
+                    "data": content,
                 }
             )
             continue
@@ -263,10 +263,10 @@ def _build_task_artifacts_from_structured_outputs(
             output_spec, generated_artifacts, used_generated_indexes
         )
         if matched_artifact is None:
+            metadata = content if isinstance(content, dict) else {}
             requested_name = (
-                output_spec.get("filename")
-                or output_spec.get("file_path")
-                or output_spec.get("filePath")
+                metadata.get("filename")
+                or metadata.get("file_path")
                 or output_port_id
             )
             raise ValueError(

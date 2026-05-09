@@ -248,7 +248,7 @@ async def test_execute_evaluation_task_uses_prompt_registry_and_emits_data_artif
     assert result["artifacts"][0]["data"]["score"] == 88
 
 
-def test_task_requires_structured_output_synthesis_for_duplicate_kinds() -> None:
+def test_task_requires_structured_output_synthesis_for_multiple_ports() -> None:
     assert _task_requires_structured_output_synthesis(
         {
             "output_ports": [
@@ -274,7 +274,7 @@ def test_determine_output_mode_prefers_plain_for_single_text_output() -> None:
     ) == "plain"
 
 
-def test_determine_output_mode_uses_structured_for_duplicate_text_ports() -> None:
+def test_determine_output_mode_uses_structured_for_multiple_text_ports() -> None:
     assert _determine_output_mode(
         {
             "output_ports": [
@@ -285,7 +285,7 @@ def test_determine_output_mode_uses_structured_for_duplicate_text_ports() -> Non
     ) == "structured_final_response"
 
 
-def test_determine_output_mode_uses_structured_for_duplicate_document_ports() -> None:
+def test_determine_output_mode_uses_structured_for_multiple_document_ports() -> None:
     assert _determine_output_mode(
         {
             "output_ports": [
@@ -356,12 +356,12 @@ def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_fi
             {
                 "output_port_id": "client_pdf",
                 "artifact_kind": "document",
-                "filename": "client-report.pdf",
+                "content": {"filename": "client-report.pdf"},
             },
             {
                 "output_port_id": "slides",
                 "artifact_kind": "document",
-                "filename": "briefing.pptx",
+                "content": {"filename": "briefing.pptx"},
             },
         ],
         [
@@ -439,7 +439,7 @@ def test_build_task_artifacts_from_structured_outputs_routes_inline_data() -> No
             {
                 "output_port_id": "metrics",
                 "artifact_kind": "data",
-                "data": {"score": 88, "status": "ok"},
+                "content": {"score": 88, "status": "ok"},
             },
         ],
         [],
@@ -456,6 +456,85 @@ def test_build_task_artifacts_from_structured_outputs_routes_inline_data() -> No
             "artifact_kind": "data",
             "data": {"score": 88, "status": "ok"},
         },
+    ]
+
+
+def test_build_task_artifacts_from_structured_outputs_rejects_old_data_field() -> None:
+    with pytest.raises(ValueError, match="must include content"):
+        _build_task_artifacts_from_structured_outputs(
+            {
+                "output_ports": [
+                    {"id": "metrics", "artifact_kind": "data"},
+                ]
+            },
+            [
+                {
+                    "output_port_id": "metrics",
+                    "artifact_kind": "data",
+                    "data": {"score": 88, "status": "ok"},
+                },
+            ],
+            [],
+        )
+
+
+def test_build_task_artifacts_from_structured_outputs_rejects_old_file_fields() -> None:
+    with pytest.raises(ValueError, match="references unknown artifact 'pdf'"):
+        _build_task_artifacts_from_structured_outputs(
+            {
+                "output_ports": [
+                    {"id": "pdf", "artifact_kind": "document"},
+                ]
+            },
+            [
+                {
+                    "output_port_id": "pdf",
+                    "artifact_kind": "document",
+                    "filename": "report.pdf",
+                    "filePath": "https://example.com/report.pdf",
+                },
+            ],
+            [
+                {
+                    "file_path": "https://example.com/report.pdf",
+                    "filename": "report.pdf",
+                    "mime_type": "application/pdf",
+                }
+            ],
+        )
+
+
+def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_content_file_path() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "pdf", "artifact_kind": "document"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "pdf",
+                "artifact_kind": "document",
+                "content": {"file_path": "https://example.com/report.pdf"},
+            },
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "pdf",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+            "mime_type": "application/pdf",
+        }
     ]
 
 
@@ -576,7 +655,7 @@ def test_finalize_task_outputs_parses_structured_text_and_data_outputs() -> None
             ],
             "declared_output_ports": ["summary", "metrics"],
         },
-        '{"display_text": "Done", "outputs": [{"output_port_id": "summary", "artifact_kind": "text", "content": "Short"}, {"output_port_id": "metrics", "artifact_kind": "data", "data": {"score": 88, "status": "ok"}}]}',
+        '{"display_text": "Done", "outputs": [{"output_port_id": "summary", "artifact_kind": "text", "content": "Short"}, {"output_port_id": "metrics", "artifact_kind": "data", "content": {"score": 88, "status": "ok"}}]}',
         [],
         "structured_final_response",
     )
@@ -601,7 +680,7 @@ def test_finalize_task_outputs_parses_structured_file_outputs() -> None:
             ],
             "declared_output_ports": ["pdf", "slides"],
         },
-        '{"display_text": "Files ready", "outputs": [{"output_port_id": "pdf", "artifact_kind": "document", "filename": "report.pdf"}, {"output_port_id": "slides", "artifact_kind": "document", "filename": "deck.pptx"}]}',
+        '{"display_text": "Files ready", "outputs": [{"output_port_id": "pdf", "artifact_kind": "document", "content": {"filename": "report.pdf"}}, {"output_port_id": "slides", "artifact_kind": "document", "content": {"filename": "deck.pptx"}}]}',
         [
             {
                 "type": "artifact",

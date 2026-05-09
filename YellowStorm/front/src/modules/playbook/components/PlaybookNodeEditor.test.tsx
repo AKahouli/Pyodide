@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import type { PlaybookTask } from '../types';
@@ -142,6 +142,24 @@ const genericTask: PlaybookTask = {
   evaluationConfig: undefined,
 };
 
+const iteratorTask: PlaybookTask = {
+  ...baseTask,
+  taskType: 'iterator',
+  title: 'Loop items',
+  description: 'Process each item',
+  inputPorts: [{ id: 'legacy', name: 'Legacy', artifactKind: 'text', required: false }],
+  outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
+  iteratorConfig: {
+    source: '{{items}}',
+    mode: 'item',
+    batchSize: 10,
+    itemVariable: 'item',
+    outputVariable: 'processed_items',
+    errorStrategy: 'stop',
+  },
+  evaluationConfig: undefined,
+};
+
 describe('PlaybookNodeEditor', () => {
   it('does not fetch the evaluation baseline when task is null', () => {
     expect(() => {
@@ -239,6 +257,65 @@ describe('PlaybookNodeEditor', () => {
       );
       expect(hasPlaceholder).toBe(false);
     });
+  });
+
+  it('locks iterator output ports to the canonical results data port', async () => {
+    const { container } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={iteratorTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('nodeEditor.iteratorOutputPortHint')).toBeInTheDocument();
+    });
+
+    expect(screen.getByDisplayValue('Results')).toBeDisabled();
+    const disabledSelects = Array.from(container.querySelectorAll('select')).filter((select) => (select as HTMLSelectElement).disabled);
+    expect(disabledSelects.length).toBeGreaterThan(0);
+    expect(screen.queryByText('ports.addOutput')).not.toBeInTheDocument();
+  });
+
+  it('saves canonical iterator ports when switching node type to iterator', async () => {
+    vi.useFakeTimers();
+    const onSave = vi.fn();
+    const { container } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={onSave}
+      />,
+    );
+
+    const nodeTypeSelect = container.querySelector('select') as HTMLSelectElement;
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    act(() => {
+      fireEvent.change(nodeTypeSelect, { target: { value: 'iterator' } });
+    });
+
+    act(() => {
+      vi.runAllTimers();
+    });
+
+    expect(onSave).toHaveBeenCalledWith(
+      'task-1',
+      expect.objectContaining({
+        taskType: 'iterator',
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+      }),
+    );
+
+    vi.useRealTimers();
   });
 
 });

@@ -900,6 +900,83 @@ def _build_default_text_artifact(
     }
 
 
+def _build_iterator_output_artifacts(
+    task_id: str,
+    task_config: TaskConfig,
+    aggregated: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    output_ports = list(task_config.get("output_ports") or [])
+    if not output_ports:
+        return []
+
+    selected_port: Dict[str, Any] | None = None
+    if len(output_ports) == 1:
+        selected_port = output_ports[0]
+    else:
+        selected_port = next(
+            (
+                port
+                for port in output_ports
+                if _normalize_port_id(port.get("id")) == "default"
+            ),
+            None,
+        )
+
+    if selected_port is None:
+        raise ValueError(
+            f"Iterator task '{task_id}' declares multiple output ports but no single routable default port"
+        )
+
+    port_id = _normalize_port_id(selected_port.get("id"))
+    artifact_kind = str(selected_port.get("artifact_kind") or "data").strip() or "data"
+    if artifact_kind != "data":
+        raise ValueError(
+            f"Iterator task '{task_id}' output port '{port_id}' must use artifact_kind 'data'"
+        )
+
+    projected_output: List[Dict[str, Any]] = []
+    for iteration in aggregated:
+        if not isinstance(iteration, dict):
+            continue
+
+        projected_iteration: Dict[str, Any] = {
+            "index": iteration.get("index"),
+            "item_preview": iteration.get("item_preview"),
+            "status": iteration.get("status"),
+            "output": iteration.get("output", ""),
+        }
+
+        if "error" in iteration:
+            projected_iteration["error"] = iteration.get("error")
+        if iteration.get("artifacts"):
+            projected_iteration["artifacts"] = iteration.get("artifacts")
+
+        for key, value in iteration.items():
+            if key in {
+                "index",
+                "item_preview",
+                "status",
+                "output",
+                "error",
+                "artifacts",
+                "child_results",
+            }:
+                continue
+            projected_iteration[key] = value
+
+        projected_output.append(projected_iteration)
+
+    return [
+        {
+            "port_id": port_id,
+            "artifact_kind": "data",
+            "data": projected_output,
+            "source_task_id": task_id,
+            "source_output_port_id": port_id,
+        }
+    ]
+
+
 class DynamicGraphBuilder:
     """Builds dynamic execution graphs from playbook task definitions."""
 
@@ -1169,6 +1246,11 @@ class DynamicGraphBuilder:
                         })
 
                 duration_ms = int((time.time() - start_time) * 1000)
+                iterator_artifacts = _build_iterator_output_artifacts(
+                    task_id,
+                    task_config,
+                    aggregated,
+                )
                 result_payload = {
                     "task_id": task_id,
                     "status": "completed",
@@ -1179,11 +1261,11 @@ class DynamicGraphBuilder:
                     "tool_trace": [],
                     "llm_prompt_trace": [],
                     "semantic_match": None,
-                    "artifacts": [],
+                    "artifacts": iterator_artifacts,
                     "iterator_iterations": aggregated,
                 }
                 await _push_step_update("completed", result=result_payload)
-                return {
+                state_update = {
                     "completed_task_ids": [task_id],
                     "results": {
                         task_id: result_payload,
@@ -1193,6 +1275,12 @@ class DynamicGraphBuilder:
                         task_config.get("output_key") or output_variable: aggregated,
                     },
                 }
+                if iterator_artifacts:
+                    state_update["artifacts_by_port"] = {
+                        f"{task_id}:{_normalize_port_id(artifact.get('port_id'))}": [artifact]
+                        for artifact in iterator_artifacts
+                    }
+                return state_update
 
             # === ACTION MODE: bypass agent execution ===
             if execution_mode_value == "action":

@@ -3,6 +3,7 @@ import { RefreshCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookNodeData } from '../types';
+import { PORT_COLORS } from '../utils/port-colors';
 
 export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   const node = data as PlaybookNodeData & { childTaskIds?: string[] };
@@ -23,6 +24,21 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
           aria-label={port.name}
         />
       ))}
+      {(node.outputPorts || []).map((port) => (
+        <div key={port.id} className="absolute right-0 top-20 z-10 flex -translate-y-1/2 items-center gap-2">
+          <div className="rounded-full border bg-background/90 px-2 py-0.5 text-[11px] font-medium text-foreground shadow-sm">
+            {port.name}
+          </div>
+          <Handle
+            id={port.id}
+            type="source"
+            position={Position.Right}
+            className="!h-3 !w-3 !border-2 !border-background"
+            style={{ top: 0, background: PORT_COLORS[port.artifactKind]?.raw }}
+            aria-label={port.name}
+          />
+        </div>
+      ))}
       <div className="flex items-center justify-between border-b border-border/80 bg-background/70 px-4 py-2 backdrop-blur-sm">
         <div className="flex items-center gap-2">
           <span className="flex h-7 w-7 items-center justify-center rounded-md bg-primary/15 text-primary">
@@ -30,7 +46,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
           </span>
           <div>
             <div className="text-sm font-semibold text-foreground">{node.title || t('nodeEditor.nodeTypeIterator')}</div>
-            <div className="text-xs text-muted-foreground">{t('nodeEditor.iteratorPortHint')}</div>
+            <div className="text-xs text-muted-foreground">{t('nodeEditor.iteratorOutputPortHint')}</div>
           </div>
         </div>
         <div className="flex items-center gap-2">

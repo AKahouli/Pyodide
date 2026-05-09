@@ -2,6 +2,7 @@ import asyncio
 import sys
 from types import SimpleNamespace
 
+import pytest
 import src.langgraph_engine.graph_builder as graph_builder_module
 from src.langgraph_engine.graph_builder import (
     DynamicGraphBuilder,
@@ -1103,6 +1104,9 @@ def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> 
                 "errorStrategy": "stop",
             }
         },
+        "output_ports": [
+            {"id": "results", "name": "Results", "artifact_kind": "data"},
+        ],
     }
     child = {
         "id": "child-1",
@@ -1167,6 +1171,48 @@ def test_iterator_task_node_executes_direct_child_for_each_item(monkeypatch) -> 
     assert result["results"]["iterator-1"]["iterator_iterations"][0]["item_preview"] == "a"
     assert "child-1" not in result["results"]
     assert result["task_outputs"]["processed_items"] == aggregate
+    projected_results = [
+        {
+            "index": 0,
+            "item_preview": "a",
+            "current_item": "a",
+            "status": "completed",
+            "output": "processed-1",
+            "artifacts": [
+                {"port_id": "default", "artifact_kind": "text", "content": "processed-1"}
+            ],
+        },
+        {
+            "index": 1,
+            "item_preview": "b",
+            "current_item": "b",
+            "status": "completed",
+            "output": "processed-2",
+            "artifacts": [
+                {"port_id": "default", "artifact_kind": "text", "content": "processed-2"}
+            ],
+        },
+    ]
+    assert result["results"]["iterator-1"]["artifacts"] == [
+        {
+            "port_id": "results",
+            "artifact_kind": "data",
+            "data": projected_results,
+            "source_task_id": "iterator-1",
+            "source_output_port_id": "results",
+        }
+    ]
+    assert result["artifacts_by_port"] == {
+        "iterator-1:results": [
+            {
+                "port_id": "results",
+                "artifact_kind": "data",
+                "data": projected_results,
+                "source_task_id": "iterator-1",
+                "source_output_port_id": "results",
+            }
+        ]
+    }
     assert len(prompts) == 2
     assert "Iterator context JSON:" in prompts[0]
     assert '"iteration_index": 0' in prompts[0]
@@ -1288,6 +1334,162 @@ def test_iterator_task_node_continue_strategy_records_failed_iteration(monkeypat
     assert aggregate[0]["output"] == "processed"
     assert aggregate[1]["error"] == "child boom"
     assert calls == 2
+
+
+def test_iterator_task_node_rejects_ambiguous_output_ports(monkeypatch) -> None:
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    iterator = {
+        "id": "iterator-1",
+        "title": "Iterator",
+        "description": "Loop items",
+        "task_type": "iterator",
+        "task_metadata": {
+            "iterator": {
+                "source": "items",
+                "mode": "item",
+                "itemVariable": "current_item",
+                "outputVariable": "processed_items",
+                "errorStrategy": "stop",
+            }
+        },
+        "output_ports": [
+            {"id": "results", "name": "Results", "artifact_kind": "data"},
+            {"id": "failures", "name": "Failures", "artifact_kind": "data"},
+        ],
+    }
+    node = builder._create_task_node("iterator-1", iterator)
+
+    with pytest.raises(ValueError, match="multiple output ports"):
+        asyncio.run(
+            node(
+                {
+                    "agents": {},
+                    "playbook_id": "pb-1",
+                    "thread_id": "th-1",
+                    "tasks": [iterator],
+                    "edges": [],
+                    "results": {},
+                    "task_outputs": {"items": ["a"]},
+                    "workspace_context": [],
+                    "execution_mode": "live",
+                    "validated_replays_by_task": {},
+                    "step_execution_modes": {},
+                    "prompt_overrides": {},
+                    "query": "",
+                    "current_task_ids": [],
+                    "completed_task_ids": [],
+                    "status": "in_progress",
+                    "error": None,
+                    "interrupt_payload": None,
+                    "node_timings": {},
+                    "evaluation_user_id": "unknown",
+                    "artifacts_by_port": {},
+                    "node_inputs_by_port": {},
+                },
+                {},
+            )
+        )
+
+
+def test_iterator_task_node_uses_default_output_port_when_multiple_exist() -> None:
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    iterator = {
+        "id": "iterator-1",
+        "title": "Iterator",
+        "description": "Loop items",
+        "task_type": "iterator",
+        "task_metadata": {
+            "iterator": {
+                "source": "items",
+                "mode": "item",
+                "itemVariable": "current_item",
+                "outputVariable": "processed_items",
+                "errorStrategy": "stop",
+            }
+        },
+        "output_ports": [
+            {"id": "results", "name": "Results", "artifact_kind": "data"},
+            {"id": "default", "name": "Default", "artifact_kind": "data"},
+        ],
+    }
+    node = builder._create_task_node("iterator-1", iterator)
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {},
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+                "tasks": [iterator],
+                "edges": [],
+                "results": {},
+                "task_outputs": {"items": ["a"]},
+                "workspace_context": [],
+                "execution_mode": "live",
+                "validated_replays_by_task": {},
+                "step_execution_modes": {},
+                "prompt_overrides": {},
+                "query": "",
+                "current_task_ids": [],
+                "completed_task_ids": [],
+                "status": "in_progress",
+                "error": None,
+                "interrupt_payload": None,
+                "node_timings": {},
+                "evaluation_user_id": "unknown",
+                "artifacts_by_port": {},
+                "node_inputs_by_port": {},
+            },
+            {},
+        )
+    )
+
+    aggregate = result["results"]["iterator-1"]["output"]
+    assert result["results"]["iterator-1"]["artifacts"] == [
+        {
+            "port_id": "default",
+            "artifact_kind": "data",
+            "data": [
+                {
+                    "index": 0,
+                    "item_preview": "a",
+                    "current_item": "a",
+                    "status": "completed",
+                    "output": "",
+                }
+            ],
+            "source_task_id": "iterator-1",
+            "source_output_port_id": "default",
+        }
+    ]
+    assert result["artifacts_by_port"] == {
+        "iterator-1:default": [
+            {
+                "port_id": "default",
+                "artifact_kind": "data",
+                "data": [
+                    {
+                        "index": 0,
+                        "item_preview": "a",
+                        "current_item": "a",
+                        "status": "completed",
+                        "output": "",
+                    }
+                ],
+                "source_task_id": "iterator-1",
+                "source_output_port_id": "default",
+            }
+        ]
+    }
 
 
 def test_top_level_graph_excludes_iterator_children() -> None:

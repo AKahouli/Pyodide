@@ -17,7 +17,8 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
-import { migrateEdge } from '../utils/migrate-ports';
+import { migrateEdge, remapIteratorEdgePorts } from '../utils/migrate-ports';
+import { normalizeIteratorTaskPorts } from '../utils/iterator-ports';
 import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
 const TRIGGER_NODE_ID = '__trigger__';
@@ -54,6 +55,7 @@ function getIteratorChildTasks(tasks: PlaybookTask[], iteratorId: string): Playb
 }
 
 function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask[]): Node {
+  const normalizedTask = normalizeIteratorTaskPorts(task);
   const bounds = childTasks.reduce(
     (acc, child) => {
       const relativeX = child.positionX - task.positionX;
@@ -72,10 +74,10 @@ function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask
   const height = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING);
 
   return {
-    id: task.id,
+    id: normalizedTask.id,
     type: 'playbookIteratorContainer',
-    position: { x: task.positionX, y: task.positionY },
-    data: { ...task, width, height, childTaskIds: childTasks.map((child) => child.id) } as PlaybookNodeData,
+    position: { x: normalizedTask.positionX, y: normalizedTask.positionY },
+    data: { ...normalizedTask, width, height, childTaskIds: childTasks.map((child) => child.id) } as PlaybookNodeData,
     style: { width, height },
   };
 }
@@ -166,22 +168,26 @@ function nodesToTasks(nodes: Node[]): PlaybookTask[] {
   });
 }
 
-function playbookEdgesToFlowEdges(edges: PlaybookEdge[]): Edge[] {
+function playbookEdgesToFlowEdges(edges: PlaybookEdge[], tasks: PlaybookTask[]): Edge[] {
   return edges
     .filter((edge) => edge.sourceId !== edge.targetId)
-    .map((edge) => ({
-    id: edge.id,
-    source: edge.sourceId,
-    target: edge.targetId,
-    sourceHandle: edge.sourceOutputPortId || undefined,
-    targetHandle: edge.targetInputPortId || undefined,
-    type: 'animated',
-    data: {
-      sourceOutputPortId: edge.sourceOutputPortId || 'default',
-      targetInputPortId: edge.targetInputPortId || 'default',
-      isTypeMatch: undefined,
-    },
-  }));
+    .map((edge) => {
+      const normalizedEdge = remapIteratorEdgePorts(edge, tasks);
+
+      return {
+        id: normalizedEdge.id,
+        source: normalizedEdge.sourceId,
+        target: normalizedEdge.targetId,
+        sourceHandle: normalizedEdge.sourceOutputPortId || undefined,
+        targetHandle: normalizedEdge.targetInputPortId || undefined,
+        type: 'animated',
+        data: {
+          sourceOutputPortId: normalizedEdge.sourceOutputPortId || 'default',
+          targetInputPortId: normalizedEdge.targetInputPortId || 'default',
+          isTypeMatch: undefined,
+        },
+      };
+    });
 }
 
 function flowEdgesToPlaybookEdges(edges: Edge[]): PlaybookEdge[] {
@@ -321,7 +327,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     if (syncedKeyRef.current !== syncKey) {
       syncedKeyRef.current = syncKey;
       setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
-      setEdges(playbookEdgesToFlowEdges(playbook.edges));
+      setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
     }
   }, [playbook]);
 
@@ -330,7 +336,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     if (!playbook || canvasSyncVersion === 0) return;
     syncedKeyRef.current = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
     setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
-    setEdges(playbookEdgesToFlowEdges(playbook.edges));
+    setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
   }, [canvasSyncVersion, playbook]);
 
   // Keep node metadata in sync when task data changes locally in the store

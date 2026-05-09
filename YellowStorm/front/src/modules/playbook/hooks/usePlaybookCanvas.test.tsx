@@ -285,6 +285,51 @@ describe('usePlaybookCanvas', () => {
     ]);
   });
 
+  it('persists iterator results port connections for downstream data inputs', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'iterator-1',
+          taskType: 'iterator',
+          outputPorts: [
+            { id: 'results', name: 'Results', artifactKind: 'data' },
+          ],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          inputPorts: [
+            { id: 'metrics', name: 'Metrics', artifactKind: 'data', required: false },
+          ],
+        }),
+      ],
+      edges: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: 'iterator-1',
+        target: 'task-2',
+        sourceHandle: 'results',
+        targetHandle: 'metrics',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-iterator-1-results-task-2-metrics',
+        sourceId: 'iterator-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'results',
+        targetInputPortId: 'metrics',
+      },
+    ]);
+  });
+
   it('removes node and linked edges and syncs both stores', () => {
     const { result } = renderHook(() => usePlaybookCanvas());
 

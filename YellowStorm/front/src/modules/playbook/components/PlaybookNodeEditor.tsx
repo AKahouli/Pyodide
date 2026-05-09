@@ -33,6 +33,11 @@ import type {
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
 import { getPortColor } from '../utils/port-colors';
+import {
+  DEFAULT_ITERATOR_INPUT_PORT,
+  getDefaultIteratorInputPorts,
+  getDefaultIteratorOutputPorts,
+} from '../utils/iterator-ports';
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 720;
@@ -66,13 +71,6 @@ const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
   itemVariable: 'item',
   outputVariable: 'processed_items',
   errorStrategy: 'stop',
-};
-
-const DEFAULT_ITERATOR_INPUT_PORT: TaskInputPort = {
-  id: 'items',
-  name: 'Items',
-  artifactKind: 'data',
-  required: false,
 };
 
 const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
@@ -114,9 +112,14 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
     notifyOnComplete: task.notifyOnComplete ?? false,
     notifyEmails: task.notifyEmails ?? [],
     inputPorts:
-      task.inputPorts?.map((p) => ({ ...p })) ??
-      [nodeType === 'iterator' ? { ...DEFAULT_ITERATOR_INPUT_PORT } : { id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }],
-    outputPorts: task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }],
+      nodeType === 'iterator'
+        ? getDefaultIteratorInputPorts()
+        : task.inputPorts?.map((p) => ({ ...p })) ??
+          [{ id: 'default', name: 'Input', artifactKind: 'text' as ArtifactKind, required: false }],
+    outputPorts:
+      nodeType === 'iterator'
+        ? getDefaultIteratorOutputPorts()
+        : task.outputPorts?.map((p) => ({ ...p })) ?? [{ id: 'default', name: 'Output', artifactKind: 'text' as ArtifactKind }],
     evaluationConfig: task.evaluationConfig
       ? { ...task.evaluationConfig, weights: { ...task.evaluationConfig.weights } }
       : { ...DEFAULT_EVALUATION_CONFIG, weights: { ...DEFAULT_EVALUATION_CONFIG.weights } },
@@ -129,7 +132,6 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
 }
 
 function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
-  const iteratorInputPorts = [{ ...DEFAULT_ITERATOR_INPUT_PORT }];
   return {
     title: draft.title,
     description: draft.description,
@@ -143,8 +145,8 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     enabled: draft.enabled,
     notifyOnComplete: draft.notifyOnComplete,
     notifyEmails: draft.notifyOnComplete ? draft.notifyEmails : [],
-    inputPorts: draft.nodeType === 'iterator' ? iteratorInputPorts : [...draft.inputPorts],
-    outputPorts: [...draft.outputPorts],
+    inputPorts: draft.nodeType === 'iterator' ? getDefaultIteratorInputPorts() : [...draft.inputPorts],
+    outputPorts: draft.nodeType === 'iterator' ? getDefaultIteratorOutputPorts() : [...draft.outputPorts],
     evaluationConfig: draft.evaluationConfig,
     iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
@@ -567,7 +569,8 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   patch.executionMode = 'agent';
                   patch.assignedAgentId = null;
                   patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
-                  patch.inputPorts = draft.inputPorts.length > 0 ? draft.inputPorts : [{ ...DEFAULT_ITERATOR_INPUT_PORT }];
+                  patch.inputPorts = getDefaultIteratorInputPorts();
+                  patch.outputPorts = getDefaultIteratorOutputPorts();
                 } else {
                   patch.executionMode = 'agent';
                   patch.iteratorConfig = null;
@@ -961,20 +964,25 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
               <h4 className="text-sm font-medium">{t('ports.outputPorts')}</h4>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 px-2 text-xs"
-                onClick={() => {
-                  const id = `out-${crypto.randomUUID().slice(0, 8)}`;
-                  updateDraft({ outputPorts: [...draft.outputPorts, { id, name: 'Output', artifactKind: 'text' }] });
-                }}
-              >
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                {t('ports.addOutput')}
-              </Button>
+              {draft.nodeType !== 'iterator' && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    const id = `out-${crypto.randomUUID().slice(0, 8)}`;
+                    updateDraft({ outputPorts: [...draft.outputPorts, { id, name: 'Output', artifactKind: 'text' }] });
+                  }}
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  {t('ports.addOutput')}
+                </Button>
+              )}
             </div>
+            {draft.nodeType === 'iterator' && (
+              <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorOutputPortHint')}</p>
+            )}
             {draft.outputPorts.length === 0 && (
               <p className="text-xs text-muted-foreground">No output ports defined.</p>
             )}
@@ -984,6 +992,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 <input
                   type="text"
                   value={port.name}
+                  disabled={draft.nodeType === 'iterator'}
                   onChange={(e) => {
                     const updated = [...draft.outputPorts];
                     updated[idx] = { ...updated[idx], name: e.target.value };
@@ -994,6 +1003,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 />
                 <select
                   value={port.artifactKind}
+                  disabled={draft.nodeType === 'iterator'}
                   onChange={(e) => {
                     const updated = [...draft.outputPorts];
                     updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
@@ -1010,7 +1020,12 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   variant="ghost"
                   size="sm"
                   className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive shrink-0"
-                  onClick={() => updateDraft({ outputPorts: draft.outputPorts.filter((_, i) => i !== idx) })}
+                  onClick={() => {
+                    if (draft.nodeType === 'iterator') {
+                      return;
+                    }
+                    updateDraft({ outputPorts: draft.outputPorts.filter((_, i) => i !== idx) });
+                  }}
                   title={t('ports.removePort')}
                 >
                   <Trash2 className="h-3.5 w-3.5" />

@@ -175,6 +175,7 @@
   "nodeEditor.nodeTypeEvaluation": "Évaluation",
   "nodeEditor.iteratorSource": "Collection source",
   "nodeEditor.iteratorPortHint": "Recommandé : connectez un port d'entrée normal. Ce champ source sert uniquement de solution de secours héritée ou avancée.",
+  "nodeEditor.iteratorOutputPortHint": "L'itérateur expose les résultats collectés via un port de sortie data fixe.",
   "nodeEditor.iteratorMode": "Mode d'itération",
   "nodeEditor.iteratorModeItem": "Un par un",
   "nodeEditor.iteratorModeBatch": "Par lot",

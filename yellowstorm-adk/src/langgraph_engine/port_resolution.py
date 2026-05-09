@@ -1313,7 +1313,7 @@ def build_task_prompt(
                 prompt_registry,
                 "task.output_ports.structured_response",
                 field="userTemplate",
-                fallback=(      
+                fallback=(
                     "Return JSON only with this exact shape:\n"
                     "{\n"
                     '  "display_text": "user-visible final answer",\n'
@@ -1321,19 +1321,19 @@ def build_task_prompt(
                     "    {\n"
                     '      "output_port_id": "declared-port-id",\n'
                     '      "artifact_kind": "text|code|document|image|data|dashboard",\n'
-                    '      "content": "required for text/code outputs",\n'
-                    '      "data": {"required": "for data outputs"},\n'
-                    '      "filename": "required for generated file outputs",\n'
-                    '      "file_path": "optional exact file path when needed"\n'
+                    '      "content": "artifact payload"\n'
                     "    }\n"
                     "  ]\n"
                     "}\n\n"
                     "Rules:\n"
                     "- `display_text` is the final user-visible answer.\n"
                     "- Use only declared `output_port_id` values.\n"
-                    "- For text/code outputs, include final downstream content in `content`.\n"
-                    "- For data outputs, include the structured payload in `data`.\n"
+                    "- Every output object must use `content` for its payload.\n"
+                    "- For text/code outputs, `content` is the final downstream string.\n"
+                    "- For data outputs, `content` is the structured JSON payload.\n"
+                    "- For file outputs, `content` is an object like {\"filename\": \"report.pdf\", \"file_path\": \"optional exact file path\"}.\n"
                     "- For file outputs, reference only files you actually generated.\n"
+                    "- Do not use top-level `data`, `filename`, `file_path`, or `filePath`.\n"
                     "- If no routed output should be produced for a port, omit it.\n"
                     "- Must never add or remove attributes, respect strictly the JSON structure specified above. Return JSON only and no markdown fences."
                 ),

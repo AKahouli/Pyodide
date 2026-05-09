@@ -175,6 +175,7 @@
   "nodeEditor.nodeTypeEvaluation": "Evaluation",
   "nodeEditor.iteratorSource": "Source collection",
   "nodeEditor.iteratorPortHint": "Preferred: connect a normal input port. This source field is only for legacy or advanced fallback.",
+  "nodeEditor.iteratorOutputPortHint": "Iterator exposes collected results through a fixed data output port.",
   "nodeEditor.iteratorMode": "Iteration mode",
   "nodeEditor.iteratorModeItem": "One by one",
   "nodeEditor.iteratorModeBatch": "Batch",

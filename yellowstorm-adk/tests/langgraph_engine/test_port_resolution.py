@@ -339,6 +339,61 @@ def test_resolve_task_inputs_filters_prefixed_node_inputs_by_normalized_source_b
     assert shared_port["upstream_bindings"][1]["artifacts"][0]["filename"] == "b.pdf"
 
 
+def test_resolve_task_inputs_consumes_iterator_output_port_artifacts() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "results_in", "name": "Results", "artifact_kind": "data"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "iterator-1",
+                    "target_id": "downstream",
+                    "source_output_port_id": "results",
+                    "target_input_port_id": "results_in",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {
+                "iterator-1:results": [
+                    {
+                        "port_id": "results",
+                        "artifact_kind": "data",
+                        "data": [
+                            {"index": 0, "output": "processed-a"},
+                            {"index": 1, "output": "processed-b"},
+                        ],
+                        "source_task_id": "iterator-1",
+                        "source_output_port_id": "results",
+                    }
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    results_port = resolved["ports"]["results_in"]
+    assert results_port["upstream_bindings"][0]["artifacts"] == [
+        {
+            "port_id": "results",
+            "artifact_kind": "data",
+            "data": [
+                {"index": 0, "output": "processed-a"},
+                {"index": 1, "output": "processed-b"},
+            ],
+            "source_task_id": "iterator-1",
+            "source_output_port_id": "results",
+        }
+    ]
+
+
 def test_resolve_task_inputs_rejects_artifact_kind_mismatch() -> None:
     with pytest.raises(
         ValueError, match="expects artifact kind 'document' but received 'text'"
@@ -1177,6 +1232,37 @@ def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_sect
     assert '"subject": "FW: Yellowsys.ai"' in prompt
     assert "Retrieval scope for MCP document tools JSON:" not in prompt
     assert "This playbook was triggered by an incoming email:" not in prompt
+
+
+def test_build_task_prompt_structured_output_contract_uses_content_only() -> None:
+    prompt = build_task_prompt(
+        {
+            "id": "downstream",
+            "title": "Task",
+            "description": "Create outputs",
+            "output_ports": [
+                {"id": "summary", "name": "Summary", "artifact_kind": "text"},
+                {"id": "metrics", "name": "Metrics", "artifact_kind": "data"},
+                {"id": "report", "name": "Report", "artifact_kind": "document"},
+            ],
+        },
+        {
+            "task_id": "downstream",
+            "ports": {},
+            "playbook_workspace_context": [],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+        output_mode="structured_final_response",
+    )
+
+    assert '"content": "artifact payload"' in prompt
+    assert "For data outputs, `content` is the structured JSON payload." in prompt
+    assert "For file outputs, `content` is an object" in prompt
+    assert "Do not use top-level `data`, `filename`, `file_path`, or `filePath`." in prompt
+    assert '"data": {"required": "for data outputs"}' not in prompt
+    assert '"filename": "required for generated file outputs"' not in prompt
 
 
 def test_build_task_prompt_includes_iterator_context_even_with_port_sources() -> None:
