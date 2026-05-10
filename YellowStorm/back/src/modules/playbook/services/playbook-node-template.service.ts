@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException, OnApplicationBootstrap } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -32,61 +32,131 @@ type NodeTemplateDefaultsEntry = Pick<
   | 'isBuiltIn'
 >;
 
-const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
+const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [];
+
+const INITIAL_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
   {
-    key: 'summarizer',
-    type: 'summarizer',
+    key: 'node_template_document_extractor',
+    type: 'document-extractor',
     nodeType: 'agent',
-    title: 'Summarizer',
-    description: 'Takes text or documents and produces a structured summary.',
-    icon: 'FileText',
+    title: 'Document Extractor',
+    description:
+      'Extracts structured text content from uploaded documents such as PowerPoint presentations, PDFs, Word files, and other office formats. ' +
+      'Parses slides, sections, tables, and embedded text to produce a clean, machine-readable text output ready for downstream summarization, analysis, or enrichment steps.',
+    icon: 'FileSearch',
     color: 'blue',
     category: 'content',
     inputPorts: [
-      { id: 'source', name: 'Source Content', artifactKind: 'text', required: true },
-      { id: 'source_doc', name: 'Source Document', artifactKind: 'document', required: false },
+      { id: 'document', name: 'Document', artifactKind: 'document', required: true },
     ],
-    outputPorts: [{ id: 'summary', name: 'Summary', artifactKind: 'text' }],
+    outputPorts: [
+      { id: 'extracted_text', name: 'Extracted Text', artifactKind: 'text' },
+    ],
     promptTemplate:
-      'Summarize the following content into a clear, structured overview. ' +
-      'Highlight key points, decisions, and action items.\n\n{{content}}',
-    recommendedAgentTypeSlug: 'researcher',
+      'Extract all meaningful text content from the provided document. ' +
+      'Preserve structural hierarchy where possible and return clean, well-formatted text ready for downstream processing.\n\n{{document}}',
+    recommendedAgentTypeSlug: null,
     requiredToolNames: [],
     iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
-    key: 'docxgen',
-    type: 'docxgen',
+    key: 'node_template_translator',
+    type: 'translator',
     nodeType: 'agent',
-    title: 'Document Generator',
-    description: 'Generates a professional Word document from structured input.',
-    icon: 'FileType',
+    title: 'Translator',
+    description:
+      'Translates text content from a source language to one or more target languages while preserving formatting, tone, and meaning. ' +
+      'Useful for localizing reports, emails, documentation, and user-facing content across multilingual workflows.',
+    icon: 'Languages',
     color: 'indigo',
-    category: 'generation',
+    category: 'content',
     inputPorts: [
-      { id: 'content', name: 'Content', artifactKind: 'text', required: true },
-      { id: 'template', name: 'Template', artifactKind: 'document', required: false },
+      { id: 'source_text', name: 'Source Text', artifactKind: 'text', required: true },
+      { id: 'target_language', name: 'Target Language', artifactKind: 'text', required: true },
     ],
-    outputPorts: [{ id: 'document', name: 'Generated Document', artifactKind: 'document' }],
+    outputPorts: [
+      { id: 'translated_text', name: 'Translated Text', artifactKind: 'text' },
+    ],
     promptTemplate:
-      'Generate a professional Word document based on the provided content. ' +
-      'Use clear headings, proper formatting, and a professional tone.\n\n{{content}}',
-    recommendedAgentTypeSlug: 'writer',
-    requiredToolNames: ['document_generator'],
+      'Translate the following source text into the target language. ' +
+      'Preserve the original formatting, tone, and intent. Return only the translated text.\n\nSource text:\n{{source_text}}\n\nTarget language: {{target_language}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
     iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
-    key: 'slidegen',
-    type: 'slidegen',
+    key: 'node_template_excel_generator',
+    type: 'excel-generator',
+    nodeType: 'agent',
+    title: 'Excel Generator',
+    description:
+      'Generates a structured Excel spreadsheet from provided data inputs. ' +
+      'Supports multi-sheet workbooks, formatted headers, data validation rules, pivot-ready layouts, and optional template-based styling. ' +
+      'Ideal for producing trackers, dashboards, reports, and data exports that business users can open and manipulate directly.',
+    icon: 'FileSpreadsheet',
+    color: 'green',
+    category: 'generation',
+    inputPorts: [
+      { id: 'data_input', name: 'Data Input', artifactKind: 'data', required: true },
+      { id: 'template', name: 'Template', artifactKind: 'document', required: false },
+    ],
+    outputPorts: [
+      { id: 'file', name: 'Excel File', artifactKind: 'document' },
+    ],
+    promptTemplate:
+      'Generate a well-structured Excel spreadsheet from the provided data. ' +
+      'Use clear column headers, appropriate data types, and formatting. ' +
+      'If a template is provided, follow its layout and styling.\n\n{{data_input}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'node_template_report_generator',
+    type: 'report-generator',
+    nodeType: 'agent',
+    title: 'Report Generator',
+    description:
+      'Produces a professional document report from structured findings and optional supporting data. ' +
+      'Generates executive summaries, detailed analysis sections, charts, tables, and actionable recommendations. ' +
+      'Suitable for due diligence reports, market analyses, audit summaries, and stakeholder deliverables.',
+    icon: 'FileType',
+    color: 'orange',
+    category: 'generation',
+    inputPorts: [
+      { id: 'findings', name: 'Findings', artifactKind: 'text', required: true },
+      { id: 'data', name: 'Supporting Data', artifactKind: 'data', required: false },
+    ],
+    outputPorts: [
+      { id: 'report', name: 'Report Document', artifactKind: 'document' },
+    ],
+    promptTemplate:
+      'Produce a professional report from the provided findings and data. ' +
+      'Include an executive summary, detailed analysis sections, supporting charts or tables where data is provided, and clear recommendations. ' +
+      'Use a polished, business-appropriate tone.\n\nFindings:\n{{findings}}\n\nData:\n{{data}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'node_template_slide_generator',
+    type: 'slide-generator',
     nodeType: 'agent',
     title: 'Slide Generator',
-    description: 'Creates presentation slide content from text or data.',
+    description:
+      'Creates presentation slide decks from text content and optional template documents. ' +
+      'Generates title slides, section dividers, content slides with bullet points, charts, and speaker notes. ' +
+      'Suitable for pitch decks, status updates, training materials, and executive briefings.',
     icon: 'Presentation',
-    color: 'orange',
+    color: 'rose',
     category: 'generation',
     inputPorts: [
       { id: 'content', name: 'Content', artifactKind: 'text', required: true },
@@ -94,49 +164,26 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
     ],
     outputPorts: [
       { id: 'slides', name: 'Slide Deck', artifactKind: 'document' },
-      { id: 'summary', name: 'Speaker Notes', artifactKind: 'text' },
+      { id: 'speaker_notes', name: 'Speaker Notes', artifactKind: 'text' },
     ],
     promptTemplate:
-      'Create a professional presentation based on the following content. ' +
-      'Structure slides with clear titles, bullet points, and speaker notes.\n\n{{content}}',
-    recommendedAgentTypeSlug: 'writer',
-    requiredToolNames: ['slide_generator'],
+      'Create a professional slide deck based on the provided content. ' +
+      'Structure slides with clear titles, bullet points, and speaker notes. ' +
+      'If a template is provided, follow its layout and branding.\n\n{{content}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
     iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
-    key: 'codegen',
-    type: 'codegen',
-    nodeType: 'agent',
-    title: 'Code Generator',
-    description: 'Generates or reviews code based on specifications.',
-    icon: 'Code',
-    color: 'green',
-    category: 'code',
-    inputPorts: [
-      { id: 'spec', name: 'Specification', artifactKind: 'text', required: true },
-      { id: 'context', name: 'Existing Code', artifactKind: 'code', required: false },
-    ],
-    outputPorts: [
-      { id: 'code', name: 'Generated Code', artifactKind: 'code' },
-      { id: 'explanation', name: 'Explanation', artifactKind: 'text' },
-    ],
-    promptTemplate:
-      'Generate production-ready code based on the following specification. ' +
-      'Follow best practices, include error handling, and add inline comments.\n\n{{spec}}',
-    recommendedAgentTypeSlug: 'researcher',
-    requiredToolNames: ['code_interpreter'],
-    iteratorConfig: null,
-    enabled: true,
-    isBuiltIn: true,
-  },
-  {
-    key: 'analyzer',
-    type: 'analyzer',
+    key: 'node_template_data_analyzer',
+    type: 'data-analyzer',
     nodeType: 'agent',
     title: 'Data Analyzer',
-    description: 'Analyzes data and produces insights or dashboard descriptions.',
+    description:
+      'Analyzes structured data to extract insights, identify trends, detect anomalies, and produce a dashboard-ready summary. ' +
+      'Performs statistical analysis, pattern recognition, comparative benchmarking, and generates actionable business recommendations.',
     icon: 'BarChart3',
     color: 'purple',
     category: 'analysis',
@@ -149,68 +196,134 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       { id: 'dashboard', name: 'Dashboard', artifactKind: 'dashboard' },
     ],
     promptTemplate:
-      'Analyze the following data and extract key insights, trends, and patterns. ' +
-      'Provide actionable recommendations.\n\n{{data}}',
-    recommendedAgentTypeSlug: 'researcher',
-    requiredToolNames: [],
-    iteratorConfig: null,
-    enabled: true,
-    isBuiltIn: true,
-  },
-  {
-    key: 'evaluation',
-    type: 'evaluation',
-    nodeType: 'evaluation',
-    title: 'Evaluation Task',
-    description: 'Evaluates connected outputs against expected results and optional reference baselines.',
-    icon: 'Scale',
-    color: 'rose',
-    category: 'evaluation',
-    inputPorts: [
-      { id: 'evidence', name: 'Evidence', artifactKind: 'text', required: false },
-      { id: 'documents', name: 'Documents', artifactKind: 'document', required: false },
-      { id: 'data', name: 'Structured Data', artifactKind: 'data', required: false },
-      { id: 'dashboard', name: 'Dashboard', artifactKind: 'dashboard', required: false },
-    ],
-    outputPorts: [{ id: 'evaluation', name: 'Evaluation Result', artifactKind: 'data' }],
-    promptTemplate:
-      'Evaluate the connected workflow outputs against the configured expectation and optional baseline. ' +
-      'Return a structured evaluation summary with score, verdict, and findings.',
-    recommendedAgentTypeSlug: 'researcher',
-    requiredToolNames: [],
-    iteratorConfig: null,
-    enabled: true,
-    isBuiltIn: true,
-  },
-  {
-    key: 'iterator',
-    type: 'iterator',
-    nodeType: 'iterator',
-    title: 'Iterator',
-    description: 'Iterates over a collection and exposes batched or per-item results to downstream nodes.',
-    icon: 'RefreshCw',
-    color: 'cyan',
-    category: 'analysis',
-    inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
-    outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
-    promptTemplate: '',
+      'Analyze the provided data and extract key insights, trends, and patterns. ' +
+      'Provide actionable recommendations. If context is provided, frame the analysis around that business context.\n\nData:\n{{data}}\n\nContext:\n{{context}}',
     recommendedAgentTypeSlug: null,
     requiredToolNames: [],
-    iteratorConfig: {
-      source: '{{items}}',
-      mode: 'item',
-      batchSize: 10,
-      itemVariable: 'item',
-      outputVariable: 'processed_items',
-      errorStrategy: 'stop',
-    },
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'node_template_classifier',
+    type: 'classifier',
+    nodeType: 'agent',
+    title: 'Classifier',
+    description:
+      'Classifies items from a structured dataset into predefined or inferred categories. ' +
+      'Useful for triaging incoming requests, routing documents to the correct team, labeling support tickets, categorizing leads, and sentiment analysis.',
+    icon: 'Tag',
+    color: 'amber',
+    category: 'analysis',
+    inputPorts: [
+      { id: 'items', name: 'Items', artifactKind: 'data', required: true },
+      { id: 'categories', name: 'Categories', artifactKind: 'text', required: false },
+    ],
+    outputPorts: [
+      { id: 'classified', name: 'Classified Items', artifactKind: 'data' },
+    ],
+    promptTemplate:
+      'Classify each provided item into an appropriate category. ' +
+      'Return the items with their assigned categories and a confidence level. ' +
+      'If categories are specified, use only those categories.\n\nItems:\n{{items}}\n\nCategories:\n{{categories}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'node_template_code_generator',
+    type: 'code-generator',
+    nodeType: 'agent',
+    title: 'Code Generator',
+    description:
+      'Generates production-ready code from a specification, with optional awareness of existing code context. ' +
+      'Follows best practices, includes error handling, and produces well-commented output. ' +
+      'Suitable for generating scripts, data transformations, API integrations, and automation routines.',
+    icon: 'Code',
+    color: 'cyan',
+    category: 'code',
+    inputPorts: [
+      { id: 'spec', name: 'Specification', artifactKind: 'text', required: true },
+      { id: 'existing_code', name: 'Existing Code', artifactKind: 'code', required: false },
+    ],
+    outputPorts: [
+      { id: 'code', name: 'Generated Code', artifactKind: 'code' },
+      { id: 'explanation', name: 'Explanation', artifactKind: 'text' },
+    ],
+    promptTemplate:
+      'Generate production-ready code based on the following specification. ' +
+      'Follow best practices, include error handling, and add inline comments. ' +
+      'If existing code is provided, integrate with or adapt the existing patterns.\n\nSpecification:\n{{spec}}\n\nExisting Code:\n{{existing_code}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'node_template_code_interpreter',
+    type: 'code-interpreter',
+    nodeType: 'agent',
+    title: 'Code Interpreter',
+    description:
+      'Executes code against provided input data and returns the computed output along with execution logs. ' +
+      'Supports ad-hoc data transformations, calculations, format conversions, validation checks, and programmatic data processing. ' +
+      'Useful as a flexible transformation step between data producers and consumers.',
+    icon: 'Terminal',
+    color: 'teal',
+    category: 'code',
+    inputPorts: [
+      { id: 'code', name: 'Code', artifactKind: 'code', required: true },
+      { id: 'input_data', name: 'Input Data', artifactKind: 'data', required: false },
+    ],
+    outputPorts: [
+      { id: 'output', name: 'Output', artifactKind: 'data' },
+      { id: 'logs', name: 'Execution Logs', artifactKind: 'text' },
+    ],
+    promptTemplate:
+      'Execute the provided code against the input data. ' +
+      'Return the computed output and any execution logs or errors.\n\nCode:\n{{code}}\n\nInput Data:\n{{input_data}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'node_template_web_researcher',
+    type: 'web-researcher',
+    nodeType: 'agent',
+    title: 'Web Researcher',
+    description:
+      'Researches a topic or query using web search and returns structured findings with source citations. ' +
+      'Suitable for market research, competitive analysis, lead sourcing, fact-checking, due diligence, and gathering publicly available information.',
+    icon: 'Globe',
+    color: 'emerald',
+    category: 'enrichment',
+    inputPorts: [
+      { id: 'query', name: 'Query', artifactKind: 'text', required: true },
+      { id: 'context', name: 'Context', artifactKind: 'text', required: false },
+    ],
+    outputPorts: [
+      { id: 'findings', name: 'Findings', artifactKind: 'text' },
+      { id: 'sources', name: 'Sources', artifactKind: 'data' },
+    ],
+    promptTemplate:
+      'Research the following query thoroughly using web search. ' +
+      'Return well-organized findings with clear source citations. ' +
+      'If context is provided, focus the research on relevant aspects.\n\nQuery:\n{{query}}\n\nContext:\n{{context}}',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
 ];
 
 @Injectable()
-export class PlaybookNodeTemplateService {
+export class PlaybookNodeTemplateService implements OnApplicationBootstrap {
   private cachedItems: PlaybookNodeTemplateResponse[] | null = null;
   private cachedAt = 0;
   private static readonly CACHE_TTL_MS = 30_000;
@@ -219,6 +332,22 @@ export class PlaybookNodeTemplateService {
     @InjectModel(PlaybookNodeTemplate.name)
     private readonly templateModel: Model<PlaybookNodeTemplateDocument>,
   ) {}
+
+  async onApplicationBootstrap(): Promise<void> {
+    const count = await this.templateModel.countDocuments({}).exec();
+    if (count > 0) return;
+
+    await this.templateModel.insertMany(
+      INITIAL_NODE_TEMPLATES.map((item) => ({
+        ...item,
+        version: 1,
+        createdBy: null,
+        updatedBy: null,
+      })),
+      { ordered: false },
+    );
+    this.invalidateCache();
+  }
 
   private deriveNodeType(doc: Pick<PlaybookNodeTemplate, 'nodeType' | 'type' | 'executionMode'>): PlaybookNodeTemplateResponse['nodeType'] {
     if (doc.nodeType) {
@@ -453,10 +582,6 @@ export class PlaybookNodeTemplateService {
       throw new NotFoundException('Template not found');
     }
 
-    if (existing.isBuiltIn) {
-      throw new BadRequestException('Built-in templates cannot be deleted');
-    }
-
     await this.templateModel.findByIdAndDelete(id).exec();
     this.invalidateCache();
   }
@@ -466,6 +591,6 @@ export class PlaybookNodeTemplateService {
   }
 
   getDefaultTemplateKeys(): string[] {
-    return DEFAULT_NODE_TEMPLATES.map((item) => item.key);
+    return INITIAL_NODE_TEMPLATES.map((item) => item.key);
   }
 }

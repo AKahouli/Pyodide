@@ -347,7 +347,7 @@ export function PlaybookPromptsPage() {
   };
 
   const handleDeleteTemplate = async () => {
-    if (!templateDraft.id || templateDraft.isBuiltIn) return;
+    if (!templateDraft.id) return;
     try {
       await deletePlaybookNodeTemplate(templateDraft.id);
       setTemplateItems((current) => current.filter((item) => item.id !== templateDraft.id));
@@ -691,21 +691,19 @@ export function PlaybookPromptsPage() {
                               v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
                             </div>
                           </button>
-                          {!item.isBuiltIn && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedTemplateId(item.id);
-                                setTemplateDraft(item);
-                                setDeleteDialogOpen(true);
-                              }}
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedTemplateId(item.id);
+                              setTemplateDraft(item);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
                         </div>
                       ))}
                     </div>
@@ -1060,7 +1058,7 @@ export function PlaybookPromptsPage() {
                     <div className="flex gap-2">
                       {isCreatingTemplate ? (
                         <Button variant="outline" onClick={cancelCreateTemplate}>{t('playbook.templates.actions.cancel')}</Button>
-                      ) : templateDraft.id && !templateDraft.isBuiltIn ? (
+                      ) : templateDraft.id ? (
                         <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
                           <Trash2 className="mr-2 h-4 w-4" />
                           {t('playbook.templates.actions.delete')}

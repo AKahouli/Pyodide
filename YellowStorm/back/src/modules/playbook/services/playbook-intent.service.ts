@@ -17,6 +17,17 @@ interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   templateType?: string | null;
+  inputPorts?: Array<{
+    id: string;
+    name?: string | null;
+    artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+    required?: boolean;
+  }>;
+  outputPorts?: Array<{
+    id: string;
+    name?: string | null;
+    artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+  }>;
   iteratorBody?: {
     steps: Array<{
       nodeRef: string;
@@ -24,10 +35,23 @@ interface PlaybookIntentTaskDraft {
       description: string;
       agentSlug?: string | null;
       templateType?: string | null;
+      inputPorts?: Array<{
+        id: string;
+        name?: string | null;
+        artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+        required?: boolean;
+      }>;
+      outputPorts?: Array<{
+        id: string;
+        name?: string | null;
+        artifactKind: 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard';
+      }>;
     }>;
     edges: Array<{
       sourceNodeRef: string;
       targetNodeRef: string;
+      sourceOutputPortId?: string | null;
+      targetInputPortId?: string | null;
     }>;
   };
 }
@@ -340,6 +364,8 @@ export class PlaybookIntentService {
       const sourceNodeRef = this.normalizeText(item.sourceNodeRef) || this.normalizeText(item.sourceRef) || this.normalizeText(item.fromNodeRef);
       const targetTaskId = this.normalizeText(item.targetTaskId);
       const targetNodeRef = this.normalizeText(item.targetNodeRef) || this.normalizeText(item.targetRef) || this.normalizeText(item.toNodeRef);
+      const sourceOutputPortId = this.normalizeText(item.sourceOutputPortId);
+      const targetInputPortId = this.normalizeText(item.targetInputPortId);
 
       if (!(sourceTaskId || sourceNodeRef) || !(targetTaskId || targetNodeRef)) {
         return null;
@@ -351,6 +377,8 @@ export class PlaybookIntentService {
         sourceNodeRef: sourceNodeRef || null,
         targetTaskId: targetTaskId || null,
         targetNodeRef: targetNodeRef || null,
+        ...(sourceOutputPortId ? { sourceOutputPortId } : {}),
+        ...(targetInputPortId ? { targetInputPortId } : {}),
       };
     }
 
@@ -360,12 +388,16 @@ export class PlaybookIntentService {
   private normalizeWorkflowAnchor(value: unknown): PlaybookIntentWorkflowChange & { type: 'create_node' } extends { anchor: infer Anchor } ? Anchor : never {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const mode = item.mode === 'before' || item.mode === 'after' || item.mode === 'append' || item.mode === 'as_input' ? item.mode : 'append';
+    const sourceOutputPortId = this.normalizeText(item.sourceOutputPortId);
+    const targetInputPortId = this.normalizeText(item.targetInputPortId);
     return {
       mode,
       targetTaskId: this.normalizeText(item.targetTaskId) || null,
       nodeRef: this.normalizeText(item.nodeRef) || null,
       targetTaskIds: this.normalizeTextArray(item.targetTaskIds),
       nodeRefs: this.normalizeTextArray(item.nodeRefs),
+      ...(sourceOutputPortId ? { sourceOutputPortId } : {}),
+      ...(targetInputPortId ? { targetInputPortId } : {}),
     };
   }
 
@@ -375,6 +407,8 @@ export class PlaybookIntentService {
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const templateType = this.normalizeText(item.templateType);
+    const inputPorts = this.normalizeInputPorts(item.inputPorts);
+    const outputPorts = this.normalizeOutputPorts(item.outputPorts);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody);
     return title
       ? {
@@ -382,6 +416,8 @@ export class PlaybookIntentService {
         description,
         ...(agentSlug ? { agentSlug } : {}),
         ...(templateType ? { templateType } : {}),
+        ...(inputPorts.length ? { inputPorts } : {}),
+        ...(outputPorts.length ? { outputPorts } : {}),
         ...(iteratorBody ? { iteratorBody } : {}),
       }
       : null;
@@ -393,12 +429,16 @@ export class PlaybookIntentService {
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const templateType = this.normalizeText(item.templateType);
+    const inputPorts = this.normalizeInputPorts(item.inputPorts);
+    const outputPorts = this.normalizeOutputPorts(item.outputPorts);
     const iteratorBody = this.normalizeIteratorBody(item.iteratorBody);
     return {
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
       ...(agentSlug ? { agentSlug } : {}),
       ...(templateType ? { templateType } : {}),
+      ...(inputPorts.length ? { inputPorts } : {}),
+      ...(outputPorts.length ? { outputPorts } : {}),
       ...(iteratorBody ? { iteratorBody } : {}),
     };
   }
@@ -426,12 +466,16 @@ export class PlaybookIntentService {
           const description = this.normalizeText(draft.description);
           const agentSlug = this.normalizeText(draft.agentSlug);
           const templateType = this.normalizeText(draft.templateType);
+          const inputPorts = this.normalizeInputPorts(draft.inputPorts);
+          const outputPorts = this.normalizeOutputPorts(draft.outputPorts);
           return {
             nodeRef,
             title,
             description,
             ...(agentSlug ? { agentSlug } : {}),
             ...(templateType ? { templateType } : {}),
+            ...(inputPorts.length ? { inputPorts } : {}),
+            ...(outputPorts.length ? { outputPorts } : {}),
           };
         })
         .filter((step): step is NonNullable<typeof step> => step !== null)
@@ -450,13 +494,20 @@ export class PlaybookIntentService {
           const normalizedEdge = edge as Record<string, unknown>;
           const sourceNodeRef = this.normalizeText(normalizedEdge.sourceNodeRef);
           const targetNodeRef = this.normalizeText(normalizedEdge.targetNodeRef);
+          const sourceOutputPortId = this.normalizeText(normalizedEdge.sourceOutputPortId);
+          const targetInputPortId = this.normalizeText(normalizedEdge.targetInputPortId);
           if (!sourceNodeRef || !targetNodeRef) {
             return null;
           }
           if (!validStepRefs.has(sourceNodeRef) || !validStepRefs.has(targetNodeRef)) {
             return null;
           }
-          return { sourceNodeRef, targetNodeRef };
+          return {
+            sourceNodeRef,
+            targetNodeRef,
+            ...(sourceOutputPortId ? { sourceOutputPortId } : {}),
+            ...(targetInputPortId ? { targetInputPortId } : {}),
+          };
         })
         .filter((edge): edge is NonNullable<typeof edge> => edge !== null)
         .slice(0, 24)
@@ -539,6 +590,80 @@ export class PlaybookIntentService {
     return Array.isArray(value)
       ? value.map((item) => this.normalizeText(item)).filter(Boolean).slice(0, 12)
       : [];
+  }
+
+  private normalizeArtifactKind(value: unknown): 'text' | 'document' | 'code' | 'image' | 'data' | 'dashboard' | '' {
+    return value === 'text'
+      || value === 'document'
+      || value === 'code'
+      || value === 'image'
+      || value === 'data'
+      || value === 'dashboard'
+      ? value
+      : '';
+  }
+
+  private normalizeInputPorts(value: unknown): NonNullable<PlaybookIntentTaskDraft['inputPorts']> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    return value
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        const port = item as Record<string, unknown>;
+        const id = this.normalizeText(port.id);
+        const artifactKind = this.normalizeArtifactKind(port.artifactKind);
+        if (!id || !artifactKind || seen.has(id)) {
+          return null;
+        }
+
+        seen.add(id);
+        const name = this.normalizeText(port.name);
+        return {
+          id,
+          artifactKind,
+          required: port.required === true,
+          ...(name ? { name } : {}),
+        };
+      })
+      .filter((port): port is NonNullable<typeof port> => port !== null)
+      .slice(0, 4);
+  }
+
+  private normalizeOutputPorts(value: unknown): NonNullable<PlaybookIntentTaskDraft['outputPorts']> {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    const seen = new Set<string>();
+    return value
+      .map((item) => {
+        if (!item || typeof item !== 'object') {
+          return null;
+        }
+
+        const port = item as Record<string, unknown>;
+        const id = this.normalizeText(port.id);
+        const artifactKind = this.normalizeArtifactKind(port.artifactKind);
+        if (!id || !artifactKind || seen.has(id)) {
+          return null;
+        }
+
+        seen.add(id);
+        const name = this.normalizeText(port.name);
+        return {
+          id,
+          artifactKind,
+          ...(name ? { name } : {}),
+        };
+      })
+      .filter((port): port is NonNullable<typeof port> => port !== null)
+      .slice(0, 4);
   }
 
   private normalizeOperationType(value: unknown, selectedTaskId: string | null): PlaybookIntentOperationType {

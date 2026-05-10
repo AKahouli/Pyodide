@@ -246,6 +246,17 @@ export interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   templateType?: string | null;
+  inputPorts?: Array<{
+    id: string;
+    name?: string | null;
+    artifactKind: ArtifactKind;
+    required?: boolean;
+  }>;
+  outputPorts?: Array<{
+    id: string;
+    name?: string | null;
+    artifactKind: ArtifactKind;
+  }>;
   iteratorBody?: {
     steps: Array<{
       nodeRef: string;
@@ -253,10 +264,23 @@ export interface PlaybookIntentTaskDraft {
       description: string;
       agentSlug?: string | null;
       templateType?: string | null;
+      inputPorts?: Array<{
+        id: string;
+        name?: string | null;
+        artifactKind: ArtifactKind;
+        required?: boolean;
+      }>;
+      outputPorts?: Array<{
+        id: string;
+        name?: string | null;
+        artifactKind: ArtifactKind;
+      }>;
     }>;
     edges: Array<{
       sourceNodeRef: string;
       targetNodeRef: string;
+      sourceOutputPortId?: string | null;
+      targetInputPortId?: string | null;
     }>;
   };
 }
@@ -282,6 +306,8 @@ export interface PlaybookIntentWorkflowAnchor {
   nodeRef: string | null;
   targetTaskIds?: string[];
   nodeRefs?: string[];
+  sourceOutputPortId?: string | null;
+  targetInputPortId?: string | null;
 }
 
 export type PlaybookIntentWorkflowChange =
@@ -306,6 +332,8 @@ export type PlaybookIntentWorkflowChange =
       sourceNodeRef: string | null;
       targetTaskId: string | null;
       targetNodeRef: string | null;
+      sourceOutputPortId?: string | null;
+      targetInputPortId?: string | null;
     };
 
 export interface PlaybookIntentWorkflowImpact {
