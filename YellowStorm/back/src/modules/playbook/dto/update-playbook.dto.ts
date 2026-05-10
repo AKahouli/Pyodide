@@ -294,7 +294,7 @@ export class UpdatePlaybookTaskDto {
   inputFiles?: InputFileDto[];
 
   @IsOptional()
-  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation', 'iterator'])
+  @IsEnum(['generic', 'evaluation', 'iterator', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'])
   taskType?: string;
 
   @ApiPropertyOptional({ type: [TaskInputPortDto] })

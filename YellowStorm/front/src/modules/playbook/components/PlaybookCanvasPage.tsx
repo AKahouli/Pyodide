@@ -76,7 +76,7 @@ import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability } from '../api';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
@@ -1346,6 +1346,7 @@ function PlaybookCanvasInner() {
 
     const createIntentTask = (title: string, description: string, agentSlug: string | null | undefined, templateType: string | null | undefined, anchorTask: PlaybookTask | null, order: number): PlaybookTask => {
       const matchedTemplate = findMatchingTemplate(title, description, templateType);
+      const matchedNodeType = matchedTemplate?.nodeType ?? 'agent';
 
       return {
         id: crypto.randomUUID(),
@@ -1370,7 +1371,13 @@ function PlaybookCanvasInner() {
         notifyOnComplete: false,
         notifyEmails: [],
         inputFiles: [],
-        taskType: matchedTemplate?.type || 'generic',
+        taskType: matchedNodeType === 'iterator'
+          ? 'iterator'
+          : matchedNodeType === 'evaluation'
+            ? 'evaluation'
+            : 'generic',
+        nodeType: matchedNodeType,
+        templateType: matchedTemplate?.type ?? templateType ?? null,
         inputPorts: matchedTemplate
           ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
           : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
@@ -1389,7 +1396,10 @@ function PlaybookCanvasInner() {
     };
 
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[]) => {
-      const layoutedTasks = autoLayoutTasks(nextTasks, toPlaybookEdges(nextEdges));
+      const iteratorChildTasks = nextTasks.filter((task) => task.containerConfig?.parentIteratorId);
+      const topLevelTasks = nextTasks.filter((task) => !task.containerConfig?.parentIteratorId);
+      const layoutedTopLevelTasks = autoLayoutTasks(topLevelTasks, toPlaybookEdges(nextEdges));
+      const layoutedTasks = [...layoutedTopLevelTasks, ...iteratorChildTasks];
       captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
@@ -1457,6 +1467,7 @@ function PlaybookCanvasInner() {
       taskDescription: string,
       agentSlug: string | null | undefined,
       templateType: string | null | undefined,
+      iteratorBody: PlaybookIntentTaskDraft['iteratorBody'] | undefined,
       mode: 'append' | 'before' | 'after' | 'as_input',
       targetTaskId: string | null,
       nodeRef: string | null,
@@ -1483,6 +1494,58 @@ function PlaybookCanvasInner() {
       changedNodeIds.add(newTask.id);
       if (newNodeRef) {
         createdNodeRefs.set(newNodeRef, newTask.id);
+      }
+
+      if (newTask.taskType === 'iterator' && iteratorBody?.steps.length) {
+        const iteratorChildRefs = new Map<string, string>();
+        const iteratorBaseX = newTask.positionX + 32;
+        const iteratorBaseY = newTask.positionY + 72;
+
+        iteratorBody.steps.forEach((step: NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number], index: number) => {
+          const childTask = createIntentTask(step.title, step.description, step.agentSlug, step.templateType, newTask, nextTasks.length + index + 1);
+          childTask.positionX = iteratorBaseX;
+          childTask.positionY = iteratorBaseY + index * 56;
+          childTask.containerConfig = { parentIteratorId: newTask.id };
+          nextTasks = [...nextTasks, childTask];
+          changedNodeIds.add(childTask.id);
+          iteratorChildRefs.set(step.nodeRef, childTask.id);
+        });
+
+        const seenChildEdgePairs = new Set<string>();
+
+        iteratorBody.edges.forEach((edge: NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['edges'][number]) => {
+          const sourceId = iteratorChildRefs.get(edge.sourceNodeRef);
+          const targetId = iteratorChildRefs.get(edge.targetNodeRef);
+          if (!sourceId || !targetId || sourceId === targetId) {
+            return;
+          }
+
+          const pairKey = `${sourceId}:${targetId}`;
+          if (seenChildEdgePairs.has(pairKey)) {
+            return;
+          }
+          seenChildEdgePairs.add(pairKey);
+
+          if (nextEdges.some((e) => e.source === sourceId && e.target === targetId)) {
+            return;
+          }
+
+          const sourceTask = nextTasks.find((task) => task.id === sourceId);
+          const targetTask = nextTasks.find((task) => task.id === targetId);
+          if (!sourceTask || !targetTask) {
+            return;
+          }
+
+          nextEdges = [
+            ...nextEdges,
+            markEdgeChanged(createProgrammaticEdge(
+              sourceId,
+              targetId,
+              getPreferredOutputPortId(sourceTask),
+              getPreferredInputPortId(targetTask),
+            )),
+          ];
+        });
       }
 
       if (!anchorTask) {
@@ -1632,7 +1695,7 @@ function PlaybookCanvasInner() {
         return;
       }
       if (!change.task) return;
-      applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.task.templateType, change.anchorMode, change.targetTaskId, null, null);
+      applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.task.templateType, change.task.iteratorBody, change.anchorMode, change.targetTaskId, null, null);
       commitGraph(nextTasks, nextEdges);
       return;
     }
@@ -1650,6 +1713,7 @@ function PlaybookCanvasInner() {
           change.task.description,
           change.task.agentSlug,
           change.task.templateType,
+          change.task.iteratorBody,
           change.anchor.mode,
           change.anchor.targetTaskId,
           change.anchor.nodeRef,

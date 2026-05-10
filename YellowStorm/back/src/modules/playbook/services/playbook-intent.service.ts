@@ -17,6 +17,19 @@ interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   templateType?: string | null;
+  iteratorBody?: {
+    steps: Array<{
+      nodeRef: string;
+      title: string;
+      description: string;
+      agentSlug?: string | null;
+      templateType?: string | null;
+    }>;
+    edges: Array<{
+      sourceNodeRef: string;
+      targetNodeRef: string;
+    }>;
+  };
 }
 
 interface PlaybookIntentSingleChangeSuggestion {
@@ -362,7 +375,16 @@ export class PlaybookIntentService {
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const templateType = this.normalizeText(item.templateType);
-    return title ? { title, description, ...(agentSlug ? { agentSlug } : {}), ...(templateType ? { templateType } : {}) } : null;
+    const iteratorBody = this.normalizeIteratorBody(item.iteratorBody);
+    return title
+      ? {
+        title,
+        description,
+        ...(agentSlug ? { agentSlug } : {}),
+        ...(templateType ? { templateType } : {}),
+        ...(iteratorBody ? { iteratorBody } : {}),
+      }
+      : null;
   }
 
   private normalizePartialTaskDraft(value: unknown, fallbackTitle = '', fallbackDescription = ''): Partial<PlaybookIntentTaskDraft> {
@@ -371,12 +393,76 @@ export class PlaybookIntentService {
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const templateType = this.normalizeText(item.templateType);
+    const iteratorBody = this.normalizeIteratorBody(item.iteratorBody);
     return {
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
       ...(agentSlug ? { agentSlug } : {}),
       ...(templateType ? { templateType } : {}),
+      ...(iteratorBody ? { iteratorBody } : {}),
     };
+  }
+
+  private normalizeIteratorBody(value: unknown): PlaybookIntentTaskDraft['iteratorBody'] | undefined {
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const item = value as Record<string, unknown>;
+    const steps = Array.isArray(item.steps)
+      ? item.steps
+        .map((step) => {
+          if (!step || typeof step !== 'object') {
+            return null;
+          }
+
+          const draft = step as Record<string, unknown>;
+          const nodeRef = this.normalizeText(draft.nodeRef);
+          const title = this.normalizeText(draft.title);
+          if (!nodeRef || !title) {
+            return null;
+          }
+
+          const description = this.normalizeText(draft.description);
+          const agentSlug = this.normalizeText(draft.agentSlug);
+          const templateType = this.normalizeText(draft.templateType);
+          return {
+            nodeRef,
+            title,
+            description,
+            ...(agentSlug ? { agentSlug } : {}),
+            ...(templateType ? { templateType } : {}),
+          };
+        })
+        .filter((step): step is NonNullable<typeof step> => step !== null)
+        .slice(0, 12)
+      : [];
+
+    const validStepRefs = new Set(steps.map((s) => s.nodeRef));
+
+    const edges = Array.isArray(item.edges)
+      ? item.edges
+        .map((edge) => {
+          if (!edge || typeof edge !== 'object') {
+            return null;
+          }
+
+          const normalizedEdge = edge as Record<string, unknown>;
+          const sourceNodeRef = this.normalizeText(normalizedEdge.sourceNodeRef);
+          const targetNodeRef = this.normalizeText(normalizedEdge.targetNodeRef);
+          if (!sourceNodeRef || !targetNodeRef) {
+            return null;
+          }
+          if (!validStepRefs.has(sourceNodeRef) || !validStepRefs.has(targetNodeRef)) {
+            return null;
+          }
+          return { sourceNodeRef, targetNodeRef };
+        })
+        .filter((edge): edge is NonNullable<typeof edge> => edge !== null)
+        .slice(0, 24)
+      : [];
+
+    return steps.length > 0 ? { steps, edges } : undefined;
   }
 
   private normalizeWorkflowImpact(value: unknown, changes: PlaybookIntentWorkflowChange[]): PlaybookIntentWorkflowPlanSuggestion['impact'] {

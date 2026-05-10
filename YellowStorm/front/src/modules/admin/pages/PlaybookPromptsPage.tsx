@@ -669,25 +669,44 @@ export function PlaybookPromptsPage() {
                   <ScrollArea className="h-[760px]">
                     <div className="p-3 space-y-2">
                       {templateItems.map((item) => (
-                        <button
+                        <div
                           key={item.id}
-                          type="button"
-                          onClick={() => { setIsCreatingTemplate(false); setSelectedTemplateId(item.id); }}
                           className={cn(
-                            'w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                            'group relative rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
                             selectedTemplateId === item.id && !isCreatingTemplate && 'border-primary bg-primary/5',
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium">{item.title}</div>
-                            <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground break-all">{item.type}</div>
-                          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                            <BadgeInfo className="h-3.5 w-3.5" />
-                            v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
-                          </div>
-                        </button>
+                          <button
+                            type="button"
+                            className="w-full text-left"
+                            onClick={() => { setIsCreatingTemplate(false); setSelectedTemplateId(item.id); }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-medium">{item.title}</div>
+                              <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.type}</div>
+                            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                              <BadgeInfo className="h-3.5 w-3.5" />
+                              v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
+                            </div>
+                          </button>
+                          {!item.isBuiltIn && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTemplateId(item.id);
+                                setTemplateDraft(item);
+                                setDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </ScrollArea>

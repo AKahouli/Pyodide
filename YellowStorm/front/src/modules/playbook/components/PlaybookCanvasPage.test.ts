@@ -55,3 +55,35 @@ describe('buildCanvasStepStatusMap', () => {
     expect(statusMap.get('iterator-child')).toBe('completed');
   });
 });
+
+describe('iterator child task classification', () => {
+  it('correctly separates iterator children from top-level tasks', () => {
+    const tasks: Array<Pick<PlaybookTask, 'id' | 'containerConfig'>> = [
+      { id: 'start', containerConfig: null },
+      { id: 'iterator-1', containerConfig: null },
+      { id: 'child-1', containerConfig: { parentIteratorId: 'iterator-1' } },
+      { id: 'child-2', containerConfig: { parentIteratorId: 'iterator-1' } },
+      { id: 'end', containerConfig: null },
+    ];
+
+    const iteratorChildren = tasks.filter((t) => t.containerConfig?.parentIteratorId);
+    const topLevel = tasks.filter((t) => !t.containerConfig?.parentIteratorId);
+
+    expect(topLevel).toHaveLength(3);
+    expect(topLevel.map((t) => t.id)).toEqual(['start', 'iterator-1', 'end']);
+    expect(iteratorChildren).toHaveLength(2);
+    expect(iteratorChildren.map((t) => t.id)).toEqual(['child-1', 'child-2']);
+  });
+
+  it('treats tasks with null or undefined containerConfig as top-level', () => {
+    const tasks: Array<Pick<PlaybookTask, 'id' | 'containerConfig'>> = [
+      { id: 'task-1', containerConfig: null },
+      { id: 'task-2', containerConfig: undefined },
+      { id: 'task-3', containerConfig: { parentIteratorId: null } },
+    ];
+
+    const topLevel = tasks.filter((t) => !t.containerConfig?.parentIteratorId);
+
+    expect(topLevel).toHaveLength(3);
+  });
+});

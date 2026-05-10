@@ -30,7 +30,7 @@ single_change.operationType: insert_before | insert_after | create_node | update
 workflow_plan requires: kind="workflow_plan", label, summary, reason, confidence, impact, and ordered changes.
 workflow_plan change types: create_node | update_node | delete_node | create_edge | delete_edge
 
-For create_node changes include nodeRef, task { title, description, agentSlug, templateType? }, and anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs? }.
+For create_node changes include nodeRef, task { title, description, agentSlug, templateType?, iteratorBody? }, and anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs? }.
 For update_node changes, include task.agentSlug when the task currently has no assigned agent or when the user clearly requests reassignment.
 Every created task must have exactly one agentSlug chosen from the provided default agents. Never invent agent slugs.
 Prefer preserving existing assigned agents on updates unless reassignment is explicit or the current task has no agent.
@@ -87,6 +87,9 @@ Do not use delete_node just to remove one dependency.
 - Prefer reusing an available node template (from the given <Available_node_templates_JSON> list)  when its purpose, execution mode, and ports match the requested step.
 - When reusing a template, return task.templateType with the exact template type from the provided node templates list.
 - Do not invent template types. If no template fits, omit templateType and use a blank task node.
+- If task.templateType is an iterator template and the repeated per-item work should be explicit, include task.iteratorBody.
+- iteratorBody.steps represent ordinary child tasks inside the iterator. Each step should use nodeRef, title, description, and optional agentSlug/templateType.
+- iteratorBody.edges connect iteratorBody.steps using sourceNodeRef and targetNodeRef.
 If Available node templates JSON includes a template with type "report_generation" for report-writing tasks, prefer:
 {"type":"create_node","nodeRef":"final_report","anchor":{"mode":"after","targetTaskId":"analysis-step-id","nodeRef":null},"task":{"title":"Generate final report","description":"Produce the final structured report from the completed analysis.","agentSlug":"report-agent","templateType":"report_generation"}}
 
@@ -95,6 +98,9 @@ If Available node templates JSON includes a template with type "report_generatio
 ###Using a blank task node when no template fits:
 If no available node template matches the requested step purpose, execution mode, or ports, omit templateType:
 {"type":"create_node","nodeRef":"custom_policy_review","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Review policy exceptions","description":"Inspect policy edge cases and summarize unresolved exceptions for the team.","agentSlug":"review-agent"}}
+
+###Using an iterator template with body steps:
+{"type":"create_node","nodeRef":"iterate_attachments","anchor":{"mode":"append","targetTaskId":"mail-intake-step-id","nodeRef":null},"task":{"title":"Process attachments","description":"Iterate over each attachment and extract the needed fields.","agentSlug":"attachment-agent","templateType":"iterator","iteratorBody":{"steps":[{"nodeRef":"extract_attachment_text","title":"Extract attachment text","description":"Extract text from the current attachment item.","agentSlug":"attachment-agent"},{"nodeRef":"classify_attachment","title":"Classify attachment","description":"Classify the current attachment based on its extracted text.","agentSlug":"classification-agent"}],"edges":[{"sourceNodeRef":"extract_attachment_text","targetNodeRef":"classify_attachment"}]}}}
 
 #Return JSON like:
 {"suggestions":[{"kind":"workflow_plan","label":"Research companies in parallel","summary":"Creates independent research branches and merges them into a comparison report.","reason":"The companies can be researched independently before synthesis.","confidence":0.86,"impact":{"nodesToCreate":3,"nodesToUpdate":0,"nodesToDelete":0,"edgesToCreate":2,"edgesToDelete":0,"affectedTaskIds":[],"businessOutcome":"Users get a faster parallel research workflow with one consolidated output."},"changes":[{"type":"create_node","nodeRef":"research_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"Collect recent public information about LVMH.","agentSlug":"research-agent"}},{"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia.","agentSlug":"research-agent"}},{"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"targetTaskIds":[],"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and write a concise report.","agentSlug":"synthesis-agent","templateType":"report_generation"}}]}]}`,

@@ -246,6 +246,19 @@ export interface PlaybookIntentTaskDraft {
   description: string;
   agentSlug?: string | null;
   templateType?: string | null;
+  iteratorBody?: {
+    steps: Array<{
+      nodeRef: string;
+      title: string;
+      description: string;
+      agentSlug?: string | null;
+      templateType?: string | null;
+    }>;
+    edges: Array<{
+      sourceNodeRef: string;
+      targetNodeRef: string;
+    }>;
+  };
 }
 
 export interface PlaybookIntentSingleChangeSuggestion {

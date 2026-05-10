@@ -186,6 +186,79 @@ describe('PlaybookIntentService', () => {
     });
   });
 
+  it('normalizes iterator body steps for iterator template nodes', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Add iterator processing',
+                summary: 'Adds an iterator with explicit child steps.',
+                reason: 'Each item needs repeated processing.',
+                confidence: 0.88,
+                impact: {
+                  nodesToCreate: 1,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 0,
+                  edgesToDelete: 0,
+                  affectedTaskIds: [],
+                  businessOutcome: 'The workflow repeats a defined body per item.',
+                },
+                changes: [
+                  {
+                    type: 'create_node',
+                    nodeRef: 'iterate_items',
+                    anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+                    task: {
+                      title: 'Iterate items',
+                      description: 'Repeat processing for each item.',
+                      templateType: 'iterator',
+                      iteratorBody: {
+                        steps: [
+                          { nodeRef: 'extract_text', title: 'Extract text', description: 'Extract text from the current item.' },
+                          { nodeRef: 'classify_text', title: 'Classify text', description: 'Classify the extracted text.' },
+                        ],
+                        edges: [
+                          { sourceNodeRef: 'extract_text', targetNodeRef: 'classify_text' },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Add iterator processing' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      changes: [
+        {
+          type: 'create_node',
+          task: {
+            templateType: 'iterator',
+            iteratorBody: {
+              steps: [
+                { nodeRef: 'extract_text', title: 'Extract text' },
+                { nodeRef: 'classify_text', title: 'Classify text' },
+              ],
+              edges: [
+                { sourceNodeRef: 'extract_text', targetNodeRef: 'classify_text' },
+              ],
+            },
+          },
+        },
+      ],
+    });
+  });
+
   it('infers workflow plan suggestions without an explicit kind for update-only plans', async () => {
     post.mockResolvedValue({
       data: {
