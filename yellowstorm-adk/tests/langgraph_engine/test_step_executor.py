@@ -9,7 +9,6 @@ from src.langgraph_engine.step_executor import (
     _attach_result_text_for_citations,
     _collect_generated_artifacts,
     _execute_evaluation_task,
-    _build_plain_file_artifacts,
     _build_plain_text_artifact,
     _build_task_artifacts_from_structured_outputs,
     _determine_output_mode,
@@ -257,7 +256,7 @@ def test_task_requires_structured_output_synthesis_for_multiple_ports() -> None:
                 {"id": "context", "artifact_kind": "text"},
             ]
         }
-    ) is True
+    ) is False
 
     assert _task_requires_structured_output_synthesis(
         {
@@ -275,7 +274,7 @@ def test_determine_output_mode_prefers_plain_for_single_text_output() -> None:
     ) == "plain"
 
 
-def test_determine_output_mode_uses_structured_for_multiple_text_ports() -> None:
+def test_determine_output_mode_prefers_plain_for_multiple_text_ports() -> None:
     assert _determine_output_mode(
         {
             "output_ports": [
@@ -283,6 +282,18 @@ def test_determine_output_mode_uses_structured_for_multiple_text_ports() -> None
                 {"id": "context", "artifact_kind": "text"},
             ]
         }
+    ) == "plain"
+
+
+def test_determine_output_mode_uses_structured_for_single_document_port() -> None:
+    assert _determine_output_mode(
+        {"output_ports": [{"id": "report", "artifact_kind": "document"}]}
+    ) == "structured_final_response"
+
+
+def test_determine_output_mode_uses_structured_for_single_code_port() -> None:
+    assert _determine_output_mode(
+        {"output_ports": [{"id": "script", "artifact_kind": "code"}]}
     ) == "structured_final_response"
 
 
@@ -460,6 +471,66 @@ def test_build_task_artifacts_from_structured_outputs_routes_inline_data() -> No
     ]
 
 
+def test_build_task_artifacts_from_structured_outputs_uses_declared_document_kind() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "default", "artifact_kind": "document"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "default",
+                "artifact_kind": "data",
+                "content": {"filename": "report.pdf"},
+            },
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "default",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+            "mime_type": "application/pdf",
+        }
+    ]
+
+
+def test_build_task_artifacts_from_structured_outputs_uses_declared_data_kind() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "default", "artifact_kind": "data"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "default",
+                "artifact_kind": "document",
+                "content": {"score": 88, "status": "ok"},
+            },
+        ],
+        [],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "default",
+            "artifact_kind": "data",
+            "data": {"score": 88, "status": "ok"},
+        }
+    ]
+
+
 def test_build_task_artifacts_from_structured_outputs_rejects_old_data_field() -> None:
     with pytest.raises(ValueError, match="must include content"):
         _build_task_artifacts_from_structured_outputs(
@@ -618,59 +689,6 @@ def test_build_plain_text_artifact_maps_single_text_port() -> None:
         "artifact_kind": "text",
         "content": "Executive summary",
     }
-
-
-def test_build_plain_file_artifacts_maps_single_generated_file() -> None:
-    artifacts = _build_plain_file_artifacts(
-        {"output_ports": [{"id": "report", "artifact_kind": "document"}]},
-        [
-            {
-                "file_path": "https://example.com/report.pdf",
-                "filename": "report.pdf",
-                "artifact_kind": "document",
-                "mime_type": "application/pdf",
-            }
-        ],
-    )
-
-    assert artifacts == [
-        {
-            "port_id": "report",
-            "artifact_kind": "document",
-            "url": "https://example.com/report.pdf",
-            "filename": "report.pdf",
-            "mime_type": "application/pdf",
-        }
-    ]
-
-
-def test_build_plain_file_artifacts_prefers_explicit_output_port_metadata() -> None:
-    artifacts = _build_plain_file_artifacts(
-        {
-            "output_ports": [
-                {"id": "report", "artifact_kind": "document"},
-                {"id": "spreadsheet", "artifact_kind": "data"},
-            ]
-        },
-        [
-            {
-                "file_path": "https://example.com/report.xlsx",
-                "filename": "report.xlsx",
-                "output_port_id": "report",
-                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            }
-        ],
-    )
-
-    assert artifacts == [
-        {
-            "port_id": "report",
-            "artifact_kind": "document",
-            "url": "https://example.com/report.xlsx",
-            "filename": "report.xlsx",
-            "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        }
-    ]
 
 
 def test_collect_generated_artifacts_preserves_explicit_output_metadata() -> None:

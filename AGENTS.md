@@ -241,6 +241,7 @@ Mandatory steps before writing code:
 ### Hard Rules
 
 - Destructive shell commands require user approval.
+- Must always comment the generated code.
 - Never skip pre-coding steps, even for small fixes.
 - `reviewer` and `frontend-qa` are read-only; never modify code.
 

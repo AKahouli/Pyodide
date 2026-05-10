@@ -8,7 +8,6 @@ infrastructure as RunAgentTeam (SearchToolkit, build_tree, etc.).
 import copy
 import json
 import re
-from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Type
 
 from langchain_core.tools import StructuredTool
@@ -16,6 +15,7 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.config.settings import get_settings
+from src.langgraph_engine.artifact_routing import infer_artifact_kind, semantic_match_output_port
 from src.smart_rag.tools.utilities.connector_tools import (
     import_connector_items_to_workspace_request,
 )
@@ -28,56 +28,6 @@ def _log_payload(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, default=str, indent=2)
     except (TypeError, ValueError):
         return str(value)
-
-_GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
-    ".pdf": "document",
-    ".doc": "document",
-    ".docx": "document",
-    ".odt": "document",
-    ".rtf": "document",
-    ".txt": "text",
-    ".md": "text",
-    ".py": "code",
-    ".js": "code",
-    ".ts": "code",
-    ".tsx": "code",
-    ".jsx": "code",
-    ".java": "code",
-    ".kt": "code",
-    ".go": "code",
-    ".rs": "code",
-    ".c": "code",
-    ".cpp": "code",
-    ".h": "code",
-    ".cs": "code",
-    ".rb": "code",
-    ".php": "code",
-    ".sh": "code",
-    ".bat": "code",
-    ".sql": "code",
-    ".r": "code",
-    ".lua": "code",
-    ".swift": "code",
-    ".csv": "data",
-    ".xlsx": "data",
-    ".xls": "data",
-    ".json": "data",
-    ".xml": "data",
-    ".yaml": "data",
-    ".yml": "data",
-    ".tsv": "data",
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".gif": "image",
-    ".bmp": "image",
-    ".svg": "image",
-    ".webp": "image",
-    ".pptx": "document",
-    ".ppt": "document",
-    ".odp": "document",
-}
-
 
 # --- ToolResultCollector ---
 
@@ -773,26 +723,6 @@ def _is_sandbox_local_path(path: str) -> bool:
     return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
 
 
-def _infer_generated_artifact_kind(filename: str) -> Optional[str]:
-    normalized = str(filename or "").strip().lower()
-    if "." not in normalized:
-        return None
-    return _GENERATED_ARTIFACT_KIND_BY_EXTENSION.get(
-        normalized[normalized.rfind(".") :]
-    )
-
-
-def _normalize_port_id(value: Any) -> str:
-    raw = str(value or "default").strip() or "default"
-    if raw.startswith(("in-", "out-")):
-        return raw.split("-", 1)[1] or "default"
-    return raw
-
-
-def _normalize_port_text(value: Any) -> str:
-    return str(value or "").strip().lower().replace(" ", "-")
-
-
 def _select_generated_artifact_output_port(
     output_ports: Optional[List[Dict[str, Any]]],
     filename: str,
@@ -809,33 +739,22 @@ def _select_generated_artifact_output_port(
         for port in (output_ports or [])
         if str(port.get("artifact_kind") or "").strip() not in {"text", "code"}
     ]
-    if not ports:
-        return None
-
-    normalized_kind = str(inferred_kind or "").strip()
-    compatible_ports = [
-        port
-        for port in ports
-        if not normalized_kind
-        or str(port.get("artifact_kind") or "").strip() == normalized_kind
-    ]
-    if len(compatible_ports) == 1:
-        return compatible_ports[0]
     if len(ports) == 1:
         return ports[0]
+    selected_port = semantic_match_output_port(
+        ports,
+        preferred_kind=inferred_kind,
+        filename=filename,
+        label=f"generated artifact '{filename}'",
+        allow_single_compatible=True,
+    )
+    if selected_port is not None:
+        return selected_port
 
-    stem = _normalize_port_text(Path(str(filename or "")).stem)
-    if stem:
-        for port in ports:
-            for field in ("id", "name"):
-                candidate = _normalize_port_text(port.get(field))
-                if candidate and (
-                    candidate == stem or stem in candidate or candidate in stem
-                ):
-                    return port
-
+    # Keep a deterministic fallback for tool-generated files when multiple
+    # file-capable ports exist but semantic cues are weak.
     return next(
-        (port for port in ports if _normalize_port_id(port.get("id")) == "default"),
+        (port for port in ports if str(port.get("id") or "").strip() == "default"),
         None,
     )
 
@@ -1306,7 +1225,7 @@ def _create_code_interpreter_tool(
             for gf in result.get("generated_files", []):
                 generated_filename = gf.get("filename", gf.get("name", ""))
                 inferred_kind = (
-                    _infer_generated_artifact_kind(generated_filename) or "document"
+                    infer_artifact_kind(generated_filename) or "document"
                 )
                 selected_port = _select_generated_artifact_output_port(
                     output_ports,

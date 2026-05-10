@@ -26,6 +26,7 @@ from src.langgraph_engine.port_resolution import (
     load_prompt_registry,
     resolve_prompt_template,
 )
+from src.langgraph_engine.artifact_routing import normalize_port_id as _normalize_port_id
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
@@ -33,13 +34,6 @@ logger = get_logger(__name__)
 MAX_TOOL_ITERATIONS = 10
 SKIP_STEP_REASON = "__SKIP_STEP__"
 StepProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
-
-
-def _normalize_port_id(value: Any) -> str:
-    raw = str(value or "default").strip() or "default"
-    if raw.startswith(("in-", "out-")):
-        return raw.split("-", 1)[1] or "default"
-    return raw
 
 
 def _get_output_ports(task: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -60,14 +54,12 @@ def _output_port_kind(port: Dict[str, Any]) -> str:
 
 def _task_requires_structured_output_synthesis(task: Dict[str, Any]) -> bool:
     output_ports = _get_output_ports(task)
-    if len(output_ports) <= 1:
+    if not output_ports:
         return False
 
-    # Any multi-port task needs explicit port routing in the model response.
-    # Duplicate kinds are one ambiguous case, but distinct kinds like
-    # text+data also need structured outputs so the runtime can bind each
-    # payload to the intended port instead of relying on post-hoc heuristics.
-    return True
+    # Plain mode is reserved for text-only tasks; any non-text port needs
+    # structured routing so the model can bind outputs explicitly.
+    return any(_output_port_kind(port) != "text" for port in output_ports)
 
 
 def _determine_output_mode(task: Dict[str, Any]) -> str:
@@ -218,16 +210,21 @@ def _build_task_artifacts_from_structured_outputs(
             )
 
         port_kind = _output_port_kind(port)
-        output_kind = str(
+        model_output_kind = str(
             output_spec.get("artifact_kind") or output_spec.get("artifactKind") or ""
         ).strip()
-        if not output_kind:
+        if not model_output_kind:
             raise ValueError(
                 f"Structured output for port '{output_port_id}' must include artifact_kind"
             )
-        if port_kind and output_kind and port_kind != output_kind:
-            raise ValueError(
-                f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
+        # The declared port contract is canonical once the model selects a port.
+        output_kind = port_kind or model_output_kind
+        if port_kind and model_output_kind and port_kind != model_output_kind:
+            logger.warning(
+                "Structured output kind does not match declared port kind; using declared port kind",
+                output_port_id=output_port_id,
+                model_artifact_kind=model_output_kind,
+                declared_artifact_kind=port_kind,
             )
 
         content = output_spec.get("content")
@@ -335,7 +332,7 @@ def _build_plain_text_artifact(
         return None
 
     text_ports = [
-        port for port in _get_output_ports(task) if _output_port_kind(port) in {"text", "code"}
+        port for port in _get_output_ports(task) if _output_port_kind(port) == "text"
     ]
     if len(text_ports) != 1:
         return None
@@ -346,84 +343,6 @@ def _build_plain_text_artifact(
         "artifact_kind": _output_port_kind(port) or "text",
         "content": content,
     }
-
-
-def _build_plain_file_artifacts(
-    task: Dict[str, Any], generated_artifacts: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    file_ports = [
-        port for port in _get_output_ports(task) if _output_port_kind(port) not in {"text", "code"}
-    ]
-    if not file_ports or not generated_artifacts:
-        return []
-
-    artifacts: List[Dict[str, Any]] = []
-    used_port_ids: set[str] = set()
-    port_by_id = {_normalize_port_id(port.get("id")): port for port in file_ports}
-    for generated_artifact in generated_artifacts:
-        raw_output_port_id = str(generated_artifact.get("output_port_id") or "").strip()
-        explicit_port_id = (
-            _normalize_port_id(raw_output_port_id) if raw_output_port_id else ""
-        )
-        explicit_kind = str(generated_artifact.get("artifact_kind") or "").strip()
-        if explicit_port_id:
-            port = port_by_id.get(explicit_port_id)
-            if port is None:
-                raise ValueError(
-                    f"Generated artifact '{generated_artifact.get('filename') or generated_artifact.get('file_path') or 'unnamed'}' targets unknown output port '{explicit_port_id}'"
-                )
-            port_kind = _output_port_kind(port)
-            if explicit_kind and port_kind and explicit_kind != port_kind:
-                raise ValueError(
-                    f"Generated artifact '{generated_artifact.get('filename') or generated_artifact.get('file_path') or 'unnamed'}' targets output port '{explicit_port_id}' with incompatible kind '{explicit_kind}'"
-                )
-            if explicit_port_id in used_port_ids:
-                logger.warning(
-                    "Generated artifact targets an output port that already has an artifact; dropping duplicate",
-                    output_port_id=explicit_port_id,
-                    filename=str(generated_artifact.get("filename") or ""),
-                    file_path=str(generated_artifact.get("file_path") or ""),
-                )
-                continue
-            used_port_ids.add(explicit_port_id)
-            artifacts.append(
-                {
-                    "port_id": str(port.get("id") or explicit_port_id).strip()
-                    or explicit_port_id,
-                    "artifact_kind": explicit_kind or port_kind or "document",
-                    "url": str(generated_artifact.get("file_path") or ""),
-                    "filename": str(generated_artifact.get("filename") or ""),
-                    "mime_type": str(generated_artifact.get("mime_type") or ""),
-                }
-            )
-            continue
-
-        compatible_ports = [
-            port
-            for port in file_ports
-            if str(port.get("id") or "default") not in used_port_ids
-            and (
-                not _output_port_kind(port)
-                or _output_port_kind(port)
-                == explicit_kind
-            )
-        ]
-        if len(compatible_ports) != 1:
-            continue
-
-        port = compatible_ports[0]
-        used_port_ids.add(str(port.get("id") or "default"))
-        artifacts.append(
-            {
-                "port_id": str(port.get("id") or "default").strip() or "default",
-                "artifact_kind": _output_port_kind(port)
-                or str(generated_artifact.get("artifact_kind") or "document"),
-                "url": str(generated_artifact.get("file_path") or ""),
-                "filename": str(generated_artifact.get("filename") or ""),
-                "mime_type": str(generated_artifact.get("mime_type") or ""),
-            }
-        )
-    return artifacts
 
 
 def _finalize_task_outputs(
@@ -445,7 +364,8 @@ def _finalize_task_outputs(
             ),
         )
 
-    artifacts = _build_plain_file_artifacts(task, generated_artifacts)
+    # Plain mode is text-only; non-text outputs are routed through structured mode.
+    artifacts: List[Dict[str, Any]] = []
     text_artifact = _build_plain_text_artifact(task, response_text)
     if text_artifact is not None:
         artifacts.insert(0, text_artifact)
