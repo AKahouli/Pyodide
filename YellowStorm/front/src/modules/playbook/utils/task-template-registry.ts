@@ -4,6 +4,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: 'summarizer',
     type: 'summarizer',
+    nodeType: 'agent',
     title: 'Summarizer',
     description: 'Takes text or documents and produces a structured summary.',
     icon: 'FileText',
@@ -25,6 +26,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: 'docxgen',
     type: 'docxgen',
+    nodeType: 'agent',
     title: 'Document Generator',
     description: 'Generates a professional Word document from structured input.',
     icon: 'FileType',
@@ -46,6 +48,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: 'slidegen',
     type: 'slidegen',
+    nodeType: 'agent',
     title: 'Slide Generator',
     description: 'Creates presentation slide content from text or data.',
     icon: 'Presentation',
@@ -68,6 +71,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: 'codegen',
     type: 'codegen',
+    nodeType: 'agent',
     title: 'Code Generator',
     description: 'Generates or reviews code based on specifications.',
     icon: 'Code',
@@ -90,6 +94,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: 'analyzer',
     type: 'analyzer',
+    nodeType: 'agent',
     title: 'Data Analyzer',
     description: 'Analyzes data and produces insights or dashboard descriptions.',
     icon: 'BarChart3',
@@ -112,6 +117,7 @@ export const TASK_TEMPLATES: TaskTemplate[] = [
   {
     id: 'evaluation',
     type: 'evaluation',
+    nodeType: 'evaluation',
     title: 'Evaluation Task',
     description: 'Evaluates connected outputs against expected results and optional reference baselines.',
     icon: 'Scale',

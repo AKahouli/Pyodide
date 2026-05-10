@@ -974,6 +974,8 @@ export class PlaybookService {
         inputFiles: t.inputFiles || [],
         enabled: t.enabled !== false,
         taskType: t.taskType || null,
+        nodeType: t.nodeType || null,
+        templateType: t.templateType || null,
         inputPorts: t.inputPorts || [],
         outputPorts: t.outputPorts || [],
         hasValidatedReplay: activeReplays.has(t.id),

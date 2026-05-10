@@ -10,6 +10,7 @@ describe('PlaybookIntentService', () => {
   const findByKey = jest.fn();
   const render = jest.fn();
   const findDefaultAgents = jest.fn();
+  const findEnabled = jest.fn();
 
   const service = new PlaybookIntentService(
     { findById } as any,
@@ -18,6 +19,7 @@ describe('PlaybookIntentService', () => {
     { findByKey } as any,
     { render } as any,
     { findDefaultAgents } as any,
+    { findEnabled } as any,
   );
 
   beforeEach(() => {
@@ -33,6 +35,7 @@ describe('PlaybookIntentService', () => {
     findByKey.mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'user-template' });
     render.mockReturnValue('rendered-user-prompt');
     findDefaultAgents.mockResolvedValue({ data: [{ id: 'agent-1', slug: 'research-agent', name: 'Research Agent', role: 'Research', description: 'Research tasks', agentType: { id: 'type-1', name: 'Research' } }], meta: { total: 1, page: 1, limit: 100, totalPages: 1 } });
+    findEnabled.mockResolvedValue({ items: [{ id: 'tpl-1', key: 'report_generation', type: 'report_generation', nodeType: 'agent', title: 'Report Generation', description: 'Generate a report', category: 'generation', inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }], outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'document' }], promptTemplate: '', recommendedAgentTypeSlug: 'research-agent', requiredToolNames: [], executionMode: 'agent', assignedAgentId: null, selectedAction: null, enabled: true, version: 1, isBuiltIn: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] });
     findById.mockResolvedValue({
       id: 'playbook-1',
       name: 'PB',
@@ -130,7 +133,57 @@ describe('PlaybookIntentService', () => {
 
     expect(render).toHaveBeenCalledWith('user-template', expect.objectContaining({
       default_agents: expect.stringContaining('research-agent'),
+      node_templates: expect.stringContaining('report_generation'),
     }));
+  });
+
+  it('normalizes templateType on created task drafts', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Add report step',
+                summary: 'Adds a report generation step.',
+                reason: 'A report is needed.',
+                confidence: 0.84,
+                impact: {
+                  nodesToCreate: 1,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 0,
+                  edgesToDelete: 0,
+                  affectedTaskIds: [],
+                  businessOutcome: 'A reusable report step is added.',
+                },
+                changes: [
+                  {
+                    type: 'create_node',
+                    nodeRef: 'report_step',
+                    anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+                    task: { title: 'Generate Report', description: 'Create the final report.', templateType: 'report_generation' },
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Add a report step' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      changes: [
+        {
+          type: 'create_node',
+          task: { templateType: 'report_generation' },
+        },
+      ],
+    });
   });
 
   it('infers workflow plan suggestions without an explicit kind for update-only plans', async () => {

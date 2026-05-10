@@ -1,5 +1,6 @@
 import type { PlaybookTask, PlaybookEdge, TaskInputPort, TaskOutputPort } from '../types';
 import { normalizeIteratorTaskPorts } from './iterator-ports';
+import { getEffectiveNodeType } from './node-type';
 
 const DEFAULT_INPUT_PORT: TaskInputPort = {
   id: 'default',
@@ -15,7 +16,7 @@ const DEFAULT_OUTPUT_PORT: TaskOutputPort = {
 };
 
 export function migrateTask(task: any): PlaybookTask {
-  if (task?.taskType === 'iterator') {
+  if (task && getEffectiveNodeType(task as PlaybookTask) === 'iterator') {
     return normalizeIteratorTaskPorts(task as PlaybookTask);
   }
 
@@ -48,11 +49,11 @@ export function remapIteratorEdgePorts(
   return {
     ...edge,
     sourceOutputPortId:
-      sourceTask?.taskType === 'iterator'
+      sourceTask && getEffectiveNodeType(sourceTask) === 'iterator'
         ? 'results'
         : edge.sourceOutputPortId,
     targetInputPortId:
-      targetTask?.taskType === 'iterator'
+      targetTask && getEffectiveNodeType(targetTask) === 'iterator'
         ? 'items'
         : edge.targetInputPortId,
   };
@@ -63,7 +64,7 @@ export function migratePlaybook(
   edges: PlaybookEdge[],
 ): { tasks: PlaybookTask[]; edges: PlaybookEdge[] } {
   const migratedTasks = tasks.map((t) =>
-    t.taskType === 'iterator'
+    getEffectiveNodeType(t) === 'iterator'
       ? normalizeIteratorTaskPorts(t)
       : t.inputPorts?.length || t.outputPorts?.length
         ? t

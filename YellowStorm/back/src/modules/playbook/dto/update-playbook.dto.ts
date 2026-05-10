@@ -311,6 +311,16 @@ export class UpdatePlaybookTaskDto {
   @Type(() => TaskOutputPortDto)
   outputPorts?: TaskOutputPortDto[];
 
+  @ApiPropertyOptional({ enum: ['agent', 'action', 'evaluation', 'iterator'] })
+  @IsOptional()
+  @IsString()
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | null;
+
+  @ApiPropertyOptional({ description: 'Template identity used to create this task' })
+  @IsOptional()
+  @IsString()
+  templateType?: string | null;
+
   @ApiPropertyOptional({ description: 'Connector tool bindings for this step', type: [Object] })
   @IsOptional()
   @IsArray()

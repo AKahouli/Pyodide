@@ -709,7 +709,9 @@ function PlaybookCanvasInner() {
         notifyOnComplete: false,
         notifyEmails: [],
         inputFiles: [],
-        taskType: template.type,
+        taskType: template.nodeType === 'iterator' ? 'iterator' : template.nodeType === 'evaluation' ? 'evaluation' : 'generic',
+        nodeType: template.nodeType,
+        templateType: template.type,
         inputPorts: template.inputPorts.map((p) => ({ ...p })),
         outputPorts: template.outputPorts.map((p) => ({ ...p })),
       };
@@ -1319,7 +1321,14 @@ function PlaybookCanvasInner() {
       return ports.map((port) => ({ ...port }));
     };
 
-    const findMatchingTemplate = (title: string, description: string) => {
+    const findMatchingTemplate = (title: string, description: string, templateType?: string | null) => {
+      if (templateType) {
+        const exactTemplate = nodeTemplates.find((template) => template.type === templateType);
+        if (exactTemplate) {
+          return exactTemplate;
+        }
+      }
+
       const normalizedTitle = title.trim().toLowerCase();
       const normalizedDescription = description.trim().toLowerCase();
 
@@ -1335,8 +1344,8 @@ function PlaybookCanvasInner() {
     const getPreferredInputPortId = (task: PlaybookTask, index = 0) => task.inputPorts?.[index]?.id || task.inputPorts?.[0]?.id || 'default';
     const getPreferredOutputPortId = (task: PlaybookTask) => task.outputPorts?.[0]?.id || 'default';
 
-    const createIntentTask = (title: string, description: string, agentSlug: string | null | undefined, anchorTask: PlaybookTask | null, order: number): PlaybookTask => {
-      const matchedTemplate = findMatchingTemplate(title, description);
+    const createIntentTask = (title: string, description: string, agentSlug: string | null | undefined, templateType: string | null | undefined, anchorTask: PlaybookTask | null, order: number): PlaybookTask => {
+      const matchedTemplate = findMatchingTemplate(title, description, templateType);
 
       return {
         id: crypto.randomUUID(),
@@ -1447,6 +1456,7 @@ function PlaybookCanvasInner() {
       taskTitle: string,
       taskDescription: string,
       agentSlug: string | null | undefined,
+      templateType: string | null | undefined,
       mode: 'append' | 'before' | 'after' | 'as_input',
       targetTaskId: string | null,
       nodeRef: string | null,
@@ -1459,7 +1469,7 @@ function PlaybookCanvasInner() {
       const anchorTasks = anchorTaskIds.map((id) => nextTasks.find((task) => task.id === id)).filter((task): task is PlaybookTask => Boolean(task));
       const anchorTask = hasExplicitAnchors ? (anchorTasks[0] || null) : null;
       if (hasExplicitAnchors && anchorTasks.length === 0) {
-        const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, null, nextTasks.length);
+        const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, templateType, null, nextTasks.length);
         nextTasks = [...nextTasks, newTask];
         changedNodeIds.add(newTask.id);
         if (newNodeRef) {
@@ -1468,7 +1478,7 @@ function PlaybookCanvasInner() {
         return true;
       }
 
-      const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, anchorTask, nextTasks.length);
+      const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, templateType, anchorTask, nextTasks.length);
       nextTasks = [...nextTasks, newTask];
       changedNodeIds.add(newTask.id);
       if (newNodeRef) {
@@ -1622,7 +1632,7 @@ function PlaybookCanvasInner() {
         return;
       }
       if (!change.task) return;
-      applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.anchorMode, change.targetTaskId, null, null);
+      applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.task.templateType, change.anchorMode, change.targetTaskId, null, null);
       commitGraph(nextTasks, nextEdges);
       return;
     }
@@ -1639,6 +1649,7 @@ function PlaybookCanvasInner() {
           change.task.title,
           change.task.description,
           change.task.agentSlug,
+          change.task.templateType,
           change.anchor.mode,
           change.anchor.targetTaskId,
           change.anchor.nodeRef,

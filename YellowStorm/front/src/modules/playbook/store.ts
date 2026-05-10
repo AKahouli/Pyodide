@@ -3483,6 +3483,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             nodeTemplates: items.map((item) => ({
               id: item.id,
               type: item.type,
+              nodeType: item.nodeType,
               title: item.title,
               description: item.description || '',
               icon: item.icon || 'FileText',

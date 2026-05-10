@@ -58,6 +58,7 @@ describe('PlaybookNodeTemplateService', () => {
       { _id: 'slidegen-id', key: 'slidegen', type: 'slidegen', isBuiltIn: true, enabled: true },
       { _id: 'codegen-id', key: 'codegen', type: 'codegen', isBuiltIn: true, enabled: true },
       { _id: 'analyzer-id', key: 'analyzer', type: 'analyzer', isBuiltIn: true, enabled: true },
+      { _id: 'iterator-id', key: 'iterator', type: 'iterator', isBuiltIn: true, enabled: true },
     ];
     return [...defaults, ...overrides];
   }
@@ -235,5 +236,85 @@ describe('PlaybookNodeTemplateService', () => {
     await service.findAll();
 
     expect(model.bulkWrite).not.toHaveBeenCalled();
+  });
+
+  it('persists iteratorConfig on update responses', async () => {
+    const templateId = '507f1f77bcf86cd799439012';
+    const userId = '507f191e810c19729de860ea';
+    const iteratorConfig = {
+      source: '{{items}}',
+      mode: 'batch' as const,
+      batchSize: 25,
+      itemVariable: 'row',
+      outputVariable: 'rows',
+      errorStrategy: 'continue' as const,
+    };
+
+    mockFindOnce(buildExistingDefaults());
+
+    model.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => templateId },
+        key: 'iterator',
+        type: 'iterator',
+        title: 'Iterator',
+        description: 'Iterator template',
+        icon: 'RefreshCw',
+        color: 'cyan',
+        category: 'analysis',
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+        executionMode: 'agent',
+        assignedAgentId: null,
+        selectedAction: null,
+        iteratorConfig: null,
+        enabled: true,
+        version: 1,
+        isBuiltIn: true,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      }),
+    });
+
+    model.findByIdAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => templateId },
+        key: 'iterator',
+        type: 'iterator',
+        title: 'Iterator',
+        description: 'Iterator template',
+        icon: 'RefreshCw',
+        color: 'cyan',
+        category: 'analysis',
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+        executionMode: 'agent',
+        assignedAgentId: null,
+        selectedAction: null,
+        iteratorConfig,
+        enabled: true,
+        version: 2,
+        isBuiltIn: true,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-02T00:00:00Z'),
+      }),
+    });
+
+    const updated = await service.update(templateId, { iteratorConfig }, userId);
+
+    expect(updated.iteratorConfig).toEqual(iteratorConfig);
+    expect(model.findByIdAndUpdate).toHaveBeenCalledWith(
+      templateId,
+      expect.objectContaining({
+        $set: expect.objectContaining({ iteratorConfig }),
+      }),
+      { new: true },
+    );
   });
 });

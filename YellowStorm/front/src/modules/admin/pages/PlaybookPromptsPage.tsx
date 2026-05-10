@@ -17,6 +17,13 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
+import {
+  PlaybookIteratorConfigFields,
+  usePlaybookStore,
+  type PlaybookIteratorConfig,
+  type PlaybookNodeType,
+} from '@/modules/playbook';
+import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '@/modules/playbook/utils/iterator-ports';
 import apiClient from '@/lib/api/client';
 import {
   getPlaybookPrompts,
@@ -27,7 +34,6 @@ import {
   deletePlaybookNodeTemplate,
 } from '../api';
 import type { PlaybookPromptResponse, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
-import { usePlaybookStore } from '@/modules/playbook';
 import * as Icons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -50,6 +56,7 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
   id: '',
   key: '',
   type: '',
+  nodeType: 'agent',
   title: '',
   description: '',
   icon: 'FileText',
@@ -71,6 +78,14 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
 };
 
 const EMPTY_PORT: PlaybookNodeTemplatePort = { id: '', name: '', artifactKind: 'text', required: false };
+const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
+  source: '{{items}}',
+  mode: 'item',
+  batchSize: 10,
+  itemVariable: 'item',
+  outputVariable: 'processed_items',
+  errorStrategy: 'stop',
+};
 
 // Constants for selects
 const CATEGORIES = ['content', 'generation', 'analysis', 'code', 'evaluation'];
@@ -110,6 +125,22 @@ function slugify(text: string): string {
     .replace(/[^\w\s-]/g, '')
     .replace(/[\s_-]+/g, '-')
     .replace(/^-+|-+$/g, '');
+}
+
+function normalizeIteratorTemplate(template: PlaybookNodeTemplateResponse): PlaybookNodeTemplateResponse {
+  if (template.nodeType !== 'iterator') {
+    return template;
+  }
+
+  return {
+    ...template,
+    executionMode: 'agent',
+    assignedAgentId: null,
+    selectedAction: null,
+    inputPorts: getDefaultIteratorInputPorts(),
+    outputPorts: getDefaultIteratorOutputPorts(),
+    iteratorConfig: template.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG },
+  };
 }
 
 export function PlaybookPromptsPage() {
@@ -153,7 +184,7 @@ export function PlaybookPromptsPage() {
       setTemplateDraft(EMPTY_NODE_TEMPLATE);
       return;
     }
-    setTemplateDraft(item);
+    setTemplateDraft(normalizeIteratorTemplate(item));
   };
 
   const fetchPrompts = async () => {
@@ -251,25 +282,30 @@ export function PlaybookPromptsPage() {
       return;
     }
     const type = templateDraft.type || templateDraft.key;
+    const draftToSave = templateDraft.nodeType === 'iterator'
+      ? normalizeIteratorTemplate({ ...templateDraft, type })
+      : templateDraft;
     setTemplateSaving(true);
     try {
       if (isCreatingTemplate) {
         const created = await createPlaybookNodeTemplate({
-          key: templateDraft.key,
+          key: draftToSave.key,
           type,
-          title: templateDraft.title,
-          description: templateDraft.description,
-          icon: templateDraft.icon,
-          color: templateDraft.color,
-          category: templateDraft.category,
-          inputPorts: stripPortIds(templateDraft.inputPorts),
-          outputPorts: stripPortIds(templateDraft.outputPorts),
-          promptTemplate: templateDraft.promptTemplate,
-          requiredToolNames: templateDraft.requiredToolNames,
-          executionMode: templateDraft.executionMode,
-          assignedAgentId: templateDraft.assignedAgentId,
-          selectedAction: templateDraft.selectedAction,
-          enabled: templateDraft.enabled,
+          nodeType: draftToSave.nodeType,
+          title: draftToSave.title,
+          description: draftToSave.description,
+          icon: draftToSave.icon,
+          color: draftToSave.color,
+          category: draftToSave.category,
+          inputPorts: stripPortIds(draftToSave.inputPorts),
+          outputPorts: stripPortIds(draftToSave.outputPorts),
+          promptTemplate: draftToSave.promptTemplate,
+          requiredToolNames: draftToSave.requiredToolNames,
+          executionMode: draftToSave.executionMode,
+          assignedAgentId: draftToSave.assignedAgentId,
+          selectedAction: draftToSave.selectedAction,
+          iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
+          enabled: draftToSave.enabled,
         });
         setTemplateItems((current) => [...current, created].sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)));
         setSelectedTemplateId(created.id);
@@ -278,21 +314,23 @@ export function PlaybookPromptsPage() {
         toast.success(t('playbook.templates.toasts.created'));
       } else if (templateDraft.id) {
         const updated = await updatePlaybookNodeTemplate(templateDraft.id, {
-          key: templateDraft.key,
+          key: draftToSave.key,
           type,
-          title: templateDraft.title,
-          description: templateDraft.description,
-          icon: templateDraft.icon,
-          color: templateDraft.color,
-          category: templateDraft.category,
-          inputPorts: stripPortIds(templateDraft.inputPorts),
-          outputPorts: stripPortIds(templateDraft.outputPorts),
-          promptTemplate: templateDraft.promptTemplate,
-          requiredToolNames: templateDraft.requiredToolNames,
-          executionMode: templateDraft.executionMode,
-          assignedAgentId: templateDraft.assignedAgentId,
-          selectedAction: templateDraft.selectedAction,
-          enabled: templateDraft.enabled,
+          nodeType: draftToSave.nodeType,
+          title: draftToSave.title,
+          description: draftToSave.description,
+          icon: draftToSave.icon,
+          color: draftToSave.color,
+          category: draftToSave.category,
+          inputPorts: stripPortIds(draftToSave.inputPorts),
+          outputPorts: stripPortIds(draftToSave.outputPorts),
+          promptTemplate: draftToSave.promptTemplate,
+          requiredToolNames: draftToSave.requiredToolNames,
+          executionMode: draftToSave.executionMode,
+          assignedAgentId: draftToSave.assignedAgentId,
+          selectedAction: draftToSave.selectedAction,
+          iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
+          enabled: draftToSave.enabled,
         });
         setTemplateItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
         setTemplateDraft(updated);
@@ -328,7 +366,7 @@ export function PlaybookPromptsPage() {
   const startCreateTemplate = () => {
     setIsCreatingTemplate(true);
     setSelectedTemplateId('');
-    setTemplateDraft({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' });
+    setTemplateDraft(normalizeIteratorTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' }));
   };
 
   const cancelCreateTemplate = () => {
@@ -350,6 +388,12 @@ export function PlaybookPromptsPage() {
 
   const stripPortIds = (ports: PlaybookNodeTemplatePort[]): PlaybookNodeTemplatePort[] =>
     ports.map(({ _id, ...rest }: any) => rest);
+
+  const stripIteratorConfigIds = (config: PlaybookIteratorConfig | null | undefined): PlaybookIteratorConfig | null => {
+    if (!config) return null;
+    const { _id, id, ...rest } = config as any;
+    return rest as PlaybookIteratorConfig;
+  };
 
   const addInputPort = () => {
     setTemplateDraft((current) => ({
@@ -413,6 +457,40 @@ export function PlaybookPromptsPage() {
       };
     });
   };
+
+  const applyTemplateNodeType = (nodeType: PlaybookNodeType) => {
+    setTemplateDraft((current) => {
+      if (nodeType === 'iterator') {
+        return normalizeIteratorTemplate({
+          ...current,
+          nodeType: 'iterator',
+        });
+      }
+
+      if (nodeType === 'action') {
+        return {
+          ...current,
+          nodeType: 'action',
+          executionMode: 'action',
+          assignedAgentId: null,
+          selectedAction: current.selectedAction ?? 'index',
+          iteratorConfig: null,
+        };
+      }
+
+      return {
+        ...current,
+        nodeType: 'agent',
+        executionMode: 'agent',
+        selectedAction: null,
+        iteratorConfig: null,
+      };
+    });
+  };
+
+  const templateNodeType: PlaybookNodeType = templateDraft.type === 'iterator'
+    ? 'iterator'
+    : templateDraft.nodeType ?? (templateDraft.executionMode === 'action' ? 'action' : 'agent');
 
   const isLoading = promptLoading || templateLoading;
 
@@ -662,18 +740,31 @@ export function PlaybookPromptsPage() {
                     </div>
                   </div>
 
-                  {/* Category */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('playbook.templates.fields.category')}</label>
-                    <div className="flex gap-2">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">{t('playbook.templates.fields.category')}</label>
+                      <div className="flex gap-2">
+                        <select
+                          value={templateDraft.category}
+                          onChange={(e) => setTemplateDraft((current) => ({ ...current, category: e.target.value }))}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">{t('playbook.templates.fields.nodeType')}</label>
                       <select
-                        value={templateDraft.category}
-                        onChange={(e) => setTemplateDraft((current) => ({ ...current, category: e.target.value }))}
+                        value={templateNodeType}
+                        onChange={(e) => applyTemplateNodeType(e.target.value as PlaybookNodeType)}
                         className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {CATEGORIES.map((cat) => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
+                        <option value="agent">{t('playbook.templates.fields.nodeTypeAgent')}</option>
+                        <option value="action">{t('playbook.templates.fields.nodeTypeAction')}</option>
+                        <option value="iterator">{t('playbook.templates.fields.nodeTypeIterator')}</option>
                       </select>
                     </div>
                   </div>
@@ -688,8 +779,8 @@ export function PlaybookPromptsPage() {
                     />
                   </div>
 
-                  {/* Icon, Color, Execution Mode */}
-                  <div className="grid gap-4 md:grid-cols-3">
+                  {/* Icon, Color */}
+                  <div className="grid gap-4 md:grid-cols-2">
                     {/* Icon Picker */}
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.icon')}</label>
@@ -755,28 +846,16 @@ export function PlaybookPromptsPage() {
                       </Popover>
                     </div>
 
-                    {/* Execution Mode */}
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('playbook.templates.fields.executionMode')}</label>
-                      <select
-                        value={templateDraft.executionMode}
-                        onChange={(e) => setTemplateDraft((current) => ({
-                          ...current,
-                          executionMode: e.target.value,
-                          assignedAgentId: e.target.value === 'agent' ? current.assignedAgentId : null,
-                          selectedAction: e.target.value === 'action' ? current.selectedAction : null,
-                        }))}
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {EXECUTION_MODES.map((mode) => (
-                          <option key={mode} value={mode}>{mode}</option>
-                        ))}
-                      </select>
-                    </div>
+
                   </div>
 
                   {/* Agent or Action based on Execution Mode */}
-                  {templateDraft.executionMode === 'agent' ? (
+                  {templateNodeType === 'iterator' && templateDraft.iteratorConfig ? (
+                    <PlaybookIteratorConfigFields
+                      value={templateDraft.iteratorConfig}
+                      onChange={(iteratorConfig) => setTemplateDraft((current) => ({ ...current, iteratorConfig }))}
+                    />
+                  ) : templateDraft.executionMode === 'agent' ? (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.agent')}</label>
                       <SearchableSelect
@@ -816,7 +895,7 @@ export function PlaybookPromptsPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.inputPorts')}</label>
-                      <Button variant="outline" size="sm" onClick={addInputPort}>
+                      <Button variant="outline" size="sm" onClick={addInputPort} disabled={templateNodeType === 'iterator'}>
                         <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
@@ -826,6 +905,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portName')}</label>
                           <Input
                             value={port.name}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateInputPort(index, { ...port, name: e.target.value })}
                             placeholder={t('playbook.templates.fields.portNamePlaceholder')}
                           />
@@ -834,6 +914,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portId')}</label>
                           <Input
                             value={port.id}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateInputPort(index, { ...port, id: e.target.value })}
                             placeholder="port-id"
                           />
@@ -842,6 +923,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.artifactKind')}</label>
                           <select
                             value={port.artifactKind}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateInputPort(index, { ...port, artifactKind: e.target.value })}
                             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                           >
@@ -850,7 +932,7 @@ export function PlaybookPromptsPage() {
                             ))}
                           </select>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeInputPort(index)} className="h-9 w-9">
+                        <Button variant="ghost" size="icon" onClick={() => removeInputPort(index)} className="h-9 w-9" disabled={templateNodeType === 'iterator'}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -863,16 +945,20 @@ export function PlaybookPromptsPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.outputPorts')}</label>
-                      <Button variant="outline" size="sm" onClick={addOutputPort}>
+                      <Button variant="outline" size="sm" onClick={addOutputPort} disabled={templateNodeType === 'iterator'}>
                         <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
+                    {templateNodeType === 'iterator' && (
+                      <p className="text-xs text-muted-foreground">{t('playbook.templates.fields.iteratorOutputPortHint')}</p>
+                    )}
                     {templateDraft.outputPorts.map((port, index) => (
                       <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto] items-end rounded-lg border p-3">
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portName')}</label>
                           <Input
                             value={port.name}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateOutputPort(index, { ...port, name: e.target.value })}
                             placeholder={t('playbook.templates.fields.portNamePlaceholder')}
                           />
@@ -881,6 +967,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portId')}</label>
                           <Input
                             value={port.id}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateOutputPort(index, { ...port, id: e.target.value })}
                             placeholder="port-id"
                           />
@@ -889,6 +976,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.artifactKind')}</label>
                           <select
                             value={port.artifactKind}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateOutputPort(index, { ...port, artifactKind: e.target.value })}
                             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                           >
@@ -897,7 +985,7 @@ export function PlaybookPromptsPage() {
                             ))}
                           </select>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeOutputPort(index)} className="h-9 w-9">
+                        <Button variant="ghost" size="icon" onClick={() => removeOutputPort(index)} className="h-9 w-9" disabled={templateNodeType === 'iterator'}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>

@@ -1,0 +1,179 @@
+import type { ReactNode } from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+import { PlaybookPromptsPage } from './PlaybookPromptsPage';
+import { updatePlaybookNodeTemplate } from '../api';
+import { mockApiClient } from '@/test/setup';
+
+const fetchAgents = vi.fn();
+const invalidateNodeTemplates = vi.fn();
+const useAgents = vi.fn(() => []);
+
+vi.mock('../api', () => ({
+  getPlaybookPrompts: vi.fn().mockResolvedValue({ items: [] }),
+  updatePlaybookPrompt: vi.fn(),
+  getPlaybookNodeTemplates: vi.fn().mockResolvedValue({
+    items: [
+      {
+        id: 'iterator-template-1',
+        key: 'iterator',
+        type: 'iterator',
+        nodeType: 'iterator',
+        title: 'Iterator',
+        description: 'Iterator template',
+        icon: 'RefreshCw',
+        color: 'cyan',
+        category: 'analysis',
+        inputPorts: [{ id: 'legacy', name: 'Legacy', artifactKind: 'text', required: false }],
+        outputPorts: [{ id: 'legacy-out', name: 'Legacy Out', artifactKind: 'text' }],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+        executionMode: 'action',
+        assignedAgentId: 'agent-1',
+        selectedAction: 'index',
+        iteratorConfig: null,
+        enabled: true,
+        version: 1,
+        isBuiltIn: false,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+  }),
+  createPlaybookNodeTemplate: vi.fn(),
+  updatePlaybookNodeTemplate: vi.fn().mockImplementation(async (_id, payload) => ({
+    id: 'iterator-template-1',
+    version: 2,
+    isBuiltIn: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    ...payload,
+  })),
+  deletePlaybookNodeTemplate: vi.fn(),
+}));
+
+vi.mock('@/modules/playbook', async () => {
+  const actual = await vi.importActual<typeof import('@/modules/playbook')>('@/modules/playbook');
+
+  return {
+    ...actual,
+    usePlaybookStore: (selector: (state: { invalidateNodeTemplates: typeof invalidateNodeTemplates }) => unknown) =>
+      selector({ invalidateNodeTemplates }),
+  };
+});
+
+vi.mock('@/modules/agent/store', () => ({
+  useAgents: () => useAgents(),
+  useAgentStore: (selector: (state: { fetchAgents: typeof fetchAgents }) => unknown) =>
+    selector({ fetchAgents }),
+}));
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
+vi.mock('@/components/ui/card', () => ({
+  Card: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CardContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CardDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CardHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CardTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/button', () => ({
+  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button type="button" {...props}>{children}</button>,
+}));
+
+vi.mock('@/components/ui/input', () => ({
+  Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
+}));
+
+vi.mock('@/components/ui/textarea', () => ({
+  Textarea: (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...props} />,
+}));
+
+vi.mock('@/components/ui/badge', () => ({
+  Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
+}));
+
+vi.mock('@/components/ui/switch', () => ({
+  Switch: ({ checked, onCheckedChange }: { checked?: boolean; onCheckedChange?: (checked: boolean) => void }) => (
+    <button type="button" aria-pressed={checked} onClick={() => onCheckedChange?.(!checked)} />
+  ),
+}));
+
+vi.mock('@/components/ui/scroll-area', () => ({
+  ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/separator', () => ({
+  Separator: () => <hr />,
+}));
+
+vi.mock('@/components/ui/collapsible', () => ({
+  Collapsible: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CollapsibleContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CollapsibleTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/dialog', () => ({
+  Dialog: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogDescription: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DialogTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/popover', () => ({
+  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  PopoverTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/searchable-select', () => ({
+  SearchableSelect: () => null,
+}));
+
+describe('PlaybookPromptsPage', () => {
+  it('normalizes iterator templates and persists iteratorConfig on save', async () => {
+    mockApiClient.get.mockResolvedValue({ data: { data: [] } });
+
+    render(<PlaybookPromptsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Iterator')).toBeInTheDocument();
+    });
+
+    expect(screen.getByDisplayValue('{{items}}')).toBeInTheDocument();
+
+    const sourceInput = screen.getByDisplayValue('{{items}}');
+    fireEvent.change(sourceInput, { target: { value: '{{records}}' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /playbook\.templates\.actions\.saveTemplate/i }));
+
+    const updateCall = vi.mocked(updatePlaybookNodeTemplate).mock.calls[0];
+    expect(updateCall).toBeTruthy();
+
+    const payload = updateCall?.[1] as Record<string, unknown>;
+    expect(payload.iteratorConfig).toEqual(
+      expect.objectContaining({
+        source: '{{records}}',
+        mode: 'item',
+        itemVariable: 'item',
+        outputVariable: 'processed_items',
+        errorStrategy: 'stop',
+      }),
+    );
+    expect(payload.inputPorts).toEqual([{ id: 'items', name: 'Items', artifactKind: 'data', required: false }]);
+    expect(payload.outputPorts).toEqual([{ id: 'results', name: 'Results', artifactKind: 'data' }]);
+    expect(payload.executionMode).toBe('agent');
+    expect(payload.assignedAgentId).toBeNull();
+    expect(payload.selectedAction).toBeNull();
+  });
+});

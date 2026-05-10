@@ -80,6 +80,8 @@ export interface PlaybookTaskData {
   outputKey: string;
   enabled?: boolean;
   taskType?: string | null;
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | null;
+  templateType?: string | null;
   inputPorts?: Array<{ id: string; name: string; artifactKind: string; required: boolean; description?: string }>;
   outputPorts?: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
   notifyOnComplete: boolean;

@@ -89,6 +89,8 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
         } : undefined,
       })),
       taskType: task.taskType,
+      nodeType: task.nodeType,
+      templateType: task.templateType,
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
@@ -745,6 +747,7 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
   id: string;
   key: string;
   type: string;
+  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
   title: string;
   description?: string;
   icon?: string;
@@ -763,6 +766,7 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
     id: string;
     key: string;
     type: string;
+    nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
     title: string;
     description?: string;
     icon?: string;

@@ -16,6 +16,7 @@ type NodeTemplateDefaultsEntry = Pick<
   PlaybookNodeTemplateResponse,
   | 'key'
   | 'type'
+  | 'nodeType'
   | 'title'
   | 'description'
   | 'icon'
@@ -26,6 +27,7 @@ type NodeTemplateDefaultsEntry = Pick<
   | 'promptTemplate'
   | 'recommendedAgentTypeSlug'
   | 'requiredToolNames'
+  | 'iteratorConfig'
   | 'enabled'
   | 'isBuiltIn'
 >;
@@ -34,6 +36,7 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
   {
     key: 'summarizer',
     type: 'summarizer',
+    nodeType: 'agent',
     title: 'Summarizer',
     description: 'Takes text or documents and produces a structured summary.',
     icon: 'FileText',
@@ -49,12 +52,14 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       'Highlight key points, decisions, and action items.\n\n{{content}}',
     recommendedAgentTypeSlug: 'researcher',
     requiredToolNames: [],
+    iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
     key: 'docxgen',
     type: 'docxgen',
+    nodeType: 'agent',
     title: 'Document Generator',
     description: 'Generates a professional Word document from structured input.',
     icon: 'FileType',
@@ -70,12 +75,14 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       'Use clear headings, proper formatting, and a professional tone.\n\n{{content}}',
     recommendedAgentTypeSlug: 'writer',
     requiredToolNames: ['document_generator'],
+    iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
     key: 'slidegen',
     type: 'slidegen',
+    nodeType: 'agent',
     title: 'Slide Generator',
     description: 'Creates presentation slide content from text or data.',
     icon: 'Presentation',
@@ -94,12 +101,14 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       'Structure slides with clear titles, bullet points, and speaker notes.\n\n{{content}}',
     recommendedAgentTypeSlug: 'writer',
     requiredToolNames: ['slide_generator'],
+    iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
     key: 'codegen',
     type: 'codegen',
+    nodeType: 'agent',
     title: 'Code Generator',
     description: 'Generates or reviews code based on specifications.',
     icon: 'Code',
@@ -118,12 +127,14 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       'Follow best practices, include error handling, and add inline comments.\n\n{{spec}}',
     recommendedAgentTypeSlug: 'researcher',
     requiredToolNames: ['code_interpreter'],
+    iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
     key: 'analyzer',
     type: 'analyzer',
+    nodeType: 'agent',
     title: 'Data Analyzer',
     description: 'Analyzes data and produces insights or dashboard descriptions.',
     icon: 'BarChart3',
@@ -142,12 +153,14 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       'Provide actionable recommendations.\n\n{{data}}',
     recommendedAgentTypeSlug: 'researcher',
     requiredToolNames: [],
+    iteratorConfig: null,
     enabled: true,
     isBuiltIn: true,
   },
   {
     key: 'evaluation',
     type: 'evaluation',
+    nodeType: 'evaluation',
     title: 'Evaluation Task',
     description: 'Evaluates connected outputs against expected results and optional reference baselines.',
     icon: 'Scale',
@@ -165,6 +178,32 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
       'Return a structured evaluation summary with score, verdict, and findings.',
     recommendedAgentTypeSlug: 'researcher',
     requiredToolNames: [],
+    iteratorConfig: null,
+    enabled: true,
+    isBuiltIn: true,
+  },
+  {
+    key: 'iterator',
+    type: 'iterator',
+    nodeType: 'iterator',
+    title: 'Iterator',
+    description: 'Iterates over a collection and exposes batched or per-item results to downstream nodes.',
+    icon: 'RefreshCw',
+    color: 'cyan',
+    category: 'analysis',
+    inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+    outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+    promptTemplate: '',
+    recommendedAgentTypeSlug: null,
+    requiredToolNames: [],
+    iteratorConfig: {
+      source: '{{items}}',
+      mode: 'item',
+      batchSize: 10,
+      itemVariable: 'item',
+      outputVariable: 'processed_items',
+      errorStrategy: 'stop',
+    },
     enabled: true,
     isBuiltIn: true,
   },
@@ -181,11 +220,28 @@ export class PlaybookNodeTemplateService {
     private readonly templateModel: Model<PlaybookNodeTemplateDocument>,
   ) {}
 
+  private deriveNodeType(doc: Pick<PlaybookNodeTemplate, 'nodeType' | 'type' | 'executionMode'>): PlaybookNodeTemplateResponse['nodeType'] {
+    if (doc.nodeType) {
+      return doc.nodeType;
+    }
+    if (doc.type === 'iterator') {
+      return 'iterator';
+    }
+    if (doc.type === 'evaluation') {
+      return 'evaluation';
+    }
+    if (doc.executionMode === 'action') {
+      return 'action';
+    }
+    return 'agent';
+  }
+
   private toResponse(doc: PlaybookNodeTemplateDocument | PlaybookNodeTemplate): PlaybookNodeTemplateResponse {
     return {
       id: doc._id.toString(),
       key: doc.key,
       type: doc.type,
+      nodeType: this.deriveNodeType(doc),
       title: doc.title,
       description: doc.description,
       icon: doc.icon,
@@ -199,6 +255,7 @@ export class PlaybookNodeTemplateService {
       executionMode: doc.executionMode || 'agent',
       assignedAgentId: doc.assignedAgentId ?? null,
       selectedAction: doc.selectedAction ?? null,
+      iteratorConfig: doc.iteratorConfig ?? null,
       enabled: doc.enabled,
       version: doc.version,
       isBuiltIn: doc.isBuiltIn,
@@ -299,6 +356,7 @@ export class PlaybookNodeTemplateService {
     const created = await this.templateModel.create({
       key: normalizedKey,
       type: normalizedType,
+      nodeType: dto.nodeType,
       title: dto.title.trim(),
       description: dto.description?.trim() || '',
       icon: dto.icon?.trim() || '',
@@ -312,6 +370,7 @@ export class PlaybookNodeTemplateService {
       executionMode: dto.executionMode || 'agent',
       assignedAgentId: dto.assignedAgentId ?? null,
       selectedAction: dto.selectedAction ?? null,
+      iteratorConfig: dto.iteratorConfig ?? null,
       enabled: dto.enabled ?? true,
       version: 1,
       isBuiltIn: false,
@@ -357,6 +416,7 @@ export class PlaybookNodeTemplateService {
 
     if (dto.key !== undefined) updatePayload.key = dto.key.trim();
     if (dto.type !== undefined) updatePayload.type = dto.type.trim();
+    if (dto.nodeType !== undefined) updatePayload.nodeType = dto.nodeType;
     if (dto.title !== undefined) updatePayload.title = dto.title.trim();
     if (dto.description !== undefined) updatePayload.description = dto.description.trim();
     if (dto.icon !== undefined) updatePayload.icon = dto.icon.trim();
@@ -370,6 +430,7 @@ export class PlaybookNodeTemplateService {
     if (dto.executionMode !== undefined) updatePayload.executionMode = dto.executionMode;
     if (dto.assignedAgentId !== undefined) updatePayload.assignedAgentId = dto.assignedAgentId;
     if (dto.selectedAction !== undefined) updatePayload.selectedAction = dto.selectedAction;
+    if (dto.iteratorConfig !== undefined) updatePayload.iteratorConfig = dto.iteratorConfig;
     if (dto.enabled !== undefined) updatePayload.enabled = dto.enabled;
 
     const updated = await this.templateModel.findByIdAndUpdate(id, { $set: updatePayload }, { new: true }).exec();

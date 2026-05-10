@@ -301,6 +301,12 @@ export class PlaybookTask {
   @Prop({ type: String, enum: ['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation', 'iterator'], default: 'generic' })
   taskType!: string;
 
+  @Prop({ type: String, enum: ['agent', 'action', 'evaluation', 'iterator'], default: null })
+  nodeType!: string | null;
+
+  @Prop({ type: String, default: null, trim: true, maxlength: 120 })
+  templateType!: string | null;
+
   @Prop({ type: [TaskInputPortSchemaDefinition], default: [], _id: false })
   inputPorts!: TaskInputPortSchema[];
 

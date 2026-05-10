@@ -11,6 +11,9 @@ export class PlaybookNodeTemplate extends Document {
   @Prop({ required: true, unique: true, index: true, trim: true, maxlength: 120 })
   type!: string;
 
+  @Prop({ required: true, trim: true, enum: ['agent', 'action', 'evaluation', 'iterator'] })
+  nodeType!: 'agent' | 'action' | 'evaluation' | 'iterator';
+
   @Prop({ required: true, trim: true, maxlength: 160 })
   title!: string;
 
@@ -83,6 +86,26 @@ export class PlaybookNodeTemplate extends Document {
 
   @Prop({ type: String, default: null, trim: true })
   selectedAction!: string | null;
+
+  @Prop({
+    type: {
+      source: { type: String, trim: true, maxlength: 400 },
+      mode: { type: String, trim: true, enum: ['item', 'batch'] },
+      batchSize: { type: Number, min: 1, default: null },
+      itemVariable: { type: String, trim: true, maxlength: 120, default: null },
+      outputVariable: { type: String, trim: true, maxlength: 120, default: null },
+      errorStrategy: { type: String, trim: true, enum: ['stop', 'continue'], default: 'stop' },
+    },
+    default: null,
+  })
+  iteratorConfig!: {
+    source: string;
+    mode: 'item' | 'batch';
+    batchSize?: number | null;
+    itemVariable?: string | null;
+    outputVariable?: string | null;
+    errorStrategy?: 'stop' | 'continue';
+  } | null;
 
   @Prop({ type: Boolean, default: true, index: true })
   enabled!: boolean;

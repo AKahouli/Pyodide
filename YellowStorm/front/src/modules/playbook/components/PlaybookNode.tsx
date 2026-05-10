@@ -30,6 +30,7 @@ import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../utils/migrate-ports';
+import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
 
@@ -367,9 +368,10 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   );
   const agentId = effectiveTask.assignedAgentId;
   const agent = agentId ? getAgentById(agentId) : null;
+  const nodeType = getEffectiveNodeType(effectiveTask);
   const isActionMode = effectiveTask.executionMode === 'action';
-  const isIteratorMode = effectiveTask.taskType === 'iterator';
-  const isConfigured = effectiveTask.taskType === 'evaluation'
+  const isIteratorMode = nodeType === 'iterator';
+  const isConfigured = nodeType === 'evaluation'
     ? !!(effectiveTask.assignedAgentId && (effectiveTask.evaluationConfig?.expectation || effectiveTask.evaluationConfig?.referenceBaselineId))
     : isIteratorMode
       ? Boolean(effectiveTask.iteratorConfig?.source?.trim())

@@ -19,6 +19,7 @@ import { ChevronDown, Loader2, X, Plus, Trash2, GripVertical } from 'lucide-reac
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
+import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
 import type {
   PlaybookTask,
   ValidatedTaskReplay,
@@ -38,6 +39,7 @@ import {
   getDefaultIteratorInputPorts,
   getDefaultIteratorOutputPorts,
 } from '../utils/iterator-ports';
+import { getEffectiveNodeType } from '../utils/node-type';
 
 const MIN_WIDTH = 320;
 const MAX_WIDTH = 720;
@@ -91,13 +93,7 @@ const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
 };
 
 function buildDraftFromTask(task: PlaybookTask): EditorDraft {
-  const nodeType: PlaybookNodeType = task.taskType === 'evaluation'
-    ? 'evaluation'
-    : task.taskType === 'iterator'
-      ? 'iterator'
-    : task.executionMode === 'action'
-      ? 'action'
-      : 'agent';
+  const nodeType = getEffectiveNodeType(task);
   return {
     title: task.title,
     description: task.description,
@@ -136,6 +132,7 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     title: draft.title,
     description: draft.description,
     taskType: draft.nodeType === 'evaluation' ? 'evaluation' : draft.nodeType === 'iterator' ? 'iterator' : 'generic',
+    nodeType: draft.nodeType,
     assignedAgentId: draft.nodeType === 'action' || draft.nodeType === 'iterator' ? null : draft.assignedAgentId,
     executionMode: (draft.nodeType === 'evaluation' || draft.nodeType === 'iterator' ? 'agent' : draft.executionMode) as import('../types').TaskExecutionMode | undefined,
     selectedAction: draft.nodeType === 'action' ? draft.selectedAction : undefined,
@@ -633,69 +630,11 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
           ) : null}
 
           {isIteratorTask && draft.iteratorConfig && (
-            <div className="space-y-4 rounded-md border p-3">
-              <div className="space-y-2">
-                <Label>{t('nodeEditor.iteratorSource')}</Label>
-                <Input
-                  value={draft.iteratorConfig.source}
-                  onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, source: e.target.value } })}
-                  placeholder="{{items}}"
-                />
-                <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorPortHint')}</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.iteratorMode')}</Label>
-                  <select
-                    value={draft.iteratorConfig.mode}
-                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, mode: e.target.value as 'item' | 'batch' } })}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="item">{t('nodeEditor.iteratorModeItem')}</option>
-                    <option value="batch">{t('nodeEditor.iteratorModeBatch')}</option>
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.iteratorErrorStrategy')}</Label>
-                  <select
-                    value={draft.iteratorConfig.errorStrategy ?? 'stop'}
-                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, errorStrategy: e.target.value as 'stop' | 'continue' } })}
-                    className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="stop">{t('nodeEditor.iteratorErrorStop')}</option>
-                    <option value="continue">{t('nodeEditor.iteratorErrorContinue')}</option>
-                  </select>
-                </div>
-              </div>
-              {draft.iteratorConfig.mode === 'batch' && (
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.iteratorBatchSize')}</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={draft.iteratorConfig.batchSize ?? 10}
-                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, batchSize: Number(e.target.value || 1) } })}
-                  />
-                </div>
-              )}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.iteratorItemVariable')}</Label>
-                  <Input
-                    value={draft.iteratorConfig.itemVariable ?? ''}
-                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, itemVariable: e.target.value } })}
-                    placeholder="item"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>{t('nodeEditor.iteratorOutputVariable')}</Label>
-                  <Input
-                    value={draft.iteratorConfig.outputVariable ?? ''}
-                    onChange={(e) => updateDraft({ iteratorConfig: { ...draft.iteratorConfig!, outputVariable: e.target.value } })}
-                    placeholder="processed_items"
-                  />
-                </div>
-              </div>
+            <div className="space-y-4">
+              <PlaybookIteratorConfigFields
+                value={draft.iteratorConfig}
+                onChange={(iteratorConfig) => updateDraft({ iteratorConfig })}
+              />
               <div className="space-y-2">
                 <Label>{t('nodeEditor.iteratorChildren')}</Label>
                 <div className="space-y-2 rounded-md border p-3">

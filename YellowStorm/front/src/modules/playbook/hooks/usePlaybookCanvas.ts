@@ -19,6 +19,7 @@ import {
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
 import { migrateEdge, remapIteratorEdgePorts } from '../utils/migrate-ports';
 import { normalizeIteratorTaskPorts } from '../utils/iterator-ports';
+import { getEffectiveNodeType } from '../utils/node-type';
 import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
 const TRIGGER_NODE_ID = '__trigger__';
@@ -83,7 +84,7 @@ function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask
 }
 
 function getIteratorNodeMap(tasks: PlaybookTask[]): Map<string, PlaybookTask> {
-  return new Map(tasks.filter((task) => task.taskType === 'iterator').map((task) => [task.id, task]));
+  return new Map(tasks.filter((task) => getEffectiveNodeType(task) === 'iterator').map((task) => [task.id, task]));
 }
 
 function toAbsoluteTaskPosition(node: Node, nodeMap: Map<string, Node>): { x: number; y: number } {
@@ -123,7 +124,7 @@ function buildChildFlowNode(task: PlaybookTask, iteratorTasks: Map<string, Playb
 }
 
 function getAssignedChildAbsolutePosition(tasks: PlaybookTask[], iteratorId: string): { x: number; y: number } | null {
-  const iteratorTask = tasks.find((task) => task.id === iteratorId && task.taskType === 'iterator');
+  const iteratorTask = tasks.find((task) => task.id === iteratorId && getEffectiveNodeType(task) === 'iterator');
   if (!iteratorTask) {
     return null;
   }
@@ -138,10 +139,10 @@ function getAssignedChildAbsolutePosition(tasks: PlaybookTask[], iteratorId: str
 export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
   const iteratorTasks = getIteratorNodeMap(tasks);
   const iteratorNodes = tasks
-    .filter((task) => task.taskType === 'iterator')
+    .filter((task) => getEffectiveNodeType(task) === 'iterator')
     .map((task) => buildIteratorContainerNode(task, getIteratorChildTasks(tasks, task.id)));
   const stepNodes = tasks
-    .filter((task) => task.taskType !== 'iterator')
+    .filter((task) => getEffectiveNodeType(task) !== 'iterator')
     .map((task) => buildChildFlowNode(task, iteratorTasks));
   const taskNodes: Node[] = [...iteratorNodes, ...stepNodes];
 

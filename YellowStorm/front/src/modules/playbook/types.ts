@@ -40,6 +40,7 @@ export interface TaskArtifact {
 export interface TaskTemplate {
   id: string;
   type: string;
+  nodeType: PlaybookNodeType;
   title: string;
   description: string;
   icon: string;
@@ -208,6 +209,8 @@ export interface PlaybookTask {
   stepReplayMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   inputFiles: InputFile[];
   taskType?: string;
+  nodeType?: PlaybookNodeType | null;
+  templateType?: string | null;
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
@@ -242,6 +245,7 @@ export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
+  templateType?: string | null;
 }
 
 export interface PlaybookIntentSingleChangeSuggestion {
