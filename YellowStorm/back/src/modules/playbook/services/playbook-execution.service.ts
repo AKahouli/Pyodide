@@ -2535,13 +2535,34 @@ export class PlaybookExecutionService {
               .select('taskResults')
               .lean()
               .exec();
-            const hasPendingOrRunning = (freshExecCheck?.taskResults || []).some(
-              (tr: any) => tr.status === StepStatus.PENDING || tr.status === StepStatus.RUNNING,
+
+            const iteratorChildTaskIds = new Set<string>();
+            for (const [id, t] of taskMap) {
+              if (t?.containerConfig?.parentIteratorId) {
+                iteratorChildTaskIds.add(id);
+              }
+            }
+
+            const runningIteratorChildren = (freshExecCheck?.taskResults || []).filter(
+              (tr: any) =>
+                iteratorChildTaskIds.has(tr.taskId) &&
+                tr.status === StepStatus.RUNNING,
+            );
+            const nonIteratorPendingOrRunning = (freshExecCheck?.taskResults || []).filter(
+              (tr: any) =>
+                (tr.status === StepStatus.PENDING || tr.status === StepStatus.RUNNING) &&
+                !iteratorChildTaskIds.has(tr.taskId),
             );
 
-            if (hasPendingOrRunning) {
+            const genuinelyPendingOrRunning = [
+              ...nonIteratorPendingOrRunning,
+              ...runningIteratorChildren,
+            ];
+
+            if (genuinelyPendingOrRunning.length > 0) {
               this.logger.warn('Stream ended prematurely with tasks still pending/running', {
                 executionId,
+                pendingRunningTaskIds: genuinelyPendingOrRunning.map((tr: any) => tr.taskId),
               });
               await this.markRemainingSkippedAndFail(
                 userId,
@@ -2550,6 +2571,28 @@ export class PlaybookExecutionService {
                 startedAt,
               );
             } else {
+              const staleIteratorChildren = (freshExecCheck?.taskResults || []).filter(
+                (tr: any) =>
+                  iteratorChildTaskIds.has(tr.taskId) &&
+                  tr.status === StepStatus.PENDING,
+              );
+              if (staleIteratorChildren.length > 0) {
+                const childIds = staleIteratorChildren.map((tr: any) => tr.taskId);
+                await this.executionModel.updateOne(
+                  { _id: executionId },
+                  {
+                    $set: {
+                      'taskResults.$[elem].status': StepStatus.COMPLETED,
+                      'taskResults.$[elem].completedAt': new Date(),
+                    },
+                  },
+                  { arrayFilters: [{ 'elem.taskId': { $in: childIds } }] },
+                );
+                this.logger.debug('Auto-completed stale iterator child tasks', {
+                  executionId,
+                  childTaskIds: childIds,
+                });
+              }
               await this.markExecutionCompleted(userId, executionId, startedAt);
             }
           }

@@ -186,6 +186,16 @@ export class IteratorConfigDto {
   errorStrategy?: string;
 }
 
+export class IteratorLayoutDto {
+  @IsOptional()
+  @IsNumber()
+  width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  height?: number;
+}
+
 export class ContainerConfigDto {
   @IsOptional()
   @IsString()
@@ -351,6 +361,12 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested()
   @Type(() => ContainerConfigDto)
   containerConfig?: ContainerConfigDto | null;
+
+  @ApiPropertyOptional({ type: IteratorLayoutDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => IteratorLayoutDto)
+  iteratorLayout?: IteratorLayoutDto | null;
 
   @ApiPropertyOptional({ description: 'Expected result text for repeatability evaluation' })
   @IsOptional()

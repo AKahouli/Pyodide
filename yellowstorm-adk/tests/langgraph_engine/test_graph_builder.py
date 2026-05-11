@@ -188,27 +188,29 @@ def test_extract_artifacts_skips_untagged_xlsx_without_compatible_port() -> None
     assert artifacts == []
 
 
-def test_extract_artifacts_rejects_explicit_kind_mismatch() -> None:
-    with pytest.raises(ValueError, match="incompatible kind 'data'"):
-        _extract_artifacts_from_components(
-            [
-                {
-                    "type": "artifact",
-                    "data": {
-                        "artifact_kind": "data",
-                        "output_port_id": "report",
-                        "file_path": "https://example.com/report.xlsx",
-                        "filename": "report.xlsx",
-                    },
-                },
-            ],
+def test_extract_artifacts_coerces_explicit_kind_mismatch_to_port_kind() -> None:
+    artifacts = _extract_artifacts_from_components(
+        [
             {
-                "id": "task-1",
-                "output_ports": [
-                    {"id": "report", "name": "Report", "artifact_kind": "document"},
-                ],
+                "type": "artifact",
+                "data": {
+                    "artifact_kind": "data",
+                    "output_port_id": "report",
+                    "file_path": "https://example.com/report.xlsx",
+                    "filename": "report.xlsx",
+                },
             },
-        )
+        ],
+        {
+            "id": "task-1",
+            "output_ports": [
+                {"id": "report", "name": "Report", "artifact_kind": "document"},
+            ],
+        },
+    )
+    assert len(artifacts) == 1
+    assert artifacts[0]["artifact_kind"] == "document"
+    assert artifacts[0]["port_id"] == "report"
 
 
 def test_extract_artifacts_routes_same_kind_outputs_by_filename() -> None:
@@ -403,6 +405,72 @@ def test_resolve_iterator_collection_from_inputs_unwraps_port_keyed_data_array()
     ]
 
 
+def test_resolve_iterator_collection_from_inputs_unwraps_single_list_property_data() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": {
+                                        "projects": [
+                                            {"id": 1, "name": "Project Alpha"},
+                                            {"id": 2, "name": "Project Beta"},
+                                        ]
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"id": 1, "name": "Project Alpha"},
+        {"id": 2, "name": "Project Beta"},
+    ]
+
+
+def test_resolve_iterator_collection_from_inputs_unwraps_single_object_list_among_multiple_keys() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": {
+                                        "projects": [
+                                            {"id": 1, "name": "Project Alpha"},
+                                            {"id": 2, "name": "Project Beta"},
+                                        ],
+                                        "notes": ["prioritized by score"],
+                                        "count": 2,
+                                    },
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"id": 1, "name": "Project Alpha"},
+        {"id": 2, "name": "Project Beta"},
+    ]
+
+
 def test_resolve_iterator_collection_from_inputs_uses_json_content_array() -> None:
     items = _resolve_iterator_collection_from_inputs(
         {
@@ -449,6 +517,70 @@ def test_resolve_iterator_collection_from_inputs_unwraps_port_keyed_json_content
     )
 
     assert items == [{"id": 1}, {"id": 2}]
+
+
+def test_resolve_iterator_collection_from_inputs_unwraps_single_list_property_json_content() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "content": (
+                                        '{"projects": ['
+                                        '{"id": 1, "name": "Project Alpha"}, '
+                                        '{"id": 2, "name": "Project Beta"}'
+                                        ']}'
+                                    ),
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"id": 1, "name": "Project Alpha"},
+        {"id": 2, "name": "Project Beta"},
+    ]
+
+
+def test_resolve_iterator_collection_from_inputs_unwraps_single_object_list_json_content() -> None:
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "content": (
+                                        '{"projects": ['
+                                        '{"id": 1, "name": "Project Alpha"}, '
+                                        '{"id": 2, "name": "Project Beta"}'
+                                        '], "notes": ["prioritized by score"], "count": 2}'
+                                    ),
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [
+        {"id": 1, "name": "Project Alpha"},
+        {"id": 2, "name": "Project Beta"},
+    ]
 
 
 def test_resolve_iterator_collection_from_inputs_wraps_plain_content() -> None:
@@ -519,6 +651,73 @@ def test_resolve_iterator_collection_from_inputs_wraps_single_data_object() -> N
     )
 
     assert items == [{"id": 1, "name": "Project Alpha"}]
+
+
+def test_resolve_iterator_collection_from_inputs_wraps_multi_key_data_object_with_list() -> None:
+    payload = {
+        "projects": [
+            {"id": 1, "name": "Project Alpha"},
+            {"id": 2, "name": "Project Beta"},
+        ],
+        "count": 2,
+    }
+
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": payload,
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [payload]
+
+
+def test_resolve_iterator_collection_from_inputs_wraps_multiple_object_lists() -> None:
+    payload = {
+        "projects": [
+            {"id": 1, "name": "Project Alpha"},
+            {"id": 2, "name": "Project Beta"},
+        ],
+        "companies": [
+            {"id": "c-1", "name": "Acme Foods"},
+            {"id": "c-2", "name": "Global Mills"},
+        ],
+    }
+
+    items = _resolve_iterator_collection_from_inputs(
+        {
+            "ports": {
+                "items": {
+                    "input_port": {"id": "items", "artifact_kind": "data"},
+                    "upstream_bindings": [
+                        {
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": payload,
+                                }
+                            ]
+                        }
+                    ],
+                }
+            }
+        }
+    )
+
+    assert items == [payload]
 
 
 def test_extract_artifacts_from_components_falls_back_on_ambiguous_port() -> None:

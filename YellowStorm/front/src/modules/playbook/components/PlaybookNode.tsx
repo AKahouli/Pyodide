@@ -79,6 +79,7 @@ function resolveIteratorChildExecutionStatus(
 
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
+  onAdvise?: (nodeId: string) => void;
   onClone: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onToggleEnabled: (nodeId: string) => void;
@@ -106,6 +107,9 @@ export interface ConnectorDropPayload {
 
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
+  setIteratorNodeSize?: (nodeId: string, size: { width: number; height: number }) => void;
+  resizeIteratorNode?: (nodeId: string, size: { width: number; height: number }) => void;
+  repackIteratorChildren?: (nodeId: string) => void;
   openOutputFormatEditor?: (nodeId: string) => void;
   onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
 }
@@ -647,11 +651,29 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   {data.title || t('node.untitled')}
                 </NodeTitle>
               </div>
-              {status && (
-                <div className="flex items-center justify-center">
-                  <PlaybookStatusBadge status={status} size="xs" />
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions?.onAdvise?.(id);
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('nodeAdvisor.open')}</TooltipContent>
+                </Tooltip>
+                {status && (
+                  <div className="flex items-center justify-center">
+                    <PlaybookStatusBadge status={status} size="xs" />
+                  </div>
+                )}
+              </div>
             </div>
           </NodeHeader>
 

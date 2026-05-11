@@ -63,6 +63,11 @@ export interface PlaybookContainerConfigData {
   parentIteratorId?: string | null;
 }
 
+export interface PlaybookIteratorLayoutData {
+  width?: number | null;
+  height?: number | null;
+}
+
 export interface PlaybookTaskData {
   id: string;
   title: string;
@@ -105,6 +110,7 @@ export interface PlaybookTaskData {
   evaluationConfig?: PlaybookEvaluationConfigData | null;
   iteratorConfig?: PlaybookIteratorConfigData | null;
   containerConfig?: PlaybookContainerConfigData | null;
+  iteratorLayout?: PlaybookIteratorLayoutData | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
 }

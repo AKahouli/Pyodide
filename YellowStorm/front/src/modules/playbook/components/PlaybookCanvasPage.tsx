@@ -69,14 +69,15 @@ import { PlaybookIntentBar } from './PlaybookIntentBar';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
 import { PlaybookDesignerPanel } from './PlaybookDesignerPanel';
+import { PlaybookNodeAdvisorDialog } from './PlaybookNodeAdvisorDialog';
 import { PlaybookUsageIndicator } from './PlaybookUsageIndicator';
 import { CloneShareDialog } from './CloneShareDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
-import { getPlaybookRepeatability } from '../api';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft } from '../types';
+import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../utils/intent-edge-ports';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -90,6 +91,25 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 
 const AUTO_APPLY_MIN_CONFIDENCE = 0.75;
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
+const ITERATOR_CHILD_HORIZONTAL_GAP = 192;
+const ITERATOR_CHILD_VERTICAL_GAP = 192;
+const ITERATOR_CHILD_MAX_COLUMNS = 3;
+const ITERATOR_CHILD_NODE_WIDTH = 384;
+const ITERATOR_CHILD_NODE_HEIGHT = 240;
+
+function getIteratorBodyChildPosition(iteratorX: number, iteratorY: number, childIndex: number, totalChildren: number) {
+  const columnCount = Math.min(
+    ITERATOR_CHILD_MAX_COLUMNS,
+    Math.max(1, Math.ceil(Math.sqrt(totalChildren))),
+  );
+  const column = childIndex % columnCount;
+  const row = Math.floor(childIndex / columnCount);
+
+  return {
+    x: iteratorX + 32 + column * (ITERATOR_CHILD_NODE_WIDTH + ITERATOR_CHILD_HORIZONTAL_GAP),
+    y: iteratorY + 72 + row * (ITERATOR_CHILD_NODE_HEIGHT + ITERATOR_CHILD_VERTICAL_GAP),
+  };
+}
 
 // Edge colors per step status
 const EDGE_STYLES: Record<string, React.CSSProperties> = {
@@ -320,6 +340,8 @@ function PlaybookCanvasInner() {
     addNode,
     removeNode,
     updateNodeData,
+    setIteratorNodeSize,
+    repackIteratorChildren,
     setNodes,
     setEdges,
   } = usePlaybookCanvas(triggerNodeActions);
@@ -333,6 +355,10 @@ function PlaybookCanvasInner() {
   const [nameValue, setNameValue] = useState('');
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [evaluationDialogOpen, setEvaluationDialogOpen] = useState(false);
+  const [nodeAdvisorOpen, setNodeAdvisorOpen] = useState(false);
+  const [nodeAdvisorLoading, setNodeAdvisorLoading] = useState(false);
+  const [nodeAdvisorTaskId, setNodeAdvisorTaskId] = useState<string | null>(null);
+  const [nodeAdvisorSuggestions, setNodeAdvisorSuggestions] = useState<PlaybookNodeAdvisorSuggestion[]>([]);
   const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
   const [advisorAutopilotEnabled, setAdvisorAutopilotEnabled] = useState(false);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
@@ -1159,9 +1185,53 @@ function PlaybookCanvasInner() {
     return resolvedTask;
   }, [activeExecutionForEditor, editingTask, playbook?.tasks]);
 
+  const handleOpenNodeAdvisor = useCallback(async (taskId: string) => {
+    if (!playbook?.id) return;
+
+    const task = playbook.tasks.find((item) => item.id === taskId);
+    if (!task) return;
+
+    setNodeAdvisorTaskId(taskId);
+    setNodeAdvisorSuggestions([]);
+    setNodeAdvisorOpen(true);
+    setNodeAdvisorLoading(true);
+
+    try {
+      const response = await requestPlaybookNodeAdvisor(playbook.id, taskId, {
+        title: task.title,
+        description: task.description,
+      });
+      setNodeAdvisorSuggestions(response.suggestions || []);
+    } catch (error) {
+      setNodeAdvisorSuggestions([]);
+      showError(error instanceof Error ? error.message : 'Failed to load node advisor suggestions.');
+    } finally {
+      setNodeAdvisorLoading(false);
+    }
+  }, [playbook]);
+
+  const handleApplyNodeAdvisorSuggestion = useCallback((suggestion: PlaybookNodeAdvisorSuggestion) => {
+    if (!playbook || !nodeAdvisorTaskId || !suggestion.patch) return;
+    const patch = suggestion.patch;
+
+    const nextTasks = playbook.tasks.map((task) => {
+      if (task.id !== nodeAdvisorTaskId) return task;
+      return {
+        ...task,
+        title: patch.taskTitle ?? task.title,
+        description: patch.taskDescription ?? task.description,
+        assignedAgentId: patch.assignedAgentId ?? task.assignedAgentId,
+      };
+    });
+
+    void updatePlaybook(playbook.id, { tasks: nextTasks });
+    setNodeAdvisorOpen(false);
+  }, [nodeAdvisorTaskId, playbook, updatePlaybook]);
+
   const nodeContextMenuActions = useMemo<NodeContextMenuActions>(
     () => ({
       onEdit: handleEditNode,
+      onAdvise: (nodeId) => { void handleOpenNodeAdvisor(nodeId); },
       onClone: handleCloneNode,
       onDelete: removeNode,
       onToggleEnabled: handleToggleEnabled,
@@ -1181,6 +1251,7 @@ function PlaybookCanvasInner() {
     }),
     [
       handleEditNode,
+      handleOpenNodeAdvisor,
       handleCloneNode,
       removeNode,
       handleToggleEnabled,
@@ -1221,6 +1292,25 @@ function PlaybookCanvasInner() {
       updateNodeData(taskId, data);
     },
     [updateNodeData],
+  );
+
+  const handleResizeIteratorNode = useCallback(
+    (taskId: string, size: { width: number; height: number }) => {
+      updateNodeData(taskId, {
+        iteratorLayout: {
+          width: Math.round(size.width),
+          height: Math.round(size.height),
+        },
+      });
+    },
+    [updateNodeData],
+  );
+
+  const handleRepackIteratorChildren = useCallback(
+    (taskId: string) => {
+      repackIteratorChildren(taskId);
+    },
+    [repackIteratorChildren],
   );
 
   const createProgrammaticEdge = useCallback((sourceId: string, targetId: string, sourceOutputPortId = 'default', targetInputPortId = 'default'): Edge => ({
@@ -1424,10 +1514,7 @@ function PlaybookCanvasInner() {
     };
 
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[]) => {
-      const iteratorChildTasks = nextTasks.filter((task) => task.containerConfig?.parentIteratorId);
-      const topLevelTasks = nextTasks.filter((task) => !task.containerConfig?.parentIteratorId);
-      const layoutedTopLevelTasks = autoLayoutTasks(topLevelTasks, toPlaybookEdges(nextEdges));
-      const layoutedTasks = [...layoutedTopLevelTasks, ...iteratorChildTasks];
+      const layoutedTasks = autoLayoutTasks(nextTasks, toPlaybookEdges(nextEdges));
       captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
@@ -1530,13 +1617,12 @@ function PlaybookCanvasInner() {
 
       if (newTask.taskType === 'iterator' && iteratorBody?.steps.length) {
         const iteratorChildRefs = new Map<string, string>();
-        const iteratorBaseX = newTask.positionX + 32;
-        const iteratorBaseY = newTask.positionY + 72;
 
         iteratorBody.steps.forEach((step: NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number], index: number) => {
           const childTask = createIntentTask(step.title, step.description, step.agentSlug, step.templateType, step.inputPorts, step.outputPorts, newTask, nextTasks.length + index + 1);
-          childTask.positionX = iteratorBaseX;
-          childTask.positionY = iteratorBaseY + index * 56;
+          const childPosition = getIteratorBodyChildPosition(newTask.positionX, newTask.positionY, index, iteratorBody.steps.length);
+          childTask.positionX = childPosition.x;
+          childTask.positionY = childPosition.y;
           childTask.containerConfig = { parentIteratorId: newTask.id };
           nextTasks = [...nextTasks, childTask];
           changedNodeIds.add(childTask.id);
@@ -2325,7 +2411,7 @@ function PlaybookCanvasInner() {
             }}
           >
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
-              <NodeDataActionsContext.Provider value={{ updateNodeData, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
+              <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
                 <Canvas
                   nodes={canvasNodes}
                   edges={liveEdges}
@@ -2452,6 +2538,15 @@ function PlaybookCanvasInner() {
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}
+      />
+
+      <PlaybookNodeAdvisorDialog
+        open={nodeAdvisorOpen}
+        onOpenChange={setNodeAdvisorOpen}
+        taskTitle={playbook.tasks.find((task) => task.id === nodeAdvisorTaskId)?.title || ''}
+        loading={nodeAdvisorLoading}
+        suggestions={nodeAdvisorSuggestions}
+        onApply={handleApplyNodeAdvisorSuggestion}
       />
 
       {/* Share Dialog */}

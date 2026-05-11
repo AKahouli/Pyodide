@@ -1026,6 +1026,12 @@ export class PlaybookService {
               parentIteratorId: t.containerConfig.parentIteratorId || null,
             }
           : null,
+        iteratorLayout: t.iteratorLayout
+          ? {
+              width: t.iteratorLayout.width ?? null,
+              height: t.iteratorLayout.height ?? null,
+            }
+          : null,
         expectedResult: t.expectedResult ?? null,
         disableAdvisorEvaluation: t.disableAdvisorEvaluation === true,
       })),

@@ -40,6 +40,7 @@ from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.langgraph_engine.types import PortPayload
+from src.langgraph_engine.playbook_node_advisor import advise_playbook_node
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -135,6 +136,87 @@ class ChatbotServicer(
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    async def AdvisePlaybookNode(
+        self,
+        request: "chatbot_pb2.AdvisePlaybookNodeRequest",
+        context: grpc.aio.ServicerContext,
+    ) -> "chatbot_pb2.AdvisePlaybookNodeResponse":
+        payload = MessageToDict(
+            request,
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
+        )
+        result = advise_playbook_node(payload)
+
+        suggestions = []
+        for item in result.get("suggestions", []):
+            patch = item.get("patch") or {}
+            suggestions.append(
+                chatbot_pb2.NodeAdvisorSuggestion(
+                    id=str(item.get("id") or ""),
+                    type=self._node_advisor_type_to_enum(item.get("type")),
+                    title=str(item.get("title") or ""),
+                    summary=str(item.get("summary") or ""),
+                    rationale=str(item.get("rationale") or ""),
+                    confidence=float(item.get("confidence") or 0),
+                    patch=chatbot_pb2.NodeAdvisorPatch(
+                        task_title=str(patch.get("task_title") or ""),
+                        task_description=str(patch.get("task_description") or ""),
+                        assigned_agent_id=str(patch.get("assigned_agent_id") or ""),
+                        input_ports=[
+                            chatbot_pb2.NodeAdvisorPortSuggestion(
+                                id=str(port.get("id") or ""),
+                                name=str(port.get("name") or ""),
+                                artifact_kind=str(port.get("artifact_kind") or ""),
+                                description=str(port.get("description") or ""),
+                            )
+                            for port in patch.get("input_ports", [])
+                        ],
+                        output_ports=[
+                            chatbot_pb2.NodeAdvisorPortSuggestion(
+                                id=str(port.get("id") or ""),
+                                name=str(port.get("name") or ""),
+                                artifact_kind=str(port.get("artifact_kind") or ""),
+                                description=str(port.get("description") or ""),
+                            )
+                            for port in patch.get("output_ports", [])
+                        ],
+                        datasource_suggestions=[
+                            chatbot_pb2.NodeAdvisorDatasourceSuggestion(
+                                source_task_id=str(ds.get("source_task_id") or ""),
+                                source_output_port_id=str(ds.get("source_output_port_id") or ""),
+                                target_input_port_id=str(ds.get("target_input_port_id") or ""),
+                                datasource_type=str(ds.get("datasource_type") or ""),
+                                datasource_id=str(ds.get("datasource_id") or ""),
+                                datasource_name=str(ds.get("datasource_name") or ""),
+                                rationale=str(ds.get("rationale") or ""),
+                            )
+                            for ds in patch.get("datasource_suggestions", [])
+                        ],
+                    ),
+                    warnings=[str(warning) for warning in item.get("warnings", [])],
+                )
+            )
+
+        return chatbot_pb2.AdvisePlaybookNodeResponse(
+            playbook_id=str(result.get("playbook_id") or request.playbook_id),
+            task_id=str(result.get("task_id") or request.task_id),
+            suggestions=suggestions,
+        )
+
+    @staticmethod
+    def _node_advisor_type_to_enum(value: str) -> int:
+        mapping = {
+            "task_title": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_TASK_TITLE,
+            "task_description": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_TASK_DESCRIPTION,
+            "agent_selection": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_AGENT_SELECTION,
+            "datasource_connection": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_DATASOURCE_CONNECTION,
+            "input_contract": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_INPUT_CONTRACT,
+            "output_contract": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_OUTPUT_CONTRACT,
+            "general": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_GENERAL,
+        }
+        return mapping.get(str(value or ""), chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_GENERAL)
 
     @staticmethod
     def _serialize_run_agent_team_request(

@@ -51,6 +51,7 @@ import {
 // Controllers — stream controller must be before playbook controller to avoid :id route conflict
 import { PlaybookStreamController } from './controllers/playbook-stream.controller';
 import { PlaybookController } from './controllers/playbook.controller';
+import { PlaybookNodeAdvisorController } from './controllers/playbook-node-advisor.controller';
 import { PlaybookExecutionController } from './controllers/playbook-execution.controller';
 import { AdminPlaybookPromptsController } from './controllers/admin-playbook-prompts.controller';
 import { AdminPlaybookSettingsController } from './controllers/admin-playbook-settings.controller';
@@ -90,6 +91,7 @@ import { PlaybookRepeatabilityService } from './services/playbook-repeatability.
 import { PlaybookSettingsService } from './services/playbook-settings.service';
 import { PlaybookIntentService } from './services/playbook-intent.service';
 import { PlaybookPromptTemplateRendererService } from './services/playbook-prompt-template-renderer.service';
+import { PlaybookNodeAdvisorService } from './services/playbook-node-advisor.service';
 
 // Guards
 import { PlaybookOwnerGuard } from './guards/playbook-owner.guard';
@@ -143,6 +145,7 @@ import playbookConfig from './config/playbook.config';
   controllers: [
     PlaybookStreamController, // Must be before PlaybookController to avoid route conflict with :id param
     PlaybookController,
+    PlaybookNodeAdvisorController,
     PlaybookMailWebhookController,
     PlaybookExecutionController,
     AdminPlaybookPromptsController,
@@ -182,6 +185,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookSettingsService,
     PlaybookIntentService,
     PlaybookPromptTemplateRendererService,
+    PlaybookNodeAdvisorService,
     PlaybookOwnerGuard,
     PlaybookStreamAuthGuard,
   ],

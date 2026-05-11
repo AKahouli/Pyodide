@@ -13,6 +13,7 @@ from src.langgraph_engine.step_executor import (
     _build_task_artifacts_from_structured_outputs,
     _determine_output_mode,
     _execute_replay_tool_calls,
+    _extract_json_object,
     _finalize_task_outputs,
     _parse_structured_final_response,
     _task_requires_structured_output_synthesis,
@@ -568,30 +569,30 @@ def test_build_task_artifacts_from_structured_outputs_requires_artifact_kind() -
         )
 
 
-def test_build_task_artifacts_from_structured_outputs_rejects_old_file_fields() -> None:
-    with pytest.raises(ValueError, match="references unknown artifact 'pdf'"):
-        _build_task_artifacts_from_structured_outputs(
+def test_build_task_artifacts_from_structured_outputs_skips_unknown_file_reference() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "pdf", "artifact_kind": "document"},
+            ]
+        },
+        [
             {
-                "output_ports": [
-                    {"id": "pdf", "artifact_kind": "document"},
-                ]
+                "output_port_id": "pdf",
+                "artifact_kind": "document",
+                "content": {"filename": "missing-report.pdf"},
             },
-            [
-                {
-                    "output_port_id": "pdf",
-                    "artifact_kind": "document",
-                    "filename": "report.pdf",
-                    "filePath": "https://example.com/report.pdf",
-                },
-            ],
-            [
-                {
-                    "file_path": "https://example.com/report.pdf",
-                    "filename": "report.pdf",
-                    "mime_type": "application/pdf",
-                }
-            ],
-        )
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+
+    assert artifacts == []
 
 
 def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_content_file_path() -> None:
@@ -882,3 +883,25 @@ def test_attach_result_text_for_citations_reuses_existing_matching_text_componen
     assert len(updated) == 2
     assert updated[0]["id"] == "final-text"
     assert updated[1]["data"]["parent_id"] == "final-text"
+
+
+def test_extract_json_object_returns_last_object_from_multi_json_response() -> None:
+    # Model emitted tool-call metadata + structured response on separate lines
+    raw = (
+        '{"query":"site:example.com SIEM EDR"}\n'
+        '{"display_text":"No data","outputs":[{"output_port_id":"alerts_batch","artifact_kind":"data","content":{"alerts":[]}}]}'
+    )
+    result = _extract_json_object(raw)
+    assert result["display_text"] == "No data"
+    assert len(result["outputs"]) == 1
+    assert result["outputs"][0]["output_port_id"] == "alerts_batch"
+
+
+def test_extract_json_object_handles_single_object() -> None:
+    result = _extract_json_object('{"key": "value"}')
+    assert result == {"key": "value"}
+
+
+def test_extract_json_object_raises_on_no_json() -> None:
+    with pytest.raises(ValueError, match="did not return a JSON object"):
+        _extract_json_object("no json here")

@@ -95,6 +95,11 @@ export interface PlaybookContainerConfig {
   parentIteratorId?: string | null;
 }
 
+export interface PlaybookIteratorLayout {
+  width?: number;
+  height?: number;
+}
+
 export interface PlaybookEvaluationRubricWeights {
   semanticMatch: number;
   referenceMatch: number;
@@ -216,6 +221,7 @@ export interface PlaybookTask {
   toolBindings?: ToolBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
   iteratorConfig?: PlaybookIteratorConfig | null;
+  iteratorLayout?: PlaybookIteratorLayout | null;
   containerConfig?: PlaybookContainerConfig | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
@@ -223,6 +229,66 @@ export interface PlaybookTask {
 }
 
 export type PlaybookSuggestionMode = 'inherit' | 'auto' | 'manual';
+
+export type PlaybookNodeAdvisorSuggestionType =
+  | 'task_title'
+  | 'task_description'
+  | 'agent_selection'
+  | 'datasource_connection'
+  | 'input_contract'
+  | 'output_contract'
+  | 'general';
+
+export interface RequestPlaybookNodeAdvisorData {
+  intent?: string;
+  suggestionTypes?: PlaybookNodeAdvisorSuggestionType[];
+  includeGraphContext?: boolean;
+  title?: string;
+  description?: string;
+}
+
+export interface PlaybookNodeAdvisorPortSuggestion {
+  id: string;
+  name: string;
+  artifactKind: string;
+  description?: string;
+}
+
+export interface PlaybookNodeAdvisorDatasourceSuggestion {
+  sourceTaskId?: string | null;
+  sourceOutputPortId?: string | null;
+  targetInputPortId?: string | null;
+  datasourceType?: string | null;
+  datasourceId?: string | null;
+  datasourceName?: string | null;
+  rationale: string;
+}
+
+export interface PlaybookNodeAdvisorPatch {
+  taskTitle?: string;
+  taskDescription?: string;
+  assignedAgentId?: string;
+  inputPorts?: PlaybookNodeAdvisorPortSuggestion[];
+  outputPorts?: PlaybookNodeAdvisorPortSuggestion[];
+  datasourceSuggestions?: PlaybookNodeAdvisorDatasourceSuggestion[];
+}
+
+export interface PlaybookNodeAdvisorSuggestion {
+  id: string;
+  type: PlaybookNodeAdvisorSuggestionType;
+  title: string;
+  summary: string;
+  rationale: string;
+  confidence: number;
+  patch?: PlaybookNodeAdvisorPatch;
+  warnings?: string[];
+}
+
+export interface PlaybookNodeAdvisorResponse {
+  playbookId: string;
+  taskId: string;
+  suggestions: PlaybookNodeAdvisorSuggestion[];
+}
 
 export interface PlaybookDesignSettings {
   inferenceModelId: string | null;

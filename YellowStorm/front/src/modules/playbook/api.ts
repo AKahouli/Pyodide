@@ -39,6 +39,8 @@ import type {
   RepeatabilityTaskExecutionSummary,
   RequestPlaybookIntentData,
   PlaybookIntentResponse,
+  RequestPlaybookNodeAdvisorData,
+  PlaybookNodeAdvisorResponse,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -51,7 +53,7 @@ interface PaginatedResponse<T> {
   };
 }
 
-function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
+export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
   const sanitizedTasks = data.tasks?.map((task) => ({
       id: task.id,
       title: task.title,
@@ -113,6 +115,12 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
             itemVariable: task.iteratorConfig.itemVariable ?? null,
             outputVariable: task.iteratorConfig.outputVariable ?? null,
             errorStrategy: task.iteratorConfig.errorStrategy ?? 'stop',
+          }
+        : null,
+      iteratorLayout: task.iteratorLayout
+        ? {
+            width: task.iteratorLayout.width,
+            height: task.iteratorLayout.height,
           }
         : null,
       containerConfig: task.containerConfig
@@ -277,6 +285,18 @@ export async function requestPlaybookIntent(
 ): Promise<PlaybookIntentResponse> {
   const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
     API_ENDPOINTS.playbooks.intent(playbookId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function requestPlaybookNodeAdvisor(
+  playbookId: string,
+  taskId: string,
+  data: RequestPlaybookNodeAdvisorData,
+): Promise<PlaybookNodeAdvisorResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookNodeAdvisorResponse>>(
+    API_ENDPOINTS.playbooks.nodeAdvisor(playbookId, taskId),
     data,
   );
   return response.data.data;

@@ -27,7 +27,9 @@ const ITERATOR_HEADER_HEIGHT = 56;
 const ITERATOR_PADDING = 32;
 const ITERATOR_MIN_WIDTH = 360;
 const ITERATOR_MIN_HEIGHT = 220;
-const ITERATOR_CHILD_STACK_OFFSET = 56;
+const ITERATOR_CHILD_HORIZONTAL_GAP = 192;
+const ITERATOR_CHILD_VERTICAL_GAP = 192;
+const ITERATOR_CHILD_MAX_COLUMNS = 3;
 const ITERATOR_CHILD_NODE_WIDTH = 384;
 const ITERATOR_CHILD_NODE_HEIGHT = 240;
 
@@ -71,8 +73,12 @@ function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask
     },
   );
 
-  const width = Math.max(ITERATOR_MIN_WIDTH, bounds.maxX + ITERATOR_PADDING);
-  const height = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING);
+  const autoWidth = Math.max(ITERATOR_MIN_WIDTH, bounds.maxX + ITERATOR_PADDING);
+  const autoHeight = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING);
+  const manualWidth = normalizedTask.iteratorLayout?.width ?? 0;
+  const manualHeight = normalizedTask.iteratorLayout?.height ?? 0;
+  const width = Math.max(autoWidth, manualWidth);
+  const height = Math.max(autoHeight, manualHeight);
 
   return {
     id: normalizedTask.id,
@@ -123,17 +129,63 @@ function buildChildFlowNode(task: PlaybookTask, iteratorTasks: Map<string, Playb
   };
 }
 
-function getAssignedChildAbsolutePosition(tasks: PlaybookTask[], iteratorId: string): { x: number; y: number } | null {
+function getIteratorChildAbsolutePosition(
+  tasks: PlaybookTask[],
+  iteratorId: string,
+  childIndex: number,
+): { x: number; y: number } | null {
   const iteratorTask = tasks.find((task) => task.id === iteratorId && getEffectiveNodeType(task) === 'iterator');
   if (!iteratorTask) {
     return null;
   }
 
-  const siblingCount = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId).length;
+  const existingSiblingCount = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId).length;
+  const totalChildren = Math.max(existingSiblingCount, childIndex + 1);
+  const columnCount = Math.min(
+    ITERATOR_CHILD_MAX_COLUMNS,
+    Math.max(1, Math.ceil(Math.sqrt(totalChildren))),
+  );
+  const column = childIndex % columnCount;
+  const row = Math.floor(childIndex / columnCount);
+
   return {
-    x: iteratorTask.positionX + ITERATOR_PADDING,
-    y: iteratorTask.positionY + ITERATOR_HEADER_HEIGHT + 16 + siblingCount * ITERATOR_CHILD_STACK_OFFSET,
+    x: iteratorTask.positionX + ITERATOR_PADDING + column * (ITERATOR_CHILD_NODE_WIDTH + ITERATOR_CHILD_HORIZONTAL_GAP),
+    y: iteratorTask.positionY + ITERATOR_HEADER_HEIGHT + 16 + row * (ITERATOR_CHILD_NODE_HEIGHT + ITERATOR_CHILD_VERTICAL_GAP),
   };
+}
+
+function repackIteratorChildrenInTasks(tasks: PlaybookTask[], iteratorId: string): PlaybookTask[] {
+  const childTasks = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId);
+  if (childTasks.length === 0) {
+    return tasks;
+  }
+
+  const orderedChildIds = [...childTasks]
+    .sort((a, b) => {
+      if (a.executionOrder !== b.executionOrder) {
+        return a.executionOrder - b.executionOrder;
+      }
+      return a.id.localeCompare(b.id);
+    })
+    .map((task) => task.id);
+
+  return tasks.map((task) => {
+    const childIndex = orderedChildIds.indexOf(task.id);
+    if (childIndex === -1) {
+      return task;
+    }
+
+    const nextPosition = getIteratorChildAbsolutePosition(tasks, iteratorId, childIndex);
+    if (!nextPosition) {
+      return task;
+    }
+
+    return {
+      ...task,
+      positionX: nextPosition.x,
+      positionY: nextPosition.y,
+    };
+  });
 }
 
 export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
@@ -305,7 +357,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       };
 
       if (nextParentIteratorId && nextParentIteratorId !== task.containerConfig?.parentIteratorId) {
-        const assignedPosition = getAssignedChildAbsolutePosition(tasks, nextParentIteratorId);
+        const assignedPosition = getIteratorChildAbsolutePosition(
+          tasks,
+          nextParentIteratorId,
+          tasks.filter((candidate) => candidate.containerConfig?.parentIteratorId === nextParentIteratorId).length,
+        );
         if (assignedPosition) {
           nextTask.positionX = assignedPosition.x;
           nextTask.positionY = assignedPosition.y;
@@ -527,6 +583,43 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
 
+  const setIteratorNodeSize = useCallback((nodeId: string, size: { width: number; height: number }) => {
+    setNodes((nds) => nds.map((node) => {
+      if (node.id !== nodeId || node.type !== 'playbookIteratorContainer') {
+        return node;
+      }
+
+      const nextWidth = Math.round(size.width);
+      const nextHeight = Math.round(size.height);
+      return {
+        ...node,
+        style: {
+          ...(node.style || {}),
+          width: nextWidth,
+          height: nextHeight,
+        },
+        data: {
+          ...(node.data as PlaybookNodeData),
+          width: nextWidth,
+          height: nextHeight,
+        },
+      };
+    }));
+  }, []);
+
+  const repackIteratorChildren = useCallback((nodeId: string) => {
+    setNodes((nds) => {
+      const repackedTasks = repackIteratorChildrenInTasks(nodesToTasks(nds), nodeId);
+      const updated = preserveNodeUiState(
+        buildNodesWithTrigger(repackedTasks, playbook?.automatedTriggerType === 'mail'),
+        nds,
+      );
+      captureSnapshot();
+      updateTasks(nodesToTasks(updated));
+      return updated;
+    });
+  }, [captureSnapshot, playbook?.automatedTriggerType, updateTasks]);
+
   return {
     nodes,
     edges,
@@ -537,6 +630,8 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     addNode,
     removeNode,
     updateNodeData,
+    setIteratorNodeSize,
+    repackIteratorChildren,
     setNodes,
     setEdges,
     triggerActions: playbook?.id ? triggerActions : undefined,

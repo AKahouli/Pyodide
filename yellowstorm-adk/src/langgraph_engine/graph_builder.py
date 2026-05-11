@@ -240,6 +240,24 @@ def _resolve_iterator_collection(iterator_config: Dict[str, Any], state: Executi
 def _resolve_iterator_collection_from_inputs(
     resolved_inputs: Dict[str, Any],
 ) -> List[Any]:
+    def _unwrap_single_list_property(value: Dict[str, Any]) -> Optional[List[Any]]:
+        if len(value) != 1:
+            return None
+        only_value = next(iter(value.values()))
+        return only_value if isinstance(only_value, list) else None
+
+    def _unwrap_single_object_list_property(value: Dict[str, Any]) -> Optional[List[Any]]:
+        object_lists = [
+            item
+            for item in value.values()
+            if isinstance(item, list)
+            and item
+            and all(isinstance(entry, dict) for entry in item)
+        ]
+        if len(object_lists) != 1:
+            return None
+        return object_lists[0]
+
     ports = resolved_inputs.get("ports") or {}
     if not ports:
         return []
@@ -275,6 +293,12 @@ def _resolve_iterator_collection_from_inputs(
                     nested_items = data.get(port_id)
                     if isinstance(nested_items, list):
                         return nested_items
+                    unwrapped_items = _unwrap_single_list_property(data)
+                    if unwrapped_items is not None:
+                        return unwrapped_items
+                    object_list_items = _unwrap_single_object_list_property(data)
+                    if object_list_items is not None:
+                        return object_list_items
                 if data is not None:
                     return [data]
                 content = artifact.get("content")
@@ -287,6 +311,12 @@ def _resolve_iterator_collection_from_inputs(
                             nested_items = parsed.get(port_id)
                             if isinstance(nested_items, list):
                                 return nested_items
+                            unwrapped_items = _unwrap_single_list_property(parsed)
+                            if unwrapped_items is not None:
+                                return unwrapped_items
+                            object_list_items = _unwrap_single_object_list_property(parsed)
+                            if object_list_items is not None:
+                                return object_list_items
                         return [parsed]
                     except Exception:
                         return [content]
@@ -440,8 +470,13 @@ def _resolve_output_port(
             )
         port_kind = str(selected_port.get("artifact_kind") or "").strip()
         if normalized_kind and port_kind and port_kind != normalized_kind:
-            raise ValueError(
-                f"Task '{task_id}' produced {component_label} for output port '{normalized_port_id}' with incompatible kind '{normalized_kind}'"
+            logger.warning(
+                "Task '%s' produced %s for output port '%s' with mismatched kind '%s'; using declared port kind '%s'",
+                task_id,
+                component_label,
+                normalized_port_id,
+                normalized_kind,
+                port_kind,
             )
         return selected_port
 
@@ -543,11 +578,12 @@ def _extract_artifacts_from_components(
             port_kind = str(
                 selected_port.get("artifact_kind") if selected_port else ""
             ).strip()
-            artifact_kind = (
-                explicit_kind
-                or port_kind
-                or fallback_kind
-            )
+            # When the model explicitly targeted a port, the declared port kind
+            # is canonical — coerce any mismatched model-provided kind.
+            if explicit_port_id and port_kind and explicit_kind and explicit_kind != port_kind:
+                artifact_kind = port_kind
+            else:
+                artifact_kind = explicit_kind or port_kind or fallback_kind
             artifacts.append(
                 {
                     "port_id": port_id,

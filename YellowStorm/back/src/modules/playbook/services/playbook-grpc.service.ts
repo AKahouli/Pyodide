@@ -262,6 +262,31 @@ export class PlaybookGrpcService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  advisePlaybookNode(request: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const deadline = new Date(Date.now() + this.grpcTimeoutMs);
+
+      this.logger.debug('gRPC AdvisePlaybookNode call initiated', {
+        playbookId: request.playbook_id,
+        taskId: request.task_id,
+        suggestionTypeCount: request.suggestion_types?.length ?? 0,
+      });
+
+      this.chatbotClient.AdvisePlaybookNode(request, { deadline }, (err: Error | null, response: any) => {
+        if (err) {
+          this.logger.error('gRPC AdvisePlaybookNode call error', {
+            playbookId: request.playbook_id,
+            taskId: request.task_id,
+            error: err.message,
+          });
+          reject(err);
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  }
+
   private resolveChatbotProtoPath(): string {
     const candidatePaths = [
       path.join(__dirname, '..', '..', 'conversation', 'proto', 'chatbot.proto'),

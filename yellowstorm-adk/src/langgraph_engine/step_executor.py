@@ -268,9 +268,13 @@ def _build_task_artifacts_from_structured_outputs(
                 or metadata.get("file_path")
                 or output_port_id
             )
-            raise ValueError(
-                f"Structured output for port '{output_port_id}' references unknown artifact '{requested_name}'"
+            logger.warning(
+                "Structured output references unknown generated artifact; skipping output",
+                output_port_id=output_port_id,
+                requested_artifact=str(requested_name),
+                artifact_kind=output_kind,
             )
+            continue
 
         artifacts.append(
             {
@@ -1153,7 +1157,7 @@ async def _execute_with_tools(
         api_key=settings.LITELLM_API_SECRET_KEY,
         model=model_name,
         temperature=temperature,
-        model_kwargs={"user": get_user()},
+        model_kwargs={"user": get_user(), "parallel_tool_calls": True},
     )
     llm_with_tools = llm.bind_tools(tools)
 
@@ -1477,11 +1481,27 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
             line for line in text.splitlines() if not line.strip().startswith("```")
         ]
         text = "\n".join(lines).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ValueError("Adaptive replay did not return a JSON object")
-    return json.loads(text[start : end + 1])
+    # Models sometimes emit multiple JSON objects (e.g. tool-call metadata
+    # on one line, structured response on the next). raw_decode stops at
+    # the end of the first valid JSON value; we scan forward to find the
+    # last such object, which is the structured response payload.
+    decoder = json.JSONDecoder()
+    pos = 0
+    last_obj: Dict[str, Any] | None = None
+    while pos < len(text):
+        idx = text.find("{", pos)
+        if idx == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+            if isinstance(obj, dict):
+                last_obj = obj
+            pos = end
+        except json.JSONDecodeError:
+            pos = idx + 1
+    if last_obj is not None:
+        return last_obj
+    raise ValueError("Adaptive replay did not return a JSON object")
 
 
 async def _adapt_replay_tool_args(

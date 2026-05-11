@@ -220,6 +220,17 @@ export class PlaybookContainerConfig {
 export const PlaybookContainerConfigSchema = SchemaFactory.createForClass(PlaybookContainerConfig);
 
 @Schema({ _id: false })
+export class PlaybookIteratorLayout {
+  @Prop({ type: Number, default: null })
+  width!: number | null;
+
+  @Prop({ type: Number, default: null })
+  height!: number | null;
+}
+
+export const PlaybookIteratorLayoutSchema = SchemaFactory.createForClass(PlaybookIteratorLayout);
+
+@Schema({ _id: false })
 export class PlaybookDesignSettings {
   @Prop({ type: String, default: null })
   inferenceModelId!: string | null;
@@ -339,6 +350,9 @@ export class PlaybookTask {
 
   @Prop({ type: PlaybookContainerConfigSchema, default: null })
   containerConfig!: PlaybookContainerConfig | null;
+
+  @Prop({ type: PlaybookIteratorLayoutSchema, default: null })
+  iteratorLayout!: PlaybookIteratorLayout | null;
 
   @Prop({ type: String, default: null })
   expectedResult!: string | null;
