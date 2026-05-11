@@ -859,6 +859,24 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 ) : null}
               </div>
               <div className="flex items-center gap-1">
+                {status && status !== 'pending' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openExecutionDetailTab('results', id);
+                        }}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{t('node.viewResults')}</TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

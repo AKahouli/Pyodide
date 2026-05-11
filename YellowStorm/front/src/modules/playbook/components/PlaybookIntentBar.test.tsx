@@ -347,7 +347,12 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getAllByText('Improve this step').length).toBeGreaterThanOrEqual(2);
 
     fireEvent.click(screen.getByText('Add validation step'));
+    expect(screen.getByText('intentBar.history.confirmTitle')).toBeInTheDocument();
+    expect(onApplySuggestion).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText('intentBar.history.confirmApply'));
     expect(onApplySuggestion).toHaveBeenCalledTimes(2);
+    expect(onApplySuggestion).toHaveBeenLastCalledWith(expect.objectContaining({ id: 's1' }));
   });
 
   it('shows empty state when intent is typed but no suggestions are returned', () => {

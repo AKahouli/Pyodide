@@ -4,6 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
@@ -21,6 +31,7 @@ interface Props {
   onSubmit: () => void;
   onApplySuggestion: (suggestion: PlaybookIntentSuggestion) => void;
   onRecordHistory: (suggestion: PlaybookIntentSuggestion, intent: string) => void;
+  onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onBarClick?: () => void;
 }
 
@@ -43,12 +54,14 @@ export function PlaybookIntentBar({
   onSubmit,
   onApplySuggestion,
   onRecordHistory,
+  onApplyHistorySuggestion,
   onBarClick,
 }: Readonly<Props>) {
   const { t } = useModuleTranslation('playbook');
   const [collapsed, setCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+  const [pendingHistoryEntry, setPendingHistoryEntry] = useState<IntentSuggestionHistoryEntry | null>(null);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement | null>(null);
   const submittedIntentRef = useRef('');
@@ -77,6 +90,21 @@ export function PlaybookIntentBar({
     onRecordHistory(suggestion, submittedIntentRef.current || value.trim());
     onApplySuggestion(suggestion);
   }, [onApplySuggestion, onRecordHistory, value]);
+
+  const handleConfirmHistoryApply = useCallback(() => {
+    if (!pendingHistoryEntry) return;
+    const intentText = pendingHistoryEntry.intent || pendingHistoryEntry.suggestion.label || '';
+    if (intentText) {
+      onValueChange(intentText);
+    }
+    if (onApplyHistorySuggestion) {
+      onApplyHistorySuggestion(pendingHistoryEntry.suggestion);
+    } else {
+      onApplySuggestion(pendingHistoryEntry.suggestion);
+    }
+    setPendingHistoryEntry(null);
+    setHistoryOpen(false);
+  }, [pendingHistoryEntry, onApplySuggestion, onApplyHistorySuggestion, onValueChange]);
 
   const handleSubmit = useCallback(() => {
     submittedIntentRef.current = value.trim();
@@ -302,8 +330,7 @@ export function PlaybookIntentBar({
                         key={entry.id}
                         type="button"
                         onClick={() => {
-                          onApplySuggestion(entry.suggestion);
-                          setHistoryOpen(false);
+                          setPendingHistoryEntry(entry);
                         }}
                         className="w-full rounded-xl border bg-muted/30 p-3 text-left transition hover:border-primary/50 hover:bg-muted/60"
                       >
@@ -398,6 +425,19 @@ export function PlaybookIntentBar({
           </div>
         ) : null}
       </div>
+
+      <AlertDialog open={!!pendingHistoryEntry} onOpenChange={(open) => { if (!open) setPendingHistoryEntry(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('intentBar.history.confirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('intentBar.history.confirmDescription')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('intentBar.history.confirmCancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmHistoryApply}>{t('intentBar.history.confirmApply')}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

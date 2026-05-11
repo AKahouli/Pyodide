@@ -1378,7 +1378,7 @@ function PlaybookCanvasInner() {
     scheduleChangeFeedbackCleanup();
   }, [reactFlow, scheduleChangeFeedbackCleanup]);
 
-  const handleApplyIntentSuggestion = useCallback((suggestion: PlaybookIntentSuggestion) => {
+  const handleApplyIntentSuggestion = useCallback((suggestion: PlaybookIntentSuggestion, options?: { replaceAll?: boolean }) => {
     if (!playbook) return;
 
     const toPlaybookEdges = (nextEdges: Edge[]): PlaybookEdge[] => nextEdges.map((edge) => {
@@ -1548,8 +1548,8 @@ function PlaybookCanvasInner() {
       return;
     }
 
-    let nextTasks = [...playbook.tasks];
-    let nextEdges = [...edges];
+    let nextTasks = options?.replaceAll ? [] : [...playbook.tasks];
+    let nextEdges = options?.replaceAll ? [] : [...edges];
     const createdNodeRefs = new Map<string, string>();
     let deletedBounds: { x: number; y: number; width: number; height: number } | null = null;
 
@@ -2086,16 +2086,21 @@ function PlaybookCanvasInner() {
     updateTasks(layoutedTasks);
   }, [playbook, updateTasks, setNodes, captureSnapshot]);
 
-  const handleRemoveAllTasks = useCallback(() => {
+  const clearAllTasks = useCallback(() => {
     if (!playbook || playbook.tasks.length === 0) return;
-    if (!window.confirm(t('toolbar.confirmRemoveAllTitle') + '\n' + t('toolbar.confirmRemoveAllDescription'))) return;
     captureSnapshot();
     const includeTrigger = playbook.automatedTriggerType === 'mail';
     setNodes(includeTrigger ? [tasksToNodes([], true)[0]] : []);
     setEdges([]);
     updateTasks([]);
     updateEdges([]);
-  }, [playbook, updateTasks, updateEdges, setNodes, setEdges, captureSnapshot, t]);
+  }, [playbook, updateTasks, updateEdges, setNodes, setEdges, captureSnapshot]);
+
+  const handleRemoveAllTasks = useCallback(() => {
+    if (!playbook || playbook.tasks.length === 0) return;
+    if (!window.confirm(t('toolbar.confirmRemoveAllTitle') + '\n' + t('toolbar.confirmRemoveAllDescription'))) return;
+    clearAllTasks();
+  }, [playbook, clearAllTasks, t]);
 
   const handleToggleCopilot = useCallback(() => {
     const newOpen = !designerOpen;
@@ -2461,6 +2466,7 @@ function PlaybookCanvasInner() {
                     }
                   }}
                   onBarClick={handleIntentBarClick}
+                  onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
                 />
                 <PlaybookCanvasFloatingToolbar
                   containerRef={canvasChromeRef}
