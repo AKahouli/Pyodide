@@ -2440,7 +2440,7 @@ function PlaybookCanvasInner() {
                   panOnScroll={false}
                   zoomOnScroll
                   fitView
-                  selectionOnDrag={false}
+                  selectionOnDrag
                   selectionKeyCode="Shift"
                   nodesDraggable={!isSaving}
                   nodesConnectable={!isSaving}

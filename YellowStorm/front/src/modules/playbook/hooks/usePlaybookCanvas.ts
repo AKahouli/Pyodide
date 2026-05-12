@@ -422,8 +422,12 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     (changes) => {
       const selectChanges = changes.filter((change) => change.type === 'select' && 'selected' in change);
       if (selectChanges.length > 0) {
-        const selectTrue = selectChanges.find((c) => c.selected === true);
-        selectStep(selectTrue ? selectTrue.id : null);
+        const selectTrue = selectChanges.filter((c) => c.selected === true);
+        if (selectTrue.length === 1) {
+          selectStep(selectTrue[0].id);
+        } else if (selectTrue.length === 0) {
+          selectStep(null);
+        }
       }
 
       const removes = changes.filter((c) => c.type === 'remove');
