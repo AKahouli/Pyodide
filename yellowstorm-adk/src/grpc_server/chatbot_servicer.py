@@ -1672,6 +1672,21 @@ class ChatbotServicer(
             tasks = [_proto_task_to_dict(t) for t in request.tasks]
             agents = {a.id: _proto_agent_to_dict(a) for a in request.agents}
             edges = [_proto_edge_to_dict(e) for e in request.edges]
+            logger.info(
+                "[ITERATOR_DEBUG RunPlaybookWorkflow] tasks after deserialization",
+                task_count=len(tasks),
+                tasks=[
+                    {
+                        "id": t.get("id"),
+                        "title": t.get("title"),
+                        "task_type": t.get("task_type"),
+                        "has_task_metadata": t.get("task_metadata") is not None,
+                        "task_metadata_keys": list(t["task_metadata"].keys()) if isinstance(t.get("task_metadata"), dict) else None,
+                        "task_metadata_iterator": (t.get("task_metadata") or {}).get("iterator") if isinstance(t.get("task_metadata"), dict) else None,
+                    }
+                    for t in tasks
+                ],
+            )
 
             bg_task = asyncio.create_task(
                 run_playbook(

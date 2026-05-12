@@ -28,6 +28,7 @@ import apiClient from '@/lib/api/client';
 import {
   getPlaybookPrompts,
   updatePlaybookPrompt,
+  deletePlaybookPrompt,
   getPlaybookNodeTemplates,
   createPlaybookNodeTemplate,
   updatePlaybookNodeTemplate,
@@ -154,6 +155,8 @@ export function PlaybookPromptsPage() {
   const [promptItems, setPromptItems] = useState<PlaybookPromptResponse[]>([]);
   const [selectedPromptKey, setSelectedPromptKey] = useState('');
   const [promptDraft, setPromptDraft] = useState<PlaybookPromptResponse>(EMPTY_PROMPT);
+  const [isCreatingPrompt, setIsCreatingPrompt] = useState(false);
+  const [promptDeleteDialogOpen, setPromptDeleteDialogOpen] = useState(false);
 
   // ===== Node Templates State =====
   const [templateLoading, setTemplateLoading] = useState(true);
@@ -179,6 +182,27 @@ export function PlaybookPromptsPage() {
     setPromptDraft(item);
   };
 
+  const startCreatePrompt = () => {
+    setIsCreatingPrompt(true);
+    setSelectedPromptKey('');
+    setPromptDraft({ ...EMPTY_PROMPT, key: '', title: '', category: 'task' });
+  };
+
+  const cancelCreatePrompt = () => {
+    setIsCreatingPrompt(false);
+    const first = promptItems[0] || null;
+    setSelectedPromptKey(first?.key || '');
+    syncPromptDraft(first);
+  };
+
+  const handlePromptTitleChange = (title: string) => {
+    setPromptDraft((current) => ({
+      ...current,
+      title,
+      key: isCreatingPrompt ? slugify(title) : current.key,
+    }));
+  };
+
   const syncTemplateDraft = (item: PlaybookNodeTemplateResponse | null) => {
     if (!item) {
       setTemplateDraft(EMPTY_NODE_TEMPLATE);
@@ -193,6 +217,9 @@ export function PlaybookPromptsPage() {
       const data = await getPlaybookPrompts();
       const nextItems = data.items || [];
       setPromptItems(nextItems);
+      if (isCreatingPrompt) {
+        setIsCreatingPrompt(false);
+      }
       const first = nextItems[0] || null;
       setSelectedPromptKey((current) => current && nextItems.some((item) => item.key === current) ? current : (first?.key || ''));
       syncPromptDraft(selectedPromptKey && nextItems.some((item) => item.key === selectedPromptKey) ? nextItems.find((item) => item.key === selectedPromptKey) || null : first);
@@ -245,8 +272,10 @@ export function PlaybookPromptsPage() {
   }, []);
 
   useEffect(() => {
-    syncPromptDraft(selectedPrompt);
-  }, [selectedPrompt]);
+    if (!isCreatingPrompt) {
+      syncPromptDraft(selectedPrompt);
+    }
+  }, [selectedPrompt, isCreatingPrompt]);
 
   useEffect(() => {
     syncTemplateDraft(selectedTemplate);
@@ -256,7 +285,7 @@ export function PlaybookPromptsPage() {
     if (!promptDraft.key) return;
     setPromptSaving(true);
     try {
-      const updated = await updatePlaybookPrompt(promptDraft.key, {
+      const saved = await updatePlaybookPrompt(promptDraft.key, {
         title: promptDraft.title,
         category: promptDraft.category,
         description: promptDraft.description,
@@ -264,15 +293,38 @@ export function PlaybookPromptsPage() {
         userTemplate: promptDraft.userTemplate,
         enabled: promptDraft.enabled,
       });
-      setPromptItems((current) => current.map((item) => (item.key === updated.key ? updated : item)));
-      setPromptDraft(updated);
-      toast.success(t('playbook.prompts.toasts.saved'));
+      if (isCreatingPrompt) {
+        setPromptItems((current) => [...current, saved].sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)));
+        setSelectedPromptKey(saved.key);
+        setIsCreatingPrompt(false);
+        toast.success(t('playbook.prompts.toasts.created'));
+      } else {
+        setPromptItems((current) => current.map((item) => (item.key === saved.key ? saved : item)));
+        toast.success(t('playbook.prompts.toasts.saved'));
+      }
+      setPromptDraft(saved);
     } catch (err) {
-      toast.error(t('playbook.prompts.toasts.saveFailed'), {
+      toast.error(isCreatingPrompt ? t('playbook.prompts.toasts.createFailed') : t('playbook.prompts.toasts.saveFailed'), {
         description: err instanceof Error ? err.message : 'Unknown error',
       });
     } finally {
       setPromptSaving(false);
+    }
+  };
+
+  const handleDeletePrompt = async () => {
+    if (!promptDraft.key) return;
+    try {
+      await deletePlaybookPrompt(promptDraft.key);
+      setPromptItems((current) => current.filter((item) => item.key !== promptDraft.key));
+      setSelectedPromptKey('');
+      setPromptDraft(EMPTY_PROMPT);
+      setPromptDeleteDialogOpen(false);
+      toast.success(t('playbook.prompts.toasts.deleted'));
+    } catch (err) {
+      toast.error(t('playbook.prompts.toasts.deleteFailed'), {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
     }
   };
 
@@ -537,33 +589,58 @@ export function PlaybookPromptsPage() {
           <div className="p-4">
             <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
               <Card className="overflow-hidden">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
+                  <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
+                    <Button variant="outline" size="sm" onClick={startCreatePrompt}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      {t('playbook.prompts.actions.create')}
+                    </Button>
+                  </div>
                   <CardDescription>{t('playbook.prompts.slots', { count: promptItems.length })}</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <ScrollArea className="h-[760px]">
                     <div className="p-3 space-y-2">
                       {promptItems.map((item) => (
-                        <button
+                        <div
                           key={item.key}
-                          type="button"
-                          onClick={() => setSelectedPromptKey(item.key)}
                           className={cn(
-                            'w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
-                            selectedPromptKey === item.key && 'border-primary bg-primary/5',
+                            'group relative rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                            selectedPromptKey === item.key && !isCreatingPrompt && 'border-primary bg-primary/5',
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium">{item.title}</div>
-                            <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground break-all">{item.key}</div>
-                          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                            <BadgeInfo className="h-3.5 w-3.5" />
-                            v{item.version}{item.isBuiltIn ? ` • ${t('playbook.prompts.builtIn')}` : ''}
-                          </div>
-                        </button>
+                          <button
+                            type="button"
+                            className="w-full text-left"
+                            onClick={() => { setIsCreatingPrompt(false); setSelectedPromptKey(item.key); }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-medium">{item.title}</div>
+                              <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.key}</div>
+                            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                              <BadgeInfo className="h-3.5 w-3.5" />
+                              v{item.version}{item.isBuiltIn ? ` • ${t('playbook.prompts.builtIn')}` : ''}
+                            </div>
+                          </button>
+                          {!item.isBuiltIn && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedPromptKey(item.key);
+                                setPromptDraft(item);
+                                setPromptDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </ScrollArea>
@@ -574,12 +651,14 @@ export function PlaybookPromptsPage() {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <CardTitle>{promptDraft.title || t('playbook.prompts.selectPrompt')}</CardTitle>
-                      <CardDescription className="break-all">{promptDraft.key || t('playbook.prompts.noPromptSelected')}</CardDescription>
+                      <CardTitle>{isCreatingPrompt ? t('playbook.prompts.actions.createPrompt') : (promptDraft.title || t('playbook.prompts.selectPrompt'))}</CardTitle>
+                      <CardDescription className="break-all">
+                        {isCreatingPrompt ? t('playbook.prompts.createDescription') : (promptDraft.key || t('playbook.prompts.noPromptSelected'))}
+                      </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch checked={promptDraft.enabled} onCheckedChange={(checked) => setPromptDraft((current) => ({ ...current, enabled: checked }))} />
-                      <span className="text-sm text-muted-foreground">Enabled</span>
+                      <span className="text-sm text-muted-foreground">{t('playbook.prompts.fields.enabled')}</span>
                     </div>
                   </div>
                 </CardHeader>
@@ -587,17 +666,35 @@ export function PlaybookPromptsPage() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.prompts.fields.title')}</label>
-                      <Input value={promptDraft.title} onChange={(e) => setPromptDraft((current) => ({ ...current, title: e.target.value }))} />
+                      <Input
+                        value={promptDraft.title}
+                        onChange={(e) => handlePromptTitleChange(e.target.value)}
+                        placeholder={t('playbook.templates.fields.titlePlaceholder')}
+                      />
                     </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium flex items-center gap-2">
+                        {t('playbook.prompts.fields.key')}
+                        <Badge variant="outline" className="text-xs">{t('playbook.prompts.fields.keyAuto')}</Badge>
+                      </label>
+                      <Input
+                        value={promptDraft.key}
+                        disabled
+                        placeholder={t('playbook.prompts.fields.keyPlaceholder')}
+                        className="bg-muted/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.prompts.fields.category')}</label>
                       <Input value={promptDraft.category} onChange={(e) => setPromptDraft((current) => ({ ...current, category: e.target.value }))} />
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Description</label>
-                    <Input value={promptDraft.description || ''} onChange={(e) => setPromptDraft((current) => ({ ...current, description: e.target.value }))} />
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">{t('playbook.prompts.fields.description')}</label>
+                      <Input value={promptDraft.description || ''} onChange={(e) => setPromptDraft((current) => ({ ...current, description: e.target.value }))} />
+                    </div>
                   </div>
 
                   <Separator />
@@ -628,10 +725,20 @@ export function PlaybookPromptsPage() {
                     <p className="text-xs text-muted-foreground">{t('playbook.prompts.hints.variables')}</p>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex justify-between">
+                    <div className="flex gap-2">
+                      {isCreatingPrompt ? (
+                        <Button variant="outline" onClick={cancelCreatePrompt}>{t('playbook.prompts.actions.cancel')}</Button>
+                      ) : !promptDraft.isBuiltIn && promptDraft.key ? (
+                        <Button variant="destructive" onClick={() => setPromptDeleteDialogOpen(true)}>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {t('playbook.prompts.actions.delete')}
+                        </Button>
+                      ) : null}
+                    </div>
                     <Button onClick={() => void handleSavePrompt()} disabled={!promptDraft.key || promptSaving}>
                       {promptSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                      {t('playbook.prompts.actions.save')}
+                      {isCreatingPrompt ? t('playbook.prompts.actions.createPrompt') : t('playbook.prompts.actions.save')}
                     </Button>
                   </div>
                 </CardContent>
@@ -1082,7 +1189,23 @@ export function PlaybookPromptsPage() {
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Prompt Confirmation Dialog */}
+      <Dialog open={promptDeleteDialogOpen} onOpenChange={setPromptDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('playbook.prompts.delete.title')}</DialogTitle>
+            <DialogDescription>
+              {t('playbook.prompts.delete.description', { name: promptDraft.title })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPromptDeleteDialogOpen(false)}>{t('playbook.prompts.actions.cancel')}</Button>
+            <Button variant="destructive" onClick={() => void handleDeletePrompt()}>{t('playbook.prompts.delete.confirm')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Template Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>

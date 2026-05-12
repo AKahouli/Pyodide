@@ -372,6 +372,7 @@ def _make_step_callback_for_thread(thread_id: str) -> StepCallback:
         queue = get_queue(thread_id)
         if queue is not None:
             await queue.put({"step_update": update})
+            await asyncio.sleep(0)
 
     return _callback
 

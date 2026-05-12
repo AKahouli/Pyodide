@@ -213,7 +213,7 @@ User task
 
 Mandatory steps before writing code:
 
-1. Load `obsidian-context` skill, search vault for relevant feature/architecture/contract/convention/recent-change notes. Tell user briefly.
+1. Must always search the obsidian vault for module boundaries, imports, and dependencies relevant to the task, Must always use Fragment Search Strategies (  "strategy": "semantic")
 2. Read relevant guideline file per Mandatory Guideline Loading table.
 3. If `plan` criteria met (multi-file, multi-slug, contract/schema/arch change, ambiguity), delegate and wait. `plan` must also load guidelines.
 4. Read vault notes — prioritize `Agent Quick Context`, index/MOC notes, notes matching `slug`/`source_paths`/tags.
@@ -260,7 +260,8 @@ FAIL on any critical. PASS-with-findings allowed for major/minor.
 
 ## Memory Protocol
 
-The Obsidian vault is the canonical long-term memory. Repository markdown is human reference; agent workflows retrieve and update implementation context through the vault.
+- The Obsidian vault is the canonical long-term memory. Repository markdown is human reference; agent workflows retrieve and update implementation context through the vault.
+- Must always use Fragment Search Strategies (  "strategy": "semantic")
 
 ### Vault Structure
 

@@ -472,6 +472,17 @@ export class PlaybookPromptService {
     return payload;
   }
 
+  async remove(key: string): Promise<boolean> {
+    const existing = await this.promptModel.findOne({ key }).exec();
+    if (!existing) return false;
+    if (existing.isBuiltIn) {
+      throw new Error('Cannot delete built-in prompt templates');
+    }
+    await this.promptModel.deleteOne({ key }).exec();
+    this.invalidateCache();
+    return true;
+  }
+
   async resetCache(): Promise<void> {
     this.invalidateCache();
   }

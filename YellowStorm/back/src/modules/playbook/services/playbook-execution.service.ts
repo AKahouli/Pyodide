@@ -1046,6 +1046,15 @@ export class PlaybookExecutionService {
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
     this.logger.log('[ITERATOR_DEBUG executePlaybook] edges', {
       playbookId,
+      allTasks: enabledTasks.map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        taskType: t.taskType,
+        nodeType: t.nodeType,
+        hasIteratorConfig: !!t.iteratorConfig,
+        iteratorConfigSource: t.iteratorConfig?.source,
+        parentIteratorId: t.containerConfig?.parentIteratorId || null,
+      })),
       iteratorTasks: enabledTasks
         .filter((t: any) => t.taskType === 'iterator')
         .map((t: any) => ({ id: t.id, title: t.title })),
@@ -1542,6 +1551,15 @@ export class PlaybookExecutionService {
     });
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
     this.logger.log('[ITERATOR_DEBUG runPlaybookWorkflow] edges', {
+      allTasks: enabledTasks.map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        taskType: t.taskType,
+        nodeType: t.nodeType,
+        hasIteratorConfig: !!t.iteratorConfig,
+        iteratorConfigSource: t.iteratorConfig?.source,
+        parentIteratorId: t.containerConfig?.parentIteratorId || null,
+      })),
       iteratorTasks: enabledTasks
         .filter((t: any) => t.taskType === 'iterator')
         .map((t: any) => ({ id: t.id, title: t.title })),

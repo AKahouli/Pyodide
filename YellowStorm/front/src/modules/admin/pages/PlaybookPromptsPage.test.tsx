@@ -13,6 +13,7 @@ const useAgents = vi.fn(() => []);
 vi.mock('../api', () => ({
   getPlaybookPrompts: vi.fn().mockResolvedValue({ items: [] }),
   updatePlaybookPrompt: vi.fn(),
+  deletePlaybookPrompt: vi.fn(),
   getPlaybookNodeTemplates: vi.fn().mockResolvedValue({
     items: [
       {

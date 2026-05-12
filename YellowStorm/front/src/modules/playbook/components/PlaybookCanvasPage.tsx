@@ -77,6 +77,7 @@ import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
+import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../utils/iterator-ports';
 import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../utils/intent-edge-ports';
 import { useModuleTranslation } from '@/modules/localization';
@@ -1458,9 +1459,12 @@ function PlaybookCanvasInner() {
       order: number,
     ): PlaybookTask => {
       const matchedTemplate = findMatchingTemplate(title, description, templateType);
-      const matchedNodeType = matchedTemplate?.nodeType ?? 'agent';
+      const matchedNodeType = matchedTemplate?.nodeType
+        ?? (templateType === 'iterator' ? 'iterator' as const : templateType === 'evaluation' ? 'evaluation' as const : 'agent');
       const genericInputPorts = normalizeIntentInputPorts(inputPorts);
       const genericOutputPorts = normalizeIntentOutputPorts(outputPorts);
+
+      const isIterator = matchedNodeType === 'iterator';
 
       return {
         id: crypto.randomUUID(),
@@ -1485,23 +1489,37 @@ function PlaybookCanvasInner() {
         notifyOnComplete: false,
         notifyEmails: [],
         inputFiles: [],
-        taskType: matchedNodeType === 'iterator'
+        taskType: isIterator
           ? 'iterator'
           : matchedNodeType === 'evaluation'
             ? 'evaluation'
             : 'generic',
         nodeType: matchedNodeType,
         templateType: matchedTemplate?.type ?? templateType ?? null,
+        iteratorConfig: isIterator
+          ? {
+              source: '{{items}}',
+              mode: 'item',
+              batchSize: 10,
+              itemVariable: 'item',
+              outputVariable: 'processed_items',
+              errorStrategy: 'stop',
+            }
+          : undefined,
         inputPorts: matchedTemplate
           ? clonePortSet(matchedTemplate.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }])
-          : genericInputPorts.length > 0
-            ? genericInputPorts
-          : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
+          : isIterator
+            ? getDefaultIteratorInputPorts()
+            : genericInputPorts.length > 0
+              ? genericInputPorts
+            : clonePortSet(anchorTask?.inputPorts, [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }]),
         outputPorts: matchedTemplate
           ? clonePortSet(matchedTemplate.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }])
-          : genericOutputPorts.length > 0
-            ? genericOutputPorts
-          : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
+          : isIterator
+            ? getDefaultIteratorOutputPorts()
+            : genericOutputPorts.length > 0
+              ? genericOutputPorts
+            : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
       };
     };
 
@@ -2021,7 +2039,7 @@ function PlaybookCanvasInner() {
     } finally {
       setIntentLoading(false);
     }
-  }, [handleApplyIntentSuggestion, id, intentAutoApply, intentValue, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
+  }, [handleApplyIntentSuggestion, id, intentAutoApply, intentValue, nodeTemplates, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
 
   useEffect(() => () => {
     if (typeof window === 'undefined') {

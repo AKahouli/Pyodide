@@ -908,7 +908,21 @@ class DynamicGraphBuilder:
                     )
 
             iterator_config = (task_config.get("task_metadata") or {}).get("iterator")
-            if str(task_config.get("task_type") or "") == "iterator" and isinstance(iterator_config, dict):
+            task_type_raw = str(task_config.get("task_type") or "")
+            task_type_match = task_type_raw == "iterator"
+            task_metadata = task_config.get("task_metadata")
+            logger.info(
+                "[ITERATOR_DEBUG _create_task_node] iterator branch gate",
+                task_id=task_id,
+                task_type=task_type_raw,
+                task_type_is_iterator=task_type_match,
+                has_task_metadata=task_metadata is not None,
+                task_metadata_type=type(task_metadata).__name__ if task_metadata is not None else None,
+                task_metadata_keys=list(task_metadata.keys()) if isinstance(task_metadata, dict) else None,
+                has_iterator_config=iterator_config is not None,
+                iterator_config_type=type(iterator_config).__name__ if iterator_config is not None else None,
+            )
+            if task_type_match and isinstance(iterator_config, dict):
                 await _push_step_update("in_progress")
                 resolved_inputs = resolve_task_inputs(task_id, task_config, state)
                 items = _resolve_iterator_collection_from_inputs(resolved_inputs)
@@ -920,7 +934,20 @@ class DynamicGraphBuilder:
                 item_variable = str(iterator_config.get("itemVariable") or "item").strip() or "item"
                 output_variable = str(iterator_config.get("outputVariable") or "processed_items").strip() or "processed_items"
 
-                child_tasks = self._get_iterator_child_tasks(task_id, state.get("tasks") or [])
+                all_state_tasks = state.get("tasks") or []
+                child_tasks = self._get_iterator_child_tasks(task_id, all_state_tasks)
+                logger.info(
+                    "[ITERATOR_DEBUG _create_task_node] iterator resolution",
+                    task_id=task_id,
+                    item_count=len(items) if isinstance(items, list) else 0,
+                    item_preview=str(items[:1])[:200] if isinstance(items, list) and items else None,
+                    state_task_count=len(all_state_tasks),
+                    state_task_ids=[t.get("id") for t in all_state_tasks if isinstance(t, dict)] if isinstance(all_state_tasks, list) else None,
+                    child_task_count=len(child_tasks),
+                    child_task_ids=[c.get("id") for c in child_tasks if isinstance(c, dict)],
+                    mode=mode,
+                    batch_size=batch_size,
+                )
                 nested_child = next(
                     (
                         child
