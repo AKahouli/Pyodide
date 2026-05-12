@@ -58,7 +58,7 @@ export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAUL
           setResolvedAgentId(composerAgent.id);
         }
       } catch (err) {
-        console.error('[ComposerSuggestions] Failed to fetch composer agent:', err);
+        // Silently fail - suggestions will be disabled
       }
     };
     fetchComposerAgent();

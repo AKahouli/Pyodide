@@ -255,10 +255,6 @@ describe('PlaybookDesignService', () => {
       expect(grpcService.generatePlaybook).toHaveBeenCalledWith(
         expect.objectContaining({
           query: dto.prompt,
-          user_context: {
-            user_id: userId,
-            username: userId,
-          },
           available_agents: mockGrpcAgents,
           workspace_context: [{ id: 'ws1', content: 'workspace data' }],
           existing_playbook: null,

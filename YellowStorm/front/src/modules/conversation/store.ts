@@ -242,7 +242,7 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'task':
     case 'error':
     case 'citation':
-      // Structured components replace the full payload on update.
+      // Charts and other structured components replace the full payload on update.
       return { ...incoming };
     case 'chart': {
       // For charts, data is an object with properties (title, data, config, etc.)

@@ -394,10 +394,7 @@ export function ExecutionStepDetail({
     return tasks.find((task) => task.id === step?.taskId) || null;
   }, [execution?.playbookSnapshot, step?.taskId]);
   const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
-  const currentTask = (playbookTask || executionSnapshotTask || null) as any;
-  useEffect(() => {
-    setStepReplayModeValue(currentTask?.stepReplayMode ?? 'live');
-  }, [currentTask?.id, currentTask?.stepReplayMode]);
+  const currentTask = (executionSnapshotTask || playbookTask || null) as any;
   const evaluationHistory = step?.evaluationHistory || [];
   const judgeHistory = step?.judgeHistory || [];
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
@@ -1146,12 +1143,7 @@ export function ExecutionStepDetail({
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
                 <div className="mt-2 space-y-1 text-muted-foreground">
-                  <div>{t('detail.provenance.mode')}: {({
-                    'replay_strict': t('execution.mode.replayStrict'),
-                    'replay_flex': t('execution.mode.replayFlex'),
-                    'replay_adaptive': t('execution.mode.replayAdaptive'),
-                    'live': t('execution.mode.live'),
-                  } as Record<string, string>)[execution?.executionMode || 'live'] || t('execution.mode.live')}</div>
+                  <div>{t('detail.provenance.mode')}: {getExecutionModeLabel(execution?.executionMode)}</div>
                   {replaySource && (
                     <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                   )}
