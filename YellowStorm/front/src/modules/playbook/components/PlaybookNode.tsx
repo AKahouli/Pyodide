@@ -859,7 +859,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 ) : null}
               </div>
               <div className="flex items-center gap-1">
-                {status && status !== 'pending' && (
+                {status && status !== 'pending' && status !== 'running' && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <Button

@@ -164,6 +164,7 @@ const initialState: PlaybookState = {
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
+  perPlaybookUndoHistory: {},
   canvasSyncVersion: 0,
   triggerSaving: false,
   triggerError: null,
@@ -227,7 +228,7 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
   judgeRefreshTimers.set(executionId, setTimeout(tick, JUDGE_REFRESH_INTERVAL_MS));
 }
 const MAX_EXECUTION_CACHE = 20;
-const MAX_UNDO_HISTORY = 50;
+const MAX_UNDO_HISTORY = 100;
 
 function getPreferredSelectedStepId(
   taskResults: Array<{ taskId: string; status: string; order?: number | null }>,
@@ -726,8 +727,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchPlaybook: async (id) => {
         set({ currentPlaybookLoading: true, error: null });
         try {
+          const { currentPlaybook, undoStack, redoStack, perPlaybookUndoHistory } = get();
+          if (currentPlaybook) {
+            perPlaybookUndoHistory[currentPlaybook.id] = { undoStack, redoStack };
+          }
+          const restored = perPlaybookUndoHistory[id] ?? { undoStack: [], redoStack: [] };
           const playbook = await api.getPlaybook(id);
-          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: [], redoStack: [], canvasSyncVersion: 0 });
+          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: restored.undoStack, redoStack: restored.redoStack, perPlaybookUndoHistory, canvasSyncVersion: 0 });
         } catch (err) {
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.fetchOneFailed', 'Failed to fetch playbook');
           set({ currentPlaybookLoading: false, error: msg });
@@ -754,7 +760,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       generatePlaybook: async (data: GeneratePlaybookData) => {
-        set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null, undoStack: [], redoStack: [], canvasSyncVersion: 0 });
+        const { currentPlaybook: currentPb, undoStack, redoStack, perPlaybookUndoHistory: pbHistory } = get();
+        if (currentPb) {
+          pbHistory[currentPb.id] = { undoStack, redoStack };
+        }
+        set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null, undoStack: [], redoStack: [], perPlaybookUndoHistory: pbHistory, canvasSyncVersion: 0 });
         try {
           const result = await api.generatePlaybook(data);
           const playbook = await api.getPlaybook(result.id);
@@ -3202,6 +3212,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             isDirty: false,
             undoStack: [],
             redoStack: [],
+            perPlaybookUndoHistory: { ...state.perPlaybookUndoHistory, [playbookId]: { undoStack: [], redoStack: [] } },
             canvasSyncVersion: state.canvasSyncVersion + 1,
           }));
           toast.success(tPlaybook('store.toasts.reverted', 'Reverted to snapshot'));
@@ -3448,7 +3459,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
         });
       },
 
-      clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
+      clearUndoHistory: () => set((state) => {
+        const { currentPlaybook, perPlaybookUndoHistory } = state;
+        if (currentPlaybook) {
+          perPlaybookUndoHistory[currentPlaybook.id] = { undoStack: [], redoStack: [] };
+        }
+        return { undoStack: [], redoStack: [], perPlaybookUndoHistory: { ...perPlaybookUndoHistory } };
+      }),
 
       addIntentSuggestionHistoryEntry: (playbookId, playbookName, suggestion, intent) => {
         const { intentSuggestionHistory } = get();

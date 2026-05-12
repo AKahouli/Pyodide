@@ -1460,6 +1460,7 @@ export interface PlaybookState {
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
+  perPlaybookUndoHistory: Record<string, { undoStack: PlaybookUndoSnapshot[]; redoStack: PlaybookUndoSnapshot[] }>;
   canvasSyncVersion: number;
   /** Saving automated trigger configuration */
   triggerSaving: boolean;
