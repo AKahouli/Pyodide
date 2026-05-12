@@ -23,6 +23,7 @@ import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { PlaybookPromptService } from './playbook-prompt.service';
 import { PlaybookSemanticEnrichmentService } from './playbook-semantic-enrichment.service';
 import { PlaybookJudgeEnrichmentService } from './playbook-judge-enrichment.service';
+import { PlaybookEvaluationService } from './playbook-evaluation.service';
 import { Connector } from '../../connector/schemas/connector.schema';
 import {
   PlaybookExecution,
@@ -69,7 +70,7 @@ async function waitForWorkflowStreamReady(): Promise<void> {
 }
 
 function createMockExecution(overrides: Record<string, any> = {}) {
-  return {
+  const execution = {
     _id: objectId('exec1'),
     playbookId: objectId('pb1'),
     executedBy: objectId('user1'),
@@ -113,6 +114,10 @@ function createMockExecution(overrides: Record<string, any> = {}) {
     ],
     threadId: null,
     interruptPayload: null,
+    waitingForHumanInput: false,
+    currentInterruptId: null,
+    currentInterruptTaskId: null,
+    hitlHistory: [],
     error: null,
     durationMs: null,
     startedAt: new Date('2026-03-10T10:00:00Z'),
@@ -126,6 +131,16 @@ function createMockExecution(overrides: Record<string, any> = {}) {
     updatedAt: new Date('2026-03-10T10:00:00Z'),
     ...overrides,
   };
+
+  if (execution.status === ExecutionStatus.INTERRUPTED) {
+    execution.waitingForHumanInput = overrides.waitingForHumanInput ?? true;
+    execution.currentInterruptTaskId =
+      overrides.currentInterruptTaskId ?? overrides.interruptPayload?.taskId ?? 'task-1';
+    execution.currentInterruptId =
+      overrides.currentInterruptId ?? overrides.interruptPayload?.interruptId ?? null;
+  }
+
+  return execution;
 }
 
 function createMockPlaybook(overrides: Record<string, any> = {}) {
@@ -222,6 +237,7 @@ describe('PlaybookExecutionService', () => {
   let mockConfigService: any;
   let mockNotificationService: any;
   let mockBufferService: any;
+  let mockEvaluationService: any;
 
   const defaultConfig: Record<string, any> = {
     'playbook.maxComponentsPerTask': 200,
@@ -351,7 +367,7 @@ describe('PlaybookExecutionService', () => {
           }
         }
       }),
-      flushBufferedTaskResult: jest.fn(),
+      flushBufferedTaskResult: jest.fn().mockResolvedValue(undefined),
       recordBufferedTaskUsage: jest.fn(),
       recordStreamUsage: jest.fn(),
       mergeTaskResultWithBuffer: jest.fn((dbTr: any, buffered: any) => {
@@ -372,6 +388,10 @@ describe('PlaybookExecutionService', () => {
       getOrCreateBuffer: jest.fn(),
       deleteBuffer: jest.fn(),
       deleteTaskFromBuffer: jest.fn(),
+    };
+
+    mockEvaluationService = {
+      persistEvaluationExecution: jest.fn().mockResolvedValue(undefined),
     };
 
     // Create a mock model that is both a constructor and has static methods
@@ -415,6 +435,7 @@ describe('PlaybookExecutionService', () => {
         { provide: PlaybookPromptService, useValue: mockPromptService },
         { provide: PlaybookSemanticEnrichmentService, useValue: mockSemanticEnrichmentService },
         { provide: PlaybookJudgeEnrichmentService, useValue: mockJudgeEnrichmentService },
+        { provide: PlaybookEvaluationService, useValue: mockEvaluationService },
         { provide: 'ConnectorAuthService', useValue: {} },
         PlaybookExecutionGraphService,
         { provide: PlaybookExecutionNotificationService, useValue: mockNotificationService },
@@ -503,7 +524,7 @@ describe('PlaybookExecutionService', () => {
         objectId('pb1').toString(),
         {},
         'owner@example.com',
-        { executionTrigger: 'manual' },
+        { executionTrigger: 'manual', userLanguage: 'en' },
       );
       expect(result).toEqual({ executionId: 'exec-public-1' });
     });
@@ -2475,6 +2496,7 @@ describe('PlaybookExecutionService', () => {
         approved: boolean;
         reason: string;
         feedback: string;
+        interruptId: string;
       }> = {},
     ) {
       return {
@@ -2483,6 +2505,7 @@ describe('PlaybookExecutionService', () => {
         approved: true,
         reason: '',
         feedback: '',
+        interruptId: '',
         ...overrides,
       };
     }
@@ -2544,6 +2567,26 @@ describe('PlaybookExecutionService', () => {
       );
     });
 
+    it('should throw BadRequestException for stale interrupt id', async () => {
+      const execution = {
+        ...createMockExecution({
+          executedBy: objectId('user1'),
+          status: ExecutionStatus.INTERRUPTED,
+          threadId: 'thread-abc',
+          interruptPayload: { taskId: 'task-1', interruptId: 'interrupt-2' },
+          currentInterruptId: 'interrupt-2',
+          currentInterruptTaskId: 'task-1',
+        }),
+        markModified: jest.fn(),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      mockExecutionModel.findById.mockReturnValue({ exec: jest.fn().mockResolvedValue(execution) });
+
+      await expect(
+        service.resumeExecution(userId, playbookId, makeResumeDto({ interruptId: 'interrupt-1' })),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     describe('single-step mode', () => {
       it('should call resumeStep and process completed response', async () => {
         const execution = {
@@ -2589,6 +2632,7 @@ describe('PlaybookExecutionService', () => {
           expect.objectContaining({
             playbook_id: playbookId,
             thread_id: 'thread-abc',
+            interrupt_id: '',
             task_id: 'task-1',
             human_response: expect.objectContaining({
               approved: true,
@@ -2638,7 +2682,10 @@ describe('PlaybookExecutionService', () => {
           expect.objectContaining({
             playbook_id: playbookId,
             thread_id: 'thread-abc',
+            interrupt_id: '',
             task_id: 'task-1',
+            tasks: [{ id: 'task-1', title: 'T1' }],
+            edges: [],
           }),
         );
         expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
@@ -3221,7 +3268,9 @@ describe('PlaybookExecutionService', () => {
       const interruptedExecution = {
         ...execution,
         status: ExecutionStatus.INTERRUPTED,
-        interruptPayload: { interruptId: 'interrupt-2', type: 'approval', round: 2 },
+        interruptPayload: { interruptId: 'interrupt-2', taskId: 'task-2', type: 'approval', round: 2 },
+        currentInterruptId: 'interrupt-2',
+        currentInterruptTaskId: 'task-2',
       };
 
       mockExecutionModel.findById.mockReturnValueOnce({

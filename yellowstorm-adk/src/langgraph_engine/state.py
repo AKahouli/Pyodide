@@ -51,6 +51,7 @@ class TaskConfig(TypedDict):
     input_files: Optional[List[str]]
     input_files_by_port: Optional[List[Dict[str, Any]]]  # Port-aware document bindings
     task_type: Optional[str]
+    evaluation_config: Optional[Dict[str, Any]]
     input_ports: Optional[List[Dict[str, Any]]]
     output_ports: Optional[List[Dict[str, Any]]]
 
@@ -205,9 +206,11 @@ class ExecutionState(TypedDict):
     execution_mode: Optional[str]
     validated_replays_by_task: Optional[Dict[str, Any]]
     step_execution_modes: Optional[Dict[str, str]]
+    user_language: Optional[str]
     prompt_overrides: Optional[Dict[str, str]]
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
     artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
+    node_inputs_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
     clarification_transcripts_by_task: Annotated[
         Dict[str, List[Dict[str, str]]], merge_clarification_transcripts
     ]

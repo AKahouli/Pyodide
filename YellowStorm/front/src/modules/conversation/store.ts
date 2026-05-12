@@ -35,8 +35,21 @@ function applyChunksToComponents(
   let result = [...components];
   for (const { action, component } of chunks) {
     if (action === 'add') {
+      if (component.type === 'chart') {
+        console.debug('[applyChunksToComponents][add][chart]', {
+          id: component.id,
+          dataKeys: Object.keys(component.data),
+          data: component.data,
+        });
+      }
       result.push({ ...component, data: initializeStreamingData(component.type, component.data) });
     } else if (action === 'update') {
+      if (component.type === 'chart') {
+        console.debug('[applyChunksToComponents][update][chart]', {
+          id: component.id,
+          incomingDataKeys: Object.keys(component.data),
+        });
+      }
       result = result.map((comp) => {
         if (comp.id !== component.id) return comp;
         return { ...comp, data: mergeStreamingData(comp.type, comp.data, component.data) };
@@ -133,7 +146,65 @@ const streamingBuffer = new StreamingBuffer();
  * Called on 'add' action.
  */
 function initializeStreamingData(type: string, data: Record<string, unknown>): Record<string, unknown> {
-  // All types use data directly - queue/plan arrive fully formed
+  if (type === 'chart') {
+    // Backend sends chart data as an object with:
+    // - data: array of data points (or nested object with data.data)
+    // - chartData: sometimes array, sometimes empty string
+    // - config: JSON string or object
+    // - Other props: title, xAxisKey, yAxisKey, series, kind, etc.
+
+    const parseJsonArray = (value: unknown): Record<string, unknown>[] => {
+      if (Array.isArray(value)) return value;
+      if (typeof value !== 'string') return [];
+
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    };
+
+    // Extract the actual data array
+    let actualData: Record<string, unknown>[] = [];
+
+    // Check if data.data is already an array (most common case from backend)
+    if (Array.isArray(data.data)) {
+      actualData = data.data;
+    }
+    // Check if data.data is a nested object with a data property
+    else if (typeof data.data === 'object' && data.data !== null && 'data' in (data.data as Record<string, unknown>)) {
+      const nested = (data.data as Record<string, unknown>).data;
+      if (Array.isArray(nested)) {
+        actualData = nested;
+      }
+    }
+    // Fallback to chartData if it's an array
+    else if (Array.isArray(data.chartData)) {
+      actualData = data.chartData;
+    }
+    else {
+      actualData = parseJsonArray(data.data) || parseJsonArray(data.chartData);
+    }
+
+    console.debug('[ConversationStream][chart][init]', {
+      id: (data as { id?: string }).id,
+      hasData: actualData.length > 0,
+      dataKeys: Object.keys(data),
+      actualDataLength: actualData.length,
+      dataDataType: typeof data.data,
+      chartDataDataType: typeof data.chartData,
+    });
+
+    // Return the data structure with chartData set to the actual data array
+    return {
+      ...data,
+      chartData: actualData,
+      data: actualData,
+    };
+  }
+
+  // All other types use data directly - queue/plan arrive fully formed
   return { ...data };
 }
 
@@ -169,11 +240,58 @@ function mergeStreamingData(type: string, existing: Record<string, unknown>, inc
     case 'plan':
     case 'checkpoint':
     case 'task':
-    case 'chart':
     case 'error':
     case 'citation':
       // Charts and other structured components replace the full payload on update.
       return { ...incoming };
+    case 'chart': {
+      // For charts, data is an object with properties (title, data, config, etc.)
+      // and chartData is the actual array of data points
+      const parseJsonArray = (value: unknown): Record<string, unknown>[] => {
+        if (Array.isArray(value)) return value;
+        if (typeof value !== 'string') return [];
+
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      };
+
+      const incomingChartData = parseJsonArray(incoming.chartData);
+      const existingChartData = parseJsonArray(existing.chartData);
+
+      // Determine the best chart data array to use
+      let finalChartData: Record<string, unknown>[] = [];
+      if (Array.isArray(incomingChartData) && incomingChartData.length > 0) {
+        finalChartData = incomingChartData;
+      } else if (Array.isArray(existingChartData) && existingChartData.length > 0) {
+        finalChartData = existingChartData;
+      }
+
+      // For chart data object, merge properties with incoming taking precedence
+      const chartDataObj = typeof incoming.data === 'object' && incoming.data !== null
+        ? { ...(typeof existing.data === 'object' && existing.data !== null ? existing.data as Record<string, unknown> : {}), ...(incoming.data as Record<string, unknown>) }
+        : (typeof existing.data === 'object' && existing.data !== null ? existing.data as Record<string, unknown> : {});
+
+      console.debug('[ConversationStream][chart][merge]', {
+        id: (existing as { id?: string }).id,
+        incomingHasChartData: Array.isArray(incomingChartData) ? incomingChartData.length : 0,
+        existingHasChartData: Array.isArray(existingChartData) ? existingChartData.length : 0,
+        resultHasChartData: finalChartData.length,
+        chartDataObjKeys: Object.keys(chartDataObj),
+      });
+
+      return {
+        ...existing,
+        ...incoming,
+        data: chartDataObj,
+        chartData: finalChartData,
+        kind: (incoming.kind as string) || (existing.kind as string) || 'bar',
+        layout: (incoming.layout as string) || (existing.layout as string) || 'horizontal',
+      };
+    }
     case 'sandbox':
       // Sandbox: merge code from first chunk with output/error from update
       // Preserve non-empty values from existing when incoming has empty values

@@ -8,12 +8,7 @@ const DEFAULT_MIN_LENGTH = 3;
 
 /** apiClient rejects with `{ code, message, statusCode }` from the response interceptor. */
 function httpStatusFromComposerError(err: unknown): number {
-  if (
-    typeof err === 'object' &&
-    err !== null &&
-    'statusCode' in err &&
-    typeof (err as { statusCode: unknown }).statusCode === 'number'
-  ) {
+  if (typeof err === 'object' && err !== null && 'statusCode' in err && typeof (err as { statusCode: unknown }).statusCode === 'number') {
     return (err as { statusCode: number }).statusCode;
   }
   return 0;
@@ -27,13 +22,7 @@ export interface UseComposerSuggestionsOptions {
   agentId?: string;
 }
 
-export function useComposerSuggestions({
-  draftText,
-  enabled,
-  debounceMs = DEFAULT_DEBOUNCE_MS,
-  minLength = DEFAULT_MIN_LENGTH,
-  agentId,
-}: UseComposerSuggestionsOptions) {
+export function useComposerSuggestions({ draftText, enabled, debounceMs = DEFAULT_DEBOUNCE_MS, minLength = DEFAULT_MIN_LENGTH, agentId }: UseComposerSuggestionsOptions) {
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [fetchError, setFetchError] = useState(false);
@@ -53,22 +42,16 @@ export function useComposerSuggestions({
         const agents = await getAllAgents();
 
         // Priority 1: Find by name === 'Suggestions' (case-insensitive)
-        let composerAgent = agents.find(
-          (a) => a.name.toLowerCase() === 'suggestions' && a.isDefault
-        );
+        let composerAgent = agents.find((a) => a.name.toLowerCase() === 'suggestions' && a.isDefault);
 
         // Priority 2: Try to find by agentType.name === 'composer-suggestions'
         if (!composerAgent) {
-          composerAgent = agents.find(
-            (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
-          );
+          composerAgent = agents.find((a) => a.agentType.name === 'composer-suggestions' && a.isDefault);
         }
 
         // Priority 3: Try to find by agentType.slug === 'composer-suggestions'
         if (!composerAgent) {
-          composerAgent = agents.find(
-            (a) => a.agentType.name === 'composer-suggestions' && a.isDefault
-          );
+          composerAgent = agents.find((a) => a.agentType.name === 'composer-suggestions' && a.isDefault);
         }
 
         if (composerAgent) {

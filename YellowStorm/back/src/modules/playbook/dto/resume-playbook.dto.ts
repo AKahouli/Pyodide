@@ -12,6 +12,11 @@ export class ResumePlaybookDto {
   @IsNotEmpty()
   taskId!: string;
 
+  @ApiPropertyOptional({ description: 'Stable interrupt instance identifier for stale-tab protection' })
+  @IsString()
+  @IsOptional()
+  interruptId?: string;
+
   @ApiPropertyOptional({ description: 'Conversational HITL action', enum: ['reply', 'approve', 'reject', 'skip'] })
   @IsString()
   @IsOptional()

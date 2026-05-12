@@ -29,7 +29,24 @@ export function InterruptDialog({ open, onOpenChange }: Props) {
   const [response, setResponse] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const interrupt = execution?.interruptPayload as InterruptPayload | null;
+  const pendingHistoryEntry = execution?.waitingForHumanInput
+    ? execution.hitlHistory?.find((entry) => entry.status === 'pending' && entry.taskId === (execution.currentInterruptTaskId || entry.taskId))
+    : undefined;
+  const interrupt = (execution?.interruptPayload || (pendingHistoryEntry
+    ? {
+        type: pendingHistoryEntry.type,
+        taskId: pendingHistoryEntry.taskId,
+        taskTitle: pendingHistoryEntry.taskTitle,
+        message: pendingHistoryEntry.message,
+        threadId: execution?.threadId || '',
+        interruptId: pendingHistoryEntry.interruptId,
+        round: pendingHistoryEntry.round,
+        payloadJson: pendingHistoryEntry.payloadJson,
+        resumableActions: pendingHistoryEntry.resumableActions,
+        taskDescription: pendingHistoryEntry.taskDescription,
+        result: pendingHistoryEntry.result,
+      }
+    : null)) as InterruptPayload | null;
   if (!interrupt || !execution || !id) return null;
 
   const isApproval = interrupt.type === 'approval_request';
@@ -41,6 +58,7 @@ export function InterruptDialog({ open, onOpenChange }: Props) {
       await resumeExecution(id, {
         executionId: execution.id,
         taskId: interrupt.taskId,
+        interruptId: interrupt.interruptId,
         approved,
         reason: extra?.reason,
         feedback: extra?.feedback,

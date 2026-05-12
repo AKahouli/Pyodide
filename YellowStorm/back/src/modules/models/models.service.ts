@@ -395,6 +395,10 @@ export class ModelsService implements OnApplicationBootstrap {
     return model ? this.toModelResponse(model) : null;
   }
 
+  getModelIdentifier(model: Pick<ModelResponse, 'id' | 'litellmModel'> | null | undefined): string {
+    return model?.id || model?.litellmModel || '';
+  }
+
   private toModelResponse(model: AiModelDocument | Record<string, unknown>): ModelResponse {
     // Handle both Mongoose document and lean object
     const doc = model as Record<string, unknown>;

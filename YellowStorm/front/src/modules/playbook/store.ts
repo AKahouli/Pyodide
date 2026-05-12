@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
-import { toast } from 'sonner';
+import { toast } from '@/lib/notifications';
 import type {
   PlaybookStore,
   PlaybookState,
@@ -43,6 +43,9 @@ import type {
   UpsertPlaybookMailTriggerData,
   UpsertPlaybookScheduleData,
   ToolBinding,
+  RequestPlaybookIntentData,
+  IntentSuggestionHistoryEntry,
+  PlaybookIntentSuggestion,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -66,6 +69,8 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
 
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
+const INTENT_HISTORY_KEY = 'ys_playbook_intent_history';
+const MAX_INTENT_HISTORY_PER_PLAYBOOK = 20;
 const JUDGE_REFRESH_INTERVAL_MS = 1500;
 const JUDGE_REFRESH_MAX_ATTEMPTS = 12;
 
@@ -75,6 +80,33 @@ function persistPanelOpen(open: boolean) {
 
 function persistWorkspaceExplorerOpen(open: boolean) {
   try { localStorage.setItem(WORKSPACE_EXPLORER_KEY, open ? '1' : '0'); } catch { /* noop */ }
+}
+
+function isValidHistoryEntry(entry: unknown): entry is IntentSuggestionHistoryEntry {
+  if (!entry || typeof entry !== 'object') return false;
+  const e = entry as Record<string, unknown>;
+  return typeof e.id === 'string' && !!e.suggestion && typeof e.suggestion === 'object' && typeof e.appliedAt === 'number';
+}
+
+function loadIntentHistory(): Record<string, IntentSuggestionHistoryEntry[]> {
+  try {
+    const raw = localStorage.getItem(INTENT_HISTORY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const result: Record<string, IntentSuggestionHistoryEntry[]> = {};
+    for (const [key, val] of Object.entries(parsed)) {
+      if (Array.isArray(val)) {
+        const valid = val.filter(isValidHistoryEntry);
+        if (valid.length > 0) result[key] = valid;
+      }
+    }
+    return result;
+  } catch { return {}; }
+}
+
+function persistIntentHistory(history: Record<string, IntentSuggestionHistoryEntry[]>) {
+  try { localStorage.setItem(INTENT_HISTORY_KEY, JSON.stringify(history)); } catch { /* noop */ }
 }
 
 function appendEvaluationHistory(
@@ -113,6 +145,7 @@ const initialState: PlaybookState = {
   isGenerating: false,
   generateRetryData: null,
   selectedStepId: null,
+  pendingRerunTaskId: null as string | null,
   error: null,
   designMessages: [],
   designMessagesLoading: false,
@@ -123,6 +156,7 @@ const initialState: PlaybookState = {
   executionPanelOpen: (() => { try { return localStorage.getItem(EXEC_PANEL_KEY) === '1'; } catch { return false; } })(),
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
   connectorSidebarOpen: false,
+  nodeEditorOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
@@ -132,6 +166,11 @@ const initialState: PlaybookState = {
   nodeTemplates: [],
   nodeTemplatesLoading: false,
   nodeTemplatesLoadedAt: 0,
+  evaluationExecutionsByTask: {},
+  evaluationBaselinesByTask: {},
+  repeatability: null,
+  repeatabilityLoading: false,
+  intentSuggestionHistory: loadIntentHistory(),
 };
 
 // ===== Stable empty references =====
@@ -395,6 +434,34 @@ function buildResumeFromStepTaskResults(taskResults: PlaybookExecution['taskResu
       judgeHistory: taskResult.judgeHistory || [],
       evaluationHistory: taskResult.evaluationHistory || [],
       stepExecutions: taskResult.stepExecutions || [],
+    };
+  });
+}
+
+function buildRerunStepTaskResults(taskResults: PlaybookExecution['taskResults'], taskId: string) {
+  const now = new Date().toISOString();
+
+  return taskResults.map((taskResult) => {
+    if (taskResult.taskId !== taskId) {
+      return taskResult;
+    }
+
+    return {
+      ...clearTaskResultStaleState(taskResult),
+      status: 'running' as const,
+      output: null,
+      error: null,
+      durationMs: null,
+      startedAt: now,
+      completedAt: null,
+      components: [],
+      toolTrace: [],
+      llmPromptTrace: [],
+      artifacts: [],
+      semanticMatch: null,
+      judgeStatus: 'idle' as const,
+      judgeResult: null,
+      judgeError: null,
     };
   });
 }
@@ -850,6 +917,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         await get().updatePlaybook(currentPlaybook.id, {
           name: currentPlaybook.name,
           description: currentPlaybook.description,
+          designSettings: currentPlaybook.designSettings,
           tasks: currentPlaybook.tasks,
           edges: currentPlaybook.edges,
           workspaces: currentPlaybook.workspaces,
@@ -906,6 +974,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
               taskResults,
               threadId: null,
               interruptPayload: null,
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
+              hitlHistory: [],
               error: null,
               durationMs: null,
               startedAt: now,
@@ -924,6 +996,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionCache: evictCache({ ...state.executionCache, [result.executionId]: optimisticExecution }),
               selectedStepId: data?.singleStepTaskId || sortedTasks[0]?.id || null,
               executionPanelOpen: true,
+              nodeEditorOpen: false,
               pageMode: 'run',
             };
           });
@@ -1161,6 +1234,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                       activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
                       activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
                       activeReplayFormatGuideError: replay.formatGuideError || null,
+                      activeReplayLabel: replay.label || null,
                       hasOutputFormatTemplate: task.hasOutputFormatTemplate,
                       activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
                       activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
@@ -1179,6 +1253,209 @@ export const usePlaybookStore = create<PlaybookStore>()(
           handleApiError(err);
           throw err;
         }
+      },
+
+      deleteTaskReplay: async (playbookId, taskId, replayId) => {
+        try {
+          const result = await api.deleteTaskReplay(playbookId, taskId, replayId);
+          if (result.wasActive) {
+            set((state) => ({
+              currentPlaybook: state.currentPlaybook?.id === playbookId
+                ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) =>
+                    task.id === taskId
+                      ? {
+                        ...task,
+                        hasValidatedReplay: false,
+                        activeReplayId: null,
+                        activeReplayVersion: null,
+                        activeReplayIsStale: false,
+                        activeReplayStaleReasons: [],
+                        activeReplayPreserveOutputFormat: false,
+                        activeReplayFormatGuideStatus: 'disabled',
+                        activeReplayFormatGuideError: null,
+                        activeReplayLabel: null,
+                        hasOutputFormatTemplate: false,
+                        activeOutputFormatTemplateId: null,
+                        activeOutputFormatTemplateVersion: null,
+                        activeOutputFormatStatus: null,
+                        activeOutputFormatError: null,
+                        isSavingReplayBaseline: false,
+                      }
+                      : task,
+                  ),
+                }
+                : state.currentPlaybook,
+            }));
+          }
+          toast.success(tPlaybook('store.toasts.replayDeleted', 'Replay baseline removed'));
+          return result;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      renameTaskReplay: async (playbookId, taskId, replayId, label) => {
+        try {
+          const replay = await api.updateTaskReplayLabel(playbookId, taskId, replayId, label);
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId && task.activeReplayId === replayId
+                    ? { ...task, activeReplayLabel: replay.label || null }
+                    : task,
+                ),
+              }
+              : state.currentPlaybook,
+          }));
+          toast.success(tPlaybook('store.toasts.replayRenamed', 'Replay baseline renamed'));
+          return replay;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchEvaluationExecutions: async (playbookId, taskId) => {
+        try {
+          const executions = await api.getEvaluationExecutions(playbookId, taskId);
+          if (taskId) {
+            set((state) => ({
+              evaluationExecutionsByTask: {
+                ...state.evaluationExecutionsByTask,
+                [taskId]: executions,
+              },
+            }));
+          }
+          return executions;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchEvaluationBaseline: async (playbookId, taskId) => {
+        try {
+          const baseline = await api.getEvaluationBaseline(playbookId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createEvaluationBaselineFromExecution: async (playbookId, taskId, executionId) => {
+        try {
+          const baseline = await api.createEvaluationBaselineFromExecution(playbookId, taskId, executionId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) => task.id === taskId
+                    ? {
+                        ...task,
+                        evaluationConfig: task.evaluationConfig
+                          ? { ...task.evaluationConfig, referenceBaselineId: baseline.id }
+                          : task.evaluationConfig,
+                      }
+                    : task),
+                }
+              : state.currentPlaybook,
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createEvaluationBaselineFromCurrentExecution: async (playbookId, taskId, executionId, evaluationExecutionId) => {
+        try {
+          const baseline = await api.createEvaluationBaselineFromCurrentExecution(playbookId, taskId, executionId, evaluationExecutionId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) => task.id === taskId
+                    ? {
+                        ...task,
+                        evaluationConfig: task.evaluationConfig
+                          ? { ...task.evaluationConfig, referenceBaselineId: baseline.id }
+                          : task.evaluationConfig,
+                      }
+                    : task),
+                }
+              : state.currentPlaybook,
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteEvaluationBaseline: async (playbookId, taskId) => {
+        try {
+          const result = await api.deleteEvaluationBaseline(playbookId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: null,
+            },
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                  ...state.currentPlaybook,
+                  tasks: state.currentPlaybook.tasks.map((task) => task.id === taskId
+                    ? {
+                        ...task,
+                        evaluationConfig: task.evaluationConfig
+                          ? { ...task.evaluationConfig, referenceBaselineId: null }
+                          : task.evaluationConfig,
+                      }
+                    : task),
+                }
+              : state.currentPlaybook,
+          }));
+          return result;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchRepeatability: async (playbookId, limit = 5, offset = 0) => {
+        set({ repeatabilityLoading: true });
+        try {
+          const result = await api.getPlaybookRepeatability(playbookId, limit, offset);
+          set({ repeatability: result, repeatabilityLoading: false });
+          return result;
+        } catch (err) {
+          set({ repeatabilityLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      clearRepeatability: () => {
+        set({ repeatability: null, repeatabilityLoading: false });
       },
 
       updateTaskReplayFormatGuide: async (playbookId, taskId, replayId, data) => {
@@ -1416,6 +1693,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set((state) => ({
             playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
             currentPlaybook: updated,
+            pendingRerunTaskId: taskId,
           }));
           toast.success(tPlaybook('store.toasts.stepOptimized', 'Step optimized'));
           return updated;
@@ -1450,6 +1728,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             set((state) => ({
               playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
               currentPlaybook: updated,
+              pendingRerunTaskId: state.selectedStepId || null,
             }));
             toast.success(tPlaybook('store.toasts.updatedFromAdvisor', 'Playbook updated from advisor'));
           }
@@ -1460,16 +1739,51 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      reapplyOptimization: async (playbookId, executionId, taskId, historyIndex, direction) => {
+        try {
+          const updated = await api.reapplyOptimization(playbookId, executionId, taskId, historyIndex, direction);
+          const summary: PlaybookSummary = {
+            id: updated.id,
+            name: updated.name,
+            description: updated.description,
+            taskCount: updated.tasks.length,
+            isFavorite: updated.isFavorite,
+            scheduleEnabled: updated.executionSchedule?.enabled === true,
+            executionStatus: null,
+            lastExecutionAt: null,
+            createdAt: updated.createdAt,
+            updatedAt: updated.updatedAt,
+          };
+          set((state) => ({
+            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
+            currentPlaybook: updated,
+            pendingRerunTaskId: direction === 'after' ? taskId : null,
+          }));
+          toast.success(tPlaybook('store.toasts.optimizationReapplied', 'Optimization reapplied'));
+          return updated;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      setPendingRerunTaskId: (taskId) => set({ pendingRerunTaskId: taskId }),
+
       resumeExecution: async (id, data) => {
         const action = data.action || (data.approved === true ? 'approve' : data.feedback || data.message ? 'reply' : 'reject');
         const message = data.message || data.feedback || data.reason || '';
+        const interruptId = data.interruptId || undefined;
         // Optimistically mark the humanFeedback component as answered
         set((state) => {
           if (!state.currentExecution) return state;
           const taskResults = state.currentExecution.taskResults.map((tr) => {
             if (tr.taskId !== data.taskId) return tr;
             const components = (tr.components || []).map((comp) => {
-              if (comp.type === 'humanFeedback' && (comp.data as any)?.status === 'pending') {
+              if (
+                comp.type === 'humanFeedback'
+                && (comp.data as any)?.status === 'pending'
+                && (!interruptId || ((comp.data as any)?.interruptId || '') === interruptId)
+              ) {
                 return {
                   ...comp,
                   data: {
@@ -1488,11 +1802,30 @@ export const usePlaybookStore = create<PlaybookStore>()(
             });
             return { ...tr, components };
           });
+          const hitlHistory = (state.currentExecution.hitlHistory || []).map((entry) => (
+            entry.status === 'pending'
+              && entry.taskId === data.taskId
+              && (!interruptId || entry.interruptId === interruptId)
+              ? {
+                  ...entry,
+                  status: 'answered' as const,
+                  responseAction: action,
+                  responseMessage: message || null,
+                  responseApproved: data.approved ?? null,
+                  responseReason: data.reason || null,
+                  responseFeedback: data.feedback || null,
+                }
+              : entry
+          ));
           const updatedExec: PlaybookExecution = {
             ...state.currentExecution,
             taskResults,
             status: 'running',
             interruptPayload: null,
+            waitingForHumanInput: false,
+            currentInterruptId: null,
+            currentInterruptTaskId: null,
+            hitlHistory,
             updatedAt: new Date().toISOString(),
           };
           return {
@@ -1511,16 +1844,44 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns) => {
+      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, skipStepExecution = false) => {
         clearJudgeRefreshTimer(executionId);
         set((state) => {
           const cachedExecution = state.executionCache[executionId];
+          if (!cachedExecution) return state;
+
+          if (skipStepExecution) {
+            const taskResults = cachedExecution.taskResults.map((tr) =>
+              tr.taskId === taskId
+                ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
+                : tr,
+            );
+            const updatedExecution = {
+              ...cachedExecution,
+              taskResults,
+              updatedAt: new Date().toISOString(),
+            };
+            return {
+              executionCache: { ...state.executionCache, [executionId]: updatedExecution },
+              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
+              selectedStepId: taskId,
+            };
+          }
+
+          const shouldPreserveOtherTaskResults = executionMode === 'replay_strict'
+            || executionMode === 'replay_flex'
+            || executionMode === 'replay_adaptive';
           const updatedExecution = cachedExecution
             ? {
               ...cachedExecution,
               status: 'running' as const,
               interruptPayload: null,
-              taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
+              taskResults: shouldPreserveOtherTaskResults
+                ? buildRerunStepTaskResults(cachedExecution.taskResults, taskId)
+                : buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
               updatedAt: new Date().toISOString(),
             }
             : null;
@@ -1559,12 +1920,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
             advisorAutopilotEnabled,
             advisorAutopilotTargetScore,
             advisorAutopilotMaxTurns,
+            skipStepExecution,
           });
-          await get().fetchExecutions(playbookId);
+          await get().fetchExecution(playbookId, executionId);
+          const exec = get().executionCache[executionId];
+          if (exec && !isActiveExecutionStatus(exec.status)) {
+            set((state) => ({
+              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
+            }));
+          }
         } catch (err) {
-          set((state) => ({
-            executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-          }));
+          if (!skipStepExecution) {
+            set((state) => ({
+              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
+            }));
+          }
           handleApiError(err);
           throw err;
         }
@@ -1579,6 +1949,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
               ...cachedExecution,
               status: 'running' as const,
               interruptPayload: null,
+              waitingForHumanInput: false,
+              currentInterruptId: null,
+              currentInterruptTaskId: null,
               taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
               updatedAt: new Date().toISOString(),
             }
@@ -1646,6 +2019,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
           taskResults,
           threadId: null,
           interruptPayload: null,
+          waitingForHumanInput: false,
+          currentInterruptId: null,
+          currentInterruptTaskId: null,
+          hitlHistory: [],
           error: null,
           durationMs: null,
           startedAt: new Date().toISOString(),
@@ -2265,6 +2642,33 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ...cachedExec,
             taskResults,
             status: 'interrupted',
+            waitingForHumanInput: true,
+            currentInterruptId: data.interruptId || null,
+            currentInterruptTaskId: data.taskId,
+            hitlHistory: [
+              ...(cachedExec.hitlHistory || []).filter((entry) => !(entry.status === 'pending' && entry.interruptId === (data.interruptId || ''))),
+              {
+                interruptId: data.interruptId || '',
+                taskId: data.taskId,
+                type: data.type,
+                taskTitle: '',
+                message: data.message,
+                taskDescription: data.taskDescription || '',
+                result: data.result || '',
+                round: data.round || 0,
+                payloadJson: data.payloadJson || '',
+                resumableActions: data.resumableActions || [],
+                status: 'pending',
+                responseAction: null,
+                responseMessage: null,
+                responseApproved: null,
+                responseReason: null,
+                responseFeedback: null,
+                respondedBy: null,
+                respondedAt: null,
+                createdAt: new Date().toISOString(),
+              },
+            ],
             interruptPayload: {
               type: data.type,
               taskId: data.taskId,
@@ -2293,6 +2697,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             copilotMode: 'interrupt',
             designerOpen: true,
             executionPanelOpen: true,
+            workspaceExplorerOpen: false,
+            connectorSidebarOpen: false,
+            nodeEditorOpen: false,
           };
         });
       },
@@ -2407,7 +2814,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const cached = get().executionCache[execId];
         set((state) => ({
           currentExecutionLoading: !cached,
-          currentExecution: state.currentPlaybook?.id === playbookId ? (cached || null) : state.currentExecution,
+          currentExecution: state.currentPlaybook?.id === playbookId || (!state.currentExecution && cached)
+            ? (cached || null)
+            : state.currentExecution,
           selectedStepId: state.currentPlaybook?.id === playbookId && cached ? state.selectedStepId : state.selectedStepId,
         }));
         try {
@@ -2450,7 +2859,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ? get().executingPlaybookIds
             : get().executingPlaybookIds.filter((pid) => pid !== playbookId);
           set((state) => ({
-            currentExecution: state.currentPlaybook?.id === playbookId ? merged : state.currentExecution,
+            currentExecution: state.currentPlaybook?.id === playbookId || !state.currentExecution || state.currentExecution.id === execId
+              ? merged
+              : state.currentExecution,
             currentExecutionLoading: false,
             executionCache,
             selectedStepId: state.currentPlaybook?.id === playbookId
@@ -2510,6 +2921,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      requestPlaybookIntent: async (playbookId: string, data: RequestPlaybookIntentData) => {
+        return api.requestPlaybookIntent(playbookId, data);
+      },
+
       revertToSnapshot: async (playbookId, messageId) => {
         try {
           const result = await api.revertToSnapshot(playbookId, messageId);
@@ -2533,7 +2948,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       setCopilotMode: (mode) => set({ copilotMode: mode }),
 
       setExecutionPanelOpen: (open) => {
-        set({ executionPanelOpen: open });
+        if (open) {
+          set({ executionPanelOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ executionPanelOpen: false });
+        }
         persistPanelOpen(open);
       },
 
@@ -2544,15 +2963,20 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set({
             currentExecution: cached,
             executionPanelOpen: true,
+            workspaceExplorerOpen: false,
+            connectorSidebarOpen: false,
+            nodeEditorOpen: false,
             selectedStepId,
             pageMode: 'run',
           });
         } else {
-          // Fetch from API — need the playbookId
           const playbookId = get().currentPlaybook?.id;
           if (!playbookId) return;
           set({
             executionPanelOpen: true,
+            workspaceExplorerOpen: false,
+            connectorSidebarOpen: false,
+            nodeEditorOpen: false,
             pageMode: 'run',
           });
           get().fetchExecution(playbookId, executionId);
@@ -2562,7 +2986,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Workspace Explorer =====
 
       setWorkspaceExplorerOpen: (open) => {
-        set({ workspaceExplorerOpen: open });
+        if (open) {
+          set({ workspaceExplorerOpen: true, connectorSidebarOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ workspaceExplorerOpen: false });
+        }
         persistWorkspaceExplorerOpen(open);
       },
 
@@ -2646,7 +3074,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Connector Sidebar =====
 
       setConnectorSidebarOpen: (open) => {
-        set({ connectorSidebarOpen: open });
+        if (open) {
+          set({ connectorSidebarOpen: true, workspaceExplorerOpen: false, executionPanelOpen: false, nodeEditorOpen: false });
+        } else {
+          set({ connectorSidebarOpen: false });
+        }
+      },
+
+      // ===== Node Editor =====
+
+      setNodeEditorOpen: (open) => {
+        if (open) {
+          set({ nodeEditorOpen: true, workspaceExplorerOpen: false, connectorSidebarOpen: false, executionPanelOpen: false });
+        } else {
+          set({ nodeEditorOpen: false });
+        }
       },
 
       // ===== Undo/Redo =====
@@ -2719,6 +3161,23 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
+
+      addIntentSuggestionHistoryEntry: (playbookId, playbookName, suggestion, intent) => {
+        const { intentSuggestionHistory } = get();
+        const existing = intentSuggestionHistory[playbookId] || [];
+        const entry: IntentSuggestionHistoryEntry = {
+          id: `${Date.now()}-${suggestion.id}-${existing.length}`,
+          suggestion,
+          appliedAt: Date.now(),
+          intent,
+          playbookId,
+          playbookName,
+        };
+        const updated = [entry, ...existing].slice(0, MAX_INTENT_HISTORY_PER_PLAYBOOK);
+        const nextHistory = { ...intentSuggestionHistory, [playbookId]: updated };
+        persistIntentHistory(nextHistory);
+        set({ intentSuggestionHistory: nextHistory });
+      },
 
       // ===== Node Templates =====
 
@@ -2879,3 +3338,16 @@ export const useWorkspaceExplorerOpen = () => usePlaybookStore((s) => s.workspac
 
 export const useCanUndo = () => usePlaybookStore((s) => s.undoStack.length > 0);
 export const useCanRedo = () => usePlaybookStore((s) => s.redoStack.length > 0);
+
+export const useIntentSuggestionHistory = (playbookId: string | undefined) =>
+  usePlaybookStore(useShallow((s) => {
+    if (!playbookId) return [];
+    const perPlaybook = s.intentSuggestionHistory[playbookId];
+    if (perPlaybook && perPlaybook.length > 0) return perPlaybook;
+    const all: IntentSuggestionHistoryEntry[] = [];
+    for (const entries of Object.values(s.intentSuggestionHistory)) {
+      for (const entry of entries) all.push(entry);
+    }
+    all.sort((a, b) => b.appliedAt - a.appliedAt);
+    return all.slice(0, MAX_INTENT_HISTORY_PER_PLAYBOOK);
+  }));

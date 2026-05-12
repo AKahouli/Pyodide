@@ -33,6 +33,12 @@ import type {
   OutputFormatTemplate,
   AdvisorRemediationItem,
   ApplyRemediationsData,
+  PlaybookEvaluationBaseline,
+  PlaybookEvaluationExecution,
+  PlaybookRepeatabilitySummary,
+  RepeatabilityTaskExecutionSummary,
+  RequestPlaybookIntentData,
+  PlaybookIntentResponse,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -46,13 +52,7 @@ interface PaginatedResponse<T> {
 }
 
 function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
-  if (!data.tasks) {
-    return data;
-  }
-
-  return {
-    ...data,
-    tasks: data.tasks.map((task) => ({
+  const sanitizedTasks = data.tasks?.map((task) => ({
       id: task.id,
       title: task.title,
       description: task.description,
@@ -92,13 +92,62 @@ function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybookData {
       inputPorts: task.inputPorts,
       outputPorts: task.outputPorts,
       toolBindings: task.toolBindings,
-    })),
+      evaluationConfig: task.evaluationConfig
+        ? {
+            expectation: task.evaluationConfig.expectation,
+            referenceBaselineId: task.evaluationConfig.referenceBaselineId ?? null,
+            passThreshold: task.evaluationConfig.passThreshold,
+            warningThreshold: task.evaluationConfig.warningThreshold,
+            weight: task.evaluationConfig.weight,
+            rubricVersion: task.evaluationConfig.rubricVersion,
+            weights: { ...task.evaluationConfig.weights },
+          }
+        : null,
+      expectedResult: task.expectedResult,
+      disableAdvisorEvaluation: task.disableAdvisorEvaluation,
+    }));
+
+  const sanitizedEdges = data.edges
+    ?.filter((edge) => typeof edge.id === 'string' && edge.id)
+    .map((edge) => ({
+      id: edge.id,
+      sourceId: edge.sourceId,
+      targetId: edge.targetId,
+      sourceOutputPortId: edge.sourceOutputPortId,
+      targetInputPortId: edge.targetInputPortId,
+    }));
+
+  return {
+    ...data,
+    tasks: sanitizedTasks,
+    edges: sanitizedEdges,
   };
 }
 
 function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData {
   return {
     ...data,
+    designSettings: data.designSettings
+      ? {
+          inferenceModelId: data.designSettings.inferenceModelId ?? null,
+          nodeSuggestionsMode: data.designSettings.nodeSuggestionsMode,
+          approvalSuggestionMode: data.designSettings.approvalSuggestionMode,
+        }
+      : undefined,
+    tasks: data.tasks?.map((task) => ({
+      ...task,
+      evaluationConfig: task.evaluationConfig
+        ? {
+            expectation: task.evaluationConfig.expectation,
+            referenceBaselineId: task.evaluationConfig.referenceBaselineId ?? null,
+            passThreshold: task.evaluationConfig.passThreshold,
+            warningThreshold: task.evaluationConfig.warningThreshold,
+            weight: task.evaluationConfig.weight,
+            rubricVersion: task.evaluationConfig.rubricVersion,
+            weights: { ...task.evaluationConfig.weights },
+          }
+        : null,
+    })),
     reflectionEnabled: data.reflectionEnabled,
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
@@ -205,6 +254,17 @@ export async function updatePlaybook(
   return response.data.data;
 }
 
+export async function requestPlaybookIntent(
+  playbookId: string,
+  data: RequestPlaybookIntentData,
+): Promise<PlaybookIntentResponse> {
+  const response = await apiClient.post<ApiResponse<PlaybookIntentResponse>>(
+    API_ENDPOINTS.playbooks.intent(playbookId),
+    data,
+  );
+  return response.data.data;
+}
+
 export async function updatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
   const response = await apiClient.post<ApiResponse<Playbook>>(
     `${API_ENDPOINTS.playbooks.byId(id)}/judge/update-current`,
@@ -250,6 +310,20 @@ export async function applyAdvisorRemediations(
   const response = await apiClient.post<ApiResponse<Playbook>>(
     `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations/apply`,
     data,
+  );
+  return response.data.data;
+}
+
+export async function reapplyOptimization(
+  playbookId: string,
+  executionId: string,
+  taskId: string,
+  historyIndex: number,
+  direction: 'after' | 'before',
+): Promise<Playbook> {
+  const response = await apiClient.post<ApiResponse<Playbook>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/tasks/${taskId}/reapply-optimization`,
+    { historyIndex, direction },
   );
   return response.data.data;
 }
@@ -379,6 +453,30 @@ export async function updateTaskReplayFormatGuide(
   return response.data.data;
 }
 
+export async function updateTaskReplayLabel(
+  playbookId: string,
+  taskId: string,
+  replayId: string,
+  label: string | null,
+): Promise<ValidatedTaskReplay> {
+  const response = await apiClient.patch<ApiResponse<ValidatedTaskReplay>>(
+    API_ENDPOINTS.playbooks.updateReplayLabel(playbookId, taskId, replayId),
+    { label },
+  );
+  return response.data.data;
+}
+
+export async function deleteTaskReplay(
+  playbookId: string,
+  taskId: string,
+  replayId: string,
+): Promise<{ removed: boolean; wasActive: boolean }> {
+  const response = await apiClient.delete<ApiResponse<{ removed: boolean; wasActive: boolean }>>(
+    API_ENDPOINTS.playbooks.deleteReplay(playbookId, taskId, replayId),
+  );
+  return response.data.data;
+}
+
 export async function grabOutputFormatTemplate(
   playbookId: string,
   taskId: string,
@@ -409,6 +507,42 @@ export async function updateOutputFormatTemplate(
   const response = await apiClient.patch<ApiResponse<OutputFormatTemplate>>(
     API_ENDPOINTS.playbooks.outputFormatTemplate(playbookId, taskId),
     data,
+  );
+  return response.data.data;
+}
+
+export async function getEvaluationExecutions(playbookId: string, taskId?: string): Promise<PlaybookEvaluationExecution[]> {
+  const response = await apiClient.get<ApiResponse<PlaybookEvaluationExecution[]>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluations`,
+    { params: taskId ? { taskId } : {} },
+  );
+  return response.data.data;
+}
+
+export async function getEvaluationBaseline(playbookId: string, taskId: string): Promise<PlaybookEvaluationBaseline | null> {
+  const response = await apiClient.get<ApiResponse<PlaybookEvaluationBaseline | null>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluation-tasks/${taskId}/baseline`,
+  );
+  return response.data.data;
+}
+
+export async function createEvaluationBaselineFromExecution(playbookId: string, taskId: string, executionId: string): Promise<PlaybookEvaluationBaseline> {
+  const response = await apiClient.post<ApiResponse<PlaybookEvaluationBaseline>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluation-tasks/${taskId}/baseline/from-execution`,
+    { executionId },
+  );
+  return response.data.data;
+}
+
+export async function createEvaluationBaselineFromCurrentExecution(
+  playbookId: string,
+  taskId: string,
+  executionId: string,
+  evaluationExecutionId: string,
+): Promise<PlaybookEvaluationBaseline> {
+  const response = await apiClient.post<ApiResponse<PlaybookEvaluationBaseline>>(
+    `${API_ENDPOINTS.playbooks.byId(playbookId)}/evaluation-tasks/${taskId}/baseline/from-current-execution`,
+    { executionId, evaluationExecutionId },
   );
   return response.data.data;
 }
@@ -629,6 +763,37 @@ export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
     selectedAction?: string | null;
   }> }>>(
     API_ENDPOINTS.playbookNodeTemplates.list,
+  );
+  return response.data.data;
+}
+
+export async function deleteEvaluationBaseline(playbookId: string, taskId: string): Promise<{ removed: boolean }> {
+  const response = await apiClient.delete<ApiResponse<{ removed: boolean }>>(
+    API_ENDPOINTS.playbooks.evaluationBaseline(playbookId, taskId),
+  );
+  return response.data.data;
+}
+
+export async function getPlaybookRepeatability(
+  playbookId: string,
+  limit = 5,
+  offset = 0,
+): Promise<PlaybookRepeatabilitySummary> {
+  const response = await apiClient.get<ApiResponse<PlaybookRepeatabilitySummary>>(
+    API_ENDPOINTS.playbooks.repeatability(playbookId),
+    { params: { limit, offset } },
+  );
+  return response.data.data;
+}
+
+export async function getTaskRepeatability(
+  playbookId: string,
+  taskId: string,
+  limit = 5,
+): Promise<RepeatabilityTaskExecutionSummary[]> {
+  const response = await apiClient.get<ApiResponse<RepeatabilityTaskExecutionSummary[]>>(
+    API_ENDPOINTS.playbooks.repeatabilityTask(playbookId, taskId),
+    { params: { limit } },
   );
   return response.data.data;
 }

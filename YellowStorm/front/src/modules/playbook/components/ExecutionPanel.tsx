@@ -410,6 +410,30 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     [execution, playbook, rerunStepInExecution],
   );
 
+  const handleRunAdvisorEvaluation = useCallback(
+    async (taskId: string) => {
+      if (!execution || !playbook) return;
+      setActiveDetailTab('judge');
+      const task = playbook.tasks.find((candidate) => candidate.id === taskId);
+      const taskResult = execution.taskResults.find((tr) => tr.taskId === taskId);
+      const stepCompleted = taskResult?.status === 'completed';
+      await rerunStepInExecution(
+        execution.playbookId,
+        execution.id,
+        taskId,
+        false,
+        task?.stepReplayMode || 'live',
+        false,
+        true,
+        execution.advisorAutopilotEnabled === true,
+        execution.advisorAutopilotTargetScore,
+        execution.advisorAutopilotMaxTurns,
+        stepCompleted,
+      );
+    },
+    [execution, playbook, rerunStepInExecution],
+  );
+
   const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
   const canDeleteCurrentExecution = Boolean(execution && visibleExecutionStatus !== 'running' && visibleExecutionStatus !== 'interrupted');
 
@@ -417,19 +441,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     (tr) => tr.taskId === selectedStepId,
   ) || null;
   const selectedTask = playbook?.tasks.find((task) => task.id === selectedResult?.taskId) || null;
-  const selectedResultRenderKey = [
-    execution?.id || 'no-exec',
-    selectedResult?.taskId || 'no-step',
-    selectedResult?.status || 'no-status',
-    selectedResult?.completedAt || 'no-completed-at',
-    selectedResult?.output || '',
-    selectedResult?.error || '',
-    selectedResult?.components?.length || 0,
-    selectedResult?.toolTrace?.length || 0,
-    selectedResult?.llmPromptTrace?.length || 0,
-    selectedResult?.semanticMatch?.matchScore ?? 'no-semantic-match',
-  ].join('|');
-
   useEffect(() => {
     let cancelled = false;
 
@@ -595,7 +606,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           pageMode={pageMode}
         />
         <ExecutionStepDetail
-          key={selectedResultRenderKey}
           step={selectedResult}
           execution={execution}
           pageMode={pageMode}
@@ -603,6 +613,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
             void handleValidateStep(taskId, { preserveOutputFormat: false });
           }}
           onRequestRunEvaluation={handleRunEvaluation}
+          onRequestRunAdvisorEvaluation={handleRunAdvisorEvaluation}
           onRequestGrabOutputFormat={handleGrabOutputFormat}
           onOpenOutputFormatEditor={onOpenOutputFormatEditor}
           onStepReplayModeChange={handleStepReplayModeChange}

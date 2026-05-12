@@ -61,6 +61,10 @@ export class AgentService {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
     }
 
+    const normalizedSlug = this.normalizeSlug(dto.slug || dto.name);
+
+    await this.ensureSlugUniqueness(normalizedSlug, false, userId);
+
     // Ensure only one default-for-type per user per agent type
     if (dto.isDefaultForType) {
       await this.ensureDefaultForTypeUniqueness(dto.agentType, true, userId);
@@ -70,6 +74,7 @@ export class AgentService {
 
     const agent = await this.agentModel.create({
       name: dto.name,
+      slug: normalizedSlug,
       agentType: new Types.ObjectId(dto.agentType),
       role: dto.role,
       description: dto.description ?? '',
@@ -195,6 +200,12 @@ export class AgentService {
       }
     }
 
+    const normalizedSlug = dto.slug ? this.normalizeSlug(dto.slug) : undefined;
+
+    if (normalizedSlug && normalizedSlug !== agent.slug) {
+      await this.ensureSlugUniqueness(normalizedSlug, false, userId, agentId);
+    }
+
     // Ensure only one default-for-type per user per agent type
     if (dto.isDefaultForType === true) {
       const effectiveAgentTypeId = dto.agentType || agent.agentType.toString();
@@ -205,6 +216,9 @@ export class AgentService {
 
     // Build update object
     const updateData: Record<string, unknown> = { ...dto };
+    if (normalizedSlug) {
+      updateData.slug = normalizedSlug;
+    }
     if (dto.agentType) {
       updateData.agentType = new Types.ObjectId(dto.agentType);
     }
@@ -291,6 +305,10 @@ export class AgentService {
       throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
     }
 
+    const normalizedSlug = this.normalizeSlug(dto.slug || dto.name);
+
+    await this.ensureSlugUniqueness(normalizedSlug, true);
+
     // Ensure only one default-for-type among admin agents
     if (dto.isDefaultForType) {
       await this.ensureDefaultForTypeUniqueness(dto.agentType, false);
@@ -300,6 +318,7 @@ export class AgentService {
 
     const agent = await this.agentModel.create({
       name: dto.name,
+      slug: normalizedSlug,
       agentType: new Types.ObjectId(dto.agentType),
       role: dto.role,
       description: dto.description ?? '',
@@ -433,6 +452,12 @@ export class AgentService {
       }
     }
 
+    const normalizedSlug = dto.slug ? this.normalizeSlug(dto.slug) : undefined;
+
+    if (normalizedSlug && normalizedSlug !== agent.slug) {
+      await this.ensureSlugUniqueness(normalizedSlug, true, undefined, agentId);
+    }
+
     // Ensure only one default-for-type among admin agents
     if (dto.isDefaultForType === true) {
       const effectiveAgentTypeId = dto.agentType || agent.agentType.toString();
@@ -442,6 +467,9 @@ export class AgentService {
     await this.skillService.findByIds([...(dto.skills ?? []), ...(dto.disabledSkills ?? [])]);
 
     const updateData: Record<string, unknown> = { ...dto };
+    if (normalizedSlug) {
+      updateData.slug = normalizedSlug;
+    }
     if (dto.agentType) {
       updateData.agentType = new Types.ObjectId(dto.agentType);
     }
@@ -1026,6 +1054,43 @@ export class AgentService {
     await this.agentModel.updateMany(filter, { $set: { isDefaultForType: false } }).exec();
   }
 
+  private normalizeSlug(value: string): string {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '');
+  }
+
+  private async ensureSlugUniqueness(
+    slug: string,
+    isDefault: boolean,
+    userId?: string,
+    excludeAgentId?: string,
+  ): Promise<void> {
+    const filter: FilterQuery<AgentDocument> = {
+      slug,
+      isDefault,
+    };
+
+    if (!isDefault) {
+      filter.createdBy = new Types.ObjectId(userId);
+    }
+
+    if (excludeAgentId) {
+      filter._id = { $ne: new Types.ObjectId(excludeAgentId) };
+    }
+
+    const existing = await this.agentModel.findOne(filter).lean().exec();
+    if (existing) {
+      throw new ConflictException(ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS);
+    }
+  }
+
   /**
    * Resolve exactly ONE manager agent to include in the stream.
    * Priority (highest → lowest):
@@ -1095,6 +1160,7 @@ export class AgentService {
     return {
       id: (d._id as { toString(): string }).toString(),
       name: d.name as string,
+      slug: ((d.slug as string) || this.normalizeSlug(d.name as string)),
       agentType: agentTypeInfo,
       role: d.role as string,
       description: (d.description as string) || '',

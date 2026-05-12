@@ -9,6 +9,18 @@ class TestCalculator:
     """Test cases for calculator functionality."""
 
     @pytest.mark.asyncio
+    async def test_calculator_supports_abs(self):
+        """Calculator should support abs()."""
+        result = await calculator("abs(-5)")
+        assert result == "5"
+
+    @pytest.mark.asyncio
+    async def test_calculator_supports_round_with_ndigits(self):
+        """Calculator should support round(x, ndigits)."""
+        result = await calculator("round(100*150000/461000, 4)")
+        assert result == "32.538"
+
+    @pytest.mark.asyncio
     async def test_calculator_basic_operations(self):
         """Test basic calculator operations."""
         try:

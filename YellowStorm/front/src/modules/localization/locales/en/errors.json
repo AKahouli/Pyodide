@@ -86,7 +86,7 @@
   "ERR_2302": "This agent type is in use and cannot be deleted.",
   "ERR_2303": "Agent type prompt not found for this model.",
   "ERR_2400": "Agent not found.",
-  "ERR_2401": "An agent with this name already exists.",
+  "ERR_2401": "An agent with this name or slug already exists.",
   "ERR_2402": "You do not have access to this agent.",
   "ERR_2404": "Agent name must contain only letters, numbers, and spaces.",
   "ERR_2405": "Default agents cannot be modified.",

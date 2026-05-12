@@ -28,6 +28,7 @@ vi.mock('@/modules/localization/i18nInstance', () => ({
 const baseAgent: Agent = {
   id: 'a1',
   name: 'Alpha',
+  slug: 'alpha',
   agentType: { id: 'type-1', name: 'Manager' },
   role: 'Do things',
   description: '',

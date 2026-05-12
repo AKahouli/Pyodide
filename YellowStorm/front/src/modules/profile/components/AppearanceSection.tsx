@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils';
 import { ThemeProviderContext, COLOR_THEMES, type ColorTheme } from '@/contexts/ThemeContext';
 import { useLocalization, useModuleTranslation } from '@/modules/localization';
 import type { Language, ModuleTranslationKey } from '@/modules/localization';
-import { updateAppearance } from '../api';
+import { updateAppearance, updateLanguage } from '../api';
 import { useAuth } from '@/modules/auth';
 
 type ThemeOption = 'light' | 'dark' | 'system';
@@ -114,7 +114,7 @@ export function AppearanceSection() {
         </div>
         <p className='text-sm text-muted-foreground'>{t('appearance.language.description')}</p>
 
-        <Select value={language} onValueChange={(value) => changeLanguage(value as Language)}>
+        <Select value={language} onValueChange={(value) => { changeLanguage(value as Language); updateLanguage(value).catch(() => {}); }}>
           <SelectTrigger className='w-full md:w-64'>
             <SelectValue placeholder={t('appearance.language.placeholder')}>{languageLabel(language)}</SelectValue>
           </SelectTrigger>

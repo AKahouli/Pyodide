@@ -73,7 +73,7 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
 const EMPTY_PORT: PlaybookNodeTemplatePort = { id: '', name: '', artifactKind: 'text', required: false };
 
 // Constants for selects
-const CATEGORIES = ['content', 'generation', 'analysis', 'code'];
+const CATEGORIES = ['content', 'generation', 'analysis', 'code', 'evaluation'];
 const EXECUTION_MODES = ['agent', 'action'];
 const ACTIONS = ['index', 'delete', 'read'];
 const ARTIFACT_KINDS = ['text', 'document', 'code', 'data', 'image', 'dashboard'];
@@ -99,7 +99,7 @@ const ICON_NAMES = [
   'Brain', 'Bot', 'User', 'Users', 'Globe', 'Link', 'Paperclip', 'Upload',
   'Download', 'Copy', 'Edit', 'Trash2', 'Eye', 'EyeOff', 'Lock', 'Unlock',
   'Check', 'X', 'Plus', 'Minus', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown',
-  'ChevronRight', 'ChevronLeft', 'ChevronUp', 'ChevronDown', 'RefreshCw', 'RotateCcw', 'Save', 'Send'
+  'ChevronRight', 'ChevronLeft', 'ChevronUp', 'ChevronDown', 'RefreshCw', 'RotateCcw', 'Save', 'Send', 'Scale'
 ];
 
 // Helper to generate slug from title
@@ -543,6 +543,11 @@ export function PlaybookPromptsPage() {
                         placeholder={t('playbook.prompts.fields.userTemplatePlaceholder')}
                       />
                     </div>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-3">
+                    <p className="text-xs text-muted-foreground mb-1 font-medium">{t('playbook.prompts.hints.title')}</p>
+                    <p className="text-xs text-muted-foreground">{t('playbook.prompts.hints.variables')}</p>
                   </div>
 
                   <div className="flex justify-end">

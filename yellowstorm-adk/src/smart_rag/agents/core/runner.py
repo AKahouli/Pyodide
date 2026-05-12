@@ -283,9 +283,8 @@ class AgentRunner:
         accumulated_text = ""
         # Citation buffering using MessageTransformer
         citation_buffer = ""
-        # Sequential citation remapping: LLM ref (e.g., "[8]") -> UI ref (e.g., "1")
+        # Preserve citation numbers generated upstream while deduplicating repeats.
         citation_mapping = {}
-        citation_counter = 0
         # Track current text component ID for citation parent_id
         current_text_component_id = None
 
@@ -340,12 +339,11 @@ class AgentRunner:
                             for citation_ref in detected_citations:
                                 # Assign sequential UI reference on first encounter
                                 if citation_ref not in citation_mapping:
-                                    citation_counter += 1
                                     citation_mapping[citation_ref] = (
-                                        str(citation_counter)
+                                        _normalize_reference_token(citation_ref)
                                     )
                                     logger.debug(
-                                        f"[CITATION REMAP] {citation_ref} -> {citation_mapping[citation_ref]}"
+                                        f"[CITATION PRESERVE] {citation_ref} -> {citation_mapping[citation_ref]}"
                                     )
                                 ui_reference = citation_mapping[citation_ref]
 
@@ -640,12 +638,11 @@ class AgentRunner:
                         for citation_ref in detected_citations:
                             # Assign sequential UI reference on first encounter
                             if citation_ref not in citation_mapping:
-                                citation_counter += 1
                                 citation_mapping[citation_ref] = (
-                                    str(citation_counter)
+                                    _normalize_reference_token(citation_ref)
                                 )
                                 logger.debug(
-                                    f"[CITATION REMAP] {citation_ref} -> {citation_mapping[citation_ref]}"
+                                    f"[CITATION PRESERVE] {citation_ref} -> {citation_mapping[citation_ref]}"
                                 )
                             ui_reference = citation_mapping[citation_ref]
 

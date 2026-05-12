@@ -226,6 +226,82 @@ class TestAgentRunner:
         assert isinstance(result[2], dict)
 
     @pytest.mark.asyncio
+    async def test_run_standard_agent_preserves_numeric_citation_reference(self):
+        """Test that numeric citations keep their original reference values."""
+        mock_event_extractor = MagicMock()
+        mock_message_transformer = MagicMock()
+        mock_streaming_formatter = MagicMock()
+        mock_prompt_processor = MagicMock()
+
+        agent_runner = AgentRunner(
+            mock_event_extractor,
+            mock_message_transformer,
+            mock_streaming_formatter,
+            mock_prompt_processor
+        )
+
+        mock_agent = MagicMock()
+        mock_agent.name = "TestAgent"
+        mock_session_helper = MagicMock()
+        mock_queue = AsyncMock()
+        mock_content = types.Content(role="user", parts=[types.Part(text="test")])
+        mock_toolkit = MagicMock()
+        mock_toolkit.sources_text = []
+        mock_toolkit.sources_image = []
+
+        mock_event = MagicMock()
+        mock_event.content = MagicMock()
+        mock_event.content.parts = [MagicMock()]
+        mock_event.content.parts[0].text = "Evidence [6]"
+        mock_event.content.parts[0].function_call = None
+        mock_event.content.parts[0].function_response = None
+        mock_event.is_final_response.return_value = False
+
+        mock_final_event = MagicMock()
+        mock_final_event.content = MagicMock()
+        mock_final_event.content.parts = [MagicMock()]
+        mock_final_event.content.parts[0].text = "Final [6]"
+        mock_final_event.content.parts[0].function_call = None
+        mock_final_event.content.parts[0].function_response = None
+        mock_final_event.is_final_response.return_value = True
+
+        async def mock_run_async(*args, **kwargs):
+            yield mock_event
+            yield mock_final_event
+
+        mock_runner_instance = MagicMock()
+        mock_runner_instance.run_async = mock_run_async
+
+        mock_streaming_formatter.format_streaming_event.return_value = {"type": "chunk"}
+        mock_message_transformer.simple_tag_transformer.side_effect = [
+            ("Evidence [6]", "", ["[6]"]),
+            ("", "", []),
+        ]
+
+        with patch('src.smart_rag.agents.core.runner.Runner', return_value=mock_runner_instance), \
+             patch.object(agent_runner, '_find_source_by_reference', return_value={"source_object": {}, "type": "text"}), \
+             patch.object(agent_runner, '_send_citation_component', new_callable=AsyncMock) as mock_send_citation_component, \
+             patch.object(agent_runner, '_handle_final_response', new_callable=AsyncMock, return_value="Final [6]"):
+            result = await agent_runner._run_standard_agent(
+                agent=mock_agent,
+                agent_name="TestAgent",
+                agent_type="agent",
+                session_helper=mock_session_helper,
+                user_id="test_user",
+                session_id="session_123",
+                content=mock_content,
+                q=mock_queue,
+                task_order="1",
+                toolkit=mock_toolkit,
+                mcp_tools_used=[],
+                agent_id="agent_123"
+            )
+
+        assert result[0] == "Final [6]"
+        assert mock_send_citation_component.await_args_list[0].args[5] == "6"
+        mock_queue.put.assert_any_call({"type": "chunk"})
+
+    @pytest.mark.asyncio
     async def test_run_standard_agent_with_function_call(self):
         """Test running standard agent with function calls."""
         mock_event_extractor = MagicMock()

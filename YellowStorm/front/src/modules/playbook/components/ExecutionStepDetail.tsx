@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
+import { AdvisorResultPanel } from './AdvisorResultPanel';
+
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -14,7 +16,8 @@ import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
-import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory } from '../types';
+import { showError, showSuccess } from '@/lib/notifications';
+import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
 const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
@@ -125,7 +128,27 @@ function ArtifactListItem({
 import type { MessageComponent } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
-import { downloadStepResultHtml, downloadStepResultPdf } from '../utils/renderStepResultHtml';
+import { downloadStepResultHtml, downloadStepResultPdf, renderStepResultHtml } from '../utils/renderStepResultHtml';
+
+interface EvaluationArtifactPayload {
+  type: 'playbook_evaluation_result';
+  mode?: 'semantic' | 'reference' | 'hybrid';
+  score?: number;
+  verdict?: 'pass' | 'warning' | 'fail';
+  summary?: string;
+  semanticScore?: number | null;
+  referenceScore?: number | null;
+  artifactScore?: number | null;
+  formatScore?: number | null;
+  evidenceScore?: number | null;
+  executionHealthScore?: number | null;
+  findings?: Array<{
+    severity?: 'info' | 'warning' | 'error';
+    category?: string;
+    sourceTaskId?: string | null;
+    message?: string;
+  }>;
+}
 
 interface Props {
   step: TaskResult | null;
@@ -134,6 +157,7 @@ interface Props {
   onBackToRunMode?: () => void;
   onRequestValidateReplay?: (taskId: string) => void;
   onRequestRunEvaluation?: (taskId: string) => void;
+  onRequestRunAdvisorEvaluation?: (taskId: string) => void;
   onRequestGrabOutputFormat?: (taskId: string) => void;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onStepReplayModeChange?: (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => void;
@@ -145,6 +169,12 @@ interface Props {
 function formatTime(isoString: string | null): string {
   if (!isoString) return '-';
   return new Date(isoString).toLocaleTimeString();
+}
+
+function formatDateTimeCompact(isoString: string | null): string {
+  if (!isoString) return '-';
+  const date = new Date(isoString);
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
 function formatDuration(ms: number | null): string {
@@ -162,7 +192,8 @@ function getExecutionModeLabel(mode?: string): string {
 
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '-';
-  return `${Math.round(value)}%`;
+  const scaled = value <= 1 ? value * 100 : value;
+  return `${Math.round(scaled)}%`;
 }
 
 function formatSignedPercentDelta(value: number): string {
@@ -187,15 +218,66 @@ function formatOptimizationValue(value: unknown): string {
 }
 
 function getScoreTone(value: number | null | undefined): string {
-  if (value === null || value === undefined || Number.isNaN(value)) return 'border bg-muted/30';
-  if (value >= 80) return 'border-emerald-200 bg-emerald-50';
-  if (value >= 60) return 'border-amber-200 bg-amber-50';
-  return 'border-rose-200 bg-rose-50';
+  if (value === null || value === undefined || Number.isNaN(value)) return 'border-border/60 bg-muted/20';
+  if (value >= 80) return 'border-emerald-500/30 bg-emerald-500/10';
+  if (value >= 60) return 'border-amber-500/30 bg-amber-500/10';
+  return 'border-rose-500/30 bg-rose-500/10';
 }
 
 function normalizePercentValue(value: number | null | undefined): number | null {
   if (value === null || value === undefined || Number.isNaN(value)) return null;
   return value <= 1 ? value * 100 : value;
+}
+
+function getExpectedMatchTone(source: string | null | undefined, score: number | null | undefined): string {
+  if (source === 'none') return 'border-slate-400/40 bg-slate-500/10';
+  return getScoreTone(score);
+}
+
+function normalizeExpectedResultSource(value: string | null | undefined): 'node_field' | 'golden_baseline' | 'none' {
+  return value === 'node_field' || value === 'golden_baseline' || value === 'none'
+    ? value
+    : 'none';
+}
+
+function normalizeExpectedResultType(value: string | null | undefined): 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none' {
+  return value === 'exact_value'
+    || value === 'semantic_description'
+    || value === 'numeric_presentation'
+    || value === 'document_generation'
+    || value === 'baseline_comparison'
+    || value === 'none'
+    ? value
+    : 'none';
+}
+
+function normalizeAdvisorScore(value: number | null | undefined): number | null {
+  if (value === null || value === undefined || Number.isNaN(value)) return null;
+  return Math.max(0, Math.min(100, value));
+}
+
+function getJudgeVerdictKey(score: number | null | undefined): 'passed' | 'passedWithImprovements' | 'needsOptimization' | 'failed' {
+  const normalized = normalizeAdvisorScore(score);
+  if (normalized === null) return 'needsOptimization';
+  if (normalized >= 90) return 'passed';
+  if (normalized >= 75) return 'passedWithImprovements';
+  if (normalized >= 50) return 'needsOptimization';
+  return 'failed';
+}
+
+function getEvaluationArtifactPayload(step: TaskResult | null): EvaluationArtifactPayload | null {
+  if (!step?.artifacts?.length) return null;
+  for (const artifact of step.artifacts) {
+    const payload = artifact.metadata?.data as EvaluationArtifactPayload | undefined;
+    if (payload?.type === 'playbook_evaluation_result') {
+      return payload;
+    }
+    const directPayload = (artifact as any).data as EvaluationArtifactPayload | undefined;
+    if (directPayload?.type === 'playbook_evaluation_result') {
+      return directPayload;
+    }
+  }
+  return null;
 }
 
 function formatToolArgs(args: Record<string, unknown> | undefined): string {
@@ -208,7 +290,7 @@ function formatToolArgs(args: Record<string, unknown> | undefined): string {
 }
 
 function formatPromptStage(stage: string | undefined): string {
-  if (!stage) return 'LLM Call';
+  if (!stage) return 'detail.promptStage.llmCall';
   return stage
     .split('_')
     .filter(Boolean)
@@ -263,6 +345,7 @@ export function ExecutionStepDetail({
   onBackToRunMode,
   onRequestValidateReplay,
   onRequestRunEvaluation,
+  onRequestRunAdvisorEvaluation,
   onRequestGrabOutputFormat,
   onOpenOutputFormatEditor,
   onStepReplayModeChange,
@@ -271,7 +354,6 @@ export function ExecutionStepDetail({
   onActiveTabChange,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
-  const navigate = useNavigate();
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
@@ -281,10 +363,19 @@ export function ExecutionStepDetail({
   const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
   const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
-  const applyAdvisorRemediations = usePlaybookStore((s) => s.applyAdvisorRemediations);
+  const designPlaybookAction = usePlaybookStore((s) => s.designPlaybook);
+  const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
+  const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
+  const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
+  const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
+  const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
+  const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
+  const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
+  const [isSavingEvaluationBaseline, setIsSavingEvaluationBaseline] = useState(false);
   const [selectedStepExecutionId, setSelectedStepExecutionId] = useState<string | null>(null);
+  const [stepReplayModeValue, setStepReplayModeValue] = useState<'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>('live');
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
   const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
@@ -293,6 +384,10 @@ export function ExecutionStepDetail({
   const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
+  const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
+  const [missingAdvisorTaskIds, setMissingAdvisorTaskIds] = useState<string[]>([]);
+  const [runningAdvisorPreflight, setRunningAdvisorPreflight] = useState(false);
+  const [copiedToClipboard, setCopiedToClipboard] = useState(false);
   const executionSnapshotTask = useMemo(() => {
     const snapshot = execution?.playbookSnapshot as { tasks?: Array<Record<string, unknown>> } | null;
     const tasks = Array.isArray(snapshot?.tasks) ? snapshot.tasks : [];
@@ -310,6 +405,10 @@ export function ExecutionStepDetail({
   const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
   const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
   const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const normalizedExpectedResultSource = normalizeExpectedResultSource(stepJudgeResult?.expectedResultSource);
+  const normalizedExpectedResultType = normalizeExpectedResultType(stepJudgeResult?.expectedResultType);
+  const normalizedResultMatchingScore = normalizeAdvisorScore(stepJudgeResult?.resultMatchingScore);
+  const judgeVerdictKey = getJudgeVerdictKey(stepJudgeResult?.overallScore);
   const selectedOptimizationEntry = useMemo(() => {
     if (!advisorOptimizationHistory.length) return null;
     if (!selectedJudgeHistory) return advisorOptimizationHistory[advisorOptimizationHistory.length - 1] || null;
@@ -394,6 +493,19 @@ export function ExecutionStepDetail({
       },
     ];
   }, [stepJudgeResult, t]);
+  const playbookTaskTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const task of currentPlaybook?.tasks || []) {
+      map.set(task.id, task.title);
+    }
+    return map;
+  }, [currentPlaybook?.tasks]);
+  const missingAdvisorTaskTitles = useMemo(
+    () => missingAdvisorTaskIds.map((taskId) => playbookTaskTitleMap.get(taskId) || taskId),
+    [missingAdvisorTaskIds, playbookTaskTitleMap],
+  );
+  const remediationCount = stepJudgeResult?.rewriteHints.length ?? 0;
+  const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
     if (baselineReplay?.llmPromptTrace?.length) {
@@ -439,6 +551,29 @@ export function ExecutionStepDetail({
     currentTask?.activeReplayFormatGuideError,
     fetchTaskReplays,
   ]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadEvaluationExecutions() {
+      if (!execution?.playbookId || !step?.taskId || currentTask?.taskType !== 'evaluation') {
+        if (!cancelled) setEvaluationExecutions([]);
+        return;
+      }
+
+      try {
+        const entries = await fetchEvaluationExecutions(execution.playbookId, step.taskId);
+        if (!cancelled) setEvaluationExecutions(entries);
+      } catch {
+        if (!cancelled) setEvaluationExecutions([]);
+      }
+    }
+
+    void loadEvaluationExecutions();
+    return () => {
+      cancelled = true;
+    };
+  }, [execution?.playbookId, step?.taskId, currentTask?.taskType, fetchEvaluationExecutions]);
 
   const isBaselineExecution = !!(execution?.id && baselineReplay?.referenceExecutionId && execution.id === baselineReplay.referenceExecutionId);
   const replayBadgeVersion = currentTask?.activeReplayVersion ?? replaySource?.validationVersion ?? baselineReplay?.validationVersion ?? null;
@@ -499,6 +634,49 @@ export function ExecutionStepDetail({
     if (step) downloadStepResultPdf(step);
   }, [step]);
 
+  const handleCopyToClipboard = useCallback(async () => {
+    if (!step) return;
+    try {
+      const html = renderStepResultHtml(step)
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<pre[^>]*>[\s\S]*?<\/pre>/gi, '');
+      const plainText = html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<\/div>/gi, '\n')
+        .replace(/<\/li>/gi, '\n')
+        .replace(/<\/tr>/gi, '\n')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&nbsp;/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      if (navigator.clipboard?.write) {
+        const htmlBlob = new Blob([html], { type: 'text/html' });
+        const textBlob = new Blob([plainText], { type: 'text/plain' });
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': htmlBlob,
+            'text/plain': textBlob,
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(plainText);
+      }
+
+      setCopiedToClipboard(true);
+      showSuccess(t('detail.actions.copiedToClipboard'));
+      window.setTimeout(() => setCopiedToClipboard(false), 2000);
+    } catch {
+      showError(t('detail.actions.copyToClipboardFailed'));
+    }
+  }, [step, t]);
+
   const handleApplyJudgeUpdate = useCallback(async () => {
     if (!execution || !currentPlaybook) return;
     setJudgeActionLoading('update');
@@ -508,17 +686,6 @@ export function ExecutionStepDetail({
       setJudgeActionLoading(null);
     }
   }, [currentPlaybook, execution, updatePlaybookFromJudge]);
-
-  const handleGenerateJudgePlaybook = useCallback(async () => {
-    if (!execution || !currentPlaybook) return;
-    setJudgeActionLoading('generate');
-    try {
-      const created = await generatePlaybookFromJudge(currentPlaybook.id, execution.id);
-      navigate(`/playbooks/${created.id}`);
-    } finally {
-      setJudgeActionLoading(null);
-    }
-  }, [currentPlaybook, execution, generatePlaybookFromJudge, navigate]);
 
   const handleOptimizeJudgeStep = useCallback(async () => {
     if (!execution || !currentPlaybook || !step) return;
@@ -532,6 +699,20 @@ export function ExecutionStepDetail({
 
   const openRemediationDialog = useCallback(async (mode: 'optimize-step' | 'update-current' | 'generate-new') => {
     if (!execution || !currentPlaybook) return;
+    if (mode === 'generate-new') {
+      const taskResultsById = new Map((execution.taskResults || []).map((taskResult) => [taskResult.taskId, taskResult]));
+      const missingTaskIds = (currentPlaybook.tasks || [])
+        .filter((task) => !taskResultsById.get(task.id)?.judgeResult)
+        .map((task) => task.id);
+
+      if (missingTaskIds.length > 0) {
+        setMissingAdvisorTaskIds(missingTaskIds);
+        setRemediationDialogOpen(false);
+        return;
+      }
+    }
+
+    setMissingAdvisorTaskIds([]);
     setRemediationLoading(true);
     setRemediationDialogMode(mode);
     try {
@@ -544,13 +725,107 @@ export function ExecutionStepDetail({
     }
   }, [execution, currentPlaybook, step, fetchAdvisorRemediations]);
 
+  const handleGenerateJudgePlaybook = useCallback(async () => {
+    await openRemediationDialog('generate-new');
+  }, [openRemediationDialog]);
+
+  const handleRunAdvisorForAllTasks = useCallback(async () => {
+    if (!currentPlaybook) return;
+    setRunningAdvisorPreflight(true);
+    try {
+      await executePlaybook(currentPlaybook.id, {
+        executionMode: 'live',
+        advisorAutopilotEnabled: true,
+        advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
+        advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
+      });
+      setMissingAdvisorTaskIds([]);
+    } catch (error) {
+      showError(t('detail.judge.failedUnknown'), { description: t('detail.judge.missingEvaluationRunFailed') });
+    } finally {
+      setRunningAdvisorPreflight(false);
+    }
+  }, [currentPlaybook, executePlaybook, t]);
+
+  const buildOptimizationQuery = useCallback((
+    selectedIds: string[],
+    editedItems: Map<string, string>,
+    mode: 'optimize-step' | 'update-current' | 'generate-new',
+  ): string => {
+    const selectedItems = remediationItems.filter((item) => selectedIds.includes(item.id));
+    const groupedByCategory = new Map<RemediationCategory, AdvisorRemediationItem[]>();
+    for (const item of selectedItems) {
+      const existing = groupedByCategory.get(item.category) || [];
+      existing.push(item);
+      groupedByCategory.set(item.category, existing);
+    }
+    const categoryOrder: RemediationCategory[] = ['structure', 'prompt', 'contract', 'handoff', 'tooling', 'evidence', 'outputFormat'];
+    const findings = categoryOrder
+      .filter((cat) => groupedByCategory.has(cat))
+      .map((cat) => {
+        const items = groupedByCategory.get(cat)!;
+        const lines = items.map((item) => {
+          const desc = editedItems.get(item.id) || item.description;
+          return `- [${cat}] ${desc}`;
+        });
+        return lines.join('\n');
+      })
+      .join('\n');
+
+    if (mode === 'optimize-step') {
+      const taskTitle = step?.taskId
+        ? currentPlaybook?.tasks.find((t) => t.id === step.taskId)?.title || step.taskId
+        : 'this step';
+      return [
+        `Optimize only the step "${taskTitle}" based on these advisor findings.`,
+        'Preserve the rest of the playbook unless a connection or port must change to keep the workflow valid.',
+        '',
+        'Advisor findings:',
+        findings,
+        '',
+        'Apply the changes directly to the current playbook.',
+      ].join('\n');
+    }
+
+    if (mode === 'generate-new') {
+      return [
+        'Generate an optimized playbook based on these advisor findings.',
+        'Restructure the workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
+        'Preserve the user\'s original intent.',
+        '',
+        'Advisor findings:',
+        findings,
+        '',
+        'Apply the changes directly to the current playbook.',
+      ].join('\n');
+    }
+
+    return [
+      'Optimize the current playbook based on these advisor findings.',
+      'Preserve the user\'s original intent, keep valid DAG structure, and only change steps, edges, ports, or agent assignments that are necessary to address the findings.',
+      '',
+      'Advisor findings:',
+      findings,
+      '',
+      'Apply the changes directly to the current playbook.',
+    ].join('\n');
+  }, [remediationItems, step?.taskId, currentPlaybook?.tasks]);
+
   const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
     if (!currentPlaybook || !execution) return;
-    return applyAdvisorRemediations(currentPlaybook.id, execution.id, {
-      mode: remediationDialogMode === 'generate-new' ? 'generate-new' : 'update-current',
-      selectedIds,
-    });
-  }, [currentPlaybook, execution, remediationDialogMode, applyAdvisorRemediations]);
+    const query = buildOptimizationQuery(selectedIds, editedItems, remediationDialogMode);
+    return designPlaybookAction(currentPlaybook.id, { query });
+  }, [currentPlaybook, execution, remediationDialogMode, buildOptimizationQuery, designPlaybookAction]);
+
+  const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
+    if (!currentPlaybook || !execution || !step) return;
+    setReapplyingIndex(historyIndex);
+    try {
+      await reapplyOptimization(currentPlaybook.id, execution.id, step.taskId, historyIndex, direction);
+    } finally {
+      setReapplyingIndex(null);
+    }
+  }, [currentPlaybook, execution, step, reapplyOptimization]);
 
   useEffect(() => {
     setSelectedStepExecutionId((current) => {
@@ -559,17 +834,13 @@ export function ExecutionStepDetail({
         ? stepExecutions.find((entry) => entry.id === currentStepExecutionId) || stepExecutions[0]
         : stepExecutions[0];
 
-      if (step?.status === 'running' || step?.status === 'interrupted') {
-        return liveExecution?.id ?? null;
-      }
-
       if (current && stepExecutions.some((entry) => entry.id === current)) {
         return current;
       }
 
       return liveExecution?.id ?? null;
     });
-  }, [currentStepExecutionId, step?.status, stepExecutions]);
+  }, [currentStepExecutionId, stepExecutions]);
 
   useEffect(() => {
     setSelectedEvaluationId((current) => {
@@ -600,6 +871,17 @@ export function ExecutionStepDetail({
     });
   }, [judgeHistory, step?.taskId]);
 
+  const handleSaveEvaluationBaseline = useCallback(async () => {
+    if (!execution || !step) return;
+    setIsSavingEvaluationBaseline(true);
+    try {
+      const baseline = await createEvaluationBaselineFromExecution(execution.playbookId, step.taskId, execution.id);
+      setEvaluationBaseline({ id: baseline.id, sourceExecutionId: baseline.sourceExecutionId, createdAt: baseline.createdAt });
+    } finally {
+      setIsSavingEvaluationBaseline(false);
+    }
+  }, [createEvaluationBaselineFromExecution, execution, step]);
+
   if (!step) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -614,8 +896,10 @@ export function ExecutionStepDetail({
   const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
   const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step.semanticMatch || null;
   const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
+  const evaluationArtifact = getEvaluationArtifactPayload(step);
   const isEvaluationPending = isRunningEvaluation || step.status === 'running';
   const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
+  const latestDedicatedEvaluation = evaluationExecutions[0] || null;
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -655,26 +939,30 @@ export function ExecutionStepDetail({
               </span>
             )}
             <div className="ml-auto flex items-center gap-1.5">
-                <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
-                <Select
-                  value={currentTask?.stepReplayMode ?? 'live'}
-                  onValueChange={(v) => onStepReplayModeChange?.(step.taskId, v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive')}
-                >
-                  <SelectTrigger className="h-7 w-[130px] text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
-                    <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
-                    <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
-                    <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
-                  </SelectContent>
-                </Select>
-                {!hasReplayBaseline && (
-                  <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
-                    {t('detail.noBaseline')}
-                  </span>
-                )}
+              <span className="whitespace-nowrap text-xs text-muted-foreground">{t('detail.stepMode')}</span>
+              <Select
+                value={stepReplayModeValue}
+                onValueChange={(v) => {
+                  const nextMode = v as 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+                  setStepReplayModeValue(nextMode);
+                  onStepReplayModeChange?.(step.taskId, nextMode);
+                }}
+              >
+                <SelectTrigger className="h-7 w-[130px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="live">{t('execution.mode.live')}</SelectItem>
+                  <SelectItem value="replay_strict">{t('execution.mode.replayStrict')}</SelectItem>
+                  <SelectItem value="replay_flex">{t('execution.mode.replayFlex')}</SelectItem>
+                  <SelectItem value="replay_adaptive">{t('execution.mode.replayAdaptive')}</SelectItem>
+                </SelectContent>
+              </Select>
+              {!hasReplayBaseline && (
+                <span className="text-[10px] text-muted-foreground" title={t('detail.noBaselineHint')}>
+                  {t('detail.noBaseline')}
+                </span>
+              )}
               {stepExecutions.length > 0 && (
                 <>
                   <span className="mx-1 h-4 w-px bg-border" />
@@ -730,6 +1018,11 @@ export function ExecutionStepDetail({
                                   if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
                                     return;
                                   }
+                                  setSelectedStepExecutionId((current) => {
+                                    if (current !== entry.id) return current;
+                                    const remaining = stepExecutions.filter((candidate) => candidate.id !== entry.id);
+                                    return remaining[0]?.id ?? null;
+                                  });
                                   await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
                                 }}
                               >
@@ -760,7 +1053,7 @@ export function ExecutionStepDetail({
                 {execution && (
                   <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
                     <FileText className="mr-2 h-4 w-4" />
-                    {t('detail.actions.runEvaluation')}
+                    {t('detail.actions.runReplayEvaluation')}
                   </DropdownMenuItem>
                 )}
                 {execution && step.status === 'completed' && !!step.output && (
@@ -778,6 +1071,10 @@ export function ExecutionStepDetail({
                     <DropdownMenuItem onClick={handleDownloadPdf}>
                       <Download className="mr-2 h-4 w-4" />
                       {t('detail.actions.downloadPdf')}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => void handleCopyToClipboard()}>
+                      <ClipboardCopy className="mr-2 h-4 w-4" />
+                      {t('detail.actions.copyToClipboard')}
                     </DropdownMenuItem>
                   </>
                 )}
@@ -821,6 +1118,23 @@ export function ExecutionStepDetail({
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px]">
+            {canDownload && (
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={handleDownloadHtml}>
+                  <FileText className="mr-1 h-4 w-4" />
+                  {t('detail.actions.downloadHtml')}
+                </Button>
+                <Button size="sm" variant="outline" onClick={handleDownloadPdf}>
+                  <Download className="mr-1 h-4 w-4" />
+                  {t('detail.actions.downloadPdf')}
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => void handleCopyToClipboard()} disabled={copiedToClipboard}>
+                  {copiedToClipboard ? <ClipboardCheck className="mr-1 h-4 w-4" /> : <ClipboardCopy className="mr-1 h-4 w-4" />}
+                  {t(copiedToClipboard ? 'detail.actions.copiedToClipboard' : 'detail.actions.copyToClipboard')}
+                </Button>
+              </div>
+            )}
+
             {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
@@ -838,7 +1152,7 @@ export function ExecutionStepDetail({
                   )}
                 </div>
               </div>
-            ) : selectedStepExecution?.output ? (
+            ) : selectedStepExecution?.output && (!selectedStepExecution.components || selectedStepExecution.components.length === 0) ? (
               <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
                 {selectedStepExecution.output}
               </div>
@@ -903,15 +1217,50 @@ export function ExecutionStepDetail({
                   </div>
                 )}
                 {execution && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onRequestRunEvaluation?.(step.taskId)}
-                    disabled={isRunningEvaluation}
-                    className="shrink-0"
-                  >
-                    {isRunningEvaluation ? t('execution.running') : t('detail.actions.runEvaluation')}
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => onRequestRunEvaluation?.(step.taskId)}
+                      disabled={isRunningEvaluation}
+                      className="shrink-0"
+                    >
+                      {isRunningEvaluation ? t('execution.running') : t('detail.actions.runReplayEvaluation')}
+                    </Button>
+                    {currentTask?.taskType === 'evaluation' && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSaveEvaluationBaseline}
+                        disabled={isSavingEvaluationBaseline}
+                        className="shrink-0"
+                      >
+                        {isSavingEvaluationBaseline ? t('execution.running') : t('detail.actions.saveEvaluationBaseline')}
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentTask?.taskType === 'evaluation' && (
+              <div className="rounded-lg border bg-muted/10 p-4 text-sm">
+                <div className="font-medium">{t('detail.evaluation.baselineTitle')}</div>
+                <div className="mt-1 text-muted-foreground">
+                  {evaluationBaseline
+                    ? `${t('detail.evaluation.baselineExecution')} ${evaluationBaseline.sourceExecutionId} • ${new Date(evaluationBaseline.createdAt).toLocaleString()}`
+                    : t('detail.evaluation.baselineEmpty')}
+                </div>
+                {latestDedicatedEvaluation && (
+                  <div className="mt-3 rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.recorded')}</div>
+                    <div className="mt-1 text-sm text-muted-foreground">
+                      {new Date(latestDedicatedEvaluation.createdAt).toLocaleString()} • {latestDedicatedEvaluation.verdict || '-'} • {formatPercent(latestDedicatedEvaluation.score ?? null)}
+                    </div>
+                    {latestDedicatedEvaluation.summary && (
+                      <div className="mt-2 text-sm whitespace-pre-wrap">{latestDedicatedEvaluation.summary}</div>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -1085,6 +1434,47 @@ export function ExecutionStepDetail({
                     : t('detail.evaluation.embeddingFallback')}
                 </div>
               </div>
+            ) : evaluationArtifact ? (
+              <div className="rounded-lg border bg-muted/30 p-4 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="font-medium">{t('detail.evaluation.semanticMatch')}</div>
+                  <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                    {evaluationArtifact.verdict || '-'} | {formatPercent(evaluationArtifact.score ?? null)}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 md:grid-cols-3">
+                  <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.score ?? null))}>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.overall')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.score ?? null)}</div>
+                  </div>
+                  <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.semanticScore ?? null))}>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.semantic')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.semanticScore ?? null)}</div>
+                  </div>
+                  <div className={cn('rounded border p-2', getScoreTone(evaluationArtifact.referenceScore ?? null))}>
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reference')}</div>
+                    <div className="mt-1 text-lg font-semibold">{formatPercent(evaluationArtifact.referenceScore ?? null)}</div>
+                  </div>
+                </div>
+                {evaluationArtifact.summary && (
+                  <div className="mt-3 rounded bg-background p-3">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.evaluation.reason')}</div>
+                    <div className="mt-1 text-sm whitespace-pre-wrap">{evaluationArtifact.summary}</div>
+                  </div>
+                )}
+                {evaluationArtifact.findings?.length ? (
+                  <div className="mt-3 space-y-2">
+                    {evaluationArtifact.findings.map((finding, index) => (
+                      <div key={`${finding.category || 'finding'}-${index}`} className="rounded bg-background p-3">
+                        <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          {(finding.category || 'evaluation')} · {(finding.severity || 'info')}
+                        </div>
+                        <div className="mt-1 text-sm whitespace-pre-wrap">{finding.message || t('detail.evaluation.none')}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <div className="flex items-center justify-center rounded-lg border bg-muted/10 p-6 text-sm text-muted-foreground">
                 {isEvaluationPending ? (
@@ -1124,7 +1514,21 @@ export function ExecutionStepDetail({
           </TabsContent>
 
           <TabsContent value="judge" className="space-y-4">
-            {advisorAutopilotActive && (
+            {execution && (
+              <div className="flex flex-wrap justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
+                  disabled={isRunningEvaluation || stepJudgeStatus === 'evaluating'}
+                >
+                  {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  {stepJudgeStatus === 'evaluating' ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}
+                </Button>
+              </div>
+            )}
+
+            {advisorOptimizationHistory.length > 0 && (
               <div className="rounded-lg border bg-muted/20 p-4 text-sm space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
                   <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.title')}</div>
@@ -1156,33 +1560,6 @@ export function ExecutionStepDetail({
                   <div>
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.lastError')}</div>
                     <div className="mt-1 text-destructive whitespace-pre-wrap">{execution.advisorAutopilotLastError}</div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {judgeHistory.length > 0 && (
-              <div className="space-y-3 rounded-lg border bg-muted/20 p-4 text-sm">
-                <div className="min-w-[260px] flex-1 space-y-1">
-                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.stepExecutionLabel')}</div>
-                  <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
-                    <SelectTrigger className="h-9">
-                      <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {judgeHistory.map((entry) => (
-                        <SelectItem key={entry.id} value={entry.id}>
-                          {new Date(entry.createdAt).toLocaleString()} | {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} | {formatPercent(entry.judgeResult.overallScore)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {selectedJudgeHistory && (
-                  <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
-                    <span>{t('detail.evaluation.recorded')}: {new Date(selectedJudgeHistory.createdAt).toLocaleString()}</span>
-                    <span>{t('detail.evaluation.attempt')}: {selectedJudgeHistory.attemptNumber ?? '-'}</span>
-                    <span>{t('detail.evaluation.judgeModel', { model: selectedJudgeHistory.model || '-' })}</span>
                   </div>
                 )}
               </div>
@@ -1229,19 +1606,52 @@ export function ExecutionStepDetail({
                                 <div>
                                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.before')}</div>
                                   <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
-                                    {formatOptimizationValue(selectedOptimizationEntry.beforeTask?.[field])}
+                                    {(() => {
+                                      const val = selectedOptimizationEntry.beforeTask?.[field];
+                                      return typeof val === 'boolean' ? t(val ? 'detail.boolean.true' : 'detail.boolean.false') : formatOptimizationValue(val);
+                                    })()}
                                   </div>
                                 </div>
                                 <div>
                                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{t('detail.autopilot.after')}</div>
                                   <div className="mt-1 whitespace-pre-wrap rounded-md border bg-muted/30 p-2 text-xs">
-                                    {formatOptimizationValue(selectedOptimizationEntry.afterTask?.[field])}
+                                    {(() => {
+                                      const val = selectedOptimizationEntry.afterTask?.[field];
+                                      return typeof val === 'boolean' ? t(val ? 'detail.boolean.true' : 'detail.boolean.false') : formatOptimizationValue(val);
+                                    })()}
                                   </div>
                                 </div>
                               </div>
                             ))}
                           </div>
                         )}
+                        {selectedOptimizationEntry && (() => {
+                          const idx = advisorOptimizationHistory.indexOf(selectedOptimizationEntry);
+                          return (
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                disabled={reapplyingIndex === idx}
+                                onClick={() => void handleReapplyOptimization(idx, 'after')}
+                              >
+                                {reapplyingIndex === idx && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                                <RotateCcw className="mr-1 h-3 w-3" />
+                                {t('detail.autopilot.reapply')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs"
+                                disabled={reapplyingIndex === idx}
+                                onClick={() => void handleReapplyOptimization(idx, 'before')}
+                              >
+                                {t('detail.autopilot.revert')}
+                              </Button>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="rounded-md border bg-background p-3 text-xs text-muted-foreground">
@@ -1255,54 +1665,69 @@ export function ExecutionStepDetail({
 
             {stepJudgeResult ? (
               <div className="space-y-4">
-                <div className="rounded-lg border bg-muted/20 p-4">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div className={cn('rounded border p-2', getScoreTone(stepJudgeResult.overallScore))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
-                      <div className="mt-1 text-lg font-semibold">{Math.round(stepJudgeResult.overallScore)}%</div>
-                    </div>
-                    <div className={cn('rounded border p-2', getScoreTone(stepJudgeResult.toolUsageScore))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageScore')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatPercent(stepJudgeResult.toolUsageScore)}</div>
-                    </div>
-                    <div className={cn('rounded border p-2', getScoreTone(normalizePercentValue(stepJudgeResult.confidence)))}>
-                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
-                      <div className="mt-1 text-lg font-semibold">{formatConfidence(stepJudgeResult.confidence)}</div>
-                    </div>
-                    <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                      {t(`detail.judge.recommendation.${stepJudgeResult.recommendation}` as any)}
-                    </div>
-                    <div className="ml-auto flex flex-wrap gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.updateCurrentPlaybook')}
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.optimizeThisStep')}
-                      </Button>
-                      <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
-                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                        {t('detail.judge.generateNewOptimizedPlaybook')}
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="mt-3 text-sm text-muted-foreground whitespace-pre-wrap">{stepJudgeResult.reason || t('detail.judge.noReason')}</p>
-
-                  <AdvisorChangeReviewDialog
-                    open={remediationDialogOpen}
-                    onOpenChange={setRemediationDialogOpen}
-                    items={remediationItems}
-                    tasks={currentPlaybook?.tasks || []}
-                    mode={remediationDialogMode}
-                    loading={remediationLoading}
-                    onApply={handleApplyRemediations}
-                  />
+                {missingAdvisorTaskIds.length > 0 && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertTitle>{t('detail.judge.missingEvaluationTitle')}</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p>{t('detail.judge.missingEvaluationDescription', { count: missingAdvisorTaskIds.length })}</p>
+                      <p className="text-xs text-destructive/90">{missingAdvisorTaskTitles.join(', ')}</p>
+                      <div>
+                        <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight || judgeActionLoading !== null}>
+                          {runningAdvisorPreflight && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                          {t('detail.judge.missingEvaluationRunCta')}
+                        </Button>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
+                    {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.generateOptimizedPlaybook')}
+                  </Button>
+                  {judgeHistory.length > 0 && (
+                    <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
+                      <SelectTrigger className="h-9 min-w-[260px] sm:w-[320px]">
+                        <SelectValue placeholder={t('detail.judge.stepExecutionPlaceholder')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {judgeHistory.map((entry) => (
+                          <SelectItem key={entry.id} value={entry.id}>
+                            {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} · {new Date(entry.createdAt).toLocaleString()} · {formatPercent(entry.judgeResult.overallScore)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.previewChanges')}
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                    {t('detail.judge.applyToCurrentPlaybook')}
+                  </Button>
                 </div>
+
+                <AdvisorResultPanel judgeResult={stepJudgeResult} />
+
+                <AdvisorChangeReviewDialog
+                  open={remediationDialogOpen}
+                  onOpenChange={setRemediationDialogOpen}
+                  items={remediationItems}
+                  tasks={currentPlaybook?.tasks || []}
+                  mode={remediationDialogMode}
+                  loading={remediationLoading}
+                  onApply={handleApplyRemediations}
+                />
 
                 <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
                   <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.remediationSuggestions')}</div>
+                    <div className="flex items-center gap-2 text-xs uppercase tracking-wide text-muted-foreground">
+                      <span>{t('detail.judge.remediationSuggestions')}</span>
+                      <span>{t('detail.judge.remediationSummary', { count: remediationCount })}</span>
+                    </div>
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2 space-y-2 text-sm data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
@@ -1316,30 +1741,27 @@ export function ExecutionStepDetail({
                   </CollapsibleContent>
                 </Collapsible>
 
-                <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
-                  <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.issueSections')}</div>
-                    <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
-                  </CollapsibleTrigger>
-                  <CollapsibleContent className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    {issueSections.map((section) => (
-                      <IssueSection
-                        key={section.title}
-                        title={section.title}
-                        badge={section.badge}
-                        badgeClassName={section.badgeClassName}
-                        items={section.items}
-                        emptyLabel={t('detail.judge.none')}
-                      />
-                    ))}
-                  </CollapsibleContent>
-                </Collapsible>
-
-                <div className="rounded-lg border bg-background p-4">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.toolUsageRecommendation')}</div>
-                  <p className="mt-2 text-sm text-muted-foreground whitespace-pre-wrap">
-                    {stepJudgeResult.toolUsageRecommendation || t('detail.judge.noReason')}
-                  </p>
+              </div>
+            ) : judgeSummary ? (
+              <div className="space-y-4">
+                <div className="rounded-lg border bg-muted/20 p-4">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(judgeSummary.overallScore))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.overallScore')}</div>
+                      <div className="mt-1 text-lg font-semibold">{formatPercent(judgeSummary.overallScore)}</div>
+                    </div>
+                    <div className={cn('rounded-md border px-3 py-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
+                      <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeSummary.confidence)}</div>
+                    </div>
+                    <div className="rounded-full border border-border/60 bg-background/60 px-2 py-0.5 text-xs text-muted-foreground">
+                      {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
+                    </div>
+                  </div>
+                  <div className="mt-4 rounded-lg border border-border/60 bg-background/60 p-4">
+                    <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationTitle')}</div>
+                    <p className="mt-2 whitespace-pre-wrap text-sm">{judgeSummary.reason || t('detail.judge.noReason')}</p>
+                  </div>
                 </div>
               </div>
             ) : stepJudgeStatus === 'failed' ? (
@@ -1360,79 +1782,6 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            {judgeSummary && !stepJudgeResult && (
-              <div className="rounded-lg border bg-background p-4 text-sm space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className={cn('rounded border p-2', getScoreTone(judgeSummary.overallScore))}>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.recommendationPane')}</div>
-                    <div className="mt-1 text-lg font-semibold">{Math.round(judgeSummary.overallScore)}%</div>
-                  </div>
-                  <div className={cn('rounded border p-2', getScoreTone(normalizePercentValue(judgeSummary.confidence)))}>
-                    <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.judge.confidence')}</div>
-                    <div className="mt-1 text-lg font-semibold">{formatConfidence(judgeSummary.confidence)}</div>
-                  </div>
-                  <div className="rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
-                    {t(`detail.judge.recommendation.${judgeSummary.recommendation}` as any)}
-                  </div>
-                  <div className="ml-auto flex flex-wrap gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.updateCurrentPlaybook')}
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.optimizeThisStep')}
-                    </Button>
-                    <Button size="sm" onClick={() => openRemediationDialog('generate-new')} disabled={remediationLoading}>
-                      {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                      {t('detail.judge.generateNewOptimizedPlaybook')}
-                    </Button>
-                  </div>
-                </div>
-                <p className="whitespace-pre-wrap text-muted-foreground">{judgeSummary.reason || t('detail.judge.noReason')}</p>
-
-                <AdvisorChangeReviewDialog
-                  open={remediationDialogOpen}
-                  onOpenChange={setRemediationDialogOpen}
-                  items={remediationItems}
-                  tasks={currentPlaybook?.tasks || []}
-                  mode={remediationDialogMode}
-                  loading={remediationLoading}
-                  onApply={handleApplyRemediations}
-                />
-
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-2">
-                  <IssueSection
-                    title={t('detail.judge.toolUsageIssues')}
-                    badge={t('detail.remediation.category.tooling')}
-                    badgeClassName="bg-emerald-100 text-emerald-700 border-emerald-200"
-                    items={judgeSummary.toolUsageIssues || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                  <IssueSection
-                    title={t('detail.judge.crossStepToolPatterns')}
-                    badge={t('detail.remediation.category.structure')}
-                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                    items={judgeSummary.crossStepToolPatterns || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                  <IssueSection
-                    title={t('detail.judge.rootCauseTaskIds')}
-                    badge={t('detail.remediation.category.structure')}
-                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                    items={judgeSummary.rootCauseTaskIds || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                  <IssueSection
-                    title={t('detail.judge.highImpactRecommendations')}
-                    badge={t('detail.remediation.category.structure')}
-                    badgeClassName="bg-purple-100 text-purple-700 border-purple-200"
-                    items={judgeSummary.highImpactRecommendations || []}
-                    emptyLabel={t('detail.judge.none')}
-                  />
-                </div>
-              </div>
-            )}
           </TabsContent>
 
           <TabsContent value="traces" className="space-y-4">
@@ -1567,7 +1916,7 @@ export function ExecutionStepDetail({
                           <div className="flex flex-wrap items-center gap-2 text-sm">
                             <span className="font-medium">{index + 1}.</span>
                             <span className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                              {formatPromptStage(item.stage)}
+                              {item.stage ? formatPromptStage(item.stage) : t('detail.promptStage.llmCall')}
                             </span>
                             <code className="rounded bg-background px-1.5 py-0.5 text-xs">{item.model || '-'}</code>
                           </div>
@@ -1638,11 +1987,37 @@ function IssueSection({
  * Groups consecutive non-humanFeedback components and renders them
  * via AIMessageContent, while humanFeedback gets its own inline widget.
  */
-export function StepComponents({ components, taskId }: { components: PlaybookComponent[]; taskId: string }) {
+function dedupeMirroredTextComponents(components: PlaybookComponent[]): PlaybookComponent[] {
+  const syntheticTexts = components.filter(
+    (c) =>
+      c.type === 'text' &&
+      String((c as any).id || '').startsWith('playbook-final-text-'),
+  );
+  if (syntheticTexts.length === 0) return components;
+
+  const syntheticContents = new Set(
+    syntheticTexts.map((c) => String((c.data as any)?.content || '').trim()),
+  );
+
+  return components.filter((c) => {
+    if (c.type !== 'text') return true;
+    if (String((c as any).id || '').startsWith('playbook-final-text-')) return true;
+    return !syntheticContents.has(String((c.data as any)?.content || '').trim());
+  });
+}
+
+export function StepComponents({
+  components,
+  taskId,
+}: {
+  components: PlaybookComponent[];
+  taskId: string;
+}) {
+  const visibleComponents = dedupeMirroredTextComponents(components);
   const groups: Array<{ type: 'ai'; items: MessageComponent[] } | { type: 'hf'; data: HumanFeedbackData }> = [];
 
   let currentAiGroup: MessageComponent[] = [];
-  for (const comp of components) {
+  for (const comp of visibleComponents) {
     if (comp.type === 'humanFeedback') {
       if (currentAiGroup.length > 0) {
         groups.push({ type: 'ai', items: currentAiGroup });

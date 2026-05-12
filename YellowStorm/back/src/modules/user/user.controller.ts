@@ -45,9 +45,13 @@ export class UserController {
     if (dto.privacyPolicy !== undefined) consents.privacyPolicy = dto.privacyPolicy;
     if (dto.dataSharing !== undefined) consents.dataSharing = dto.dataSharing;
 
+    const appearance: { colorTheme?: 'default' | 'yellow' | 'orange' | 'blue'; language?: string } = {};
+    if (dto.appearance?.colorTheme) appearance.colorTheme = dto.appearance.colorTheme;
+    if (dto.appearance?.language) appearance.language = dto.appearance.language;
+
     const updatedUser = await this.userService.updateProfile(user._id.toString(), {
       profile: Object.keys(profile).length > 0 ? profile : undefined,
-      appearance: dto.appearance?.colorTheme ? { colorTheme: dto.appearance.colorTheme } : undefined,
+      appearance: Object.keys(appearance).length > 0 ? appearance : undefined,
       consents: Object.keys(consents).length > 0 ? consents : undefined,
     });
     return this.mapUserToResponse(updatedUser);
@@ -90,6 +94,7 @@ export class UserController {
       profileComplete: user.profileComplete,
       appearance: {
         colorTheme: user.appearance?.colorTheme ?? 'default',
+        language: user.appearance?.language ?? 'en',
       },
       profile: {
         firstName: user.profile?.firstName,

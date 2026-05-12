@@ -142,7 +142,7 @@ describe('ExecutionPanel', () => {
     render(<ExecutionPanel />);
 
     await user.click(screen.getByRole('tab', { name: 'detail.tabs.evaluation' }));
-    await user.click(screen.getByText('detail.actions.runEvaluation'));
+    await user.click(screen.getByText('detail.actions.runReplayEvaluation'));
 
     expect(rerunSpy).toHaveBeenCalledWith(
       execution.playbookId,

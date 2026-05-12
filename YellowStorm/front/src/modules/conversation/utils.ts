@@ -153,6 +153,7 @@ function mapSingleComponent(comp: MessageComponent): MessageContentPart {
         label: (data.label as string) || (data.content as string) || '',
       };
     case 'chart':
+      console.debug('[mapSingleComponent] chart component:', { data, dataKeys: Object.keys(data) });
       return mapChartComponent(data);
     case 'task':
       return {
@@ -258,7 +259,8 @@ function parseChartData(data: unknown): Record<string, unknown>[] {
   if (Array.isArray(data)) return data;
   if (typeof data === 'string') {
     try {
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -296,6 +298,8 @@ function parseJsonArrayValue<T>(value: unknown): T[] {
 }
 
 function normalizeChartKind(kind: unknown): 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' {
+  console.log('[normalizeChartKind] Input kind:', kind, 'type:', typeof kind);
+
   if (typeof kind === 'number') {
     const numericKindMap: Record<number, 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed'> = {
       1: 'bar',
@@ -308,8 +312,17 @@ function normalizeChartKind(kind: unknown): 'line' | 'bar' | 'area' | 'pie' | 's
     return numericKindMap[kind] || 'bar';
   }
 
-  const normalized = typeof kind === 'string' ? kind.toLowerCase().replace('chart_kind_', '') : '';
-  return chartKindSchema.catch('bar').parse(normalized || 'bar');
+  const normalized = typeof kind === 'string'
+    ? kind.toLowerCase().replace('chart_kind_', '').replace('chartkind_', '')
+    : '';
+  console.log('[normalizeChartKind] Normalized string:', normalized);
+
+  if (normalized === 'unspecified' || normalized === '') return 'bar';
+  if (normalized === 'chart_kind_unspecified') return 'bar';
+
+  const result = chartKindSchema.catch('bar').parse(normalized || 'bar');
+  console.log('[normalizeChartKind] Final result:', result);
+  return result;
 }
 
 function normalizeChartLayout(layout: unknown): 'horizontal' | 'vertical' {
@@ -321,13 +334,30 @@ function normalizeChartLayout(layout: unknown): 'horizontal' | 'vertical' {
     return numericLayoutMap[layout] || 'horizontal';
   }
 
-  const normalized = typeof layout === 'string' ? layout.toLowerCase().replace('chart_layout_', '') : '';
+  const normalized = typeof layout === 'string'
+    ? layout.toLowerCase().replace('chart_layout_', '').replace('chartlayout_', '')
+    : '';
+  if (normalized === 'unspecified' || normalized === '') return 'horizontal';
+  if (normalized === 'chart_layout_unspecified') return 'horizontal';
   return chartLayoutSchema.catch('horizontal').parse(normalized || 'horizontal');
 }
 
 function mapChartComponent(data: Record<string, unknown>) {
+  console.log('[mapChartComponent] RAW INPUT data:', JSON.stringify(data, null, 2));
+
+  console.debug('[mapChartComponent] Input data:', {
+    hasData: 'data' in data,
+    hasChartData: 'chartData' in data,
+    dataValue: data.data,
+    chartDataValue: data.chartData,
+    dataIsArray: Array.isArray(data.data),
+    dataIsString: typeof data.data === 'string',
+    keys: Object.keys(data),
+  });
+
   const parsed = chartPayloadSchema.safeParse(data);
   if (!parsed.success) {
+    console.error('[mapChartComponent] Schema validation failed:', parsed.error);
     return {
       type: 'error' as const,
       title: '',
@@ -336,12 +366,36 @@ function mapChartComponent(data: Record<string, unknown>) {
   }
 
   const payload = parsed.data;
+
   if (payload.error) {
+    console.error('[mapChartComponent] Payload has error:', payload.error);
     return {
       type: 'error' as const,
       title: payload.title || '',
       content: 'ai.chart.errorContent',
     };
+  }
+
+  const chartData = parseChartData(payload.data ?? payload.chartData);
+  const config = parseJsonValue<Record<string, { label?: string; color?: string }>>(payload.config, {});
+  const series = parseJsonArrayValue<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>(payload.series);
+  const normalizedKind = normalizeChartKind(payload.kind);
+  const normalizedLayout = normalizeChartLayout(payload.layout);
+
+  console.log('[mapChartComponent] Parsed chart:', {
+    title: payload.title,
+    dataLength: chartData.length,
+    kind: payload.kind,
+    normalizedKind,
+    xAxisKey: payload.xAxisKey,
+    yAxisKey: payload.yAxisKey,
+    config,
+    series,
+    seriesLength: series.length,
+  });
+
+  if (!chartData.length && typeof payload.data === 'string' && payload.data.includes('[object Object]')) {
+    console.warn('[mapChartComponent] Dropping non-JSON chart payload string');
   }
 
   return {
@@ -353,10 +407,10 @@ function mapChartComponent(data: Record<string, unknown>) {
     yAxisKey: payload.yAxisKey || '',
     nameKey: payload.nameKey || '',
     zAxisKey: payload.zAxisKey || '',
-    series: parseJsonArrayValue<{ dataKey: string; color?: string; label?: string; kind?: 'line' | 'bar' | 'area' | 'pie' | 'scatter' | 'composed' }>(payload.series),
-    kind: normalizeChartKind(payload.kind),
+    series,
+    kind: normalizedKind,
     stacked: payload.stacked,
-    layout: normalizeChartLayout(payload.layout),
+    layout: normalizedLayout,
     innerRadius: payload.innerRadius,
     showLegend: payload.showLegend,
     showGrid: payload.showGrid,

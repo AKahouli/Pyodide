@@ -66,7 +66,10 @@ class CorrelationIdFilter(Filter):
         import structlog
 
         # Add basic correlation fields
-        record.user = get_user()
+        current_user = get_user()
+        record.user = current_user
+        if not getattr(record, "user_mail", None) and current_user != "unknown":
+            record.user_mail = current_user
         record.component = "API-metachatbot"
 
         # Extract and bind contextvars from structlog

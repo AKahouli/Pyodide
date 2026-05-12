@@ -88,11 +88,12 @@ class ToolResultCollector:
     can drain components after each tool call.
     """
 
-    def __init__(self):
+    def __init__(self, initial_components: Optional[List[dict]] = None):
         self.components: List[dict] = []
         self._connector_source_signatures: Dict[str, str] = {}
         self._connector_source_links_seen: set[tuple[str, str]] = set()
         self._connector_reference_counter = 0
+        self.seed_from_components(initial_components or [])
 
     def add_component(self, component_type: str, data: dict):
         self.components.append({"type": component_type, "data": data})
@@ -105,6 +106,83 @@ class ToolResultCollector:
     def next_connector_reference(self) -> str:
         self._connector_reference_counter += 1
         return str(self._connector_reference_counter)
+
+    def seed_from_components(self, components: List[dict]) -> None:
+        for component in components or []:
+            if not isinstance(component, dict):
+                continue
+
+            component_type = component.get("type")
+            data = component.get("data") or {}
+            if component_type == "sources":
+                for source in data.get("sources") or []:
+                    if not isinstance(source, dict):
+                        continue
+                    title = str(source.get("title") or source.get("url") or "").strip()
+                    url = str(source.get("url") or "").strip()
+                    if title and url:
+                        self._connector_source_links_seen.add((title, url))
+                continue
+
+            if component_type != "citation":
+                continue
+
+            source = _component_to_connector_citation_source(component)
+            if not source:
+                continue
+            reference = str(source.get("reference") or "").strip()
+            if not reference:
+                continue
+
+            self._connector_source_signatures[
+                _build_connector_citation_signature(source)
+            ] = reference
+            reference_number = _parse_reference_number(reference)
+            if reference_number is not None:
+                self._connector_reference_counter = max(
+                    self._connector_reference_counter,
+                    reference_number,
+                )
+
+
+def _parse_reference_number(reference: str) -> Optional[int]:
+    match = re.search(r"\d+", str(reference or ""))
+    if not match:
+        return None
+    return int(match.group(0))
+
+
+def _component_to_connector_citation_source(
+    component: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    data = component.get("data") or {}
+    text_source = data.get("text_source")
+    if isinstance(text_source, dict):
+        return {
+            "type": "text",
+            "source": str(text_source.get("source") or ""),
+            "external_id": str(text_source.get("external_id") or ""),
+            "page": str(text_source.get("page") or ""),
+            "page_content": str(text_source.get("page_content") or ""),
+            "workspace_id": str(text_source.get("workspace_id") or ""),
+            "reference": str(text_source.get("reference") or ""),
+        }
+
+    image_source = data.get("image_source")
+    if isinstance(image_source, dict):
+        return {
+            "type": "image",
+            "path": str(image_source.get("path") or ""),
+            "external_id": str(image_source.get("external_id") or ""),
+            "page": str(image_source.get("page") or ""),
+            "file_name": str(image_source.get("file_name") or ""),
+            "workspace_id": str(image_source.get("workspace_id") or ""),
+            "height": str(image_source.get("height") or ""),
+            "width": str(image_source.get("width") or ""),
+            "reference": str(image_source.get("reference") or ""),
+        }
+
+    return None
 
 
 def _append_citation_guidance(text: str, references: List[str]) -> str:
@@ -380,6 +458,7 @@ def create_langchain_tools(
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
+    initial_components: Optional[List[dict]] = None,
 ) -> Tuple[List[StructuredTool], ToolResultCollector]:
     """Create LangChain StructuredTool instances from a playbook agent config.
 
@@ -392,11 +471,13 @@ def create_langchain_tools(
         output_workspace_id: Workspace used for generated file uploads.
         workspace_context_mode: Indicates whether the current task relies on fallback workspace context.
         step_connector_bindings: Optional list of connector bindings attached to this step.
+        initial_components: Prior playbook source/citation components used to continue
+            citation numbering and avoid duplicate source emission.
 
     Returns:
         Tuple of (list of StructuredTools, ToolResultCollector).
     """
-    collector = ToolResultCollector()
+    collector = ToolResultCollector(initial_components=initial_components)
 
     # --- Connector MCP tools (always evaluated, even if agent has no native tools) ---
     mcp_tools: List[StructuredTool] = []
@@ -1296,12 +1377,6 @@ def _create_connector_mcp_tools(
     if not bindings:
         return []
 
-    brain_header: Dict[str, str] = {}
-    if brain_ids:
-        brain_header["X-Brain-ID"] = ",".join(brain_ids)
-    if external_ids:
-        brain_header["X-External-ID"] = ",".join(external_ids)
-
     tools: List[StructuredTool] = []
     for binding in bindings:
         connector_id = binding.get("connector_id", "")
@@ -1390,7 +1465,7 @@ def _create_connector_mcp_tools(
                 sc: Dict[str, Any] = server_config,
                 fp: Dict[str, Any] = fixed_params,
                 tn: str = tool_name,
-                ah: Dict[str, str] = {**binding_auth_headers, **brain_header},
+                ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
                 async def _execute_mcp(**kwargs: Any) -> Any:
@@ -1484,7 +1559,7 @@ def _create_connector_mcp_tools(
             tools_created=len(actions),
             tool_names=[t.name for t in tools[len(tools) - len(actions) :]],
             brain_ids=brain_ids,
-            brain_header=brain_header,
+            external_ids=external_ids,
         )
 
     return tools

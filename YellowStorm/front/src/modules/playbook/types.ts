@@ -44,7 +44,7 @@ export interface TaskTemplate {
   description: string;
   icon: string;
   color: string;
-  category: 'content' | 'generation' | 'analysis' | 'code';
+  category: 'content' | 'generation' | 'analysis' | 'code' | 'evaluation';
   inputPorts: TaskInputPort[];
   outputPorts: TaskOutputPort[];
   promptTemplate: string;
@@ -76,6 +76,82 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
+export type PlaybookNodeType = 'agent' | 'action' | 'evaluation';
+
+export interface PlaybookEvaluationRubricWeights {
+  semanticMatch: number;
+  referenceMatch: number;
+  artifactRequirements: number;
+  formatCompliance: number;
+  evidenceConsistency: number;
+  executionHealth: number;
+}
+
+export interface PlaybookEvaluationConfig {
+  expectation: string;
+  referenceBaselineId?: string | null;
+  passThreshold: number;
+  warningThreshold: number;
+  weight: number;
+  rubricVersion: string;
+  weights: PlaybookEvaluationRubricWeights;
+}
+
+export interface PlaybookEvaluationBaselineArtifactSnapshot {
+  id?: string | null;
+  kind: ArtifactKind;
+  name?: string | null;
+  mimeType?: string | null;
+  uri?: string | null;
+  textPreview?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface PlaybookEvaluationBaselineInputSnapshot {
+  sourceTaskId: string;
+  sourceOutputPortId?: string | null;
+  targetInputPortId?: string | null;
+  output?: string | null;
+  artifacts: PlaybookEvaluationBaselineArtifactSnapshot[];
+}
+
+export interface PlaybookEvaluationBaseline {
+  id: string;
+  playbookId: string;
+  evaluationTaskId: string;
+  sourceExecutionId: string;
+  sourceMode: 'selected_execution' | 'current_inputs';
+  inputSnapshots: PlaybookEvaluationBaselineInputSnapshot[];
+  createdAt: string;
+  updatedAt: string;
+  replacedAt?: string | null;
+}
+
+export interface PlaybookEvaluationExecutionFinding {
+  severity: 'info' | 'warning' | 'error';
+  category: 'semantic' | 'reference' | 'artifact' | 'format' | 'evidence' | 'execution';
+  sourceTaskId?: string | null;
+  message: string;
+}
+
+export interface PlaybookEvaluationExecution {
+  id: string;
+  playbookId: string;
+  executionId: string;
+  evaluationTaskId: string;
+  evaluationTaskTitle: string;
+  baselineId?: string | null;
+  mode: 'semantic' | 'reference' | 'hybrid';
+  status: 'running' | 'completed' | 'failed';
+  score?: number | null;
+  verdict?: 'pass' | 'warning' | 'fail' | null;
+  expectation?: string;
+  summary?: string | null;
+  findings: PlaybookEvaluationExecutionFinding[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string | null;
+}
 
 export interface PlaybookTask {
   id: string;
@@ -105,6 +181,7 @@ export interface PlaybookTask {
   activeReplayPreserveOutputFormat?: boolean;
   activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   activeReplayFormatGuideError?: string | null;
+  activeReplayLabel?: string | null;
   hasOutputFormatTemplate?: boolean;
   activeOutputFormatTemplateId?: string | null;
   activeOutputFormatTemplateVersion?: number | null;
@@ -118,6 +195,126 @@ export interface PlaybookTask {
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
+  evaluationConfig?: PlaybookEvaluationConfig | null;
+  expectedResult?: string | null;
+  disableAdvisorEvaluation?: boolean;
+  advisorOptimizedAt?: string | null;
+}
+
+export type PlaybookSuggestionMode = 'inherit' | 'auto' | 'manual';
+
+export interface PlaybookDesignSettings {
+  inferenceModelId: string | null;
+  nodeSuggestionsMode: PlaybookSuggestionMode;
+  approvalSuggestionMode: PlaybookSuggestionMode;
+}
+
+export interface EffectivePlaybookDesignSettings {
+  inferenceModelId: string | null;
+  resolvedInferenceModelId: string | null;
+  nodeSuggestionsMode: 'auto' | 'manual';
+  approvalSuggestionMode: 'auto' | 'manual';
+}
+
+export type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
+
+export type PlaybookIntentSuggestionKind = 'single_change' | 'workflow_plan';
+
+export interface PlaybookIntentTaskDraft {
+  title: string;
+  description: string;
+  agentSlug?: string | null;
+}
+
+export interface PlaybookIntentSingleChangeSuggestion {
+  id: string;
+  kind: 'single_change';
+  label: string;
+  summary: string;
+  reason: string;
+  confidence: number;
+  operationType: PlaybookIntentOperationType;
+  task: PlaybookIntentTaskDraft | null;
+  targetTaskId: string | null;
+  isDirectIntentFallback: boolean;
+}
+
+export type PlaybookIntentWorkflowAnchorMode = 'append' | 'before' | 'after' | 'as_input';
+
+export interface PlaybookIntentWorkflowAnchor {
+  mode: PlaybookIntentWorkflowAnchorMode;
+  targetTaskId: string | null;
+  nodeRef: string | null;
+  targetTaskIds?: string[];
+  nodeRefs?: string[];
+}
+
+export type PlaybookIntentWorkflowChange =
+  | {
+      type: 'create_node';
+      nodeRef: string;
+      anchor: PlaybookIntentWorkflowAnchor;
+      task: PlaybookIntentTaskDraft;
+    }
+  | {
+      type: 'update_node';
+      targetTaskId: string;
+      task: Partial<PlaybookIntentTaskDraft>;
+    }
+  | {
+      type: 'delete_node';
+      targetTaskId: string;
+    }
+  | {
+      type: 'create_edge' | 'delete_edge';
+      sourceTaskId: string | null;
+      sourceNodeRef: string | null;
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+    };
+
+export interface PlaybookIntentWorkflowImpact {
+  nodesToCreate: number;
+  nodesToUpdate: number;
+  nodesToDelete: number;
+  edgesToCreate: number;
+  edgesToDelete: number;
+  affectedTaskIds: string[];
+  businessOutcome: string;
+}
+
+export interface PlaybookIntentWorkflowPlanSuggestion {
+  id: string;
+  kind: 'workflow_plan';
+  label: string;
+  summary: string;
+  reason: string;
+  confidence: number;
+  impact: PlaybookIntentWorkflowImpact;
+  changes: PlaybookIntentWorkflowChange[];
+  isDirectIntentFallback: false;
+}
+
+export type PlaybookIntentSuggestion = PlaybookIntentSingleChangeSuggestion | PlaybookIntentWorkflowPlanSuggestion;
+
+export interface IntentSuggestionHistoryEntry {
+  id: string;
+  suggestion: PlaybookIntentSuggestion;
+  appliedAt: number;
+  intent: string;
+  playbookId: string;
+  playbookName: string;
+}
+
+export interface RequestPlaybookIntentData {
+  intent: string;
+  selectedTaskId?: string;
+}
+
+export interface PlaybookIntentResponse {
+  suggestions: PlaybookIntentSuggestion[];
+  model: string;
+  settings: EffectivePlaybookDesignSettings;
 }
 
 export interface ToolBindingAction {
@@ -347,6 +544,8 @@ export interface Playbook {
   id: string;
   name: string;
   description: string;
+  designSettings: PlaybookDesignSettings;
+  effectiveDesignSettings: EffectivePlaybookDesignSettings;
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
   reflectionEnabled: boolean;
@@ -446,9 +645,14 @@ export interface TaskResult {
   judgeResult?: {
     accuracyScore: number;
     completenessScore: number;
+    resultMatchingScore: number;
     overallScore: number;
     confidence: number;
     toolUsageScore: number;
+    expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+    expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+    expectedResultMatched: boolean;
+    expectedResultReason: string;
     missingFacts: string[];
     incoherences: string[];
     unsupportedClaims: string[];
@@ -474,9 +678,14 @@ export interface TaskResult {
     judgeResult: {
       accuracyScore: number;
       completenessScore: number;
+      resultMatchingScore: number;
       overallScore: number;
       confidence: number;
       toolUsageScore: number;
+      expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+      expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+      expectedResultMatched: boolean;
+      expectedResultReason: string;
       missingFacts: string[];
       incoherences: string[];
       unsupportedClaims: string[];
@@ -567,6 +776,10 @@ export interface PlaybookExecution {
   }>;
   threadId: string | null;
   interruptPayload: InterruptPayload | null;
+  waitingForHumanInput?: boolean;
+  currentInterruptId?: string | null;
+  currentInterruptTaskId?: string | null;
+  hitlHistory?: HitlHistoryEntry[];
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
@@ -629,6 +842,7 @@ export interface ValidatedTaskReplay {
   llmPromptTrace?: LLMPromptTraceItem[];
   isStale?: boolean;
   staleReasons?: string[];
+  label?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -691,6 +905,28 @@ export interface HumanFeedbackData {
   approved?: boolean;
   reason?: string;
   feedback?: string;
+}
+
+export interface HitlHistoryEntry {
+  interruptId: string;
+  taskId: string;
+  type: InterruptType | string;
+  taskTitle: string;
+  message: string;
+  taskDescription: string;
+  result: string;
+  round: number;
+  payloadJson: string;
+  resumableActions: string[];
+  status: 'pending' | 'answered';
+  responseAction: InterruptAction | string | null;
+  responseMessage: string | null;
+  responseApproved: boolean | null;
+  responseReason: string | null;
+  responseFeedback: string | null;
+  respondedBy: string | null;
+  respondedAt: string | null;
+  createdAt: string;
 }
 
 // ===== ReactFlow Node Data =====
@@ -892,6 +1128,7 @@ export interface DesignPlaybookData {
 export interface UpdatePlaybookData {
   name?: string;
   description?: string;
+  designSettings?: Partial<PlaybookDesignSettings>;
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
   workspaces?: string[];
@@ -935,6 +1172,7 @@ export interface UpdateOutputFormatTemplateData {
 export interface ResumePlaybookData {
   executionId: string;
   taskId: string;
+  interruptId?: string;
   action?: InterruptAction;
   message?: string;
   approved?: boolean;
@@ -951,6 +1189,7 @@ export interface RerunStepData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  skipStepExecution?: boolean;
 }
 
 export interface ResumeFromStepData {
@@ -1013,6 +1252,7 @@ export interface PlaybookState {
   isGenerating: boolean;
   generateRetryData: GeneratePlaybookData | null;
   selectedStepId: string | null;
+  pendingRerunTaskId: string | null;
   error: string | null;
   designMessages: DesignMessage[];
   designMessagesLoading: boolean;
@@ -1023,6 +1263,7 @@ export interface PlaybookState {
   executionPanelOpen: boolean;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
+  nodeEditorOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
@@ -1034,6 +1275,11 @@ export interface PlaybookState {
   nodeTemplates: TaskTemplate[];
   nodeTemplatesLoading: boolean;
   nodeTemplatesLoadedAt: number;
+  evaluationExecutionsByTask: Record<string, PlaybookEvaluationExecution[]>;
+  evaluationBaselinesByTask: Record<string, PlaybookEvaluationBaseline | null>;
+  repeatability: PlaybookRepeatabilitySummary | null;
+  repeatabilityLoading: boolean;
+  intentSuggestionHistory: Record<string, IntentSuggestionHistoryEntry[]>;
 }
 
 export interface PlaybookActions {
@@ -1076,6 +1322,7 @@ export interface PlaybookActions {
     advisorAutopilotEnabled?: boolean,
     advisorAutopilotTargetScore?: number,
     advisorAutopilotMaxTurns?: number,
+    skipStepExecution?: boolean,
   ) => Promise<void>;
   resumeFromStep: (playbookId: string, executionId: string, taskId: string, streaming?: boolean) => Promise<void>;
   skipExecutionStep: (playbookId: string, executionId: string, taskId: string) => Promise<void>;
@@ -1097,6 +1344,15 @@ export interface PlaybookActions {
   ) => Promise<ValidatedTaskReplay>;
   fetchTaskReplays: (playbookId: string, taskId: string) => Promise<ValidatedTaskReplay[]>;
   activateTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<ValidatedTaskReplay>;
+  deleteTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<{ removed: boolean; wasActive: boolean }>;
+  renameTaskReplay: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<ValidatedTaskReplay>;
+  fetchEvaluationExecutions: (playbookId: string, taskId?: string) => Promise<PlaybookEvaluationExecution[]>;
+  fetchEvaluationBaseline: (playbookId: string, taskId: string) => Promise<PlaybookEvaluationBaseline | null>;
+  createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
+  createEvaluationBaselineFromCurrentExecution: (playbookId: string, taskId: string, executionId: string, evaluationExecutionId: string) => Promise<PlaybookEvaluationBaseline>;
+  deleteEvaluationBaseline: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
+  fetchRepeatability: (playbookId: string, limit?: number, offset?: number) => Promise<PlaybookRepeatabilitySummary>;
+  clearRepeatability: () => void;
   grabOutputFormatTemplate: (
     playbookId: string,
     taskId: string,
@@ -1114,6 +1370,9 @@ export interface PlaybookActions {
   optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
   applyAdvisorRemediations: (playbookId: string, executionId: string, data: ApplyRemediationsData) => Promise<Playbook>;
+  reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
+  pendingRerunTaskId: string | null;
+  setPendingRerunTaskId: (taskId: string | null) => void;
 
   // SSE handlers
   onExecutionStart: (data: PlaybookExecutionStartEvent) => void;
@@ -1142,11 +1401,16 @@ export interface PlaybookActions {
   // Designer
   fetchDesignMessages: (playbookId: string) => Promise<void>;
   designPlaybook: (playbookId: string, data: DesignPlaybookData) => Promise<void>;
+  requestPlaybookIntent: (playbookId: string, data: RequestPlaybookIntentData) => Promise<PlaybookIntentResponse>;
   revertToSnapshot: (playbookId: string, messageId: string) => Promise<void>;
   setDesignerOpen: (open: boolean) => void;
   setCopilotMode: (mode: PlaybookCopilotMode) => void;
   setExecutionPanelOpen: (open: boolean) => void;
   viewExecutionInPanel: (executionId: string) => void;
+
+  // Node Editor
+  nodeEditorOpen: boolean;
+  setNodeEditorOpen: (open: boolean) => void;
 
   // Workspace Explorer
   setWorkspaceExplorerOpen: (open: boolean) => void;
@@ -1171,6 +1435,54 @@ export interface PlaybookActions {
   undo: () => void;
   redo: () => void;
   clearUndoHistory: () => void;
+
+  // Intent Suggestion History
+  addIntentSuggestionHistoryEntry: (playbookId: string, playbookName: string, suggestion: PlaybookIntentSuggestion, intent: string) => void;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;
+
+export type ExpectedResultSource = 'node_field' | 'golden_baseline' | 'none';
+export type RepeatabilityMatchState = 'matched' | 'not_matched' | 'not_evaluated';
+
+export interface RepeatabilityTaskExecutionSummary {
+  taskId: string;
+  taskTitle: string;
+  output: string | null;
+  completedAt: string | null;
+  expectedResult: string | null;
+  expectedResultSource: ExpectedResultSource;
+  expectedResultType: string | null;
+  expectedResultMatched: boolean | null;
+  expectedResultReason: string | null;
+  matchScore: number | null;
+  matchState: RepeatabilityMatchState;
+  passed: boolean;
+  evaluated: boolean;
+  advisorPassed: boolean;
+  advisorEvaluated: boolean;
+  judgeResult: TaskResult['judgeResult'];
+}
+
+export interface RepeatabilityIterationSummary {
+  executionId: string;
+  executionNumber: number;
+  completedAt: string | null;
+  taskCount: number;
+  evaluatedTasks: number;
+  passedTasks: number;
+  averageMatchScore: number | null;
+  passed: boolean;
+  tasks: RepeatabilityTaskExecutionSummary[];
+}
+
+export interface PlaybookRepeatabilitySummary {
+  playbookId: string;
+  totalIterations: number;
+  evaluatedIterations: number;
+  passedIterations: number;
+  overallAverageMatchScore: number | null;
+  overallAdvisorScore: number | null;
+  generatedAt: string;
+  iterations: RepeatabilityIterationSummary[];
+}

@@ -16,7 +16,10 @@ import {
   upsertPlaybookTriggerSchedule,
   clearPlaybookTriggerSchedule,
   rerunPlaybookStep,
+  resumePlaybook,
   resumePlaybookFromStep,
+  getPlaybookRepeatability,
+  getTaskRepeatability,
 } from './api';
 
 const apiClientMock = vi.hoisted(() => ({
@@ -122,6 +125,10 @@ describe('playbook api', () => {
         taskType: 'generic',
         inputPorts: [],
         outputPorts: [],
+        executionMode: undefined,
+        selectedAction: undefined,
+        toolBindings: undefined,
+        evaluationConfig: null,
       }],
     });
   });
@@ -141,6 +148,18 @@ describe('playbook api', () => {
       advisorAutopilotEnabled: true,
       advisorAutopilotTargetScore: 95,
       advisorAutopilotMaxTurns: 3,
+    });
+  });
+
+  it('requests playbook intent suggestions', async () => {
+    apiClientMock.post.mockResolvedValueOnce({ data: { data: { suggestions: [], model: 'gpt-test', settings: { nodeSuggestionsMode: 'manual', approvalSuggestionMode: 'auto', inferenceModelId: null, resolvedInferenceModelId: null } } } });
+
+    const { requestPlaybookIntent } = await import('./api');
+    await requestPlaybookIntent('p1', { intent: 'add a review step', selectedTaskId: 'task-1' });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(API_ENDPOINTS.playbooks.intent('p1'), {
+      intent: 'add a review step',
+      selectedTaskId: 'task-1',
     });
   });
 
@@ -220,6 +239,12 @@ describe('playbook api', () => {
   it('targets the rerun and resume-from-step routes', async () => {
     apiClientMock.post.mockResolvedValue({ data: { data: { status: 'running', executionId: 'e1' } } });
 
+    await resumePlaybook('p1', { executionId: 'e1', taskId: 't0', interruptId: 'interrupt-1', action: 'approve' });
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.resume('p1'),
+      { executionId: 'e1', taskId: 't0', interruptId: 'interrupt-1', action: 'approve' },
+    );
+
     await rerunPlaybookStep('p1', 'e1', { taskId: 't1', runEvaluation: true, executionMode: 'live', streaming: false });
     expect(apiClientMock.post).toHaveBeenCalledWith(
       API_ENDPOINTS.playbooks.rerunStep('p1', 'e1'),
@@ -231,5 +256,53 @@ describe('playbook api', () => {
       API_ENDPOINTS.playbooks.resumeFromStep('p1', 'e1'),
       { taskId: 't2', streaming: true },
     );
+  });
+
+  it('fetches playbook repeatability with limit and offset params', async () => {
+    const mockSummary = {
+      playbookId: 'p1',
+      overallAverageMatchScore: 82,
+      totalIterations: 5,
+      evaluatedIterations: 3,
+      passedIterations: 2,
+      iterations: [],
+      generatedAt: '2026-04-26T20:00:00.000Z',
+    };
+    apiClientMock.get.mockResolvedValueOnce({ data: { data: mockSummary } });
+
+    const result = await getPlaybookRepeatability('p1', 5, 0);
+    expect(apiClientMock.get).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.repeatability('p1'),
+      { params: { limit: 5, offset: 0 } },
+    );
+    expect(result.overallAverageMatchScore).toBe(82);
+    expect(result.passedIterations).toBe(2);
+  });
+
+  it('fetches task-level repeatability', async () => {
+    const mockTaskResults = [{
+      taskId: 't1',
+      taskTitle: 'Step 1',
+      output: 'Actual output',
+      completedAt: null,
+      expectedResult: 'Expected output',
+      expectedResultSource: 'node_field',
+      expectedResultType: 'semantic_description',
+      expectedResultMatched: true,
+      expectedResultReason: 'Matches expectation',
+      matchScore: 95,
+      matchState: 'matched',
+      passed: true,
+      evaluated: true,
+    }];
+    apiClientMock.get.mockResolvedValueOnce({ data: { data: mockTaskResults } });
+
+    const result = await getTaskRepeatability('p1', 't1', 10);
+    expect(apiClientMock.get).toHaveBeenCalledWith(
+      API_ENDPOINTS.playbooks.repeatabilityTask('p1', 't1'),
+      { params: { limit: 10 } },
+    );
+    expect(result[0].taskId).toBe('t1');
+    expect(result[0].expectedResultSource).toBe('node_field');
   });
 });

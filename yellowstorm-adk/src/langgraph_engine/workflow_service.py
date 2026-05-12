@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import json
+import re
 import sys
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
@@ -29,6 +30,8 @@ from src.langgraph_engine.playbook_queue import register_queue, get_queue, remov
 from src.langgraph_engine.port_resolution import validate_port_routing
 
 logger = get_logger(__name__)
+
+_CITATION_REF_PATTERN = re.compile(r"\[(\d+)\]")
 
 
 def _extract_interrupt_from_snapshot(
@@ -102,30 +105,215 @@ def _extract_interrupt_from_stream_chunk(
 def _build_resume_state_update(
     interrupt_data: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    if not interrupt_data or interrupt_data.get("type") != "clarification":
-        return None
+    # Clarification resumes continue from the suspended interrupt() call with the
+    # human response supplied via Command(resume=...). Replaying transcript state
+    # here makes the node behave like it is starting clarification again.
+    return None
 
-    task_id = str(interrupt_data.get("task_id") or "").strip()
-    if not task_id:
-        return None
 
-    conversation_json = interrupt_data.get("conversation_json") or "[]"
-    try:
-        transcript = json.loads(conversation_json)
-    except (TypeError, ValueError):
-        transcript = []
+def _validate_resume_interrupt(
+    interrupt_data: Optional[Dict[str, Any]],
+    *,
+    task_id: str = "",
+    interrupt_id: str = "",
+) -> None:
+    if not interrupt_data:
+        raise ValueError("No active interrupt found for this workflow thread.")
 
-    if not isinstance(transcript, list):
-        transcript = []
+    active_task_id = str(interrupt_data.get("task_id") or "").strip()
+    if task_id and active_task_id and active_task_id != str(task_id).strip():
+        raise ValueError(
+            f"Interrupt task mismatch: expected '{task_id}' but active interrupt belongs to '{active_task_id}'."
+        )
 
-    task_description = str(interrupt_data.get("task_description") or "").strip()
+    expected_interrupt_id = str(interrupt_id or "").strip()
+    active_interrupt_id = str(interrupt_data.get("interrupt_id") or "").strip()
+    if expected_interrupt_id and active_interrupt_id != expected_interrupt_id:
+        raise ValueError(
+            f"Interrupt mismatch: expected '{expected_interrupt_id}' but active interrupt is '{active_interrupt_id}'."
+        )
 
-    update: Dict[str, Any] = {
-        "clarification_transcripts_by_task": {task_id: transcript},
+
+def _citation_source_from_component(
+    component: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
+    data = component.get("data") or {}
+    for key in ("text_source", "image_source"):
+        source = data.get(key)
+        if isinstance(source, dict):
+            return source
+    return None
+
+
+def _citation_reference(component: Dict[str, Any]) -> str:
+    source = _citation_source_from_component(component)
+    if not source:
+        return ""
+    return str(source.get("reference") or "").strip()
+
+
+def _citation_signature(component: Dict[str, Any]) -> str:
+    data = component.get("data") or {}
+    text_source = data.get("text_source")
+    if isinstance(text_source, dict):
+        return "::".join(
+            [
+                "text",
+                str(text_source.get("source") or ""),
+                str(text_source.get("external_id") or ""),
+                str(text_source.get("page") or ""),
+                str(text_source.get("page_content") or ""),
+            ]
+        )
+
+    image_source = data.get("image_source")
+    if isinstance(image_source, dict):
+        return "::".join(
+            [
+                "image",
+                str(image_source.get("path") or ""),
+                str(image_source.get("external_id") or ""),
+                str(image_source.get("page") or ""),
+            ]
+        )
+
+    return json.dumps(component, sort_keys=True, default=str)
+
+
+def _set_citation_reference(
+    component: Dict[str, Any],
+    reference: str,
+    parent_id: str,
+) -> Dict[str, Any]:
+    updated = dict(component)
+    data = dict(updated.get("data") or {})
+    data["parent_id"] = parent_id
+    for key in ("text_source", "image_source"):
+        source = data.get(key)
+        if isinstance(source, dict):
+            source_data = dict(source)
+            source_data["reference"] = reference
+            data[key] = source_data
+            break
+    updated["data"] = data
+    return updated
+
+
+def _rewrite_citation_references(text: str, ref_map: Dict[str, str]) -> str:
+    if not text or not ref_map:
+        return text
+
+    def replace(match: re.Match[str]) -> str:
+        current = match.group(1)
+        return f"[{ref_map.get(current, current)}]"
+
+    return _CITATION_REF_PATTERN.sub(replace, text)
+
+
+def _find_text_parent_id(components: List[Dict[str, Any]], output: str) -> str:
+    normalized_output = str(output or "").strip()
+    for component in reversed(components or []):
+        if not isinstance(component, dict) or component.get("type") != "text":
+            continue
+        data = component.get("data") or {}
+        if (
+            normalized_output
+            and str(data.get("content") or "").strip() != normalized_output
+        ):
+            continue
+        return str(component.get("id") or "").strip()
+    return ""
+
+
+def _normalize_task_result_citations(
+    task_results: List[Dict[str, Any]],
+    tasks: List[TaskConfig],
+) -> List[Dict[str, Any]]:
+    order_by_task_id = {
+        str(task.get("id") or ""): (
+            int(task.get("execution_order", index) or index),
+            index,
+        )
+        for index, task in enumerate(tasks or [])
     }
-    if task_description:
-        update["task_description_overrides_by_task"] = {task_id: task_description}
-    return update
+    ordered_results = sorted(
+        [
+            result
+            for result in task_results
+            if isinstance(result, dict) and result.get("status") == "completed"
+        ],
+        key=lambda result: order_by_task_id.get(
+            str(result.get("task_id") or ""),
+            (len(order_by_task_id), len(order_by_task_id)),
+        ),
+    )
+
+    reference_by_signature: Dict[str, str] = {}
+    citation_by_signature: Dict[str, Dict[str, Any]] = {}
+    cumulative_signatures: List[str] = []
+    next_reference = 1
+
+    for result in ordered_results:
+        components = [
+            component
+            for component in (result.get("components") or [])
+            if isinstance(component, dict)
+        ]
+        parent_id = _find_text_parent_id(components, str(result.get("output") or ""))
+        local_ref_map: Dict[str, str] = {}
+
+        task_citation_components = [
+            component for component in components if component.get("type") == "citation"
+        ]
+        for component in task_citation_components:
+            signature = _citation_signature(component)
+            if signature not in reference_by_signature:
+                reference_by_signature[signature] = str(next_reference)
+                cumulative_signatures.append(signature)
+                next_reference += 1
+
+            normalized_reference = reference_by_signature[signature]
+            original_reference = _citation_reference(component)
+            if original_reference:
+                local_ref_map[original_reference.strip("[]")] = normalized_reference
+            citation_by_signature[signature] = _set_citation_reference(
+                component,
+                normalized_reference,
+                parent_id,
+            )
+
+        if local_ref_map:
+            result["output"] = _rewrite_citation_references(
+                str(result.get("output") or ""),
+                local_ref_map,
+            )
+
+        non_citation_components: List[Dict[str, Any]] = []
+        for component in components:
+            if component.get("type") == "citation":
+                continue
+            updated_component = dict(component)
+            if updated_component.get("type") == "text":
+                data = dict(updated_component.get("data") or {})
+                data["content"] = _rewrite_citation_references(
+                    str(data.get("content") or ""),
+                    local_ref_map,
+                )
+                updated_component["data"] = data
+            non_citation_components.append(updated_component)
+
+        cumulative_citations = [
+            _set_citation_reference(
+                citation_by_signature[signature],
+                reference_by_signature[signature],
+                parent_id,
+            )
+            for signature in cumulative_signatures
+            if signature in citation_by_signature
+        ]
+        result["components"] = non_citation_components + cumulative_citations
+
+    return task_results
 
 
 async def _consume_graph_stream(
@@ -209,6 +397,7 @@ async def run_playbook(
     evaluation_user_id: str = "unknown",
     step_execution_modes: Optional[Dict[str, str]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
+    user_language: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a playbook workflow with dynamic graph."""
     cleanup_stale_graphs()
@@ -252,8 +441,10 @@ async def run_playbook(
         "execution_mode": execution_mode,
         "validated_replays_by_task": validated_replays_by_task or {},
         "step_execution_modes": step_execution_modes or {},
+        "user_language": user_language or "en",
         "task_outputs": {},
         "artifacts_by_port": {},
+        "node_inputs_by_port": {},
         "prompt_overrides": prompt_overrides or {},
         "clarification_transcripts_by_task": {},
         "task_description_overrides_by_task": {},
@@ -343,17 +534,64 @@ async def run_playbook(
         remove_queue(thread_id)
 
 
+async def _get_or_rebuild_thread_graph(
+    *,
+    playbook_id: str,
+    thread_id: str,
+    tasks: Optional[List[TaskConfig]],
+    edges: Optional[List[EdgeConfig]],
+):
+    graph = get_thread_graph(thread_id)
+    if graph is not None:
+        return graph
+
+    rebuilt_tasks = list(tasks or [])
+    rebuilt_edges = list(edges or [])
+    if not rebuilt_tasks:
+        return None
+
+    validate_port_routing(rebuilt_tasks, rebuilt_edges)
+    checkpointer = await get_checkpointer()
+    on_step_update = _make_step_callback_for_thread(thread_id)
+    graph_info = get_or_create_graph(
+        playbook_id=playbook_id,
+        tasks=rebuilt_tasks,
+        edges=rebuilt_edges,
+        checkpointer=checkpointer,
+        on_step_update=on_step_update,
+        force_rebuild=True,
+    )
+    compiled = graph_info["compiled"]
+    store_thread_graph(thread_id, compiled)
+    logger.info(
+        "[resume_playbook] Rebuilt graph from persisted playbook snapshot",
+        playbook_id=playbook_id,
+        thread_id=thread_id,
+        task_count=len(rebuilt_tasks),
+        edge_count=len(rebuilt_edges),
+    )
+    return compiled
+
+
 async def resume_playbook(
     playbook_id: str,
     thread_id: str,
     human_response: dict,
     task_id: str = "",
     queue: Optional[asyncio.Queue] = None,
+    tasks: Optional[List[TaskConfig]] = None,
+    edges: Optional[List[EdgeConfig]] = None,
+    interrupt_id: str = "",
 ) -> Dict[str, Any]:
     """Resume an interrupted playbook with the human response."""
     from langgraph.types import Command
 
-    graph = get_thread_graph(thread_id)
+    graph = await _get_or_rebuild_thread_graph(
+        playbook_id=playbook_id,
+        thread_id=thread_id,
+        tasks=tasks,
+        edges=edges,
+    )
     if graph is None:
         logger.warning(
             "[resume_playbook] Graph not found for thread, attempting recovery",
@@ -381,6 +619,11 @@ async def resume_playbook(
         state_snapshot = await graph.aget_state(config)
         resume_interrupt_data = _extract_interrupt_from_snapshot(
             state_snapshot, thread_id
+        )
+        _validate_resume_interrupt(
+            resume_interrupt_data,
+            task_id=task_id,
+            interrupt_id=interrupt_id,
         )
         resume_state_update = _build_resume_state_update(resume_interrupt_data)
         interrupt_data, result = await _consume_graph_stream(
@@ -428,6 +671,24 @@ async def resume_playbook(
 
         await _send_sentinel(queue)
         return response
+    except ValueError as e:
+        error_str = str(e)
+        logger.warning(
+            "[resume_playbook] Resume validation failed",
+            thread_id=thread_id,
+            error=error_str,
+        )
+
+        response = {
+            "status": "failed",
+            "task_results": [],
+            "interrupt": None,
+            "thread_id": thread_id,
+            "error": error_str,
+        }
+
+        await _send_sentinel(queue)
+        return response
     except Exception as e:
         error_str = str(e)
         logger.error("[resume_playbook] Exception during resume", error=error_str)
@@ -456,11 +717,14 @@ async def run_single_step_graph(
     trigger_context: Optional[Dict[str, Any]] = None,
     edges: Optional[List[Dict[str, Any]]] = None,
     upstream_results: Optional[List[Dict[str, Any]]] = None,
+    artifacts_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     execution_mode: str = "live",
     validated_replay: Optional[Dict[str, Any]] = None,
     evaluation_user_id: str = "unknown",
     on_progress=None,
     prompt_overrides: Optional[Dict[str, str]] = None,
+    user_language: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a single task via a dedicated LangGraph for HITL support.
 
@@ -493,7 +757,9 @@ async def run_single_step_graph(
         for item in (upstream_results or [])
         if isinstance(item, dict) and str(item.get("task_id") or "").strip()
     }
-    artifacts_by_port: Dict[str, List[Dict[str, Any]]] = {}
+    resolved_artifacts_by_port: Dict[str, List[Dict[str, Any]]] = dict(
+        artifacts_by_port or {}
+    )
     for upstream_task_id, upstream_result in upstream_results_map.items():
         for artifact in upstream_result.get("artifacts") or []:
             if not isinstance(artifact, dict):
@@ -501,9 +767,9 @@ async def run_single_step_graph(
             port_id = _normalize_port_id(
                 artifact.get("port_id") or artifact.get("portId") or "default"
             )
-            artifacts_by_port.setdefault(f"{upstream_task_id}:{port_id}", []).append(
-                artifact
-            )
+            resolved_artifacts_by_port.setdefault(
+                f"{upstream_task_id}:{port_id}", []
+            ).append(artifact)
 
     initial_state: ExecutionState = {
         "playbook_id": task_id,
@@ -528,7 +794,9 @@ async def run_single_step_graph(
         else {},
         "step_execution_modes": {},
         "task_outputs": {},
-        "artifacts_by_port": artifacts_by_port,
+        "artifacts_by_port": resolved_artifacts_by_port,
+        "node_inputs_by_port": node_inputs_by_port or {},
+        "user_language": user_language or "en",
         "prompt_overrides": prompt_overrides or {},
         "clarification_transcripts_by_task": {},
         "task_description_overrides_by_task": {},
@@ -803,4 +1071,4 @@ def _build_task_results(
                     }
                 )
 
-    return task_results
+    return _normalize_task_result_citations(task_results, tasks)

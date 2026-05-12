@@ -39,6 +39,7 @@ import { PlaybookReplayService } from './playbook-replay.service';
 import { PlaybookOutputFormatService } from './playbook-output-format.service';
 import { ConnectedAppTokenService } from '../../connected-app/services/connected-app-token.service';
 import { PlaybookMailGraphClientService } from './playbook-mail-graph-client.service';
+import { PlaybookSettingsService } from './playbook-settings.service';
 
 @Injectable()
 export class PlaybookService {
@@ -54,6 +55,7 @@ export class PlaybookService {
     private readonly outputFormatService: PlaybookOutputFormatService,
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     private readonly mailGraphClient: PlaybookMailGraphClientService,
+    private readonly playbookSettingsService: PlaybookSettingsService,
   ) {
     this.logger.setContext('PlaybookService');
   }
@@ -62,6 +64,7 @@ export class PlaybookService {
     const playbook = await this.playbookModel.create({
       name: dto.name,
       description: dto.description || '',
+      designSettings: this.playbookSettingsService.getDefaultPlaybookSettings(),
       tasks: [],
       edges: [],
       reflectionEnabled: true,
@@ -89,6 +92,7 @@ export class PlaybookService {
     const playbook = await this.playbookModel.create({
       name,
       description: description || '',
+      designSettings: this.playbookSettingsService.getDefaultPlaybookSettings(),
       tasks,
       edges,
       workspaces: workspaceIds.map((id) => new Types.ObjectId(id)),
@@ -119,6 +123,7 @@ export class PlaybookService {
     const cloned = await this.playbookModel.create({
       name: `${source.name}${options?.nameSuffix ?? ' (shared)'}`,
       description: source.description || '',
+      designSettings: this.playbookSettingsService.normalizePlaybookSettings(source.designSettings),
       tasks: source.tasks || [],
       edges: source.edges || [],
       reflectionEnabled: source.reflectionEnabled !== false,
@@ -294,6 +299,14 @@ export class PlaybookService {
     const updateData: Record<string, unknown> = {};
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.description !== undefined) updateData.description = dto.description;
+    if (dto.designSettings !== undefined) {
+      await this.playbookSettingsService.validatePlaybookSettingsPatch(dto.designSettings);
+      const existing = await this.playbookModel.findById(playbookId).select('designSettings').lean().exec();
+      if (!existing) {
+        throw new NotFoundException(ErrorCode.PLAYBOOK_NOT_FOUND);
+      }
+      updateData.designSettings = this.playbookSettingsService.mergePlaybookSettingsPatch(existing.designSettings, dto.designSettings);
+    }
     if (dto.tasks !== undefined) updateData.tasks = dto.tasks;
     if (dto.edges !== undefined) updateData.edges = dto.edges;
     if (dto.workspaces !== undefined) updateData.workspaces = dto.workspaces.map((id) => new Types.ObjectId(id));
@@ -937,6 +950,8 @@ export class PlaybookService {
       id: (playbook._id || playbook.id).toString(),
       name: playbook.name,
       description: playbook.description || '',
+      designSettings: this.playbookSettingsService.normalizePlaybookSettings(playbook.designSettings),
+      effectiveDesignSettings: await this.playbookSettingsService.resolveEffectiveSettings(playbook.designSettings),
       tasks: (playbook.tasks || []).map((t: any) => ({
         id: t.id,
         title: t.title,
@@ -976,6 +991,26 @@ export class PlaybookService {
         activeOutputFormatError: activeOutputFormats.get(t.id)?.generationError || null,
         stepReplayMode: t.stepReplayMode || 'live',
         toolBindings: t.toolBindings || [],
+        evaluationConfig: t.evaluationConfig
+          ? {
+              expectation: t.evaluationConfig.expectation || '',
+              referenceBaselineId: t.evaluationConfig.referenceBaselineId ?? null,
+              passThreshold: t.evaluationConfig.passThreshold ?? 80,
+              warningThreshold: t.evaluationConfig.warningThreshold ?? 60,
+              weight: t.evaluationConfig.weight ?? 1,
+              rubricVersion: t.evaluationConfig.rubricVersion || 'evaluation-node-v1',
+              weights: {
+                semanticMatch: t.evaluationConfig.weights?.semanticMatch ?? 40,
+                referenceMatch: t.evaluationConfig.weights?.referenceMatch ?? 20,
+                artifactRequirements: t.evaluationConfig.weights?.artifactRequirements ?? 20,
+                formatCompliance: t.evaluationConfig.weights?.formatCompliance ?? 10,
+                evidenceConsistency: t.evaluationConfig.weights?.evidenceConsistency ?? 5,
+                executionHealth: t.evaluationConfig.weights?.executionHealth ?? 5,
+              },
+            }
+          : null,
+        expectedResult: t.expectedResult ?? null,
+        disableAdvisorEvaluation: t.disableAdvisorEvaluation === true,
       })),
       edges: (playbook.edges || []).map((e: any) => ({
         id: e.id,
@@ -1191,6 +1226,14 @@ export class PlaybookService {
       })),
       threadId: execution.threadId,
       interruptPayload: execution.interruptPayload,
+      waitingForHumanInput: execution.waitingForHumanInput === true,
+      currentInterruptId: execution.currentInterruptId ?? null,
+      currentInterruptTaskId: execution.currentInterruptTaskId ?? null,
+      hitlHistory: (execution.hitlHistory || []).map((entry: any) => ({
+        ...entry,
+        respondedAt: entry.respondedAt?.toISOString?.() || entry.respondedAt || null,
+        createdAt: entry.createdAt?.toISOString?.() || entry.createdAt,
+      })),
       error: execution.error,
       durationMs: execution.durationMs,
       startedAt: execution.startedAt?.toISOString?.() || execution.startedAt,

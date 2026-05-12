@@ -7,9 +7,11 @@ from src.langgraph_engine.graph_builder import (
     DynamicGraphBuilder,
     _extract_artifacts_from_components,
     _build_default_text_artifact,
+    _build_execution_clarification_guidance,
     _get_clarification_context,
     _store_clarification_context,
     _resolve_output_port,
+    _collect_prior_source_components,
 )
 
 
@@ -19,6 +21,65 @@ def _install_fake_tool_factory(monkeypatch, create_langchain_tools) -> None:
         "src.langgraph_engine.playbook_tool_factory",
         SimpleNamespace(create_langchain_tools=create_langchain_tools),
     )
+
+
+def test_collect_prior_source_components_returns_sources_and_citations_in_task_order() -> None:
+    state = {
+        "tasks": [
+            {"id": "step-2", "execution_order": 2},
+            {"id": "step-1", "execution_order": 1},
+            {"id": "step-3", "execution_order": 3},
+        ],
+        "results": {
+            "step-1": {
+                "components": [
+                    {
+                        "type": "citation",
+                        "data": {
+                            "text_source": {
+                                "source": "Doc 1",
+                                "reference": "1",
+                            }
+                        },
+                    }
+                ]
+            },
+            "step-2": {
+                "components": [
+                    {
+                        "type": "sources",
+                        "data": {
+                            "sources": [
+                                {
+                                    "title": "Doc 2",
+                                    "url": "https://example.com/doc-2",
+                                }
+                            ]
+                        },
+                    },
+                    {
+                        "type": "citation",
+                        "data": {
+                            "text_source": {
+                                "source": "Doc 2",
+                                "reference": "6",
+                            }
+                        },
+                    },
+                ]
+            },
+        },
+    }
+
+    components = _collect_prior_source_components(state, "step-3")
+
+    assert [component["type"] for component in components] == [
+        "citation",
+        "sources",
+        "citation",
+    ]
+    assert components[0]["data"]["text_source"]["reference"] == "1"
+    assert components[2]["data"]["text_source"]["reference"] == "6"
 
 
 def test_extract_artifacts_routes_explicit_same_kind_outputs_by_port_id() -> None:
@@ -388,6 +449,41 @@ def test_task_without_assigned_agent_emits_failed_step_update() -> None:
     assert updates[0]["result"]["error"] == "No agent assigned to task task-1"
 
 
+def test_evaluation_task_without_assigned_agent_fails_like_other_tasks() -> None:
+    updates = []
+
+    async def on_step_update(update):
+        updates.append(update)
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    node = builder._create_task_node(
+        "task-1",
+        {
+            "id": "task-1",
+            "title": "Evaluation Task",
+            "task_type": "evaluation",
+            "evaluation_config": {},
+        },
+        on_step_update,
+    )
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {},
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+            },
+            {},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert updates
+    assert updates[0]["status"] == "failed"
+    assert updates[0]["result"]["error"] == "No agent assigned to task task-1"
+
+
 def test_workflow_task_node_uses_structured_output_artifacts_for_downstream_state(
     monkeypatch,
 ) -> None:
@@ -644,3 +740,239 @@ def test_workflow_task_node_builds_default_text_artifact_without_explicit_output
         ],
     }
     assert updates[-1]["result"]["artifacts"][0]["port_id"] == "default"
+
+
+def test_workflow_task_node_resolves_clarification_prompt_before_main_prompt_build(
+    monkeypatch,
+) -> None:
+    direct_call_system_prompts = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            return SimpleNamespace(content="CLEAR")
+
+    async def fake_direct_call(*args, **kwargs):
+        direct_call_system_prompts.append(args[2])
+        raise RuntimeError("sentinel-direct-call")
+
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        SimpleNamespace(ChatOpenAI=FakeChatOpenAI),
+    )
+    monkeypatch.setattr(
+        DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+
+    updates = []
+
+    async def on_step_update(update):
+        updates.append(update)
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    node = builder._create_task_node(
+        "task-1",
+        {
+            "id": "task-1",
+            "title": "Task 1",
+            "description": "desc",
+            "assigned_agent_id": "agent-1",
+            "allow_clarification": True,
+            "max_clarifications": 1,
+            "output_key": "task_1_output",
+            "output_ports": [
+                {"id": "default", "name": "Default", "artifact_kind": "text"},
+            ],
+        },
+        on_step_update,
+    )
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {
+                    "agent-1": {
+                        "id": "agent-1",
+                        "name": "Agent",
+                        "instructions": "Do it",
+                        "tools": [],
+                    }
+                },
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+                "tasks": [{"id": "task-1", "title": "Task 1"}],
+                "edges": [],
+                "results": {},
+                "task_outputs": {},
+                "workspace_context": [],
+                "execution_mode": "live",
+                "validated_replays_by_task": {},
+                "step_execution_modes": {},
+                "prompt_overrides": {
+                    "task.clarification": {
+                        "systemTemplate": "Ask if anything is missing. {{UserLanguage}}"
+                    }
+                },
+                "query": "",
+                "current_task_ids": [],
+                "completed_task_ids": [],
+                "status": "in_progress",
+                "error": None,
+                "interrupt_payload": None,
+                "node_timings": {},
+                "evaluation_user_id": "unknown",
+                "artifacts_by_port": {},
+            },
+            {},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "sentinel-direct-call"
+    assert result["results"]["task-1"]["error"] == "sentinel-direct-call"
+    assert updates[-1]["status"] == "failed"
+    assert direct_call_system_prompts
+    assert "Clarification behavior for task execution:" in direct_call_system_prompts[0]
+    assert "ask one concise clarification question" in direct_call_system_prompts[0]
+    assert "respond with exactly 'CLEAR'" not in direct_call_system_prompts[0]
+
+
+def test_build_execution_clarification_guidance_removes_clear_output_contract() -> None:
+    guidance = _build_execution_clarification_guidance(
+        {"title": "Task 1"},
+        "desc",
+        {
+            "task.clarification": {
+                "systemTemplate": "Ask one question when needed. If clear, respond with exactly 'CLEAR'."
+            }
+        },
+        "en",
+    )
+
+    assert "If required information is genuinely missing, ask one concise clarification question" in guidance
+    assert "If the task is clear, complete the task normally." in guidance
+    assert "respond with exactly 'CLEAR'" not in guidance
+
+
+def test_build_clarification_pre_prompt_includes_missing_requirement_guardrails() -> None:
+    prompt = graph_builder_module._build_clarification_pre_prompt(
+        {"title": "Analyze company"},
+        "Research the company and summarize the latest quarter.",
+        {},
+        "en",
+        user_query="Analyze the latest quarter for the target company.",
+        resolved_context="",
+    )
+
+    assert "User request:\nAnalyze the latest quarter for the target company." in prompt
+    assert "missing company names, time ranges, targets, data sources, deliverable format" in prompt
+    assert "Otherwise respond with exactly 'CLEAR'." in prompt
+
+
+def test_workflow_task_node_skips_reasking_after_user_clarification(monkeypatch) -> None:
+    clarification_checks = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            clarification_checks.append(messages)
+            return SimpleNamespace(content="CLEAR")
+
+    async def fake_direct_call(*args, **kwargs):
+        raise RuntimeError("sentinel-direct-call")
+
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        SimpleNamespace(ChatOpenAI=FakeChatOpenAI),
+    )
+    monkeypatch.setattr(
+        DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+
+    builder = DynamicGraphBuilder.__new__(DynamicGraphBuilder)
+    node = builder._create_task_node(
+        "task-1",
+        {
+            "id": "task-1",
+            "title": "Task 1",
+            "description": "desc",
+            "assigned_agent_id": "agent-1",
+            "allow_clarification": True,
+            "max_clarifications": 1,
+            "output_key": "task_1_output",
+            "output_ports": [
+                {"id": "default", "name": "Default", "artifact_kind": "text"},
+            ],
+        },
+    )
+
+    result = asyncio.run(
+        node(
+            {
+                "agents": {
+                    "agent-1": {
+                        "id": "agent-1",
+                        "name": "Agent",
+                        "instructions": "Do it",
+                        "tools": [],
+                    }
+                },
+                "playbook_id": "pb-1",
+                "thread_id": "th-1",
+                "tasks": [{"id": "task-1", "title": "Task 1"}],
+                "edges": [],
+                "results": {},
+                "task_outputs": {},
+                "workspace_context": [],
+                "execution_mode": "live",
+                "validated_replays_by_task": {},
+                "step_execution_modes": {},
+                "prompt_overrides": {},
+                "query": "",
+                "current_task_ids": [],
+                "completed_task_ids": [],
+                "status": "in_progress",
+                "error": None,
+                "interrupt_payload": None,
+                "node_timings": {},
+                "evaluation_user_id": "unknown",
+                "artifacts_by_port": {},
+                "clarification_transcripts_by_task": {
+                    "task-1": [
+                        {"role": "assistant", "content": "Which scope?"},
+                        {"role": "user", "content": "Use the latest quarter."},
+                    ]
+                },
+                "task_description_overrides_by_task": {
+                    "task-1": "desc\n\nClarification from user: Use the latest quarter."
+                },
+            },
+            {},
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["error"] == "sentinel-direct-call"
+    assert clarification_checks == []

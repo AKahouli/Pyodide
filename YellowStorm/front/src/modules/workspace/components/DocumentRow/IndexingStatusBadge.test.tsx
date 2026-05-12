@@ -12,4 +12,9 @@ describe('IndexingStatusBadge', () => {
     render(<IndexingStatusBadge status='failed' error='index error' />);
     expect(screen.getByText('Failed')).toBeInTheDocument();
   });
+
+  it('renders processing task name while indexing', () => {
+    render(<IndexingStatusBadge status='processing' taskName='logical_indexing_task' />);
+    expect(screen.getByText('logical_indexing_task')).toBeInTheDocument();
+  });
 });

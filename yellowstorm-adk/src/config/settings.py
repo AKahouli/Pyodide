@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     GRPC_PORT: int = 50051
     PLAYBOOK_STREAM_QUEUE_MAXSIZE: int = 128
     STEP_STREAM_QUEUE_MAXSIZE: int = 64
+    LANGGRAPH_CHECKPOINT_PATH: Optional[str] = None
 
     # External API Configuration for specific brain_ids
     EXTERNAL_API_BRAIN_IDS: List[str] = []  # Brain IDs requiring external routing

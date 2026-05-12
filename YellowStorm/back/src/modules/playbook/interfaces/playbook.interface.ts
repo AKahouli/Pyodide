@@ -1,4 +1,5 @@
 import { ExecutionStatus } from '../schemas/playbook-execution.schema';
+import type { EffectivePlaybookDesignSettings, PlaybookDesignSettings } from './playbook-settings.interface';
 
 export interface ToolBindingActionData {
   actionKey: string;
@@ -28,6 +29,25 @@ export interface InputFileData {
     filepath?: string;
     language?: string;
   };
+}
+
+export interface PlaybookEvaluationRubricWeightsData {
+  semanticMatch: number;
+  referenceMatch: number;
+  artifactRequirements: number;
+  formatCompliance: number;
+  evidenceConsistency: number;
+  executionHealth: number;
+}
+
+export interface PlaybookEvaluationConfigData {
+  expectation: string;
+  referenceBaselineId?: string | null;
+  passThreshold: number;
+  warningThreshold: number;
+  weight: number;
+  rubricVersion: string;
+  weights: PlaybookEvaluationRubricWeightsData;
 }
 
 export interface PlaybookTaskData {
@@ -67,6 +87,9 @@ export interface PlaybookTaskData {
   inputFiles?: InputFileData[];
   stepReplayMode?: string;
   toolBindings?: ToolBindingData[];
+  evaluationConfig?: PlaybookEvaluationConfigData | null;
+  expectedResult?: string | null;
+  disableAdvisorEvaluation?: boolean;
 }
 
 export interface PlaybookEdgeData {
@@ -329,6 +352,8 @@ export interface PlaybookResponse {
   id: string;
   name: string;
   description: string;
+  designSettings: PlaybookDesignSettings;
+  effectiveDesignSettings: EffectivePlaybookDesignSettings;
   tasks: PlaybookTaskData[];
   edges: PlaybookEdgeData[];
   reflectionEnabled: boolean;
@@ -379,6 +404,30 @@ export interface PlaybookExecutionResponse {
   taskResults: TaskResultData[];
   threadId: string | null;
   interruptPayload: Record<string, unknown> | null;
+  waitingForHumanInput: boolean;
+  currentInterruptId: string | null;
+  currentInterruptTaskId: string | null;
+  hitlHistory: Array<{
+    interruptId: string;
+    taskId: string;
+    type: string;
+    taskTitle: string;
+    message: string;
+    taskDescription: string;
+    result: string;
+    round: number;
+    payloadJson: string;
+    resumableActions: string[];
+    status: 'pending' | 'answered';
+    responseAction: string | null;
+    responseMessage: string | null;
+    responseApproved: boolean | null;
+    responseReason: string | null;
+    responseFeedback: string | null;
+    respondedBy: string | null;
+    respondedAt: string | null;
+    createdAt: string;
+  }>;
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
@@ -403,9 +452,14 @@ export interface PlaybookExecutionResponse {
 export interface PlaybookAdvisorResult {
   accuracyScore: number;
   completenessScore: number;
+  resultMatchingScore: number;
   overallScore: number;
   confidence: number;
   toolUsageScore: number;
+  expectedResultSource: 'node_field' | 'golden_baseline' | 'none';
+  expectedResultType: 'exact_value' | 'semantic_description' | 'numeric_presentation' | 'document_generation' | 'baseline_comparison' | 'none';
+  expectedResultMatched: boolean;
+  expectedResultReason: string;
   missingFacts: string[];
   incoherences: string[];
   unsupportedClaims: string[];

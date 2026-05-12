@@ -649,7 +649,19 @@ const SourcesPartRenderer = ({ sources }: { sources: SourceItemData[] }) => (
 // Chart Part
 const ChartPartRenderer = ({ title, kind, data, config, xAxisKey, yAxisKey, nameKey, zAxisKey, stacked = false, layout = 'horizontal', innerRadius = 0, showLegend = true, showGrid = true, series }: ChartPart) => {
   const { t: tCommon } = useModuleTranslation('common');
-  const hasData = data.length > 0;
+  const hasData = Array.isArray(data) && data.length > 0;
+
+  console.log('[ChartPartRenderer] Props:', {
+    title,
+    kind,
+    kindType: typeof kind,
+    hasData,
+    dataLength: data?.length,
+    xAxisKey,
+    yAxisKey,
+    config,
+    series,
+  });
 
   if (!hasData) {
     return <div className='my-4 rounded-xl border bg-card p-4 text-sm text-muted-foreground'>{tCommon('ai.chart.noData')}</div>;

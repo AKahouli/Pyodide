@@ -23,6 +23,7 @@ export interface LoginResponse {
     profileComplete: boolean;
     appearance?: {
       colorTheme: 'default' | 'yellow' | 'orange' | 'blue';
+      language: string;
     };
     profile: {
       firstName?: string;

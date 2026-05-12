@@ -143,7 +143,7 @@ interface WorkspaceActions {
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
   reindexDocument: (workspaceId: string, docId: string) => Promise<void>;
-  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string) => void;
+  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
 
   // Template operations
   fetchTemplates: () => Promise<void>;
@@ -745,7 +745,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }
       },
 
-      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt) => {
+      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size) => {
         const state = get();
         const newCache = new Map(state.documents);
         newCache.forEach((documents, page) => {
@@ -757,6 +757,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               indexingStatus: indexingStatus as WorkspaceDocument['indexingStatus'],
               indexingError,
               lastIndexedAt,
+              indexingTaskName,
+              indexingTaskId,
+              detected_language,
+              chunk_size,
             };
             newCache.set(page, updatedDocuments);
           }

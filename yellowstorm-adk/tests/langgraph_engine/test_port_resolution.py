@@ -682,6 +682,7 @@ def test_build_task_prompt_context_returns_structured_prompt_ready_inputs() -> N
     )
 
     assert prompt_context["task"]["id"] == "downstream"
+    assert prompt_context["metadata"]["default_workspace_id"] == ""
     assert prompt_context["has_port_sources"] is True
     assert prompt_context["has_trigger_port_inputs"] is True
     assert prompt_context["resolved_inputs"][0]["input_port_id"] == "mail_in"
@@ -694,6 +695,96 @@ def test_build_task_prompt_context_returns_structured_prompt_ready_inputs() -> N
     ] == {
         "subject": "FW: Yellowsys.ai",
         "bodyText": "Mail body",
+    }
+
+
+def test_build_task_prompt_context_includes_default_workspace_metadata() -> None:
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {},
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "ws-default",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+    )
+
+    assert prompt_context["metadata"]["default_workspace_id"] == "ws-default"
+    assert prompt_context["metadata"]["retrieval_scope"] == {
+        "brain_ids": ["ws-default"],
+        "external_ids": [],
+    }
+
+
+def test_build_task_prompt_context_includes_normalized_retrieval_scope() -> None:
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {
+                "default": {
+                    "input_port": {
+                        "id": "default",
+                        "name": "Input",
+                        "artifact_kind": "document",
+                    },
+                    "document_bindings": {
+                        "document_ids": ["doc-1", "doc-2"],
+                    },
+                    "resolved_documents": [
+                        {
+                            "document_id": "doc-1",
+                            "filename": "A.docx",
+                            "filepath": "ws-default/doc-1/A.docx",
+                            "workspace_id": "ws-default",
+                        },
+                        {
+                            "document_id": "doc-3",
+                            "filename": "B.docx",
+                            "filepath": "ws-other/doc-3/B.docx",
+                            "workspace_id": "ws-other",
+                        },
+                    ],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                }
+            },
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "ws-default",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+    )
+
+    assert prompt_context["resolved_inputs"][0]["retrieval_scope"] == {
+        "brain_ids": ["ws-default", "ws-other"],
+        "external_ids": ["doc-1", "doc-2", "doc-3"],
+    }
+    assert prompt_context["metadata"]["retrieval_scope"] == {
+        "brain_ids": ["ws-default", "ws-other"],
+        "external_ids": ["doc-1", "doc-2", "doc-3"],
     }
 
 
@@ -769,7 +860,70 @@ def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_sect
     assert "Structured inputs for this task JSON:" in prompt
     assert '"input_port_id": "mail_in"' in prompt
     assert '"subject": "FW: Yellowsys.ai"' in prompt
+    assert "Retrieval scope for MCP document tools JSON:" not in prompt
     assert "This playbook was triggered by an incoming email:" not in prompt
+
+
+def test_build_task_prompt_includes_mcp_retrieval_scope_guidance() -> None:
+    prompt = build_task_prompt(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "Review the provided documents",
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {
+                "default": {
+                    "input_port": {
+                        "id": "default",
+                        "name": "Input",
+                        "artifact_kind": "document",
+                    },
+                    "document_bindings": {
+                        "document_ids": ["doc-1"],
+                    },
+                    "resolved_documents": [
+                        {
+                            "document_id": "doc-1",
+                            "filename": "A.docx",
+                            "filepath": "ws-default/doc-1/A.docx",
+                            "workspace_id": "ws-default",
+                        },
+                        {
+                            "document_id": "doc-2",
+                            "filename": "B.docx",
+                            "filepath": "ws-other/doc-2/B.docx",
+                            "workspace_id": "ws-other",
+                        },
+                    ],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                }
+            },
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "ws-default",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+    )
+
+    assert "Retrieval scope for MCP document tools JSON:" in prompt
+    assert '"brain_ids": [' in prompt
+    assert '"ws-default"' in prompt
+    assert '"ws-other"' in prompt
+    assert '"external_ids": [' in prompt
+    assert '"doc-1"' in prompt
+    assert '"doc-2"' in prompt
+    assert "list_documents` supports `brain_ids` only" in prompt
 
 
 def test_task_has_trigger_port_inputs_detects_bound_trigger_sources() -> None:

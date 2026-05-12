@@ -92,6 +92,51 @@ def _unique_strings(values: Iterable[Any]) -> List[str]:
     return result
 
 
+def _build_port_retrieval_scope(
+    port_state: Dict[str, Any],
+    *,
+    default_workspace_id: str = "",
+) -> Dict[str, List[str]]:
+    resolved_documents = list(port_state.get("resolved_documents") or [])
+    staged_files = list(port_state.get("staged_files") or [])
+
+    return {
+        "brain_ids": _unique_strings(
+            [
+                default_workspace_id,
+                *[
+                    doc.get("workspace_id")
+                    for doc in resolved_documents
+                    if isinstance(doc, dict)
+                ],
+                *[
+                    file_ref.get("workspace_id")
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict)
+                ],
+            ]
+        ),
+        "external_ids": _unique_strings(
+            [
+                *(
+                    (port_state.get("document_bindings") or {}).get("document_ids")
+                    or []
+                ),
+                *[
+                    doc.get("document_id")
+                    for doc in resolved_documents
+                    if isinstance(doc, dict)
+                ],
+                *[
+                    file_ref.get("document_id")
+                    for file_ref in staged_files
+                    if isinstance(file_ref, dict)
+                ],
+            ]
+        ),
+    }
+
+
 def _resolve_document_metadata(
     document_id: str,
     *,
@@ -834,6 +879,7 @@ def build_task_prompt_context(
 ) -> Dict[str, Any]:
     ports = resolved_inputs.get("ports") or {}
     output_ports = list(task_config.get("output_ports") or [])
+    default_workspace_id = select_output_workspace_id(resolved_inputs)
 
     prompt_inputs: List[Dict[str, Any]] = []
     for port_id, port_state in ports.items():
@@ -849,12 +895,18 @@ def build_task_prompt_context(
         resolved_documents = list(port_state.get("resolved_documents") or [])
         staged_files = list(port_state.get("staged_files") or [])
         workspace_artifacts = list(port_state.get("workspace_artifacts") or [])
+        retrieval_scope = _build_port_retrieval_scope(
+            port_state,
+            default_workspace_id=str(default_workspace_id or ""),
+        )
 
         prompt_inputs.append(
             {
                 "input_port_id": port_id,
                 "name": str(input_port.get("name") or port_id),
                 "expected_kind": str(input_port.get("artifact_kind") or ""),
+                "default_workspace_id": str(default_workspace_id or ""),
+                "retrieval_scope": retrieval_scope,
                 "sources": [
                     {
                         "source_task_id": str(
@@ -906,11 +958,39 @@ def build_task_prompt_context(
             }
         )
 
+    retrieval_scope = {
+        "brain_ids": _unique_strings(
+            [
+                str(default_workspace_id or ""),
+                *[
+                    brain_id
+                    for item in prompt_inputs
+                    for brain_id in (
+                        (item.get("retrieval_scope") or {}).get("brain_ids") or []
+                    )
+                ],
+            ]
+        ),
+        "external_ids": _unique_strings(
+            [
+                external_id
+                for item in prompt_inputs
+                for external_id in (
+                    (item.get("retrieval_scope") or {}).get("external_ids") or []
+                )
+            ]
+        ),
+    }
+
     return {
         "task": {
             "id": str(task_config.get("id") or resolved_inputs.get("task_id") or ""),
             "title": str(task_config.get("title") or ""),
             "description": str(task_config.get("description") or ""),
+        },
+        "metadata": {
+            "default_workspace_id": default_workspace_id,
+            "retrieval_scope": retrieval_scope,
         },
         "resolved_inputs": prompt_inputs,
         "declared_output_ports": [
@@ -951,6 +1031,7 @@ def build_task_prompt(
     workspace_file_hint: str = "",
     trigger_context: Optional[Dict[str, Any]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
+    output_mode: str = "plain",
 ) -> str:
     """Build a consistent task prompt from resolved inputs."""
 
@@ -965,7 +1046,7 @@ def build_task_prompt(
     )
 
     lines = [
-        f"Task: {task_config.get('title', '')}\n\nDescription:\n{task_config.get('description', '')}",
+        f"Task Description:\n{task_config.get('description', '')}",
     ]
 
     if prompt_context.get("resolved_inputs"):
@@ -978,15 +1059,62 @@ def build_task_prompt(
             )
         )
 
+    retrieval_scope = (
+        (prompt_context.get("metadata") or {}).get("retrieval_scope") or {}
+    )
+    if retrieval_scope.get("brain_ids") or retrieval_scope.get("external_ids"):
+        lines.append(
+            "Retrieval scope for MCP document tools JSON:\n"
+            + json.dumps(retrieval_scope, ensure_ascii=True, indent=2)
+            + "\n\n"
+            + "MCP retrieval rules:\n"
+            + "- Use `brain_ids` exactly from `retrieval_scope.brain_ids` when calling global retrieval tools.\n"
+            + "- Use `external_ids` exactly from `retrieval_scope.external_ids` when restricting retrieval to known documents.\n"
+            + "- Always pass `brain_ids` and `external_ids` as arrays when provided.\n"
+            + "- `workspace_id` values map to MCP `brain_ids`.\n"
+            + "- `document_id` values map to MCP `external_ids`.\n"
+            + "- `list_documents` supports `brain_ids` only and must not receive `external_ids`.\n"
+            + "- Do not invent IDs or derive them from filenames."
+        )
+
     output_ports = list(task_config.get("output_ports") or [])
     if output_ports:
         output_lines = []
-        output_ports_intro = resolve_prompt_template(
-            prompt_registry,
-            "task.output_ports.note",
-            field="userTemplate",
-            fallback="Declared output ports are semantic targets. When multiple ports share a kind, use the port name and description to decide the right target. If you produce structured outputs, set `output_port_id` to a declared id.",
-        )
+        if output_mode == "structured_final_response":
+            output_ports_intro = resolve_prompt_template(
+                prompt_registry,
+                "task.output_ports.structured_response",
+                field="userTemplate",
+                fallback=(
+                    "Return JSON only with this exact shape:\n"
+                    "{\n"
+                    '  "display_text": "user-visible final answer",\n'
+                    '  "outputs": [\n'
+                    "    {\n"
+                    '      "output_port_id": "declared-port-id",\n'
+                    '      "artifact_kind": "text|code|document|image|data|dashboard",\n'
+                    '      "content": "required for text/code outputs",\n'
+                    '      "filename": "required for generated file outputs",\n'
+                    '      "file_path": "optional exact file path when needed"\n'
+                    "    }\n"
+                    "  ]\n"
+                    "}\n\n"
+                    "Rules:\n"
+                    "- `display_text` is the final user-visible answer.\n"
+                    "- Use only declared `output_port_id` values.\n"
+                    "- For text/code outputs, include final downstream content in `content`.\n"
+                    "- For file outputs, reference only files you actually generated.\n"
+                    "- If no routed output should be produced for a port, omit it.\n"
+                    "- Return JSON only and no markdown fences."
+                ),
+            )
+        else:
+            output_ports_intro = resolve_prompt_template(
+                prompt_registry,
+                "task.output_ports.note",
+                field="userTemplate",
+                fallback="Declared output ports are semantic targets. Answer normally for the user. The runtime will route deterministic outputs automatically.",
+            )
         for output_port in output_ports:
             port_id = str(output_port.get("id") or "default").strip() or "default"
             port_name = str(output_port.get("name") or port_id).strip() or port_id

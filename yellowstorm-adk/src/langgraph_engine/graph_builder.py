@@ -11,6 +11,7 @@ single streaming path (LangGraph ``astream``) is the only mechanism in use.
 from typing import Any, Callable, Dict, List, Optional
 from difflib import SequenceMatcher
 from pathlib import Path
+import re
 
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, END
@@ -32,10 +33,8 @@ from src.langgraph_engine.step_executor import (
     extract_interrupt_message,
     extract_follow_up_question,
     _attach_result_text_for_citations,
-    _task_requires_structured_output_synthesis,
-    _synthesize_structured_outputs,
-    _build_task_artifacts_from_structured_outputs,
-    _collect_generated_artifacts,
+    _determine_output_mode,
+    _finalize_task_outputs,
 )
 from src.langgraph_engine.port_resolution import (
     resolve_task_inputs,
@@ -81,6 +80,61 @@ def _get_clarification_context(
     return transcript, task_description_override
 
 
+def _build_clarification_pre_prompt(
+    task_config: Dict[str, Any],
+    task_description: str,
+    prompt_registry: Optional[Dict[str, Dict[str, Any]]],
+    user_language: str,
+    *,
+    user_query: str = "",
+    resolved_context: str = "",
+) -> str:
+    clarification_prompt = str(task_config.get("clarification_prompt") or "").strip()
+    if not clarification_prompt:
+        clarification_prompt = resolve_prompt_template(
+            prompt_registry,
+            "task.clarification",
+            field="systemTemplate",
+            fallback=(
+                "Review the task below and determine if you have enough information to complete it.\n"
+                f"Task: {task_config.get('title', '')}\n"
+                f"Description: {task_description}\n"
+                "If you need clarification, respond with one clear question only. "
+                "If everything is clear, respond with exactly 'CLEAR'."
+            ),
+        )
+    clarification_prompt = clarification_prompt.replace("{{UserLanguage}}", user_language or "en")
+    context_blocks: List[str] = [clarification_prompt]
+    context_blocks.append(f"Task title: {task_config.get('title', '')}")
+    context_blocks.append(f"Task description:\n{task_description}")
+    if user_query.strip():
+        context_blocks.append(f"User request:\n{user_query.strip()}")
+    if resolved_context.strip():
+        context_blocks.append(f"Available upstream context:\n{resolved_context.strip()}")
+    context_blocks.append(
+        "For this pre-check, treat missing company names, time ranges, targets, data sources, deliverable format, "
+        "or any other essential requirement as insufficient information. If anything essential is missing or ambiguous, "
+        "ask exactly one clarification question. Otherwise respond with exactly 'CLEAR'."
+    )
+    return "\n\n".join(context_blocks)
+
+
+def _build_execution_clarification_guidance(
+    task_config: Dict[str, Any],
+    task_description: str,
+    prompt_registry: Optional[Dict[str, Dict[str, Any]]],
+    user_language: str,
+) -> str:
+    return (
+        "If required information is genuinely missing, ask one concise clarification question "
+        "instead of inventing details. If the task is clear, complete the task normally.\n"
+        "Treat missing company names, time ranges, targets, data sources, deliverable format, "
+        "or other essential requirements as a reason to ask one question before proceeding.\n"
+        f"Task title: {task_config.get('title', '')}\n"
+        f"Task description:\n{task_description}"
+    )
+
+
 def _store_clarification_context(
     state: ExecutionState,
     task_id: str,
@@ -113,6 +167,87 @@ def _store_clarification_context(
 
     state["artifacts_by_port"] = artifacts_by_port
     state["task_outputs"] = task_outputs
+
+
+def _citation_reference(component: Dict[str, Any]) -> str:
+    data = component.get("data") or {}
+    for key in ("text_source", "image_source"):
+        source = data.get(key)
+        if isinstance(source, dict):
+            return str(source.get("reference") or "").strip()
+    return ""
+
+
+def _component_signature(component: Dict[str, Any]) -> str:
+    if component.get("type") == "citation":
+        reference = _citation_reference(component)
+        if reference:
+            return f"citation:{reference}"
+    return json.dumps(component, sort_keys=True, default=str)
+
+
+def _merge_unique_components(
+    first: List[Dict[str, Any]],
+    second: List[Dict[str, Any]],
+    *,
+    component_type: str = "",
+) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for component in [*(first or []), *(second or [])]:
+        if not isinstance(component, dict):
+            continue
+        if component_type and component.get("type") != component_type:
+            continue
+        signature = _component_signature(component)
+        if signature in seen:
+            continue
+        seen.add(signature)
+        merged.append(dict(component))
+    return merged
+
+
+def _reset_citation_parent(component: Dict[str, Any]) -> Dict[str, Any]:
+    if component.get("type") != "citation":
+        return dict(component)
+    updated = dict(component)
+    data = dict(updated.get("data") or {})
+    data["parent_id"] = ""
+    updated["data"] = data
+    return updated
+
+
+def _collect_prior_source_components(
+    state: ExecutionState,
+    current_task_id: str,
+) -> List[Dict[str, Any]]:
+    results = state.get("results") or {}
+    tasks = sorted(
+        state.get("tasks") or [],
+        key=lambda item: (
+            int(item.get("execution_order", 0) or 0),
+            str(item.get("id") or ""),
+        ),
+    )
+    ordered_task_ids = [
+        str(task.get("id") or "")
+        for task in tasks
+        if str(task.get("id") or "") and str(task.get("id") or "") != current_task_id
+    ]
+
+    components: List[Dict[str, Any]] = []
+    for task_id in ordered_task_ids:
+        result = results.get(task_id)
+        if not isinstance(result, dict):
+            continue
+        for component in result.get("components") or []:
+            if (
+                isinstance(component, dict)
+                and component.get("type") in {"sources", "citation"}
+            ):
+                components.append(component)
+
+    return _merge_unique_components([], components)
 
 
 _ARTIFACT_KIND_BY_EXTENSION = {
@@ -697,6 +832,7 @@ class DynamicGraphBuilder:
             task_config = task
             playbook_id = state.get("playbook_id", "")
             thread_id = state.get("thread_id")
+            is_evaluation_task = str(task_config.get("task_type") or "") == "evaluation"
             agent_id = task_config.get("assigned_agent_id")
             start_time = time.time()
             started_at = datetime.utcnow().isoformat() + "Z"
@@ -704,6 +840,7 @@ class DynamicGraphBuilder:
             execution_mode_value = str(
                 task_config.get("execution_mode") or "agent"
             ).strip().lower()
+            prompt_registry = load_prompt_registry(state.get("prompt_overrides") or {})
 
             async def _push_step_update(status, result=None, interrupt_data=None):
                 update: StepUpdate = {
@@ -746,6 +883,7 @@ class DynamicGraphBuilder:
                         (state.get("results") or {}).values()
                     ),
                     artifacts_by_port=state.get("artifacts_by_port"),
+                    node_inputs_by_port=state.get("node_inputs_by_port"),
                     on_progress=_push_step_update,
                 )
 
@@ -769,7 +907,7 @@ class DynamicGraphBuilder:
                 return action_result
 
             # === AGENT MODE: continue with normal agent execution ===
-            if not agent_id or agent_id not in state["agents"]:
+            if not agent_id or agent_id not in state.get("agents", {}):
                 error_msg = f"No agent assigned to task {task_id}"
                 logger.error(f"[{task_id}] {error_msg}")
                 await _push_step_update(
@@ -797,8 +935,8 @@ class DynamicGraphBuilder:
                     "error": error_msg,
                     "status": "failed",
                 }
-
-            agent = state["agents"][agent_id]
+            else:
+                agent = state["agents"][agent_id]
 
             logger.info(f"[{task_id}] Starting task", title=task_config.get("title"))
 
@@ -861,24 +999,27 @@ class DynamicGraphBuilder:
                         int(task_config.get("max_clarifications") or 0), 0
                     )
                     clarification_resolved = False
+                    last_clarification_role = (
+                        clarification_transcript[-1].get("role", "")
+                        if clarification_transcript
+                        else ""
+                    )
+                    if last_clarification_role == "user":
+                        clarification_resolved = True
                     for round_number in range(1, clarification_limit + 1):
+                        if clarification_resolved:
+                            break
                         prior_turns = "\n".join(
                             f"{turn.get('role', 'user')}: {turn.get('content', '')}"
                             for turn in clarification_transcript
                         )
-                        clarification_prompt = task_config.get(
-                            "clarification_prompt"
-                        ) or resolve_prompt_template(
+                        clarification_prompt = _build_clarification_pre_prompt(
+                            task_config,
+                            task_for_execution["description"],
                             prompt_registry,
-                            "task.clarification",
-                            field="systemTemplate",
-                            fallback=(
-                                "Review the task below and determine if you have enough information to complete it.\n"
-                                f"Task: {task_config['title']}\n"
-                                f"Description: {task_for_execution['description']}\n"
-                                "If you need clarification, respond with one clear question only. "
-                                "If everything is clear, respond with exactly 'CLEAR'."
-                            ),
+                            state.get("user_language") or "en",
+                            user_query=state.get("query") or "",
+                            resolved_context="",
                         )
                         if prior_turns:
                             clarification_prompt += (
@@ -1063,9 +1204,6 @@ class DynamicGraphBuilder:
                 context, resolved_inputs, workspace_artifacts = (
                     self._build_structured_context(task_id, task_config, state)
                 )
-                prompt_registry = load_prompt_registry(
-                    state.get("prompt_overrides") or {}
-                )
 
                 workspace_context_for_hint = (
                     state.get("workspace_context")
@@ -1079,6 +1217,7 @@ class DynamicGraphBuilder:
                 def _build_user_prompt(
                     current_task_for_execution: Dict[str, Any],
                 ) -> str:
+                    output_mode = _determine_output_mode(current_task_for_execution)
                     return build_task_prompt(
                         current_task_for_execution,
                         resolved_inputs,
@@ -1087,6 +1226,7 @@ class DynamicGraphBuilder:
                         workspace_file_hint=workspace_file_hint,
                         trigger_context=state.get("trigger_context"),
                         prompt_overrides=state.get("prompt_overrides") or {},
+                        output_mode=output_mode,
                     )
 
                 agent_instructions = inject_skill_catalog(
@@ -1105,7 +1245,21 @@ class DynamicGraphBuilder:
                 )
                 system_prompt = system_prompt.replace(
                     "{{agentName}}", agent["name"]
-                ).replace("{{agentInstructions}}", agent_instructions)
+                ).replace("{{agentInstructions}}", agent_instructions).replace(
+                    "{{UserLanguage}}", state.get("user_language") or "en"
+                )
+                if task_config.get("allow_clarification", False):
+                    clarification_guidance = _build_execution_clarification_guidance(
+                        task_config,
+                        task_for_execution["description"],
+                        prompt_registry,
+                        state.get("user_language") or "en",
+                    )
+                    system_prompt = (
+                        f"{system_prompt}\n\n"
+                        "Clarification behavior for task execution:\n"
+                        f"{clarification_guidance}"
+                    )
 
                 effective_workspace_context = list(state.get("workspace_context") or [])
                 if workspace_artifacts:
@@ -1131,6 +1285,7 @@ class DynamicGraphBuilder:
                     )
 
                 user_prompt = _build_user_prompt(task_for_execution)
+                user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
 
                 async def _execute_task_once(
                     current_task_for_execution: Dict[str, Any],
@@ -1140,9 +1295,14 @@ class DynamicGraphBuilder:
                     nonlocal components, tool_trace, llm_prompt_trace
                     agent_params = agent.get("agent_params") or {}
                     temperature = float(agent_params.get("temperature", 0.7))
+                    output_mode = _determine_output_mode(current_task_for_execution)
                     components = []
                     tool_trace = []
                     llm_prompt_trace = []
+                    prior_source_components = _collect_prior_source_components(
+                        state,
+                        task_id,
+                    )
 
                     from src.langgraph_engine.playbook_tool_factory import (
                         create_langchain_tools,
@@ -1179,6 +1339,7 @@ class DynamicGraphBuilder:
                         output_workspace_id=output_workspace_id,
                         workspace_context_mode=tool_scope["workspace_context_mode"],
                         step_connector_bindings=task.get("tool_bindings"),
+                        initial_components=prior_source_components,
                     )
                     step_execution_modes = state.get("step_execution_modes") or {}
                     execution_mode = step_execution_modes.get(task_id) or state.get(
@@ -1347,7 +1508,7 @@ class DynamicGraphBuilder:
                                 temperature=temperature,
                                 prompt_trace=llm_prompt_trace,
                                 stage="replay_final_synthesis",
-                                on_progress=_on_execution_progress,
+                                on_progress=_on_execution_progress if output_mode == "plain" else None,
                             )
                         else:
                             response = strict_response
@@ -1379,6 +1540,7 @@ class DynamicGraphBuilder:
                             collector=collector,
                             temperature=temperature,
                             on_progress=_on_execution_progress,
+                            stream_final_output=output_mode == "plain",
                         )
                     else:
                         response, usage = await self._llm_direct_call(
@@ -1389,7 +1551,7 @@ class DynamicGraphBuilder:
                             temperature=temperature,
                             prompt_trace=llm_prompt_trace,
                             stage="task_direct_completion",
-                            on_progress=_on_execution_progress,
+                            on_progress=_on_execution_progress if output_mode == "plain" else None,
                         )
                         components = []
                         tool_trace = []
@@ -1400,6 +1562,33 @@ class DynamicGraphBuilder:
                         or "visualizer_agent" in agent["name"].lower()
                     )
                     if not is_visualizer:
+                        prior_citations = _merge_unique_components(
+                            [],
+                            prior_source_components,
+                            component_type="citation",
+                        )
+                        prior_citations = [
+                            _reset_citation_parent(component)
+                            for component in prior_citations
+                        ]
+                        current_non_citations = [
+                            component
+                            for component in components
+                            if not (
+                                isinstance(component, dict)
+                                and component.get("type") == "citation"
+                            )
+                        ]
+                        current_citations = _merge_unique_components(
+                            [],
+                            components,
+                            component_type="citation",
+                        )
+                        components = current_non_citations + _merge_unique_components(
+                            prior_citations,
+                            current_citations,
+                            component_type="citation",
+                        )
                         components = _attach_result_text_for_citations(
                             response,
                             components,
@@ -1413,30 +1602,15 @@ class DynamicGraphBuilder:
                             },
                         )
 
-                    artifacts: List[Dict[str, Any]] = []
-                    if _task_requires_structured_output_synthesis(
-                        current_task_for_execution
-                    ):
-                        structured_outputs = await _synthesize_structured_outputs(
-                            settings,
-                            model_name,
-                            current_task_for_execution,
-                            response,
-                            components,
-                            prompt_trace=llm_prompt_trace,
-                            prompt_overrides=state.get("prompt_overrides") or {},
-                        )
-                        generated_artifacts = _collect_generated_artifacts(components)
-                        if not structured_outputs and (
-                            str(response or "").strip() or generated_artifacts
-                        ):
-                            raise ValueError(
-                                f"Task '{task_id}' completed without structured output mappings for semantically ambiguous output ports"
-                            )
-                        artifacts = _build_task_artifacts_from_structured_outputs(
-                            current_task_for_execution,
-                            structured_outputs,
-                            generated_artifacts,
+                    response, artifacts = _finalize_task_outputs(
+                        current_task_for_execution,
+                        response,
+                        components,
+                        output_mode,
+                    )
+                    if output_mode == "structured_final_response":
+                        await _on_execution_progress(
+                            {"output": response, "components": list(components)}
                         )
 
                     return (
@@ -1572,6 +1746,7 @@ class DynamicGraphBuilder:
                                 task_description,
                             )
                             user_prompt = _build_user_prompt(task_for_execution)
+                            user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
                             continue
 
                     if not task_config.get("interrupt_after", False):
@@ -1666,6 +1841,7 @@ class DynamicGraphBuilder:
                         "description": f"{task_for_execution['description']}\n\nHuman Review Feedback: {feedback_message}",
                     }
                     user_prompt = _build_user_prompt(task_for_execution)
+                    user_prompt = user_prompt.replace("{{UserLanguage}}", state.get("user_language") or "en")
 
                 completed_at = datetime.utcnow().isoformat() + "Z"
                 duration_ms = int((time.time() - start_time) * 1000)

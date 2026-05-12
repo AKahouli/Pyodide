@@ -1,3 +1,5 @@
+import type { ConnectorActionResponse } from '../../types';
+
 export interface ConnectorFormValues {
   slug: string;
   name: string;
@@ -15,7 +17,9 @@ export interface ConnectorFormValues {
   runtimeEnvMappings: Array<{ id: string; key: string; value: string }>;
   mcpTransportType: string;
   mcpServerUrl: string;
+  githubPatToken: string;
   mcpServerConfig: string;
+  actions?: ConnectorActionResponse[];
   actionsJson: string;
   referencedSkillIds: string[];
   isActive: boolean;
@@ -38,7 +42,9 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   runtimeEnvMappings: [],
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
+  githubPatToken: '',
   mcpServerConfig: '',
+  actions: [],
   actionsJson: '',
   referencedSkillIds: [],
   isActive: true,

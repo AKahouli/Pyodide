@@ -21,6 +21,7 @@ import { PlaybookDesignService } from '../services/playbook-design.service';
 import { PlaybookJudgeEnrichmentService } from '../services/playbook-judge-enrichment.service';
 import { PlaybookReplayService } from '../services/playbook-replay.service';
 import { PlaybookOutputFormatService } from '../services/playbook-output-format.service';
+import { PlaybookEvaluationService } from '../services/playbook-evaluation.service';
 import { PlaybookStreamGatewayService } from '../services/playbook-stream-gateway.service';
 import { PlaybookOwnerGuard } from '../guards/playbook-owner.guard';
 import { UserService } from '../../user/user.service';
@@ -45,17 +46,26 @@ import { TestPlaybookMailEventDto } from '../dto/test-playbook-mail-event.dto';
 import { SyncPlaybookMailSubscriptionDto } from '../dto/sync-playbook-mail-subscription.dto';
 import { ValidateTaskReplayDto } from '../dto/validate-task-replay.dto';
 import { UpdateTaskReplayFormatDto } from '../dto/update-task-replay-format.dto';
+import { UpdateTaskReplayLabelDto } from '../dto/update-task-replay-label.dto';
 import { GrabOutputFormatTemplateDto } from '../dto/grab-output-format-template.dto';
 import { UpdateOutputFormatTemplateDto } from '../dto/update-output-format-template.dto';
 import { RerunStepDto } from '../dto/rerun-step.dto';
 import { GetAdvisorRemediationsDto, ApplyAdvisorRemediationsDto } from '../dto/advisor-remediation.dto';
+import { ReapplyOptimizationDto } from '../dto/reapply-optimization.dto';
 import { ResumeFromStepDto } from '../dto/resume-from-step.dto';
 import { RewritePromptDto } from '../dto/rewrite-prompt.dto';
+import { RequestPlaybookIntentDto } from '../dto/request-playbook-intent.dto';
+import {
+  CreateEvaluationBaselineFromCurrentExecutionDto,
+  CreateEvaluationBaselineFromExecutionDto,
+} from '../dto/evaluation-baseline.dto';
 import type { Response } from 'express';
 import { SkipResponseWrap } from '../../response/decorators/skip-response-wrap.decorator';
 import { PlaybookIntegrationLinkResponse } from '../interfaces/playbook.interface';
 import { PlaybookMailTriggerTestEventService } from '../services/playbook-mail-trigger-test-event.service';
 import { PlaybookMailGraphClientService } from '../services/playbook-mail-graph-client.service';
+import { PlaybookRepeatabilityService } from '../services/playbook-repeatability.service';
+import { PlaybookIntentService } from '../services/playbook-intent.service';
 
 @ApiTags('Playbooks')
 @Controller('playbooks')
@@ -68,12 +78,86 @@ export class PlaybookController {
     private readonly judgeService: PlaybookJudgeEnrichmentService,
     private readonly replayService: PlaybookReplayService,
     private readonly outputFormatService: PlaybookOutputFormatService,
+    private readonly evaluationService: PlaybookEvaluationService,
+    private readonly repeatabilityService: PlaybookRepeatabilityService,
+    private readonly playbookIntentService: PlaybookIntentService,
     private readonly mailTriggerTestEventService: PlaybookMailTriggerTestEventService,
     private readonly mailGraphClientService: PlaybookMailGraphClientService,
     private readonly streamGateway: PlaybookStreamGatewayService,
     private readonly userService: UserService,
     private readonly notificationsService: NotificationsService,
   ) {}
+
+  @Get(':id/evaluations')
+  @UseGuards(PlaybookOwnerGuard)
+  async listEvaluationExecutions(@Param('id') id: string, @Query('taskId') taskId?: string) {
+    return this.evaluationService.listEvaluationExecutions(id, taskId);
+  }
+
+  @Get(':id/evaluation-tasks/:taskId/baseline')
+  @UseGuards(PlaybookOwnerGuard)
+  async getEvaluationBaseline(@Param('id') id: string, @Param('taskId') taskId: string) {
+    return this.evaluationService.getActiveBaseline(id, taskId);
+  }
+
+  @Post(':id/evaluation-tasks/:taskId/baseline/from-execution')
+  @UseGuards(PlaybookOwnerGuard)
+  async createEvaluationBaselineFromExecution(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: CreateEvaluationBaselineFromExecutionDto,
+  ) {
+    return this.evaluationService.replaceBaselineFromExecution(id, taskId, dto.executionId, user._id.toString());
+  }
+
+  @Post(':id/evaluation-tasks/:taskId/baseline/from-current-execution')
+  @UseGuards(PlaybookOwnerGuard)
+  async createEvaluationBaselineFromCurrentExecution(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Body() dto: CreateEvaluationBaselineFromCurrentExecutionDto,
+  ) {
+    return this.evaluationService.replaceBaselineFromCurrentEvaluationExecution(
+      id,
+      taskId,
+      dto.executionId,
+      dto.evaluationExecutionId,
+      user._id.toString(),
+    );
+  }
+
+  @Delete(':id/evaluation-tasks/:taskId/baseline')
+  @UseGuards(PlaybookOwnerGuard)
+  async removeEvaluationBaseline(@Param('id') id: string, @Param('taskId') taskId: string) {
+    return this.evaluationService.removeActiveBaseline(id, taskId);
+  }
+
+  @Get(':id/repeatability')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get playbook repeatability analysis' })
+  async getRepeatability(
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    const parsedLimit = Math.min(Math.max(parseInt(limit || '5', 10) || 5, 1), 20);
+    const parsedOffset = Math.max(parseInt(offset || '0', 10) || 0, 0);
+    return this.repeatabilityService.getRepeatability(id, parsedLimit, parsedOffset);
+  }
+
+  @Get(':id/repeatability/:taskId')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Get task-level repeatability analysis' })
+  async getTaskRepeatability(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Query('limit') limit?: string,
+  ) {
+    const parsedLimit = Math.min(Math.max(parseInt(limit || '5', 10) || 5, 1), 20);
+    return this.repeatabilityService.getTaskRepeatability(id, taskId, parsedLimit);
+  }
 
   @Post()
   async create(
@@ -99,6 +183,16 @@ export class PlaybookController {
     @Body() dto: GeneratePlaybookDto,
   ) {
     return this.designService.generatePlaybook(user._id.toString(), dto, user.email);
+  }
+
+  @Post(':id/intent')
+  @UseGuards(PlaybookOwnerGuard)
+  @ApiOperation({ summary: 'Analyze a canvas-level playbook intent without mutating the playbook' })
+  async analyzeIntent(
+    @Param('id') id: string,
+    @Body() dto: RequestPlaybookIntentDto,
+  ) {
+    return this.playbookIntentService.analyze(id, dto);
   }
 
   @Post('rewrite-prompt')
@@ -380,6 +474,25 @@ export class PlaybookController {
     );
   }
 
+  @Post(':id/executions/:executionId/tasks/:taskId/reapply-optimization')
+  @UseGuards(PlaybookOwnerGuard)
+  async reapplyOptimization(
+    @CurrentUser() user: { _id: string },
+    @Param('id') id: string,
+    @Param('executionId') executionId: string,
+    @Param('taskId') taskId: string,
+    @Body() body: ReapplyOptimizationDto,
+  ) {
+    return this.judgeService.reapplyOptimization(
+      user._id.toString(),
+      id,
+      executionId,
+      taskId,
+      body.historyIndex,
+      body.direction,
+    );
+  }
+
   @Get(':id/design-messages')
   @UseGuards(PlaybookOwnerGuard)
   async getDesignMessages(@Param('id') id: string) {
@@ -406,6 +519,7 @@ export class PlaybookController {
   ) {
     return this.executionService.executePlaybook(user._id.toString(), id, dto, user.email, {
       executionTrigger: 'manual',
+      userLanguage: (user as any).appearance?.language || 'en',
     });
   }
 
@@ -472,6 +586,27 @@ export class PlaybookController {
     @Body() dto: UpdateTaskReplayFormatDto,
   ) {
     return this.replayService.updateTaskReplayFormatGuide(id, taskId, replayId, dto);
+  }
+
+  @Patch(':id/tasks/:taskId/replays/:replayId')
+  @UseGuards(PlaybookOwnerGuard)
+  async updateTaskReplayLabel(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Param('replayId') replayId: string,
+    @Body() dto: UpdateTaskReplayLabelDto,
+  ) {
+    return this.replayService.updateTaskReplayLabel(id, taskId, replayId, dto.label);
+  }
+
+  @Delete(':id/tasks/:taskId/replays/:replayId')
+  @UseGuards(PlaybookOwnerGuard)
+  async deleteTaskReplay(
+    @Param('id') id: string,
+    @Param('taskId') taskId: string,
+    @Param('replayId') replayId: string,
+  ) {
+    return this.replayService.deleteTaskReplay(id, taskId, replayId);
   }
 
   @Post(':id/tasks/:taskId/output-format-template')
@@ -570,6 +705,7 @@ export class PlaybookController {
       dto.advisorAutopilotEnabled === true,
       dto.advisorAutopilotTargetScore,
       dto.advisorAutopilotMaxTurns,
+      dto.skipStepExecution === true,
     );
   }
 

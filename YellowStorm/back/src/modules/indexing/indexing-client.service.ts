@@ -127,7 +127,7 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       request: request,
     });
 
-    try {
+    const makeRequest = async (): Promise<IndexDocumentResponse> => {
       const requestBody = {
         metadata: {
           external_id: request.documentId,
@@ -163,7 +163,20 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       });
 
       return { download_id, indexing_id };
+    };
+
+    try {
+      return await makeRequest();
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        this.logger.warn('Got 401 error from indexing API, refreshing token and retrying...', {
+          documentId: request.documentId,
+          workspaceId: request.workspaceId,
+        });
+        await this.authenticate();
+        return await makeRequest();
+      }
+
       if (axios.isAxiosError(error)) {
         const status = error.response?.status;
         const data = error.response?.data;
@@ -203,13 +216,17 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
       workspaceId: request.workspaceId,
     });
 
-    try {
+    const makeRequest = async (): Promise<void> => {
       await this.httpClient.delete('/vectorstores/vectorIds/V2', {
         data: {
           brain_id: request.workspaceId,
           external_id: request.documentId,
         },
       });
+    };
+
+    try {
+      await makeRequest();
 
       this.logger.debug('Delete index API success', {
         documentId: request.documentId,
@@ -217,6 +234,15 @@ export class IndexingClientService implements IndexingClient, OnModuleInit {
 
       return { success: true };
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        this.logger.warn('Got 401 error from delete index API, refreshing token and retrying...', {
+          documentId: request.documentId,
+          workspaceId: request.workspaceId,
+        });
+        await this.authenticate();
+        return await this.deleteIndex.call(this, request);
+      }
+
       if (axios.isAxiosError(error)) {
         const status = error.response?.status;
         const data = error.response?.data;

@@ -803,7 +803,10 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
         // Reset idle timeout on each chunk received
         resetIdleTimeout();
         chunkCount++;
+        console.log(chunk);
         // Capture time to first chunk
+
+        // Capture time to first
         if (chunkCount === 1) {
           timeToFirstChunk = Date.now() - startTime;
         }
@@ -852,6 +855,21 @@ export class StreamService implements OnModuleInit, OnModuleDestroy {
 
               // Extract component type and data from oneof structure
               const { type, data } = this.extractComponentData(comp);
+
+              // Debug logging for chart components
+              if (type === 'chart') {
+                this.logger.debug('[Chart chunk] Sending to frontend', {
+                  id: comp.id,
+                  action,
+                  dataKeys: Object.keys(data),
+                  hasData: 'data' in data,
+                  hasChartData: 'chartData' in data,
+                  dataDataType: typeof data.data,
+                  chartDataDataType: typeof data.chartData,
+                  dataValue: data.data,
+                  chartDataValue: data.chartData,
+                }, logOpts);
+              }
 
               // Capture time to first token when first text/reasoning content appears
               if (timeToFirstToken === null) {

@@ -145,6 +145,29 @@ const DEFAULT_NODE_TEMPLATES: NodeTemplateDefaultsEntry[] = [
     enabled: true,
     isBuiltIn: true,
   },
+  {
+    key: 'evaluation',
+    type: 'evaluation',
+    title: 'Evaluation Task',
+    description: 'Evaluates connected outputs against expected results and optional reference baselines.',
+    icon: 'Scale',
+    color: 'rose',
+    category: 'evaluation',
+    inputPorts: [
+      { id: 'evidence', name: 'Evidence', artifactKind: 'text', required: false },
+      { id: 'documents', name: 'Documents', artifactKind: 'document', required: false },
+      { id: 'data', name: 'Structured Data', artifactKind: 'data', required: false },
+      { id: 'dashboard', name: 'Dashboard', artifactKind: 'dashboard', required: false },
+    ],
+    outputPorts: [{ id: 'evaluation', name: 'Evaluation Result', artifactKind: 'data' }],
+    promptTemplate:
+      'Evaluate the connected workflow outputs against the configured expectation and optional baseline. ' +
+      'Return a structured evaluation summary with score, verdict, and findings.',
+    recommendedAgentTypeSlug: 'researcher',
+    requiredToolNames: [],
+    enabled: true,
+    isBuiltIn: true,
+  },
 ];
 
 @Injectable()
@@ -191,24 +214,36 @@ export class PlaybookNodeTemplateService {
 
   private async seedDefaultsIfNeeded(): Promise<void> {
     const existing = await this.templateModel
-      .find({ key: { $in: DEFAULT_NODE_TEMPLATES.map((item) => item.key) } })
-      .select('key')
+      .find({
+        $or: [
+          { key: { $in: DEFAULT_NODE_TEMPLATES.map((item) => item.key) } },
+          { type: { $in: DEFAULT_NODE_TEMPLATES.map((item) => item.type) } },
+        ],
+      })
+      .select('_id key type isBuiltIn enabled')
       .lean()
       .exec();
-    const existingKeys = new Set(existing.map((item) => item.key));
-    const missing = DEFAULT_NODE_TEMPLATES.filter((item) => !existingKeys.has(item.key));
-    if (!missing.length) return;
 
-    await this.templateModel.insertMany(
-      missing.map((item) => ({
-        ...item,
-        version: 1,
-        createdBy: null,
-        updatedBy: null,
-      })),
-      { ordered: false },
-    );
-    this.invalidateCache();
+    const missing = DEFAULT_NODE_TEMPLATES.filter((item) => {
+      const matches = existing.filter((existingItem) => existingItem.key === item.key || existingItem.type === item.type);
+      return matches.length === 0;
+    });
+
+    if (missing.length) {
+      await this.templateModel.insertMany(
+        missing.map((item) => ({
+          ...item,
+          version: 1,
+          createdBy: null,
+          updatedBy: null,
+        })),
+        { ordered: false },
+      );
+    }
+
+    if (missing.length) {
+      this.invalidateCache();
+    }
   }
 
   async findAll(): Promise<PlaybookNodeTemplateListResponse> {

@@ -11,6 +11,12 @@ const storeFns = vi.hoisted(() => ({
   canvasSyncVersion: 0,
 }));
 
+const triggerActionsFns = vi.hoisted(() => ({
+  onDelete: vi.fn().mockResolvedValue(undefined),
+  onToggleEnabled: vi.fn().mockResolvedValue(undefined),
+  onEdit: vi.fn(),
+}));
+
 const currentPlaybookState = vi.hoisted(() => ({
   value: null as any,
 }));
@@ -191,5 +197,28 @@ describe('usePlaybookCanvas', () => {
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
     expect(storeFns.updateEdges).toHaveBeenCalled();
+  });
+
+  it('delegates trigger node deletion to triggerActions.onDelete', () => {
+    const playbook = makePlaybook({ automatedTriggerType: 'mail' });
+    currentPlaybookState.value = playbook;
+    const { result } = renderHook(() => usePlaybookCanvas(triggerActionsFns));
+
+    act(() => {
+      result.current.removeNode('__trigger__');
+    });
+
+    expect(triggerActionsFns.onDelete).toHaveBeenCalledWith('playbook-1');
+    expect(storeFns.updateTasks).not.toHaveBeenCalled();
+  });
+
+  it('allows selecting the trigger node', () => {
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onNodesChange([{ id: '__trigger__', type: 'select', selected: true }] as any);
+    });
+
+    expect(storeFns.selectStep).toHaveBeenCalledWith('__trigger__');
   });
 });

@@ -52,6 +52,8 @@ import type {
   AdminModelResponse,
   UpdateModelRequest,
   SyncModelsResponse,
+  AdminPlaybookSettings,
+  UpdateAdminPlaybookSettingsRequest,
   PlaybookPromptListResponse,
   PlaybookPromptResponse,
   UpsertPlaybookPromptRequest,
@@ -494,6 +496,23 @@ export async function clearDefaultModel(id: string): Promise<AdminModelResponse>
 export async function syncModels(): Promise<SyncModelsResponse> {
   const response = await apiClient.post<ApiResponse<SyncModelsResponse>>(
     API_ENDPOINTS.adminModels.sync
+  );
+  return response.data.data;
+}
+
+export async function getAdminPlaybookSettings(): Promise<AdminPlaybookSettings> {
+  const response = await apiClient.get<ApiResponse<AdminPlaybookSettings>>(
+    API_ENDPOINTS.adminPlaybookSettings.base,
+  );
+  return response.data.data;
+}
+
+export async function updateAdminPlaybookSettings(
+  data: UpdateAdminPlaybookSettingsRequest,
+): Promise<AdminPlaybookSettings> {
+  const response = await apiClient.post<ApiResponse<AdminPlaybookSettings>>(
+    API_ENDPOINTS.adminPlaybookSettings.base,
+    data,
   );
   return response.data.data;
 }

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ResizablePanel, OverflowTooltip } from '@/components/ui/resizable-panel';
 import { cn } from '@/lib/utils';
 import type { ConnectorResponse } from '@/modules/admin/types';
 import apiClient from '@/lib/api/client';
@@ -84,7 +85,14 @@ export function ConnectorSidebar({ isOpen, onDragStart }: ConnectorSidebarProps)
   if (!isOpen) return null;
 
   return (
-    <div className='w-64 border-l bg-background flex flex-col h-full'>
+    <ResizablePanel
+      storageKey="ys_connector_sidebar_width"
+      defaultWidth={256}
+      minWidth={180}
+      maxWidthRatio={0.35}
+      handlePosition="right"
+      className="border-l bg-background"
+    >
       <div className='p-3 border-b'>
         <div className='flex items-center gap-2 mb-3'>
           <Cable className='h-4 w-4 text-muted-foreground' />
@@ -126,7 +134,7 @@ export function ConnectorSidebar({ isOpen, onDragStart }: ConnectorSidebarProps)
           </div>
         )}
       </ScrollArea>
-    </div>
+    </ResizablePanel>
   );
 }
 
@@ -182,7 +190,7 @@ function ConnectorCard({
         >
           <ChevronRight className={cn('h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform', connector.expanded && 'rotate-90')} />
           <Plug className='h-3.5 w-3.5 text-muted-foreground shrink-0' />
-          <span className='truncate font-medium'>{connector.name}</span>
+          <OverflowTooltip text={connector.name} />
 
           {isOAuth && (
             isConnected ? (
@@ -237,7 +245,7 @@ function ConnectorCard({
                 startDrag(e, [{ key: action.key, label: action.label }])
               }
             >
-              <span className='truncate'>{action.label}</span>
+              <OverflowTooltip text={action.label} />
               <Badge variant='outline' className='ml-auto text-[10px] px-1 py-0'>
                 {action.safety}
               </Badge>

@@ -7,6 +7,13 @@ import type { HumanFeedbackData } from '../types';
 const setDesignerOpenMock = vi.fn();
 const setCopilotModeMock = vi.fn();
 const selectStepMock = vi.fn();
+const storeState = {
+  setDesignerOpen: setDesignerOpenMock,
+  setCopilotMode: setCopilotModeMock,
+  selectStep: selectStepMock,
+  designerOpen: false,
+  copilotMode: 'design',
+};
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -14,9 +21,7 @@ vi.mock('@/modules/localization', () => ({
 
 vi.mock('../store', () => ({
   usePlaybookStore: (sel: any) => sel({
-    setDesignerOpen: setDesignerOpenMock,
-    setCopilotMode: setCopilotModeMock,
-    selectStep: selectStepMock,
+    ...storeState,
   }),
 }));
 
@@ -46,6 +51,8 @@ const pendingClarification: HumanFeedbackData = {
 describe('HumanFeedbackInline', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    storeState.designerOpen = false;
+    storeState.copilotMode = 'design';
   });
 
   it('renders approval title and copilot prompt for pending approval', () => {
@@ -53,6 +60,7 @@ describe('HumanFeedbackInline', () => {
     expect(screen.getByText('interrupt.approvalTitle')).toBeInTheDocument();
     expect(screen.getByText('Approve this action?')).toBeInTheDocument();
     expect(screen.getByText('interrupt.answerInCopilot')).toBeInTheDocument();
+    expect(screen.getByText('interrupt.waitingForDecision')).toBeInTheDocument();
     expect(screen.getByText('interrupt.openCopilot')).toBeInTheDocument();
   });
 
@@ -80,6 +88,16 @@ describe('HumanFeedbackInline', () => {
     render(<HumanFeedbackInline data={pendingClarification} taskId="t1" />);
     expect(screen.getByText('interrupt.clarificationTitle')).toBeInTheDocument();
     expect(screen.getByText('interrupt.openCopilot')).toBeInTheDocument();
+  });
+
+  it('removes the open-copilot CTA when the interrupt panel is already open', () => {
+    storeState.designerOpen = true;
+    storeState.copilotMode = 'interrupt';
+
+    render(<HumanFeedbackInline data={pendingApproval} taskId="t1" />);
+
+    expect(screen.getByText('interrupt.answerInCopilotOpen')).toBeInTheDocument();
+    expect(screen.queryByText('interrupt.openCopilot')).not.toBeInTheDocument();
   });
 
   it('keeps clarification pending state read-only in the step detail', () => {

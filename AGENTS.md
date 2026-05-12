@@ -33,6 +33,18 @@ When you encounter a file reference (e.g., `@rules/general.md`), load it on dema
 - **Comments:** Sparingly — code should be self-documenting.
 - **Commits:** Conventional format: `<type>(<scope>): <subject>` — types: `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `chore`.
 
+### Mandatory Guideline Loading (HARD RULE)
+
+**Before writing or reviewing any code**, agents **must** read the relevant coding guidelines file based on the paths being changed:
+
+| Paths being changed | Required reading |
+|---|---|
+| `YellowStorm/front/**` | `YellowStorm/front/FRONTEND_GUIDELINES.md` |
+| `YellowStorm/back/**` | `YellowStorm/back/BACKEND_GUIDELINES.md` |
+| Both `front/` and `back/` | **Both** files, plus cross-boundary contract rules |
+
+This applies to **all** agents: `build`, `plan`, `reviewer`, `diagnostics`, `frontend-qa`. Skipping this step is a hard rule violation regardless of task size.
+
 ---
 
 ## Agent Team
@@ -56,11 +68,11 @@ User task
    │  pass / fail
    ▼
 ┌─────────────┐
-│ maintainer  │◀── post-merge docs & cleanup
+│ maintainer  │◀── Full/Light memory sync only
 └─────────────┘
 ```
 
-`diagnostics`, `backend-developer`, `frontend-developer`, and `frontend-qa` are called **on demand** by `build` when the situation requires them.
+`diagnostics` is called **on demand** by `build` when the situation requires it. `frontend-qa` is a **mandatory blocking browser QA gate** for frontend-visible changes.
 
 `contract` and `integration` are workflow roles described here, but they are not currently implemented as project-local OpenCode subagents in `.opencode/agents/`.
 
@@ -78,10 +90,12 @@ User task
 
 **Skip when:** Single-file fix with no interface change. Pure formatting/typo/comment edit.
 
+**Before planning**, read the relevant coding guidelines file per the Mandatory Guideline Loading table above. The action plan must account for guideline compliance.
+
 **Outputs a scoped action plan:**
 1. Files to touch (with rationale)
 2. Risk assessment (what could break)
-3. Doc impact tier (Full / Light / None — see Documentation Protocol)
+3. Memory impact tier (Full / Light / None — see Memory Protocol)
 4. Recommended specialist calls (e.g., "call `diagnostics` first — failure is unclear")
 
 `build` must follow the plan. Deviations require re-invoking `plan`.
@@ -93,26 +107,27 @@ User task
 Primary coding agent. Has bash permissions, skill access, and delegation authority.
 
 **Before writing code:**
-0. check the `/docs/webapp-frontend/` and `/docs/webapp-backend/` for existing documentation.
-1. Check if `plan` is required (see criteria above). If yes, delegate and wait.
-2. Read `/docs/DOC_INDEX.md`. Identify related feature slugs. >> Must say to the user (I'm reading the existing doc ...)
-3. Read the top 40 lines of `/docs/CHANGELOG.md`.
-4. For each related slug, read its `Latest Doc Path`. Note architecture decisions, API contracts, and recent changes.
-5. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
+0. Load the `obsidian-context` skill and search the Obsidian vault for relevant feature, architecture, contract, convention, and recent-change notes. Tell the user briefly that you are checking the vault memory.
+1. Read the relevant coding guidelines file per the Mandatory Guideline Loading table above. If touching frontend, read `FRONTEND_GUIDELINES.md`; if backend, read `BACKEND_GUIDELINES.md`; if both, read both.
+2. Check if `plan` is required (see criteria above). If yes, delegate and wait. `plan` must also read the relevant guideline file before producing its action plan.
+3. Read the relevant vault notes returned by search, prioritizing `Agent Quick Context`, index/MOC notes, and notes with matching `slug`, `source_paths`, or tags.
+4. Follow only directly relevant `[[Internal Links]]` from those notes; avoid broad recursive note traversal.
+5. Inspect the codebase after memory retrieval to verify the current implementation.
+6. Confirm internally: which decisions you're respecting, which requirements you're addressing, and whether this modifies an existing feature or creates a new one.
 
 **After writing code:**
-1. Delegate to `reviewer`. **Task is not complete until `reviewer` returns PASS.**
-2. If `reviewer` returns FAIL, fix the findings and re-submit.
-3. Once passed, delegate to `maintainer` with: what changed, why, and which feature slugs were affected.
+1. If the change affects frontend UI, layout, styling, interaction, navigation, forms, browser runtime behavior, responsive behavior, or accessibility, delegate to `frontend-qa`. **Task is not complete until `frontend-qa` returns PASS or the user explicitly accepts the risk.**
+2. If `frontend-qa` returns FAIL, fix the findings and re-submit to `frontend-qa` before continuing.
+3. Delegate to `reviewer`. **Task is not complete until `reviewer` returns PASS.**
+4. If `reviewer` returns FAIL, fix the findings and re-submit.
+5. Once passed, delegate to `maintainer` only when the memory tier is **Full** or **Light**. Include what changed, why, which feature slugs or modules were affected, and which vault notes should be updated. Skip `maintainer` for **None** tier tasks.
 
 **Delegation triggers during implementation:**
 - Unclear failure or vague bug → `diagnostics` before editing
-- Backend-only implementation slice in `YellowStorm/back` → `backend-developer` for scoped NestJS work
-- Frontend-only implementation slice in `YellowStorm/front` → `frontend-developer` for scoped UI work
-- Frontend change affecting interaction/layout/runtime → `frontend-qa` after editing
+- Frontend-visible change affecting UI, layout, styling, interaction, navigation, forms, browser runtime, responsive behavior, or accessibility → `frontend-qa` after editing (mandatory, blocking)
 - Proto/API change or cross-service modification → perform explicit contract validation after editing; if a dedicated `contract` agent is added later, use it
 - Cross-service change needing end-to-end verification → perform explicit integration verification after contract validation; if a dedicated `integration` agent is added later, use it
-- Need current library docs → context7 skill (see below)
+- Current external library/framework/API behavior is unclear or being changed → context7 skill (see below)
 
 **Hard rules:**
 - Destructive shell commands require user approval.
@@ -122,10 +137,13 @@ Primary coding agent. Has bash permissions, skill access, and delegation authori
 
 #### `reviewer` — Quality Gate (read-only, BLOCKING)
 
-Single-pass review across three lenses:
+**Before reviewing**, read the relevant coding guidelines file per the Mandatory Guideline Loading table above. All review findings must be checked against the applicable guideline rules.
+
+Single-pass review across four lenses:
 
 | Lens | Focus |
 |------|-------|
+| **Guideline compliance** | Violations of `FRONTEND_GUIDELINES.md` or `BACKEND_GUIDELINES.md` rules — anti-patterns, wrong imports, missing i18n, wrong API patterns, etc. |
 | **Correctness** | Bugs, regressions, missing edge cases, missing tests |
 | **Security** | Auth flaws, input validation, injection/XSS/SSRF, secret leaks, unsafe trust boundaries, AI/tool safety |
 | **Performance** | N+1s, unbounded queries, render churn, unnecessary re-renders, blocking calls |
@@ -164,43 +182,48 @@ Single-pass review across three lenses:
 
 ---
 
-#### `backend-developer` — Backend Implementation
+#### `frontend-qa` — Browser Validation (read-only, BLOCKING)
 
-**Invoke when:** A task is mostly contained within `YellowStorm/back` and `build` wants a specialist to implement a backend slice while retaining overall task ownership.
-
-**Does:**
-- Implements NestJS, Mongoose, DTO, validation, and backend test changes in `YellowStorm/back`
-- Preserves repo backend patterns for modules, config, exceptions, and structured logging
-- Adds or updates backend tests when the surrounding area already uses them and behavior changes materially
-- Hands implementation details back to `build` for review, contract/integration handling when needed, and task closure
-
-**Output:** Changed files, verification run, and any follow-up risks for `build`.
-
----
-
-#### `frontend-qa` — Browser Validation
-
-**Invoke after:** Any frontend change affecting interaction, layout, or browser runtime behavior.
+**Invoke after:** Any frontend-visible change affecting UI, layout, styling, interaction, navigation, forms, browser runtime behavior, responsive behavior, or accessibility.
 
 **Does:**
-- Real-browser validation via `chrome-devtools` and `ai-elements` skills + project MCP browser tooling
-- Visual regression, responsive behavior, interaction quality (focus, keyboard, a11y basics)
+- Real-browser validation via `chrome-devtools` and `ai-elements` skills + project MCP browser tooling.
+- Uses a vision-capable model when configured for screenshots/snapshots and visual state analysis.
+- Checks visual regression, responsive behavior, interaction quality, focus, keyboard navigation, console health, network health, and a11y basics.
+- Never modifies code. Findings go back to `build` for fixes.
 
-**Output:** Pass/fail with evidence. Findings go back to `build`.
+**Output:**
 
----
+```markdown
+## Frontend QA Verdict: PASS | FAIL
 
-#### `frontend-developer` — Frontend Implementation
+### Browser Coverage
+- Desktop: tested / not tested
+- Mobile: tested / not tested
+- Console errors: none / listed
+- Network errors: none / listed
 
-**Invoke when:** A task is mostly contained within `YellowStorm/front` and `build` wants a specialist to implement a frontend slice while retaining overall task ownership.
+### Checks Performed
+- Visual correctness
+- Interaction
+- Responsive behavior
+- Console health
+- Network health
+- Accessibility basics
+- Regression coverage
 
-**Does:**
-- Implements React, TypeScript, Radix UI, and Tailwind changes in `YellowStorm/front`
-- Preserves repo frontend patterns and the project's `i18` localization rule for visible text
-- Adds or updates frontend tests when the surrounding area already uses them and behavior changes materially
-- Hands implementation details back to `build` for review, QA delegation, and task closure
+### Findings (if any)
+1. [critical|major|minor] Description with screenshot/snapshot/console evidence
 
-**Output:** Changed files, verification run, and any follow-up risks for `build`.
+### Required Actions (if FAIL)
+- ...
+```
+
+- **FAIL** on broken primary user flows, visible layout regressions, blocking browser runtime errors, inaccessible critical controls, or unhandled network failures caused by the change.
+- **FAIL** on console errors caused by the change. Console warnings are findings unless they indicate broken behavior, security risk, or a likely regression.
+- **FAIL** on failed requests or unexpected status codes caused by the change unless they are expected, handled, and not user-visible regressions.
+- **PASS with findings** is allowed for non-blocking minor visual, accessibility, console, or network issues.
+- Read-only/browser-only. Never modifies code.
 
 ---
 
@@ -290,17 +313,17 @@ Single-pass review across three lenses:
 
 ---
 
-#### `maintainer` — Docs & Refactoring
+#### `maintainer` — Memory & Refactoring
 
 **Invoke:**
-- After every task that passes `reviewer` (mandatory for doc sync)
+- After tasks that pass `reviewer` and have memory tier **Full** or **Light**
 - When `plan` identifies refactoring opportunities
 
 **Does:**
-- Documentation: feature READMEs, `DOC_INDEX.md`, `CHANGELOG.md`
+- Obsidian vault memory: feature notes, architecture notes, decisions, contracts, conventions, and recent changes
 - Behavior-preserving code refactoring and module cleanup
 
-See the `maintainer` agent file for the full documentation procedure.
+See the `maintainer` agent file for the full memory procedure.
 
 ---
 
@@ -309,105 +332,130 @@ See the `maintainer` agent file for the full documentation procedure.
 | Signal | Action |
 |--------|--------|
 | Multi-file, multi-slug, or arch change | `plan` first (mandatory) |
-| Vague bug or unclear failure | `diagnostics` first |
-| Backend-only implementation slice | `backend-developer` during implementation |
-| Frontend-only implementation slice | `frontend-developer` during implementation |
-| Any code change | `reviewer` after (mandatory, blocking) |
-| Frontend UI/interaction change | `frontend-qa` after |
-| Proto/API change or cross-service edit | Run explicit contract validation after implementation |
-| Cross-service change needing E2E verification | Run explicit integration verification after contract validation |
-| Task complete and reviewed | `maintainer` last |
-| Need library/framework docs | context7 skill |
-| Single-file, no interface change | `build` directly → `reviewer` → `maintainer` |
+| Frontend-visible UI/layout/interaction/runtime/a11y change | `frontend-qa` after (mandatory, blocking) |
+| Need current external library/framework/API docs | context7 skill |
+| Single-file, no interface change | `build` directly → `reviewer` → `maintainer` only if Full/Light |
+
+### Explicit Agent Capabilities
+
+| Agent | Role | Trigger Conditions | Output Format | Key Skills | Dependencies |
+|-------|------|--------------------|---------------|------------|--------------|
+| plan | Task decomposition | >1 file, ambiguity, cross-service | Structured plan | File search, tool calling, dependency analysis | n/a |
+| build | Implementation | Code generation/mod | Code + verification | File writing, git, testing, tool integration | plan (for complex tasks) |
+| reviewer | Code review | Any code change | PASS/FAIL + findings | Code reading, logic analysis, test validation | build |
+| diagnostics | Test gaps | Test failures, incompleteness | Test plan + fixes | Test writing, scenario modeling | reviewer |
+| frontend-qa | UI testing | Frontend changes | PASS/FAIL + browser evidence | Browser automation, visual regression | build |
+| maintainer | Memory sync | Full/Light memory tier | Memory updates | Obsidian MCP tools, documentation | reviewer |
+
 
 ---
 
-## Documentation Protocol
+## Memory Protocol
 
-### Structure
+The Obsidian vault is the canonical long-term memory for agents. Repository markdown can remain for human reference, but agent workflows must retrieve and update implementation context through the vault.
+
+### Vault Structure
 
 ```
-docs/
-├── DOC_INDEX.md
-├── CHANGELOG.md
-└── {feature_slug}/
-    └── README.md     ← single living doc, versioned by git
+YellowStorm/
+├── Index.md
+├── Features/
+│   └── {feature_slug}.md
+├── Architecture/
+│   └── {topic}.md
+├── Decisions/
+│   └── ADR-{number}-{topic}.md
+├── Conventions/
+│   └── {topic}.md
+└── Timeline/
+    └── YYYY-MM.md
 ```
 
 ### Change Tiers
 
-| Tier | Trigger | Doc action |
+| Tier | Trigger | Memory action |
 |------|---------|------------|
-| **Full** | API/contract change, new feature, architecture mod, requirement change | Update or create feature README + index + changelog |
-| **Light** | Implementation-only change, no interface change | Changelog entry only |
-| **None** | Typo, formatting, comment-only edit | No doc action |
+| **Full** | API/contract change, new feature, architecture mod, requirement change | Update or create the relevant vault note(s), frontmatter, `Agent Quick Context`, 3-7 high-value links, tags, and timeline entry (use `timestamp `YYYY-MM-DD HH:MM:SS UTC` for each change) |
+| **Light** | Implementation-only change, no interface change | Append concise recent-change memory to the relevant vault note |
+| **None** | Typo, formatting, comment-only edit | No memory action |
 
 `plan` determines the tier when invoked. Otherwise `build` determines it.
 
 ### Hard Rules
 
-- One `README.md` per slug, updated in place, history tracked by git.
-- Never create a duplicate slug — check `DOC_INDEX.md` first.
-- Relative paths for cross-references.
+- Search before writing to avoid duplicate vault notes.
+- Prefer stable feature notes at `YellowStorm/Features/{feature_slug}.md`.
+- Use 3-7 high-value Obsidian `[[Internal Links]]` on Full-tier notes. Link to related architecture, contracts, decisions, conventions, and pitfalls where applicable.
+- Prefer link quality over quantity; links should answer which notes an agent should read next to avoid a bad change.
+- When reading a feature note, read `Agent Quick Context` first and follow only links directly relevant to the task.
 - All timestamps UTC.
-- `CHANGELOG.md` updated **last**.
 - Content must be factual and code-derived.
+- Vault interactions must go through the Obsidian MCP tools, not direct filesystem access.
+- `docs/` is passive human reference only. Agents must not read or write `docs/` during normal workflow. Memory lives exclusively in the Obsidian vault.
 
-### DOC_INDEX.md Format
-
-```markdown
-# Documentation Index
-
-> Auto-maintained by the maintainer agent. Do not edit manually.
-> Last updated: YYYY-MM-DD HH:MM UTC
-
-| Feature Slug | Description | Doc Path | Status | Last Updated |
-|--------------|-------------|----------|--------|--------------|
-| `auth` | Authentication & session management | `/docs/auth/README.md` | ✅ stable | 2026-03-20 |
-```
-
-### CHANGELOG.md Format
+### Feature Note Frontmatter
 
 ```markdown
-## [YYYY-MM-DD HH:MM UTC] — {short title}
-
-- **Feature:** `{feature_slug}`
-- **Type:** feat | fix | refactor | docs
-- **Changed:** {what}
-- **Why:** {rationale}
-- **Impact:** {files/modules affected}
+---
+project: YellowStorm
+type: feature
+slug: {feature_slug}
+status: active | draft | deprecated
+updated: YYYY-MM-DD HH:MM UTC
+source_paths:
+  - YellowStorm/front/src/modules/{module}
+  - YellowStorm/back/src/modules/{module}
+tags:
+  - yellowstorm
+  - feature/{feature_slug}
+---
 ```
 
-### Feature README Template
+### Feature Note Template
 
 ```markdown
 # {Feature Name}
 
-> **Slug:** `{feature_slug}` | **Status:** 🚧 draft | **Last Updated:** YYYY-MM-DD HH:MM UTC
+## Agent Quick Context
+- Entry points: `{primary source paths}`
+- Runtime flow: {short request/data flow}
+- Contracts: {endpoints, DTOs, proto messages, or none}
+- Invariants: {rules future agents must preserve}
+- Pitfalls: {known failure modes or testing gotchas}
 
 ## Purpose
 {What this feature does and why it exists.}
 
-## Scope
-{Included and explicitly excluded.}
+## Current Implementation
+{Current modules, data flow, runtime behavior.}
 
-## Architecture
-{Key modules, data flow. Mermaid diagram if non-trivial.}
-
-## Requirements
-- As a {role}, I want to {goal} so that {benefit}.
-- [ ] {acceptance criterion}
+## Key Files
+- `{path}` — {purpose}
 
 ## API / Interfaces
-{Key signatures, endpoints, or schemas.}
+{Endpoints, schemas, gRPC contracts, events, or tool contracts.}
 
 ## Design Decisions
 | Decision | Rationale | Alternatives Considered |
 |----------|-----------|------------------------|
 
-## Related Features
-- [`{related_slug}`](/docs/{related_slug}/README.md)
+## Known Pitfalls
+- {Failure mode, invariant, migration warning, testing gotcha.}
+
+## Recent Changes
+### YYYY-MM-DD HH:MM UTC
+- Changed: {what}
+- Why: {rationale}
+- Impact: {files/modules affected}
+
+## Related Notes
+- [[Related Architecture]]
+- [[Related Contract]]
+- [[Related Decision]]
+- [[Related Convention]]
+- [[Known Pitfall]]
 ```
+
 
 ---
 
@@ -415,39 +463,60 @@ docs/
 
 **Available to:** `build`, `plan`, `diagnostics`, `reviewer`.
 
-When the task involves a library, framework, SDK, or API — even well-known ones — Must always fetch current docs first. Training data may be outdated.
+Use Context7 only when the task depends on current external library, framework, SDK, or API behavior.
 
 ```bash
 npx ctx7@latest library <name> "<question>"
 npx ctx7@latest docs <libraryId> "<question>"
 ```
 
-- Always `library` first to get a valid ID.
+- Use `library` first to get a valid ID.
 - Full question as the query.
 - Max 3 commands per question.
 - Never include credentials.
 - On quota errors, inform user → `npx ctx7@latest login`.
 
-**Not for:** refactoring, scripts from scratch, debugging business logic, code review, general concepts.
+**Use for:** adding or changing external API usage, version-specific behavior, unclear framework behavior, or suspected library misuse.
+
+**Not for:** refactoring, scripts from scratch, debugging business logic, simple code review, local test patterns, or general concepts.
 
 ---
 
 ## Development Workflow
 
-1. Must always Use Context7 when the task depends on current library or framework documentation
+1. Use Context7 only when current external library or framework documentation is needed
 2. `plan` if criteria met → action plan
 3. `build` implements (pre-coding protocol mandatory)
 4. Run relevant verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`, `poetry run pytest` in `yellowstorm-adk`
-5. `reviewer` validates → **must PASS**
-6. `diagnostics` if test gaps; `frontend-qa` if UI affected
-8. `maintainer` syncs docs per tier
+5. `frontend-qa` validates frontend-visible changes → **must PASS**
+6. `reviewer` validates → **must PASS**
+7. `diagnostics` if test gaps
+8. must always call the `maintainer` agent to syncs Obsidian vault memory with relevant changes
 
+## Prompting Improvements for Better Agent Performance
 
-## graphify
+1. **Explicit Agent Capabilities**: Add a section "When to use which agent" with a table clearly outlining what each agent does, when to call them, and what tools/skills they have access to.
 
-This project has a graphify knowledge graph at graphify-out/.
+2. **Step-by-Step Task Decomposition**: When invoking an agent for a complex task, guide it through a structured thinking process.
 
-Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current
+3. **Structured Output Format**: Define a clear template for agent outputs (e.g., using JSON schema or Markdown sections) including "Status", "Findings", "Required Actions", "Files Modified", and "Files Created".
+
+4. **Contextual Information**: Include relevant context in the invocation prompt, such as:
+    - The specific task or bug description
+    - Any relevant error messages or logs
+    - Affected file paths or modules
+    - Previous conversation history if relevant
+
+5. **Success Criteria**: Clearly define what constitutes a successful outcome for the agent's task.
+
+6. **Constraints and Rules**: Explicitly state any constraints the agent must follow, such as:
+    - Coding standards
+    - Security policies
+    - Tool usage restrictions
+    - Time/resource limitations
+
+7. **Iterative Refinement**: Encourage an iterative workflow where agents can request clarification or additional information if needed, and humans can provide feedback to refine the task.
+
+## Code patterns
+
+- When generating Python code for dynamic prompts, always prioritize f-strings (string interpolation) over concatenation or .format(). Ensure all variables are wrapped in {} and the string is prefixed with f. This maintains clarity and let the user set the prompt template dynamically from the ui without breaking the code.

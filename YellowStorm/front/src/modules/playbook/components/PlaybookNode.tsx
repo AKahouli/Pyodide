@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -19,9 +19,13 @@ import {
 } from '@/components/ai-elements/node';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { InputFilesPopover } from './InputFilesPopover';
+import { BaselineBadgePopover } from './BaselineBadgePopover';
 import { PortLabel } from './PortLabel';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgentStore } from '@/modules/agent/store';
+import { CreateEditAgentDialog } from '@/modules/agent/components/CreateEditAgentDialog';
+import type { UserAgentFormValues } from '@/modules/agent/components/AgentFormSchema';
+import type { Agent } from '@/modules/agent/types';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -39,6 +43,8 @@ export interface NodeContextMenuActions {
   onSkipStep: (nodeId: string) => void;
   onSaveBaseline: (nodeId: string) => void;
   onGrabOutputFormat: (nodeId: string) => void;
+  onRemoveReplayBaseline: (playbookId: string, taskId: string, replayId: string) => Promise<void>;
+  onRenameReplayBaseline: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<void>;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
@@ -66,7 +72,7 @@ export const NodeContextMenuContext = createContext<NodeContextMenuActions | nul
 
 const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
-  running: 'border-primary/40 ring-1 ring-primary/40 shadow-md shadow-primary/10',
+  running: 'border-running shadow-md shadow-running/10',
   completed: '',
   failed: 'ring-2 ring-destructive/60',
   skipped: '',
@@ -75,7 +81,7 @@ const STATUS_RING: Record<StepStatus, string> = {
 
 const STATUS_HEADER_BG: Record<StepStatus, string> = {
   pending: '',
-  running: 'bg-orange-500/10',
+  running: 'bg-running/10',
   completed: 'bg-green-500/10',
   failed: 'bg-destructive/10',
   skipped: '',
@@ -117,14 +123,8 @@ function getSemanticScoreTone(score: number): {
 
 function SemanticScoreBadge({
   score,
-  semantic,
-  evidence,
-  judge,
 }: {
   score: number;
-  semantic: number;
-  evidence: number;
-  judge: number;
 }) {
   const { t } = useModuleTranslation('playbook');
   const radius = 14;
@@ -134,78 +134,54 @@ function SemanticScoreBadge({
   const tone = getSemanticScoreTone(normalized);
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div className="flex items-center gap-2">
-          <div className="relative h-9 w-9 shrink-0">
-            <svg className="-rotate-90 h-9 w-9" viewBox="0 0 36 36" aria-hidden="true">
-              <circle
-                cx="18"
-                cy="18"
-                r={radius}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                className="text-muted/50"
-              />
-              <circle
-                cx="18"
-                cy="18"
-                r={radius}
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                strokeDashoffset={dashOffset}
-                className={tone.ringClass}
-              />
-            </svg>
-            <div className={cn('absolute inset-0 flex items-center justify-center text-[10px] font-semibold', tone.textClass)}>
-              {normalized}
-            </div>
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t('node.match')}</div>
-          </div>
+    <div className="flex items-center gap-2">
+      <div className="relative h-9 w-9 shrink-0">
+        <svg className="-rotate-90 h-9 w-9" viewBox="0 0 36 36" aria-hidden="true">
+          <circle
+            cx="18"
+            cy="18"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            className="text-muted/50"
+          />
+          <circle
+            cx="18"
+            cy="18"
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+            className={tone.ringClass}
+          />
+        </svg>
+        <div className={cn('absolute inset-0 flex items-center justify-center text-[10px] font-semibold', tone.textClass)}>
+          {normalized}
         </div>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="space-y-1 text-xs">
-        <div className="font-medium">{t('node.evaluationScore')}</div>
-        <div>{t('node.scoreLabel.overall')} {normalized}%</div>
-        <div>{t('node.scoreLabel.semantic')} {Math.round(semantic)}%</div>
-        <div>{t('node.scoreLabel.evidence')} {Math.round(evidence)}%</div>
-        <div>{t('node.scoreLabel.judge')} {Math.round(judge)}%</div>
-      </TooltipContent>
-    </Tooltip>
+      </div>
+      <div className="min-w-0">
+        <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{t('node.match')}</div>
+      </div>
+    </div>
   );
 }
 
 function JudgeScoreBadge({
   score,
-  accuracy,
-  completeness,
 }: {
   score: number;
-  accuracy: number;
-  completeness: number;
 }) {
-  const { t } = useModuleTranslation('playbook');
-  const tone = getSemanticScoreTone(score);
+  const normalizedScore = score <= 1 ? score * 100 : score;
+  const tone = getSemanticScoreTone(normalizedScore);
+
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
-          <span>{Math.round(score)}%</span>
-        </Badge>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="text-xs">
-        <div className="font-medium">{t('node.advisorScore')}</div>
-        <div>{t('node.scoreLabel.accuracy')} {Math.round(accuracy)}%</div>
-        <div>{t('node.scoreLabel.completeness')} {Math.round(completeness)}%</div>
-        <div>{t('node.scoreLabel.overall')} {Math.round(score)}%</div>
-      </TooltipContent>
-    </Tooltip>
+    <Badge variant="outline" className={cn('h-6 gap-1.5 px-2 py-0 text-[10px] font-medium', tone.badgeClass)}>
+      <span>{Math.round(normalizedScore)}%</span>
+    </Badge>
   );
 }
 
@@ -291,6 +267,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const { t } = useModuleTranslation('playbook');
   const getAgentById = useAgentStore((s) => s.getAgentById);
   const currentTask = usePlaybookStore((s) => s.currentPlaybook?.tasks.find((t) => t.id === id));
+  const playbookId = usePlaybookStore((s) => s.currentPlaybook?.id ?? null);
   const selectedStepId = usePlaybookStore((s) => s.selectedStepId);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
@@ -298,6 +275,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
   const [dragPortCompatible, setDragPortCompatible] = useState<boolean | null>(null);
+  const [agentDialogOpen, setAgentDialogOpen] = useState(false);
+  const [agentDialogSaving, setAgentDialogSaving] = useState(false);
+  const updateAgent = useAgentStore((s) => s.updateAgent);
   const updateNodeInternals = useUpdateNodeInternals();
 
   const migratedTask = useMemo(() => migrateTask(data), [data]);
@@ -317,11 +297,15 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     }
     return map;
   }, [inputFiles]);
-  const agent = data.assignedAgentId ? getAgentById(data.assignedAgentId) : null;
-  const isActionMode = data.executionMode === 'action';
-  const isConfigured = isActionMode ? !!data.selectedAction : !!data.assignedAgentId;
-  const selectedActionLabel = data.selectedAction
-    ? `${String(data.selectedAction).charAt(0).toUpperCase()}${String(data.selectedAction).slice(1)}`
+  const effectiveTask = currentTask || data;
+  const agentId = effectiveTask.assignedAgentId;
+  const agent = agentId ? getAgentById(agentId) : null;
+  const isActionMode = effectiveTask.executionMode === 'action';
+  const isConfigured = effectiveTask.taskType === 'evaluation'
+    ? !!(effectiveTask.assignedAgentId && (effectiveTask.evaluationConfig?.expectation || effectiveTask.evaluationConfig?.referenceBaselineId))
+    : isActionMode ? !!effectiveTask.selectedAction : !!effectiveTask.assignedAgentId;
+  const selectedActionLabel = effectiveTask.selectedAction
+    ? `${String(effectiveTask.selectedAction).charAt(0).toUpperCase()}${String(effectiveTask.selectedAction).slice(1)}`
     : null;
   const status = data.stepStatus as StepStatus | undefined;
   const semanticMatch = data.stepSemanticMatch;
@@ -333,15 +317,24 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
   const isSelected = selected || selectedStepId === id;
+  const isRecentlyChanged = data.isRecentlyChanged === true;
   const selectedClass = isSelected
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
     : '';
   const disabledClass = isExplicitlyDisabled ? 'opacity-60 border-dashed' : '';
-  const replayBadgeLabel = currentTask?.activeReplayVersion
-    ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
-    : t('detail.badges.baseline');
+  const recentlyChangedClass = isRecentlyChanged
+    ? 'ring-2 ring-primary/70 shadow-[0_0_12px_2px_rgba(59,130,246,0.15)] animate-[ys-node-flash_1.6s_ease-in-out_infinite]'
+    : '';
+  const replayBadgeLabel = currentTask?.activeReplayLabel
+    ? currentTask.activeReplayVersion
+      ? t('baselineBadge.versionedLabel', { label: currentTask.activeReplayLabel, version: currentTask.activeReplayVersion })
+      : t('baselineBadge.customLabel', { label: currentTask.activeReplayLabel })
+    : currentTask?.activeReplayVersion
+      ? t('detail.badges.replayBaseline', { version: currentTask.activeReplayVersion })
+      : t('detail.badges.baseline');
   const showReplayBadge = Boolean(currentTask?.hasValidatedReplay || currentTask?.isSavingReplayBaseline);
   const showOutputFormatBadge = Boolean(currentTask?.hasOutputFormatTemplate || currentTask?.isCapturingOutputFormat);
+  const showOptimizationBadge = Boolean(effectiveTask?.advisorOptimizedAt);
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
@@ -367,6 +360,35 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     } catch { /* noop */ }
     return null;
   }, []);
+
+  const handleAgentDialogSave = useCallback(async (data: UserAgentFormValues) => {
+    if (!agent) return;
+    setAgentDialogSaving(true);
+    try {
+      await updateAgent(agent.id, {
+        name: data.name,
+        agentType: data.agentType,
+        role: data.role,
+        description: data.description,
+        temperature: data.temperature,
+        model: data.model || undefined,
+        instruction: data.instruction,
+        ignorePrePrompt: data.ignorePrePrompt,
+        knowledgeBases: data.knowledgeBases,
+        tools: data.tools,
+        skills: data.skills,
+        disabledSkills: data.disabledSkills,
+        connectors: data.connectors,
+        isActive: data.isActive,
+        isDefaultForType: data.isDefaultForType,
+      });
+      setAgentDialogOpen(false);
+    } catch {
+      // handled by store toast
+    } finally {
+      setAgentDialogSaving(false);
+    }
+  }, [agent, updateAgent]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -453,10 +475,11 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <Node
           handles={false}
           className={cn(
-            'group transition-all duration-300',
+            'group',
             ringClass,
             selectedClass,
             disabledClass,
+            recentlyChangedClass,
             isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
             isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
             isDragOver && dragOverPortId && dragPortCompatible === false && 'ring-2 ring-red-400/50 ring-inset bg-red-50/20',
@@ -562,15 +585,41 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
 
           <NodeContent className="p-3 space-y-2.5">
             <div className="flex items-center gap-2">
-              <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-              <span className={cn(
-                'truncate text-xs',
-                isActionMode
-                  ? (selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground')
-                  : (agent ? 'font-medium' : 'italic text-muted-foreground'),
-              )}>
-                {isActionMode ? (selectedActionLabel || t('node.notConfigured')) : (agent ? agent.name : t('node.noAgent'))}
-              </span>
+              {isActionMode ? (
+                <>
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className={cn(
+                    'truncate text-xs',
+                    selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground',
+                  )}>
+                    {selectedActionLabel || t('node.notConfigured')}
+                  </span>
+                </>
+              ) : agent ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary hover:bg-primary/10 transition-colors cursor-pointer max-w-full"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setAgentDialogOpen(true);
+                      }}
+                    >
+                      <Bot className="h-2.5 w-2.5 shrink-0" />
+                      <span className="truncate">{agent.name}</span>
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('node.agentBadge.editAgent')}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <>
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="truncate text-xs italic text-muted-foreground">
+                    {t('node.noAgent')}
+                  </span>
+                </>
+              )}
               {!isConfigured && (
                 <Badge variant="outline" className="h-5 border-dashed px-1.5 py-0 text-[10px] text-muted-foreground">
                   {t('node.notConfigured')}
@@ -584,15 +633,27 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               <p className="text-xs text-muted-foreground/60 italic">{t('node.noDescription')}</p>
             )}
 
-            {(showReplayBadge || showOutputFormatBadge) && (
+            {(showReplayBadge || showOutputFormatBadge || showOptimizationBadge) && (
               <div className="flex flex-wrap items-center gap-1.5">
-                {showReplayBadge && (
+                {showOptimizationBadge && (
                   <NodeMetaBadge
-                    label={replayBadgeLabel}
-                    busy={Boolean(currentTask?.isSavingReplayBaseline)}
+                    label={t('node.badges.optimized')}
+                    toneClassName="border-violet-500/30 bg-violet-100 text-violet-700"
+                  />
+                )}
+                {showReplayBadge && (
+                  <BaselineBadgePopover
+                    taskId={id}
+                    playbookId={playbookId || ''}
+                    replayId={currentTask?.activeReplayId}
+                    label={currentTask?.activeReplayLabel}
                     toneClassName={currentTask?.activeReplayIsStale
                       ? 'border-orange-500/30 bg-orange-100 text-orange-700'
                       : 'border-amber-500/30 bg-amber-100 text-amber-700'}
+                    badgeLabel={replayBadgeLabel}
+                    isBusy={Boolean(currentTask?.isSavingReplayBaseline)}
+                    onRemove={actions?.onRemoveReplayBaseline ?? (() => Promise.resolve())}
+                    onRename={actions?.onRenameReplayBaseline ?? (() => Promise.resolve())}
                   />
                 )}
                 {showOutputFormatBadge && (
@@ -646,8 +707,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 {judgeResult && (
                   <JudgeScoreBadge
                     score={judgeResult.overallScore}
-                    accuracy={judgeResult.accuracyScore}
-                    completeness={judgeResult.completenessScore}
                   />
                 )}
               </div>
@@ -663,9 +722,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 {semanticMatch && status === 'completed' ? (
                   <SemanticScoreBadge
                     score={semanticMatch.matchScore}
-                    semantic={semanticMatch.semanticSimilarityScore}
-                    evidence={semanticMatch.evidenceConsistencyScore}
-                    judge={semanticMatch.judgeScore}
                   />
                 ) : null}
               </div>
@@ -742,6 +798,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
               </div>
             </div>
           </NodeContent>
+          {isStepRunning && (
+            <div className="absolute inset-0 rounded-md pointer-events-none z-10 animate-running-node-glow" />
+          )}
         </Node>
       </ContextMenuTrigger>
 
@@ -784,6 +843,15 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
           {t('nodeContextMenu.delete')}
         </ContextMenuItem>
       </ContextMenuContent>
+      {agent && (
+        <CreateEditAgentDialog
+          open={agentDialogOpen}
+          onOpenChange={setAgentDialogOpen}
+          agent={agent}
+          onSave={handleAgentDialogSave}
+          saving={agentDialogSaving}
+        />
+      )}
     </ContextMenu>
   );
 }

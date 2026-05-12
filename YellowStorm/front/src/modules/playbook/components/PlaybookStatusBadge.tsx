@@ -6,7 +6,7 @@ import type { StepStatus, ExecutionStatus } from '../types';
 const statusConfig: Record<string, { icon: React.ElementType; className: string }> = {
   idle: { icon: Circle, className: 'border-transparent bg-muted text-muted-foreground' },
   pending: { icon: Circle, className: 'border-transparent bg-muted text-muted-foreground' },
-  running: { icon: Loader2, className: 'border-transparent bg-primary/10 text-primary' },
+  running: { icon: Loader2, className: 'border-running/50 bg-running/15 text-running' },
   completed: { icon: CheckCircle2, className: 'border-transparent bg-green-500/10 text-green-600' },
   failed: { icon: XCircle, className: 'border-transparent bg-destructive/10 text-destructive' },
   skipped: { icon: CornerDownRight, className: 'border-transparent bg-muted text-muted-foreground' },

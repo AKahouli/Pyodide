@@ -9,10 +9,26 @@
       "Bash(python *)",
       "Bash(node -p \"require\\('recharts/package.json'\\).version\")",
       "Bash(npm test *)",
+      "Bash(grep -E \"\\\\.\\(ts|tsx\\)$\")",
+      "Bash(node *)",
+      "Bash(npm run *)",
+      "Bash(pkill -f \"mock-grpc-server.js\")",
+      "Bash(node mock-grpc-server.js)",
+      "Bash(pkill -f \"nest start\")",
+      "Bash(npm start *)",
+      "Bash(pkill *)",
+      "Bash(lsof -i:50051)",
+      "Bash(xargs kill *)",
+      "Bash(lsof -i:50051 -nP -t)",
+      "Bash(lsof -tiTCP -i:50051 -sTCP:LISTEN -n)",
+      "Bash(awk '{print $2}')",
+      "Bash(npm test *)",
+      "Bash(npx tsc *)",
       "Bash(python3 -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
       "Bash(python3 -m py_compile utilities/render_chart.py)",
       "Bash(git restore *)",
-      "Bash(grep -E \"^\\\\+\\\\+\\\\+.*\\\\.\\(ts|tsx\\)$|^\\\\+.*console\\\\.\\(log|warn|error|debug|info\\)\")"
+      "Bash(grep -E \"^\\\\+\\\\+\\\\+.*\\\\.\\(ts|tsx\\)$|^\\\\+.*console\\\\.\\(log|warn|error|debug|info\\)\")",
+      "mcp__ide__getDiagnostics"
     ]
   }
 }

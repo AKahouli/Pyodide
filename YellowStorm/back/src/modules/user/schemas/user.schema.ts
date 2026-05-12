@@ -23,6 +23,9 @@ export class UserAppearance {
     default: 'default',
   })
   colorTheme!: 'default' | 'yellow' | 'orange' | 'blue';
+
+  @Prop({ type: String, default: 'en' })
+  language!: string;
 }
 
 @Schema({ _id: false })
@@ -85,7 +88,7 @@ export class User extends Document {
   profile!: UserProfile;
 
   // Appearance preferences
-  @Prop({ type: UserAppearance, default: { colorTheme: 'default' } })
+  @Prop({ type: UserAppearance, default: { colorTheme: 'default', language: 'en' } })
   appearance!: UserAppearance;
 
   // Consents

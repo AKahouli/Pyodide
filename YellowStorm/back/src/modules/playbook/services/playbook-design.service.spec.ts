@@ -15,6 +15,7 @@ import { LiteLLMConnectionService } from '../../models/litellm-connection.servic
 import { UsageService } from '../../usage/usage.service';
 import { ConfigService } from '@nestjs/config';
 import { PlaybookPromptService } from './playbook-prompt.service';
+import { PlaybookSettingsService } from './playbook-settings.service';
 
 describe('PlaybookDesignService', () => {
   let service: PlaybookDesignService;
@@ -27,6 +28,7 @@ describe('PlaybookDesignService', () => {
   let modelsService: Record<string, jest.Mock>;
   let usageService: Record<string, jest.Mock>;
   let promptService: Record<string, jest.Mock>;
+  let playbookSettingsService: Record<string, jest.Mock>;
   let loggerService: Record<string, jest.Mock>;
   let designMessageModel: Record<string, jest.Mock>;
 
@@ -111,6 +113,10 @@ describe('PlaybookDesignService', () => {
       }),
     };
 
+    const mockPlaybookSettingsService = {
+      resolveInferenceModel: jest.fn().mockResolvedValue(mockDefaultModel.id),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         PlaybookDesignService,
@@ -124,6 +130,7 @@ describe('PlaybookDesignService', () => {
         { provide: ConfigService, useValue: mockConfigService },
         { provide: UsageService, useValue: mockUsageService },
         { provide: PlaybookPromptService, useValue: mockPromptService },
+        { provide: PlaybookSettingsService, useValue: mockPlaybookSettingsService },
         { provide: LoggerService, useValue: mockLoggerService },
       ],
     }).compile();
@@ -136,6 +143,7 @@ describe('PlaybookDesignService', () => {
     modelsService = module.get(ModelsService);
     usageService = module.get(UsageService);
     promptService = module.get(PlaybookPromptService);
+    playbookSettingsService = module.get(PlaybookSettingsService);
     loggerService = module.get(LoggerService);
     designMessageModel = module.get(getModelToken(PlaybookDesignMessage.name));
   });
@@ -261,9 +269,8 @@ describe('PlaybookDesignService', () => {
       );
     });
 
-    it('should use model id as fallback when litellmModel is not available', async () => {
-      const modelWithoutLitellm = { id: 'model-123', litellmModel: undefined };
-      modelsService.getDefaultModel.mockResolvedValue(modelWithoutLitellm);
+    it('should use resolved inference model', async () => {
+      playbookSettingsService.resolveInferenceModel.mockResolvedValue('model-123');
 
       await service.generatePlaybook(userId, dto);
 
@@ -273,7 +280,7 @@ describe('PlaybookDesignService', () => {
     });
 
     it('should use empty string for model when no default model exists', async () => {
-      modelsService.getDefaultModel.mockResolvedValue(null);
+      playbookSettingsService.resolveInferenceModel.mockResolvedValue(null);
 
       await service.generatePlaybook(userId, dto);
 
@@ -283,7 +290,7 @@ describe('PlaybookDesignService', () => {
     });
 
     it('should use empty string for fallback model id when no default model exists', async () => {
-      modelsService.getDefaultModel.mockResolvedValue(null);
+      playbookSettingsService.resolveInferenceModel.mockResolvedValue(null);
       agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
 
       await service.generatePlaybook(userId, dto);
@@ -702,6 +709,10 @@ describe('PlaybookDesignService', () => {
       expect(grpcService.generatePlaybook).toHaveBeenCalledWith(
         expect.objectContaining({
           query: dto.query,
+          user_context: {
+            user_id: userId,
+            username: userId,
+          },
           available_agents: mockGrpcAgents,
           model: mockDefaultModel.id,
           prompt_overrides: expect.any(Object),

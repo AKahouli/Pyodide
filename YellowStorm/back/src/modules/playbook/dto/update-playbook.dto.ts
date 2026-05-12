@@ -14,6 +14,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { UpdatePlaybookDesignSettingsDto } from './playbook-settings.dto';
 
 export class InputFileMetadataDto {
   @IsOptional()
@@ -102,6 +103,63 @@ export class TaskOutputPortDto {
   description?: string;
 }
 
+export class EvaluationRubricWeightsDto {
+  @IsOptional()
+  @IsNumber()
+  semanticMatch?: number;
+
+  @IsOptional()
+  @IsNumber()
+  referenceMatch?: number;
+
+  @IsOptional()
+  @IsNumber()
+  artifactRequirements?: number;
+
+  @IsOptional()
+  @IsNumber()
+  formatCompliance?: number;
+
+  @IsOptional()
+  @IsNumber()
+  evidenceConsistency?: number;
+
+  @IsOptional()
+  @IsNumber()
+  executionHealth?: number;
+}
+
+export class EvaluationConfigDto {
+  @IsOptional()
+  @IsString()
+  expectation?: string;
+
+  @IsOptional()
+  @IsString()
+  referenceBaselineId?: string | null;
+
+  @IsOptional()
+  @IsNumber()
+  passThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  warningThreshold?: number;
+
+  @IsOptional()
+  @IsNumber()
+  weight?: number;
+
+  @IsOptional()
+  @IsString()
+  rubricVersion?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EvaluationRubricWeightsDto)
+  weights?: EvaluationRubricWeightsDto;
+}
+
 export class UpdatePlaybookTaskDto {
   @IsString()
   id!: string;
@@ -114,6 +172,12 @@ export class UpdatePlaybookTaskDto {
   @IsString()
   @MaxLength(20000)
   description?: string;
+
+  @ApiPropertyOptional({ type: UpdatePlaybookDesignSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdatePlaybookDesignSettingsDto)
+  designSettings?: UpdatePlaybookDesignSettingsDto;
 
   @IsOptional()
   @IsString()
@@ -198,7 +262,7 @@ export class UpdatePlaybookTaskDto {
   inputFiles?: InputFileDto[];
 
   @IsOptional()
-  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'])
+  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation'])
   taskType?: string;
 
   @ApiPropertyOptional({ type: [TaskInputPortDto] })
@@ -227,6 +291,22 @@ export class UpdatePlaybookTaskDto {
     disableAutoSkills?: boolean;
     isEnabled?: boolean;
   }>;
+
+  @ApiPropertyOptional({ type: EvaluationConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EvaluationConfigDto)
+  evaluationConfig?: EvaluationConfigDto | null;
+
+  @ApiPropertyOptional({ description: 'Expected result text for repeatability evaluation' })
+  @IsOptional()
+  @IsString()
+  expectedResult?: string | null;
+
+  @ApiPropertyOptional({ description: 'Disable advisor evaluation for this step even when enabled at playbook level' })
+  @IsOptional()
+  @IsBoolean()
+  disableAdvisorEvaluation?: boolean;
 
 }
 
@@ -262,6 +342,12 @@ export class UpdatePlaybookDto {
   @IsString()
   @MaxLength(20000)
   description?: string;
+
+  @ApiPropertyOptional({ type: UpdatePlaybookDesignSettingsDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => UpdatePlaybookDesignSettingsDto)
+  designSettings?: UpdatePlaybookDesignSettingsDto;
 
   @ApiPropertyOptional({ type: [UpdatePlaybookTaskDto] })
   @IsOptional()

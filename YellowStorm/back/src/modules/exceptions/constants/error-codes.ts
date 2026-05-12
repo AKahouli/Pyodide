@@ -345,7 +345,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.AGENT_TYPE_PROMPT_NOT_FOUND]: 'Agent type prompt not found for this model.',
 
   [ErrorCode.CUSTOM_AGENT_NOT_FOUND]: 'Agent not found.',
-  [ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS]: 'An agent with this name already exists.',
+  [ErrorCode.CUSTOM_AGENT_ALREADY_EXISTS]: 'An agent with this name or slug already exists.',
   [ErrorCode.CUSTOM_AGENT_FORBIDDEN]: 'You do not have access to this agent.',
   [ErrorCode.CUSTOM_AGENT_INVALID_NAME]: 'Agent name must contain only letters, numbers, and spaces.',
   [ErrorCode.CUSTOM_AGENT_DEFAULT_READONLY]: 'Default agents cannot be modified by users.',

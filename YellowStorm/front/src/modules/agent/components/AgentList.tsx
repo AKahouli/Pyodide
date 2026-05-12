@@ -44,6 +44,7 @@ export function AgentList() {
       if (editingAgent) {
         await updateAgent(editingAgent.id, {
           name: data.name,
+          slug: data.slug,
           agentType: data.agentType,
           role: data.role,
           description: data.description,
@@ -62,6 +63,7 @@ export function AgentList() {
       } else {
         await createAgent({
           name: data.name,
+          slug: data.slug,
           agentType: data.agentType,
           role: data.role,
           description: data.description,

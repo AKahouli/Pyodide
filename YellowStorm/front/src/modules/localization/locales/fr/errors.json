@@ -86,7 +86,7 @@
   "ERR_2302": "Ce type d'agent est utilisé et ne peut pas être supprimé.",
   "ERR_2303": "Invite de type d'agent introuvable pour ce modèle.",
   "ERR_2400": "Agent introuvable.",
-  "ERR_2401": "Un agent porte déjà ce nom.",
+  "ERR_2401": "Un agent porte déjà ce nom ou ce slug.",
   "ERR_2402": "Vous n'avez pas accès à cet agent.",
   "ERR_2404": "Le nom de l'agent doit contenir uniquement lettres, chiffres et espaces.",
   "ERR_2405": "Les agents par défaut ne peuvent pas être modifiés.",

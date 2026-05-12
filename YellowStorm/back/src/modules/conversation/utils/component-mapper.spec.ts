@@ -1,3 +1,5 @@
+/// <reference types="jest" />
+
 import { extractComponentData } from './component-mapper';
 
 describe('component-mapper chart extraction', () => {
@@ -28,7 +30,7 @@ describe('component-mapper chart extraction', () => {
           chartData: '[{"month":"Jan","revenue":42}]',
         config: '{"revenue":{"label":"Revenue","color":"#123456"}}',
         xAxisKey: 'month',
-        series: '[{"dataKey":"revenue","label":"Revenue","color":"#123456"}]',
+        series: [{ dataKey: 'revenue', label: 'Revenue', color: '#123456' }],
         kind: 'CHART_KIND_LINE',
         yAxisKey: 'revenue',
         nameKey: '',
@@ -71,7 +73,7 @@ describe('component-mapper chart extraction', () => {
           chartData: '[{"produit":"Stylo","prix":1.2}]',
         config: '{"prix":{"label":"Prix (€)","color":"#123456"}}',
         xAxisKey: 'produit',
-        series: '[{"dataKey":"prix","label":"Prix (€)"}]',
+        series: [{ dataKey: 'prix', label: 'Prix (€)' }],
         kind: 'CHART_KIND_BAR',
         yAxisKey: 'prix',
         nameKey: '',
@@ -130,7 +132,7 @@ describe('component-mapper chart extraction', () => {
           chartData: '[]',
         config: '{}',
         xAxisKey: 'category',
-        series: '[]',
+        series: [],
         kind: 'CHART_KIND_BAR',
         yAxisKey: 'value',
         nameKey: '',

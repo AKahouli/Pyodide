@@ -5,12 +5,14 @@ import { SystemSetting, SystemSettingDocument, MaintenanceValue, RegistrationVal
 import { MaintenanceStatus } from './interfaces/maintenance.interface';
 import { RegistrationStatus } from './interfaces/registration.interface';
 import { AppearanceSettings } from './interfaces/appearance.interface';
+import { AdminPlaybookSettings, DEFAULT_ADMIN_PLAYBOOK_SETTINGS } from './interfaces/playbook-settings.interface';
 import { LoggerService } from '../logger';
 import { User, UserDocument } from '../user/schemas/user.schema';
 
 const MAINTENANCE_KEY = 'maintenance_mode';
 const REGISTRATION_KEY = 'registration_settings';
 const APPEARANCE_KEY = 'appearance_settings';
+const PLAYBOOK_SETTINGS_KEY = 'playbook_settings';
 const CACHE_TTL_MS = 5000; // 5 seconds
 const DEFAULT_APPEARANCE: AppearanceSettings = {
   defaultColorTheme: 'default',
@@ -53,8 +55,10 @@ export class SystemService implements OnApplicationBootstrap {
   private maintenanceCache: MaintenanceStatus | null = null;
   private registrationCache: RegistrationStatus | null = null;
   private appearanceCache: AppearanceSettings | null = null;
+  private playbookSettingsCache: AdminPlaybookSettings | null = null;
   private lastCacheUpdate = 0;
   private lastRegistrationCacheUpdate = 0;
+  private lastPlaybookSettingsCacheUpdate = 0;
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -74,6 +78,7 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshMaintenanceCache(),
         this.refreshRegistrationCache(),
         this.refreshAppearanceCache(),
+        this.refreshPlaybookSettingsCache(),
       ]);
       this.logger.log('System service initialized', {
         maintenanceEnabled: this.maintenanceCache?.enabled ?? false,
@@ -92,6 +97,9 @@ export class SystemService implements OnApplicationBootstrap {
         this.refreshAppearanceCache().catch((err) => {
           this.logger.warn('Periodic appearance cache refresh failed', { error: err.message });
         });
+        this.refreshPlaybookSettingsCache().catch((err) => {
+          this.logger.warn('Periodic playbook settings cache refresh failed', { error: err.message });
+        });
       }, CACHE_TTL_MS);
     } catch (error) {
       this.logger.warn('Failed to initialize system service', { error: (error as Error).message });
@@ -99,6 +107,7 @@ export class SystemService implements OnApplicationBootstrap {
       this.maintenanceCache = { enabled: false, message: '' };
       this.registrationCache = { enabled: true };
       this.appearanceCache = DEFAULT_APPEARANCE;
+      this.playbookSettingsCache = DEFAULT_ADMIN_PLAYBOOK_SETTINGS;
     }
   }
 
@@ -228,6 +237,7 @@ export class SystemService implements OnApplicationBootstrap {
   async forceRefreshCache(): Promise<void> {
     await this.refreshMaintenanceCache();
     await this.refreshAppearanceCache();
+    await this.refreshPlaybookSettingsCache();
   }
 
   async getAppearanceSettings(): Promise<AppearanceSettings> {
@@ -254,6 +264,33 @@ export class SystemService implements OnApplicationBootstrap {
     this.appearanceCache = settings;
     this.lastCacheUpdate = Date.now();
     return settings;
+  }
+
+  async getPlaybookSettings(): Promise<AdminPlaybookSettings> {
+    const now = Date.now();
+    if (this.playbookSettingsCache && now - this.lastPlaybookSettingsCacheUpdate < CACHE_TTL_MS) {
+      return this.playbookSettingsCache;
+    }
+
+    return this.refreshPlaybookSettingsCache();
+  }
+
+  async setPlaybookSettings(settings: AdminPlaybookSettings): Promise<AdminPlaybookSettings> {
+    const value: AdminPlaybookSettings = {
+      inferenceModelId: settings.inferenceModelId?.trim() || null,
+      nodeSuggestionsMode: settings.nodeSuggestionsMode,
+      approvalSuggestionMode: settings.approvalSuggestionMode,
+    };
+
+    await this.systemSettingModel.findOneAndUpdate(
+      { key: PLAYBOOK_SETTINGS_KEY },
+      { key: PLAYBOOK_SETTINGS_KEY, value },
+      { upsert: true, new: true },
+    );
+
+    this.playbookSettingsCache = value;
+    this.lastPlaybookSettingsCacheUpdate = Date.now();
+    return value;
   }
 
   async applyAppearanceToAllUsers(colorTheme: AppearanceSettings['defaultColorTheme']): Promise<number> {
@@ -429,6 +466,31 @@ export class SystemService implements OnApplicationBootstrap {
 
       this.appearanceCache = this.appearanceCache ?? DEFAULT_APPEARANCE;
       return this.appearanceCache;
+    }
+  }
+
+  private async refreshPlaybookSettingsCache(): Promise<AdminPlaybookSettings> {
+    try {
+      const setting = await this.systemSettingModel.findOne({ key: PLAYBOOK_SETTINGS_KEY }).lean().exec();
+      const value = setting?.value as Partial<AdminPlaybookSettings> | undefined;
+
+      this.playbookSettingsCache = {
+        inferenceModelId: typeof value?.inferenceModelId === 'string' && value.inferenceModelId.trim()
+          ? value.inferenceModelId.trim()
+          : null,
+        nodeSuggestionsMode: value?.nodeSuggestionsMode === 'auto' ? 'auto' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.nodeSuggestionsMode,
+        approvalSuggestionMode: value?.approvalSuggestionMode === 'manual' ? 'manual' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.approvalSuggestionMode,
+      };
+
+      this.lastPlaybookSettingsCacheUpdate = Date.now();
+      return this.playbookSettingsCache;
+    } catch (error) {
+      this.logger.error('Failed to refresh playbook settings cache', {
+        error: (error as Error).message,
+      });
+
+      this.playbookSettingsCache = this.playbookSettingsCache ?? { ...DEFAULT_ADMIN_PLAYBOOK_SETTINGS };
+      return this.playbookSettingsCache;
     }
   }
 

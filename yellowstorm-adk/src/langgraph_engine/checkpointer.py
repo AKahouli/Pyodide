@@ -1,9 +1,10 @@
 """LangGraph checkpointer configuration for playbook execution persistence."""
 
-import os
 import tempfile
+from pathlib import Path
 
 from structlog import get_logger
+from src.config.settings import get_settings
 
 logger = get_logger(__name__)
 
@@ -19,9 +20,16 @@ async def init_checkpointer():
     if _checkpointer is not None:
         return _checkpointer
 
-    checkpoint_dir = os.path.join(tempfile.gettempdir(), "yellowstorm_checkpoints")
-    os.makedirs(checkpoint_dir, mode=0o700, exist_ok=True)
-    db_path = os.path.join(checkpoint_dir, "checkpoints.db")
+    settings = get_settings()
+    configured_path = str(settings.LANGGRAPH_CHECKPOINT_PATH or "").strip()
+    if configured_path:
+        db_path = configured_path
+    else:
+        checkpoint_dir = Path(tempfile.gettempdir()) / "yellowstorm_checkpoints"
+        checkpoint_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        db_path = str(checkpoint_dir / "checkpoints.db")
+
+    Path(db_path).parent.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     _checkpointer_cm = AsyncSqliteSaver.from_conn_string(db_path)
     _checkpointer = await _checkpointer_cm.__aenter__()

@@ -74,7 +74,9 @@ export function ConnectorsPage() {
   const handleSave = async (data: ConnectorFormValues) => {
     try {
       let parsedActions: ConnectorActionResponse[] | undefined;
-      if (data.actionsJson.trim()) {
+      if (data.actions && data.actions.length > 0) {
+        parsedActions = data.actions;
+      } else if (data.actionsJson.trim()) {
         parsedActions = JSON.parse(data.actionsJson);
       }
       const payload = {

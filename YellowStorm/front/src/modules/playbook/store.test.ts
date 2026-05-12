@@ -25,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
   revertToSnapshot: vi.fn(),
   upsertPlaybookTriggerSchedule: vi.fn(),
   clearPlaybookTriggerSchedule: vi.fn(),
+  getPlaybookRepeatability: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -453,6 +454,62 @@ describe('playbook store', () => {
     expect(state.selectedStepId).toBe('task-1');
     expect(state.executingPlaybookIds).not.toContain('p1');
     expect(state.executionCache.e1.taskResults[0].components?.[0].type).toBe('humanFeedback');
+    expect(state.executionCache.e1.waitingForHumanInput).toBe(true);
+    expect(state.executionCache.e1.currentInterruptId).toBeNull();
+    expect(state.executionCache.e1.currentInterruptTaskId).toBe('task-1');
+    expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({ taskId: 'task-1', status: 'pending' });
+  });
+
+  it('resumes execution with interrupt id and clears waiting state optimistically', async () => {
+    apiMock.resumePlaybook.mockResolvedValueOnce({ status: 'resumed' });
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'interrupted',
+      waitingForHumanInput: true,
+      currentInterruptId: 'interrupt-1',
+      currentInterruptTaskId: 'task-1',
+      interruptPayload: {
+        type: 'clarification',
+        taskId: 'task-1',
+        taskTitle: 'Task 1',
+        message: 'Need input',
+        threadId: 'th-1',
+        interruptId: 'interrupt-1',
+      },
+      hitlHistory: [{
+        interruptId: 'interrupt-1', taskId: 'task-1', type: 'clarification', taskTitle: 'Task 1', message: 'Need input', taskDescription: '', result: '', round: 1, payloadJson: '', resumableActions: ['reply'], status: 'pending', responseAction: null, responseMessage: null, responseApproved: null, responseReason: null, responseFeedback: null, respondedBy: null, respondedAt: null, createdAt: '2025-01-01T00:00:00.000Z',
+      }],
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        components: [{ type: 'humanFeedback', data: { status: 'pending', interruptId: 'interrupt-1' } }],
+      }],
+    });
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution }, executingPlaybookIds: [] });
+
+    await usePlaybookStore.getState().resumeExecution('p1', {
+      executionId: 'e1',
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Here you go',
+    });
+
+    expect(apiMock.resumePlaybook).toHaveBeenCalledWith('p1', expect.objectContaining({
+      executionId: 'e1',
+      taskId: 'task-1',
+      interruptId: 'interrupt-1',
+      action: 'reply',
+      message: 'Here you go',
+    }));
+    const updated = usePlaybookStore.getState().executionCache.e1;
+    expect(updated.status).toBe('running');
+    expect(updated.interruptPayload).toBeNull();
+    expect(updated.waitingForHumanInput).toBe(false);
+    expect(updated.currentInterruptId).toBeNull();
+    expect(updated.currentInterruptTaskId).toBeNull();
+    expect(updated.hitlHistory?.[0]).toMatchObject({ status: 'answered', responseAction: 'reply', responseMessage: 'Here you go' });
   });
 
   // ===== Execution Panel =====
@@ -841,6 +898,73 @@ describe('playbook store', () => {
     });
   });
 
+  it('preserves previous workflow results when rerunning a step in replay flex mode', async () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        {
+          taskId: 't1',
+          nodeTitle: 'Step 1',
+          agentName: 'A1',
+          order: 1,
+          status: 'completed',
+          output: 'old step 1',
+          error: null,
+          durationMs: 100,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          isStale: false,
+          staleReason: null,
+          invalidatedByTaskId: null,
+        },
+        {
+          taskId: 't2',
+          nodeTitle: 'Step 2',
+          agentName: 'A2',
+          order: 2,
+          status: 'completed',
+          output: 'keep this result',
+          error: null,
+          durationMs: 100,
+          startedAt: '2025-01-01T00:00:02.000Z',
+          completedAt: '2025-01-01T00:00:03.000Z',
+          isStale: false,
+          staleReason: null,
+          invalidatedByTaskId: null,
+        },
+      ],
+    });
+
+    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
+    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
+
+    usePlaybookStore.setState({
+      executionCache: { e1: execution },
+      currentExecution: execution,
+      selectedStepId: null,
+    });
+
+    const promise = usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1', false, 'replay_flex');
+    const state = usePlaybookStore.getState();
+
+    expect(state.currentExecution?.taskResults[0]).toMatchObject({
+      taskId: 't1',
+      status: 'running',
+      output: null,
+    });
+    expect(state.currentExecution?.taskResults[1]).toMatchObject({
+      taskId: 't2',
+      status: 'completed',
+      output: 'keep this result',
+      startedAt: '2025-01-01T00:00:02.000Z',
+      completedAt: '2025-01-01T00:00:03.000Z',
+    });
+
+    await promise;
+  });
+
   it('focuses the rerun execution immediately when the panel is showing an older execution', async () => {
     const rerunTarget = makeExecution({
       id: 'e1',
@@ -1013,5 +1137,58 @@ describe('playbook store', () => {
     expect(state.triggerSaving).toBe(false);
     expect(state.triggerError).toBeTruthy();
     expect(handleApiErrorMock).toHaveBeenCalled();
+  });
+
+  describe('fetchRepeatability', () => {
+    it('fetches and stores repeatability summary', async () => {
+      const mockSummary = {
+        playbookId: 'p1',
+        overallAverageMatchScore: 82,
+        totalIterations: 5,
+        evaluatedIterations: 3,
+        passedIterations: 2,
+        iterations: [],
+        generatedAt: '2026-04-26T20:00:00.000Z',
+      };
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce(mockSummary);
+
+      const result = await usePlaybookStore.getState().fetchRepeatability('p1', 5, 0);
+
+      expect(apiMock.getPlaybookRepeatability).toHaveBeenCalledWith('p1', 5, 0);
+      expect(result.overallAverageMatchScore).toBe(82);
+      expect(usePlaybookStore.getState().repeatability).toEqual(mockSummary);
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+    });
+
+    it('sets loading state and clears on success', async () => {
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallAverageMatchScore: null, totalIterations: 0, evaluatedIterations: 0, passedIterations: 0, iterations: [], generatedAt: '' });
+
+      await usePlaybookStore.getState().fetchRepeatability('p1');
+
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+    });
+
+    it('clears loading on failure and calls handleApiError', async () => {
+      apiMock.getPlaybookRepeatability.mockRejectedValueOnce(new Error('network'));
+
+      await expect(
+        usePlaybookStore.getState().fetchRepeatability('p1'),
+      ).rejects.toThrow('network');
+
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+      expect(handleApiErrorMock).toHaveBeenCalled();
+    });
+  });
+
+  describe('clearRepeatability', () => {
+    it('resets repeatability state', async () => {
+      apiMock.getPlaybookRepeatability.mockResolvedValueOnce({ playbookId: 'p1', overallAverageMatchScore: 90, totalIterations: 1, evaluatedIterations: 1, passedIterations: 1, iterations: [], generatedAt: '' });
+      await usePlaybookStore.getState().fetchRepeatability('p1');
+      expect(usePlaybookStore.getState().repeatability).not.toBeNull();
+
+      usePlaybookStore.getState().clearRepeatability();
+      expect(usePlaybookStore.getState().repeatability).toBeNull();
+      expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
+    });
   });
 });

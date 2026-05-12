@@ -553,6 +553,12 @@ function runAgentTeam(call) {
   const citation2Id = randomUUID();
   const citation3Id = randomUUID();
   const citation4Id = randomUUID();
+  const chartLineId = randomUUID();
+  const chartBarId = randomUUID();
+  const chartAreaId = randomUUID();
+  const chartPieId = randomUUID();
+  const chartScatterId = randomUUID();
+  const chartComposedId = randomUUID();
 
   const metadata = { message_id: randomUUID(), agent_id: 'agent-main' };
 

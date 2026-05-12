@@ -319,7 +319,7 @@ class PostgreSQLHandler(logging.Handler):
         correlation_id = getattr(record, 'correlationId', None) or getattr(record, 'request_id', None)
         user = getattr(record, 'user', None)
         user_id = getattr(record, 'user_id', None) or user
-        user_mail = getattr(record, 'user_mail', None)
+        user_mail = getattr(record, 'user_mail', None) or user
         session_id = getattr(record, 'session_id', None)
         component = getattr(record, 'component', 'API-metachatbot')
 

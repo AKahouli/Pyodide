@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2 } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -16,7 +16,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 import { PORT_COLORS } from '../utils/port-colors';
 import { usePlaybookStore } from '../store';
-import type { TaskTemplate } from '../types';
+import type { InterruptType, TaskTemplate } from '../types';
 
 interface Props {
   containerRef: RefObject<HTMLElement>;
@@ -32,6 +32,14 @@ interface Props {
   canUndo: boolean;
   canRedo: boolean;
   disabled?: boolean;
+  onDownloadAllResults?: () => void;
+  canDownloadAllResults?: boolean;
+  onToggleDesigner?: () => void;
+  designerOpen?: boolean;
+  onRemoveAllTasks?: () => void;
+  taskCount?: number;
+  waitingForHumanInput?: boolean;
+  interruptType?: InterruptType | null;
 }
 
 type Position = { x: number; y: number };
@@ -53,6 +61,14 @@ export function PlaybookCanvasFloatingToolbar({
   canUndo,
   canRedo,
   disabled = false,
+  onDownloadAllResults,
+  canDownloadAllResults = false,
+  onToggleDesigner,
+  designerOpen = false,
+  onRemoveAllTasks,
+  taskCount = 0,
+  waitingForHumanInput = false,
+  interruptType = null,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
@@ -157,6 +173,14 @@ export function PlaybookCanvasFloatingToolbar({
     window.addEventListener('pointercancel', stopDragging);
   };
 
+  const designerLabel = waitingForHumanInput
+    ? interruptType === 'review_request'
+      ? t('interrupt.reviewTitle')
+      : interruptType === 'clarification'
+        ? t('interrupt.clarificationTitle')
+        : t('interrupt.approvalTitle')
+    : t('toolbar.designer');
+
   const actionButtons = [
     {
       key: 'undo',
@@ -194,6 +218,31 @@ export function PlaybookCanvasFloatingToolbar({
       onClick: onToggleConnectors,
       disabled,
       active: connectorsOpen,
+    },
+    {
+      key: 'download',
+      label: t('execution.downloadAllResults'),
+      icon: Download,
+      onClick: onDownloadAllResults,
+      disabled: !canDownloadAllResults,
+      hidden: !onDownloadAllResults,
+    },
+    {
+      key: 'designer',
+      label: designerLabel,
+      icon: Wand2,
+      onClick: onToggleDesigner,
+      disabled: false,
+      active: designerOpen,
+      hidden: !onToggleDesigner,
+    },
+    {
+      key: 'removeAll',
+      label: t('toolbar.removeAllTasks'),
+      icon: Trash2,
+      onClick: onRemoveAllTasks,
+      disabled: taskCount === 0,
+      hidden: !onRemoveAllTasks,
     },
   ];
 
@@ -271,9 +320,9 @@ export function PlaybookCanvasFloatingToolbar({
                     size="sm"
                     disabled={disabled}
                     className={cn('h-9', collapsed ? 'rounded-l-none px-1.5' : 'w-full rounded-t-none px-3 justify-between')}
-                    aria-label={t('toolbar.fromTemplate')}
+                    aria-label={t('toolbar.tasks')}
                   >
-                    {!collapsed && <span className="text-xs text-muted-foreground">{t('toolbar.fromTemplate')}</span>}
+                    {!collapsed && <span className="text-xs text-muted-foreground">{t('toolbar.tasks')}</span>}
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
@@ -286,10 +335,10 @@ export function PlaybookCanvasFloatingToolbar({
                   {nodeTemplatesLoading ? (
                     <DropdownMenuItem disabled>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Loading...
+                      {t('common.loading')}
                     </DropdownMenuItem>
                   ) : nodeTemplates.length === 0 ? (
-                    <DropdownMenuItem disabled>No templates available</DropdownMenuItem>
+                    <DropdownMenuItem disabled>{t('toolbar.noTemplatesAvailable')}</DropdownMenuItem>
                   ) : (
                     nodeTemplates.map((template) => {
                       const KindIcon = PORT_COLORS[template.inputPorts[0]?.artifactKind || 'text'].icon;
@@ -305,7 +354,7 @@ export function PlaybookCanvasFloatingToolbar({
               </DropdownMenu>
             </div>
 
-            {actionButtons.map((action) => {
+            {actionButtons.filter((a) => !a.hidden).map((action) => {
               const Icon = action.icon;
               const button = (
                 <Button
