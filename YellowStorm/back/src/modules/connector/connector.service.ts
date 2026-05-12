@@ -16,6 +16,10 @@ import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.in
 
 @Injectable()
 export class ConnectorService {
+  private static readonly CONNECTOR_ACTION_KEY_MAX_LENGTH = 128;
+  private static readonly CONNECTOR_ACTION_LABEL_MAX_LENGTH = 128;
+  private static readonly CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH = 1024;
+
   constructor(
     @InjectModel(Connector.name)
     private readonly connectorModel: Model<ConnectorDocument>,
@@ -33,17 +37,8 @@ export class ConnectorService {
       throw new ConflictException(ErrorCode.CONNECTOR_ALREADY_EXISTS);
     }
 
-    const actions = (dto.actions ?? []).map((a) => ({
-      key: a.key,
-      label: a.label,
-      description: a.description ?? '',
-      parameterSchema: a.parameterSchema ?? {},
-      outputSchema: a.outputSchema ?? {},
-      safety: a.safety ?? 'read',
-      supportsBatch: a.supportsBatch ?? false,
-      supportsIteration: a.supportsIteration ?? false,
-      isEnabled: a.isEnabled ?? true,
-    }));
+    const actions = this.normalizeConnectorActions(dto.actions);
+    const sanitizedMcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
 
     const connector = await this.connectorModel.create({
       slug: dto.slug,
@@ -58,7 +53,7 @@ export class ConnectorService {
       runtimeAuthConfig: dto.runtimeAuthConfig ?? {},
       mcpTransportType: dto.mcpTransportType ?? 'streamable_http',
       mcpServerUrl: dto.mcpServerUrl ?? '',
-      mcpServerConfig: dto.mcpServerConfig ?? {},
+      mcpServerConfig: sanitizedMcpServerConfig,
       actions,
       referencedSkillIds: (dto.referencedSkillIds ?? []).map((id) => new Types.ObjectId(id)),
       isActive: dto.isActive ?? true,
@@ -151,22 +146,15 @@ export class ConnectorService {
 
     const updateData: Record<string, unknown> = { ...dto };
     if (dto.actions) {
-      (updateData as Record<string, unknown>).actions = dto.actions.map((a) => ({
-        key: a.key,
-        label: a.label,
-        description: a.description ?? '',
-        parameterSchema: a.parameterSchema ?? {},
-        outputSchema: a.outputSchema ?? {},
-        safety: a.safety ?? 'read',
-        supportsBatch: a.supportsBatch ?? false,
-        supportsIteration: a.supportsIteration ?? false,
-        isEnabled: a.isEnabled ?? true,
-      }));
+      (updateData as Record<string, unknown>).actions = this.normalizeConnectorActions(dto.actions);
     }
     if (dto.referencedSkillIds) {
       (updateData as Record<string, unknown>).referencedSkillIds = dto.referencedSkillIds.map(
         (id) => new Types.ObjectId(id),
       );
+    }
+    if (dto.mcpServerConfig) {
+      (updateData as Record<string, unknown>).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
     }
 
     const updated = await this.connectorModel
@@ -220,7 +208,7 @@ export class ConnectorService {
       createdBy: creatorId,
       mcpTransportType: transportType,
       mcpServerUrl: serverUrl,
-      mcpServerConfig: serverConfig ?? {},
+      mcpServerConfig: this.sanitizeMcpServerConfig(serverConfig),
       actions,
     });
 
@@ -262,6 +250,7 @@ export class ConnectorService {
 
       let client: any;
       let transport: any;
+      const requestInit = this.buildMcpRequestInit(serverConfig);
 
       if (transportType === 'sse') {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -270,7 +259,7 @@ export class ConnectorService {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
         }
         const SSEClientTransport = sseMod.SSEClientTransport;
-        transport = new SSEClientTransport(new URL(serverUrl));
+        transport = new SSEClientTransport(new URL(serverUrl), { requestInit });
       } else if (transportType === 'streamable_http') {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const httpMod = await import('@modelcontextprotocol/sdk/client/streamableHttp.js').catch(() => null);
@@ -278,7 +267,7 @@ export class ConnectorService {
           return { serverName: '', tools: [], error: 'MCP SDK not installed. Run: npm install @modelcontextprotocol/sdk' };
         }
         const StreamableHTTPClientTransport = httpMod.StreamableHTTPClientTransport;
-        transport = new StreamableHTTPClientTransport(new URL(serverUrl));
+        transport = new StreamableHTTPClientTransport(new URL(serverUrl), { requestInit });
       } else {
         // stdio
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -337,6 +326,70 @@ export class ConnectorService {
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '')
       .slice(0, 64);
+  }
+
+  private buildMcpRequestInit(serverConfig?: Record<string, unknown>): RequestInit | undefined {
+    const headers = this.buildMcpHeaders(serverConfig);
+    return Object.keys(headers).length > 0 ? { headers } : undefined;
+  }
+
+  private buildMcpHeaders(serverConfig?: Record<string, unknown>): Record<string, string> {
+    const headers: Record<string, string> = {};
+    const configHeaders = serverConfig?.headers;
+
+    if (configHeaders && typeof configHeaders === 'object' && !Array.isArray(configHeaders)) {
+      for (const [key, value] of Object.entries(configHeaders as Record<string, unknown>)) {
+        if (typeof value === 'string' && value.trim()) {
+          headers[key] = value;
+        }
+      }
+    }
+
+    const githubPat = typeof serverConfig?.githubPat === 'string' ? serverConfig.githubPat.trim() : '';
+    if (githubPat && !headers.Authorization) {
+      headers.Authorization = `Bearer ${githubPat}`;
+    }
+
+    return headers;
+  }
+
+  private sanitizeMcpServerConfig(serverConfig?: Record<string, unknown>): Record<string, unknown> {
+    if (!serverConfig || typeof serverConfig !== 'object') {
+      return {};
+    }
+
+    const sanitized = { ...serverConfig };
+    delete sanitized.githubPat;
+
+    return sanitized;
+  }
+
+  private normalizeConnectorActions(actions?: Array<{
+    key: string;
+    label: string;
+    description?: string;
+    parameterSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    safety?: string;
+    supportsBatch?: boolean;
+    supportsIteration?: boolean;
+    isEnabled?: boolean;
+  }>): ConnectorAction[] {
+    return (actions ?? []).map((action) => ({
+      key: this.truncateValue(action.key, ConnectorService.CONNECTOR_ACTION_KEY_MAX_LENGTH),
+      label: this.truncateValue(action.label, ConnectorService.CONNECTOR_ACTION_LABEL_MAX_LENGTH),
+      description: this.truncateValue(action.description ?? '', ConnectorService.CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH),
+      parameterSchema: action.parameterSchema ?? {},
+      outputSchema: action.outputSchema ?? {},
+      safety: action.safety ?? 'read',
+      supportsBatch: action.supportsBatch ?? false,
+      supportsIteration: action.supportsIteration ?? false,
+      isEnabled: action.isEnabled ?? true,
+    })) as ConnectorAction[];
+  }
+
+  private truncateValue(value: string, maxLength: number): string {
+    return value.length > maxLength ? value.slice(0, maxLength) : value;
   }
 
   toResponse(doc: any): IConnectorResponse {
