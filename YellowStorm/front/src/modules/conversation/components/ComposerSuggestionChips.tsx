@@ -11,6 +11,8 @@ export interface ComposerSuggestionChipsProps {
   fetchDisabled: boolean;
 }
 
+const ESTIMATED_SUGGESTION_HEIGHT = 120; // Estimated height of suggestion bar for space calculation
+
 export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChipsProps) {
   const { t } = useModuleTranslation('conversation');
   const { textInput } = usePromptInputController();
@@ -23,6 +25,7 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number; width: number } | null>(null);
   const [isVisible, setIsVisible] = useState(false);
+  const [showAbove, setShowAbove] = useState(false);
 
   // Find the textarea in the DOM
   useEffect(() => {
@@ -47,8 +50,15 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
     const inputGroupRect = inputGroup?.getBoundingClientRect();
 
     if (inputGroupRect) {
+      const windowHeight = window.innerHeight;
+      const spaceBelow = windowHeight - inputGroupRect.bottom - 20; // 20px for margin
+
+      // Show above if there's not enough space below
+      const shouldShowAbove = spaceBelow < ESTIMATED_SUGGESTION_HEIGHT;
+      setShowAbove(shouldShowAbove);
+
       setPosition({
-        top: inputGroupRect.bottom + 4,
+        top: shouldShowAbove ? inputGroupRect.top - ESTIMATED_SUGGESTION_HEIGHT - 4 : inputGroupRect.bottom + 4,
         left: inputGroupRect.left,
         width: inputGroupRect.width,
       });
@@ -68,8 +78,14 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
       const inputGroupRect = inputGroup?.getBoundingClientRect();
 
       if (inputGroupRect) {
+        const windowHeight = window.innerHeight;
+        const spaceBelow = windowHeight - inputGroupRect.bottom - 20;
+        const shouldShowAbove = spaceBelow < ESTIMATED_SUGGESTION_HEIGHT;
+
+        setShowAbove(shouldShowAbove);
+
         setPosition({
-          top: inputGroupRect.bottom + 4,
+          top: shouldShowAbove ? inputGroupRect.top - ESTIMATED_SUGGESTION_HEIGHT - 4 : inputGroupRect.bottom + 4,
           left: inputGroupRect.left,
           width: inputGroupRect.width,
         });
@@ -134,7 +150,10 @@ export function ComposerSuggestionChips({ fetchDisabled }: ComposerSuggestionChi
   return createPortal(
     <div
       ref={containerRef}
-      className='fixed z-[100] animate-in fade-in-0 slide-in-from-bottom-2 duration-200'
+      className={cn(
+        'fixed z-[100] animate-in fade-in-0 duration-200',
+        showAbove ? 'slide-in-from-top-2' : 'slide-in-from-bottom-2'
+      )}
       style={{
         top: position.top,
         left: position.left,
