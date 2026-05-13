@@ -4,7 +4,7 @@
  */
 
 import { useState, useCallback, useMemo } from 'react';
-import { MoreHorizontal, Pencil, Settings, FileX, Trash2, FileText, User } from 'lucide-react';
+import { MoreHorizontal, Pencil, Settings, FileX, Trash2, FileText, User, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
@@ -34,6 +34,7 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
   const isDeleting = useWorkspaceStore((state) => state.isDeleting);
   const menuLabels = useMemo(
     () => ({
+      share: t('sharing.share'),
       rename: t('item.menu.rename'),
       settings: t('item.menu.settings'),
       deleteDocs: t('item.menu.deleteDocs'),
@@ -119,7 +120,15 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
     setIsDeleteDialogOpen(true);
   }, []);
 
-  // Check if workspace is personal (cannot be renamed/deleted)
+  const handleShareClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      useWorkspaceStore.getState().openShareModal(workspace);
+    },
+    [workspace],
+  );
+
+  // Check if workspace is personal (cannot be renamed/deleted/shared)
   const isPersonal = workspace.isPersonal || false;
   const totalFileCount = workspace.isPersonal ? Math.max(0, useWorkspaceStore.getState().totalDocuments) : workspace.documentCount;
 
@@ -136,6 +145,12 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
           <div className='flex items-center gap-2'>
             {isPersonal && <User className='h-4 w-4 text-primary' />}
             <div className='font-medium text-sm truncate'>{workspace.name}</div>
+            {workspace.shareCount > 0 && (
+              <span className='flex items-center gap-1 text-xs text-primary-foreground bg-primary/80 px-1.5 py-0.5 rounded-full shrink-0'>
+                <Users className='h-2.5 w-2.5' />
+                {workspace.shareCount}
+              </span>
+            )}
           </div>
           <div className='flex items-center gap-2 text-xs text-muted-foreground'>
             <span className='flex items-center gap-1'>
@@ -171,6 +186,12 @@ export function WorkspaceItem({ workspace, isSelected }: WorkspaceItemProps) {
               <Settings className='mr-2 h-4 w-4' />
               {menuLabels.settings}
             </DropdownMenuItem>
+            {!isPersonal && (
+              <DropdownMenuItem onClick={handleShareClick} className='cursor-pointer'>
+                <Users className='mr-2 h-4 w-4' />
+                {menuLabels.share}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={handleDeleteDocsClick} className='cursor-pointer' disabled={workspace.documentCount === 0}>
               <FileX className='mr-2 h-4 w-4' />

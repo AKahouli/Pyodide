@@ -3,6 +3,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Workspace, WorkspaceDocument } from './schemas/workspace.schema';
 import {
+  WorkspaceShare,
+  WorkspaceShareDocument,
+} from './schemas/workspace-share.schema';
+import {
   Conversation,
   ConversationDocument,
 } from '../conversation/schemas/conversation.schema';
@@ -29,6 +33,8 @@ export class WorkspaceService {
   constructor(
     @InjectModel(Workspace.name)
     private readonly workspaceModel: Model<WorkspaceDocument>,
+    @InjectModel(WorkspaceShare.name)
+    private readonly shareModel: Model<WorkspaceShareDocument>,
     @InjectModel(Conversation.name)
     private readonly conversationModel: Model<ConversationDocument>,
     @InjectModel(Agent.name)
@@ -380,6 +386,9 @@ export class WorkspaceService {
 
     await this.workspaceModel.deleteOne({ _id: workspaceId });
 
+    // Cascade: delete all shares for this workspace
+    await this.shareModel.deleteMany({ workspaceId: new Types.ObjectId(workspaceId) });
+
     // Remove workspace reference from all conversations
     await this.conversationModel.updateMany(
       { workspaces: new Types.ObjectId(workspaceId) },
@@ -536,6 +545,7 @@ export class WorkspaceService {
       allocatedStorage: workspace.allocatedStorage,
       isSystem: workspace.isSystem || false,
       isPersonal: workspace.isPersonal || false,
+      shareCount: workspace.shareCount || 0,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

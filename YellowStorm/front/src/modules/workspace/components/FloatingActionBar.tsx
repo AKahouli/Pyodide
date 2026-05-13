@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { useModuleTranslation } from '@/modules/localization';
-import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading } from '../store';
+import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useCanWriteWorkspace } from '../store';
 import { useModalCloseEffect } from '../hooks';
 import { ConfirmDialog } from './dialogs';
 import { getErrorMessage } from '@/lib/error-codes';
@@ -28,6 +28,7 @@ export function FloatingActionBar({ selectedCount, selectedIds, onClearSelection
 
   const selectedWorkspace = useSelectedWorkspace();
   const { isDeleting } = useWorkspaceLoading();
+  const canWrite = useCanWriteWorkspace();
 
   const bulkDeleteDocuments = useWorkspaceStore((state) => state.bulkDeleteDocuments);
   const getDownloadUrl = useWorkspaceStore((state) => state.getDownloadUrl);
@@ -77,10 +78,12 @@ export function FloatingActionBar({ selectedCount, selectedIds, onClearSelection
           {isDownloading ? <Loader2 className='h-4 w-4 md:mr-2 animate-spin' /> : <Download className='h-4 w-4 md:mr-2' />}
           <span className='hidden md:inline'>{t('floating.actions.download')}</span>
         </Button>
-        <Button variant='destructive' size='sm' onClick={() => setIsDeleteDialogOpen(true)} className='h-8 px-2 md:px-3'>
-          <Trash2 className='h-4 w-4 md:mr-2' />
-          <span className='hidden md:inline'>{t('floating.actions.delete')}</span>
-        </Button>
+        {canWrite && (
+          <Button variant='destructive' size='sm' onClick={() => setIsDeleteDialogOpen(true)} className='h-8 px-2 md:px-3'>
+            <Trash2 className='h-4 w-4 md:mr-2' />
+            <span className='hidden md:inline'>{t('floating.actions.delete')}</span>
+          </Button>
+        )}
         <Button variant='ghost' size='sm' onClick={onClearSelection} className='h-8 w-8 p-0'>
           <X className='h-4 w-4' />
         </Button>

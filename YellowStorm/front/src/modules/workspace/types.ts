@@ -34,6 +34,7 @@ export interface Workspace {
   allocatedStorage: number;
   isSystem: boolean;
   isPersonal: boolean;
+  shareCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -255,6 +256,94 @@ export interface ReportProgressRequest {
   progress: number;
   status: UploadFileStatus;
   error?: string;
+}
+
+// ===== Workspace Share Types =====
+
+export type WorkspacePermission = 'read' | 'readwrite';
+
+export type WorkspaceRole = 'owner' | WorkspacePermission;
+
+export type WorkspaceTab = 'personal' | 'shared';
+
+export interface SharedUserInfo {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface WorkspaceShareResponse {
+  id: string;
+  workspaceId: string;
+  user: SharedUserInfo;
+  permission: WorkspacePermission;
+  sharedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShareWorkspaceEntry {
+  email: string;
+  permission: WorkspacePermission;
+}
+
+export interface ShareWorkspaceDto {
+  shares: ShareWorkspaceEntry[];
+}
+
+export interface ShareResult {
+  shared: WorkspaceShareResponse[];
+  notFound: string[];
+  invalid: string[];
+}
+
+export interface PaginatedShares {
+  shares: WorkspaceShareResponse[];
+  pagination: PaginationInfo;
+}
+
+export interface SharedWorkspaceResponse {
+  id: string;
+  name: string;
+  alias: string;
+  description?: string;
+  owner: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  permission: WorkspacePermission;
+  shareId: string;
+  documentCount: number;
+  usedStorage: number;
+  allocatedStorage: number;
+  sharedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaginatedSharedWorkspaces {
+  workspaces: SharedWorkspaceResponse[];
+  pagination: PaginationInfo;
+}
+
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export type WorkspaceListItem = Workspace | SharedWorkspaceResponse;
+
+export function isWorkspace(item: WorkspaceListItem): item is Workspace {
+  return 'createdBy' in item;
+}
+
+export function isSharedWorkspace(item: WorkspaceListItem): item is SharedWorkspaceResponse {
+  return 'shareId' in item;
 }
 
 // Local upload tracking (for UI state)

@@ -30,6 +30,7 @@ function makeWorkspace(id: string, name: string): Workspace {
     allocatedStorage: 1024,
     isSystem: false,
     isPersonal: true,
+    shareCount: 0,
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   };

@@ -12,7 +12,29 @@ import { DEFAULT_PAGE_LIMIT } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
-import type { Workspace, WorkspaceDocument, WorkspaceSetting, CreateWorkspaceData, UpdateWorkspaceData, CreateWorkspaceSettingData, UpdateWorkspaceSettingData, BulkDeleteResult, UploadQueueItem, UploadFileStatus, CreateFolderData, RenameFolderData, DocumentQueryParams } from './types';
+import type {
+  Workspace,
+  WorkspaceDocument,
+  WorkspaceSetting,
+  CreateWorkspaceData,
+  UpdateWorkspaceData,
+  CreateWorkspaceSettingData,
+  UpdateWorkspaceSettingData,
+  BulkDeleteResult,
+  UploadQueueItem,
+  UploadFileStatus,
+  CreateFolderData,
+  RenameFolderData,
+  DocumentQueryParams,
+  ShareWorkspaceDto,
+  ShareResult,
+  WorkspaceShareResponse,
+  WorkspacePermission,
+  WorkspaceRole,
+  WorkspaceTab,
+  SharedWorkspaceResponse,
+  UserSearchResult,
+} from './types';
 
 /**
  * Extract user-friendly error message from API error
@@ -64,6 +86,26 @@ interface WorkspaceState {
   // Selected workspace
   selectedWorkspaceId: string | null;
   selectedWorkspace: Workspace | null;
+  selectedWorkspaceRole: WorkspaceRole;
+  selectedSharedWorkspaceInfo: {
+    owner: { id: string; email: string; firstName?: string; lastName?: string };
+    permission: WorkspacePermission;
+    shareId: string;
+  } | null;
+
+  // Shared workspaces (cached by page)
+  sharedWorkspaces: Map<number, SharedWorkspaceResponse[]>;
+  sharedCurrentPage: number;
+  sharedTotalPages: number;
+  totalSharedWorkspaces: number;
+  activeTab: WorkspaceTab;
+
+  // Share modal + share list
+  isShareModalOpen: boolean;
+  shareModalWorkspace: Workspace | null;
+  workspaceShares: WorkspaceShareResponse[];
+  isLoadingShares: boolean;
+  isSharingInProgress: boolean;
 
   // Documents with page caching
   documents: Map<number, WorkspaceDocument[]>;
@@ -183,6 +225,21 @@ interface WorkspaceActions {
   getFolderContents: (workspaceId: string, folderId: string, params?: DocumentQueryParams) => Promise<void>;
   moveDocuments: (workspaceId: string, documentIds: string[], targetFolderId?: string) => Promise<{ moved: number; failed: string[] }>;
   getPersonalWorkspace: () => Promise<void>;
+
+  // Shared workspaces (recipient side)
+  setActiveTab: (tab: WorkspaceTab) => void;
+  fetchSharedWorkspaces: (page?: number) => Promise<void>;
+  selectSharedWorkspace: (workspaceId: string, shareId: string) => Promise<void>;
+  invalidateSharedWorkspaceCache: () => void;
+
+  // Share management (owner side)
+  openShareModal: (workspace?: Workspace) => void;
+  closeShareModal: () => void;
+  shareWorkspace: (workspaceId: string, data: ShareWorkspaceDto) => Promise<ShareResult>;
+  fetchWorkspaceShares: (workspaceId: string, params?: { page?: number; limit?: number }) => Promise<void>;
+  updateSharePermission: (workspaceId: string, shareId: string, permission: WorkspacePermission) => Promise<void>;
+  revokeShare: (workspaceId: string, shareId: string) => Promise<void>;
+  searchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -198,6 +255,20 @@ const initialState: WorkspaceState = {
 
   selectedWorkspaceId: null,
   selectedWorkspace: null,
+  selectedWorkspaceRole: 'owner',
+  selectedSharedWorkspaceInfo: null,
+
+  sharedWorkspaces: new Map(),
+  sharedCurrentPage: 1,
+  sharedTotalPages: 0,
+  totalSharedWorkspaces: 0,
+  activeTab: 'personal',
+
+  isShareModalOpen: false,
+  shareModalWorkspace: null,
+  workspaceShares: [],
+  isLoadingShares: false,
+  isSharingInProgress: false,
 
   documents: new Map(),
   documentsCurrentPage: 1,
@@ -405,6 +476,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({
           selectedWorkspaceId: workspaceId,
           selectedWorkspace: cachedWorkspace,
+          selectedWorkspaceRole: 'owner',
+          selectedSharedWorkspaceInfo: null,
           isLoadingDocuments: true,
           documents: new Map(),
           documentsCurrentPage: 1,
@@ -1300,6 +1373,227 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           set({ error: message });
         }
       },
+
+      // ===== Shared workspaces =====
+      setActiveTab: (tab) => set({ activeTab: tab }),
+
+      invalidateSharedWorkspaceCache: () =>
+        set({ sharedWorkspaces: new Map(), sharedCurrentPage: 1 }),
+
+      fetchSharedWorkspaces: async (page = 1) => {
+        const state = get();
+
+        if (state.sharedWorkspaces.has(page)) {
+          set({ sharedCurrentPage: page });
+          return;
+        }
+
+        set({ isLoadingWorkspaces: true, error: null });
+
+        try {
+          const result = await workspaceApi.getSharedWorkspaces({
+            page,
+            limit: DEFAULT_PAGE_LIMIT,
+          });
+
+          const newCache = new Map(state.sharedWorkspaces);
+          newCache.set(page, result.workspaces);
+
+          set({
+            sharedWorkspaces: newCache,
+            sharedCurrentPage: page,
+            sharedTotalPages: result.pagination.totalPages,
+            totalSharedWorkspaces: result.pagination.total,
+            isLoadingWorkspaces: false,
+          });
+        } catch (err) {
+          const fallback = tError('fetchSharedWorkspaces', 'Failed to fetch shared workspaces');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingWorkspaces: false });
+        }
+      },
+
+      selectSharedWorkspace: async (workspaceId, shareId) => {
+        const state = get();
+
+        if (state.selectedWorkspaceId === workspaceId) {
+          return;
+        }
+
+        let cached: SharedWorkspaceResponse | null = null;
+        for (const workspaces of state.sharedWorkspaces.values()) {
+          const found = workspaces.find((w) => w.id === workspaceId);
+          if (found) {
+            cached = found;
+            break;
+          }
+        }
+
+        set({
+          selectedWorkspaceId: workspaceId,
+          selectedWorkspace: cached
+            ? {
+                id: cached.id,
+                name: cached.name,
+                alias: cached.alias,
+                description: cached.description,
+                createdBy: cached.owner.id,
+                documentCount: cached.documentCount,
+                usedStorage: cached.usedStorage,
+                allocatedStorage: cached.allocatedStorage,
+                isSystem: false,
+                isPersonal: false,
+                shareCount: 0,
+                createdAt: cached.createdAt,
+                updatedAt: cached.updatedAt,
+              }
+            : null,
+          selectedWorkspaceRole: cached?.permission || 'read',
+          selectedSharedWorkspaceInfo: cached
+            ? { owner: cached.owner, permission: cached.permission, shareId }
+            : null,
+          isLoadingDocuments: true,
+          documents: new Map(),
+          documentsCurrentPage: 1,
+          documentSearchQuery: '',
+        });
+
+        try {
+          const fresh = await workspaceApi.getWorkspace(workspaceId);
+          await get().fetchDocuments(workspaceId, 1);
+          set({ selectedWorkspace: fresh });
+        } catch (err) {
+          const fallback = tError('loadWorkspace', 'Failed to load workspace');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingDocuments: false });
+        }
+      },
+
+      // ===== Share modal + management =====
+      openShareModal: (workspace) =>
+        set({
+          isShareModalOpen: true,
+          shareModalWorkspace: workspace || get().selectedWorkspace,
+        }),
+
+      closeShareModal: () =>
+        set({
+          isShareModalOpen: false,
+          shareModalWorkspace: null,
+          workspaceShares: [],
+        }),
+
+      shareWorkspace: async (workspaceId, data) => {
+        set({ isSharingInProgress: true, error: null });
+
+        try {
+          const result = await workspaceApi.shareWorkspace(workspaceId, data);
+          const { isShareModalOpen, shareModalWorkspace } = get();
+          const shouldSyncShares = isShareModalOpen && shareModalWorkspace?.id === workspaceId;
+
+          if (shouldSyncShares && result.shared.length > 0) {
+            set((state) => {
+              const newIds = new Set(result.shared.map((s) => s.id));
+              const existing = state.workspaceShares.filter((s) => !newIds.has(s.id));
+              return { workspaceShares: [...result.shared, ...existing] };
+            });
+          }
+
+          set({ isSharingInProgress: false });
+
+          if (result.shared.length > 0) {
+            toast.success(tToast('sharing.shareSuccess', 'Workspace shared'), {
+              description: tToast('sharing.sharedWith', 'Shared with {{count}} user(s).', {
+                count: result.shared.length,
+              }),
+            });
+          }
+          if (result.notFound.length > 0) {
+            toast.warning(
+              tToast('sharing.notFound', '{{count}} user(s) not found', {
+                count: result.notFound.length,
+              }),
+              { description: result.notFound.join(', ') },
+            );
+          }
+          if (result.invalid.length > 0) {
+            toast.warning(tToast('sharing.invalid', 'Some shares were invalid'));
+          }
+
+          get().refreshWorkspace(workspaceId).catch(() => {});
+
+          return result;
+        } catch (err) {
+          const fallback = tError('shareWorkspace', 'Failed to share workspace');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isSharingInProgress: false });
+          throw err;
+        }
+      },
+
+      fetchWorkspaceShares: async (workspaceId, params = {}) => {
+        set({ isLoadingShares: true, error: null });
+
+        try {
+          const result = await workspaceApi.getWorkspaceShares(workspaceId, params);
+          set({ workspaceShares: result.shares, isLoadingShares: false });
+        } catch (err) {
+          const fallback = tError('fetchWorkspaceShares', 'Failed to fetch workspace shares');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingShares: false });
+          throw err;
+        }
+      },
+
+      updateSharePermission: async (workspaceId, shareId, permission) => {
+        set({ isLoadingShares: true, error: null });
+
+        try {
+          const updated = await workspaceApi.updateSharePermission(workspaceId, shareId, {
+            permission,
+          });
+
+          set((state) => ({
+            workspaceShares: state.workspaceShares.map((s) => {
+              if (s.id !== shareId) return s;
+              return { ...s, permission: updated.permission, updatedAt: updated.updatedAt };
+            }),
+            isLoadingShares: false,
+          }));
+
+          toast.success(tToast('sharing.permissionUpdated', 'Permission updated'));
+        } catch (err) {
+          const fallback = tError('updateSharePermission', 'Failed to update permission');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingShares: false });
+          throw err;
+        }
+      },
+
+      revokeShare: async (workspaceId, shareId) => {
+        set({ isLoadingShares: true, error: null });
+
+        try {
+          await workspaceApi.revokeShare(workspaceId, shareId);
+
+          set((state) => ({
+            workspaceShares: state.workspaceShares.filter((s) => s.id !== shareId),
+            isLoadingShares: false,
+          }));
+
+          toast.success(tToast('sharing.revokeSuccess', 'Access revoked'));
+          await get().refreshWorkspace(workspaceId);
+        } catch (err) {
+          const fallback = tError('revokeShare', 'Failed to revoke access');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingShares: false });
+          throw err;
+        }
+      },
+
+      searchUsers: async (query, limit = 10) => {
+        return workspaceApi.searchUsers(query, limit);
+      },
     }),
     { name: 'workspace-store' },
   ),
@@ -1407,3 +1701,34 @@ export const useWorkspacePagination = () => {
   const totalPages = useWorkspaceStore((state) => state.totalPages) ?? 1;
   return { currentPage, totalPages };
 };
+
+export const useActiveTab = () => useWorkspaceStore((state) => state.activeTab);
+
+export const useSelectedWorkspaceRole = () =>
+  useWorkspaceStore((state) => state.selectedWorkspaceRole);
+
+export const useCanWriteWorkspace = () =>
+  useWorkspaceStore((state) => state.selectedWorkspaceRole !== 'read');
+
+export const useSharedWorkspaces = () => {
+  const sharedWorkspaces = useWorkspaceStore((state) => state.sharedWorkspaces);
+  const sharedCurrentPage = useWorkspaceStore((state) => state.sharedCurrentPage);
+  return sharedWorkspaces.get(sharedCurrentPage) ?? [];
+};
+
+export const useSharedPagination = () => {
+  const currentPage = useWorkspaceStore((state) => state.sharedCurrentPage) ?? 1;
+  const totalPages = useWorkspaceStore((state) => state.sharedTotalPages) ?? 1;
+  return { currentPage, totalPages };
+};
+
+export const useWorkspaceShares = () =>
+  useWorkspaceStore((state) => state.workspaceShares);
+
+export const useShareLoading = () =>
+  useWorkspaceStore(
+    useShallow((state) => ({
+      isLoadingShares: state.isLoadingShares,
+      isSharingInProgress: state.isSharingInProgress,
+    })),
+  );

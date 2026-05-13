@@ -38,3 +38,5 @@ export { StepIndicator } from './components/StepIndicator';
 export { UploadDropZone } from './components/UploadDropZone';
 export { UploadButton } from './components/UploadButton';
 export { UploadProgress } from './components/UploadProgress';
+export { ShareWorkspaceDialog } from './components/ShareWorkspaceDialog';
+export { useShareNotifications } from './hooks/useShareNotifications';
