@@ -335,6 +335,32 @@ describe('ConnectorService importFromMcp', () => {
     );
   });
 
+  it('builds an authorization header from githubPat when inspecting GitHub MCP', () => {
+    const logger = {
+      setContext: jest.fn(),
+      log: jest.fn(),
+      error: jest.fn(),
+    };
+
+    const service = new ConnectorService(
+      {
+        create: jest.fn(),
+        find: jest.fn(),
+      } as any,
+      logger as any,
+    );
+
+    const requestInit = (service as any).buildMcpRequestInit({
+      githubPat: 'ghp_test_123',
+    });
+
+    expect(requestInit).toEqual({
+      headers: {
+        Authorization: 'Bearer ghp_test_123',
+      },
+    });
+  });
+
   it('preserves explicit authorization headers from server config', () => {
     const logger = {
       setContext: jest.fn(),
