@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { FileText, Download, RefreshCw, Search, Trash2, Loader2, Folder, Upload, FolderPlus, FolderOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-import { formatFileSize, getFileTypeLabel } from '../../utils';
+import { formatFileSize, getFileTypeLabel, formatDate } from '../../utils';
 import type { WorkspaceDocument } from '../../types';
 import { useDocumentActions, useWorkspaceStore, useSelectedWorkspace } from '../../hooks';
 import { IndexingStatusBadge } from './IndexingStatusBadge';
@@ -164,6 +164,8 @@ export const DocumentCard = memo(function DocumentCard({
           <Badge variant='outline' className='text-[10px] h-4 px-1.5'>
             {document.isFolder ? 'Folder' : getFileTypeLabel(document.mimeType)}
           </Badge>
+          <IndexingStatusBadge status={document.indexingStatus} error={document.indexingError} taskName={document.indexingTaskName} />
+          <span className='text-xs text-muted-foreground'>{formatDate(document.uploadedAt || document.createdAt)}</span>
         </div>
       </div>
 

@@ -22,6 +22,7 @@ import {
 import type { ConnectorResponse, ConnectorActionResponse, SkillResponse, McpToolDefinition } from '../../types';
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
+import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
 import { Loader2, Plus, TestTube2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSkills, inspectMcp } from '../../api';
@@ -46,6 +47,10 @@ const RUNTIME_AUTH_STRATEGIES = [
   { value: 'custom_headers', label: 'Custom headers' },
   { value: 'env_vars', label: 'Environment variables' },
 ];
+
+const CONNECTOR_ACTION_KEY_MAX_LENGTH = 128;
+const CONNECTOR_ACTION_LABEL_MAX_LENGTH = 128;
+const CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH = 1024;
 
 function createMappingRow(key = '', value = '') {
   return {
@@ -111,11 +116,15 @@ function humanizeToolName(name: string) {
   return name.replace(/_/g, ' ').replace(/-/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function truncateValue(value: string, maxLength: number) {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
 function mapInspectToolsToActions(tools: McpToolDefinition[]): ConnectorActionResponse[] {
   return tools.map((tool) => ({
-    key: tool.name,
-    label: humanizeToolName(tool.name),
-    description: tool.description ?? '',
+    key: truncateValue(tool.name, CONNECTOR_ACTION_KEY_MAX_LENGTH),
+    label: truncateValue(humanizeToolName(tool.name), CONNECTOR_ACTION_LABEL_MAX_LENGTH),
+    description: truncateValue(tool.description ?? '', CONNECTOR_ACTION_DESCRIPTION_MAX_LENGTH),
     parameterSchema: tool.inputSchema ?? {},
     outputSchema: {},
     safety: 'read',
@@ -156,6 +165,7 @@ export function CreateEditConnectorDialog({
         .catch(() => setConnectedApps([]));
       if (connector) {
         const parsedRuntime = parseRuntimeAuthConfig(connector.runtimeAuthConfig);
+        const parsedServerConfig = parseMcpServerConfig(connector.mcpServerConfig);
         setForm({
           slug: connector.slug,
           name: connector.name,
@@ -173,7 +183,9 @@ export function CreateEditConnectorDialog({
           runtimeEnvMappings: parsedRuntime.runtimeEnvMappings,
           mcpTransportType: connector.mcpTransportType || 'streamable_http',
           mcpServerUrl: connector.mcpServerUrl || '',
-          mcpServerConfig: connector.mcpServerConfig ? JSON.stringify(connector.mcpServerConfig, null, 2) : '',
+          githubPatToken: parsedServerConfig.githubPatToken,
+          mcpServerConfig: parsedServerConfig.serverConfigText,
+          actions: connector.actions || [],
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
           referencedSkillIds: connector.referencedSkillIds || [],
           isActive: connector.isActive,
@@ -207,19 +219,19 @@ export function CreateEditConnectorDialog({
     }
 
     let mcpServerConfig: Record<string, unknown> | undefined;
-    if (form.mcpServerConfig.trim()) {
-      try {
-        mcpServerConfig = JSON.parse(form.mcpServerConfig);
-      } catch {
-        toast.error(t('connectors.form.errors.invalidServerConfigJson'));
-        return;
-      }
+    try {
+      mcpServerConfig = form.mcpServerConfig.trim() ? (JSON.parse(form.mcpServerConfig) as Record<string, unknown>) : undefined;
+    } catch {
+      toast.error(t('connectors.form.errors.invalidServerConfigJson'));
+      return;
     }
 
     const runtimeAuthConfig = buildRuntimeAuthConfig(form);
 
     onSave({
       ...form,
+      actions: actions ?? [],
+      mcpServerConfig: mcpServerConfig ? JSON.stringify(mcpServerConfig) : '',
       authType: form.authSourceType === 'connected_app' ? 'oauth2' : form.authSourceType === 'credential' ? 'token' : 'none',
       connectedAppKey: form.authSourceType === 'connected_app' ? form.connectedAppKey : '',
       runtimeAuthConfig: runtimeAuthConfig ? JSON.stringify(runtimeAuthConfig) : '',
@@ -233,13 +245,11 @@ export function CreateEditConnectorDialog({
     }
 
     let mcpServerConfig: Record<string, unknown> | undefined;
-    if (form.mcpServerConfig.trim()) {
-      try {
-        mcpServerConfig = JSON.parse(form.mcpServerConfig);
-      } catch {
-        toast.error(t('connectors.form.errors.invalidServerConfigJson'));
-        return;
-      }
+    try {
+      mcpServerConfig = buildMcpServerConfig(form.mcpServerConfig, form.githubPatToken);
+    } catch {
+      toast.error(t('connectors.form.errors.invalidServerConfigJson'));
+      return;
     }
 
     setInspecting(true);
@@ -255,6 +265,7 @@ export function CreateEditConnectorDialog({
       const actions = mapInspectToolsToActions(result.tools ?? []);
       setForm((current) => ({
         ...current,
+        actions,
         actionsJson: JSON.stringify(actions, null, 2),
       }));
       toast.success(t('connectors.form.inspect.loadedTitle'), {
@@ -266,6 +277,10 @@ export function CreateEditConnectorDialog({
       setInspecting(false);
     }
   };
+
+  const isGitHubConnector = [form.slug, form.name, form.mcpServerUrl].some((value) =>
+    value.toLowerCase().includes('github'),
+  );
 
   const updateMappingRow = (
     field: 'runtimeHeaderMappings' | 'runtimeEnvMappings',
@@ -473,6 +488,20 @@ export function CreateEditConnectorDialog({
             <Textarea placeholder='{"commandArgs": ["--stdio"]}' value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
           </div>
 
+          {isGitHubConnector ? (
+            <div className='grid gap-2'>
+              <Label>{t('connectors.form.githubPat.label')}</Label>
+              <Input
+                type='password'
+                autoComplete='off'
+                placeholder={t('connectors.form.githubPat.placeholder')}
+                value={form.githubPatToken}
+                onChange={(e) => setForm({ ...form, githubPatToken: e.target.value })}
+              />
+              <p className='text-sm text-muted-foreground'>{t('connectors.form.githubPat.helper')}</p>
+            </div>
+          ) : null}
+
           <div className='flex items-center justify-between gap-3'>
             <div className='text-sm text-muted-foreground'>{t('connectors.form.inspect.helper')}</div>
             <Button type='button' variant='outline' onClick={handleInspect} disabled={inspecting}>
@@ -506,7 +535,7 @@ export function CreateEditConnectorDialog({
             <Textarea
               placeholder='[{"key": "list_files", "label": "List Files", "safety": "read"}]'
               value={form.actionsJson}
-              onChange={(e) => setForm({ ...form, actionsJson: e.target.value })}
+              onChange={(e) => setForm({ ...form, actionsJson: e.target.value, actions: [] })}
               rows={6}
               className='font-mono text-xs'
             />

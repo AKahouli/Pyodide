@@ -24,10 +24,14 @@ interface IndexingWebhookBody {
   event_type: string;
   task_id: string;
   status: string;
+  processing_status?: string;
+  processing_task_name?: string;
+  processing_task_id?: string;
   detected_language?: string;
   metadata: {
     external_id: string;
     brain_id: string;
+    error_message_image?: string;
     [key: string]: unknown;
   };
   [key: string]: unknown;
@@ -89,20 +93,26 @@ export class IndexingWebhookController {
     }
 
     const documentId = dto.metadata.external_id;
-    const status = dto.status === 'FINISH' ? 'READY' : 'FAILED';
 
     this.logger.log('Webhook received', {
       documentId,
       eventType: dto.event_type,
-      taskId: dto.task_id,
+      taskId: dto.processing_task_id || dto.task_id,
+      taskName: dto.processing_task_name,
       rawStatus: dto.status,
-      mappedStatus: status,
+      processingStatus: dto.processing_status,
     });
 
     await this.indexingService.handleWebhook(
       documentId,
       dto.status,
       dto.detected_language,
+      {
+        processingStatus: dto.processing_status,
+        processingTaskName: dto.processing_task_name,
+        processingTaskId: dto.processing_task_id || dto.task_id,
+        errorMessage: dto.metadata.error_message_image,
+      },
     );
     return {
       success: true,
