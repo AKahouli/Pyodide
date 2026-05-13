@@ -33,6 +33,7 @@ export const API_ENDPOINTS = {
   users: {
     me: '/users/me',
     completeProfile: '/users/me/complete-profile',
+    search: '/users/search',
   },
   health: {
     check: '/health',
@@ -69,6 +70,12 @@ export const API_ENDPOINTS = {
     create: '/workspaces',
     byId: (id: string) => `/workspaces/${id}`,
     byAlias: (alias: string) => `/workspaces/alias/${alias}`,
+    sharedWithMe: '/workspaces/shared-with-me',
+  },
+  workspaceShares: {
+    list: (workspaceId: string) => `/workspaces/${workspaceId}/shares`,
+    byId: (workspaceId: string, shareId: string) =>
+      `/workspaces/${workspaceId}/shares/${shareId}`,
   },
   workspaceDocuments: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,

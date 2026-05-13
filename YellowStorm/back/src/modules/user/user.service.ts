@@ -17,6 +17,20 @@ import {
   NotFoundException,
 } from '../exceptions';
 import { ErrorCode } from '../exceptions/constants/error-codes';
+import { escapeRegex } from '../../common/utils';
+
+interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+interface SearchUsersParams {
+  query: string;
+  excludeUserId?: string;
+  limit?: number;
+}
 
 @Injectable()
 export class UserService {
@@ -422,5 +436,33 @@ export class UserService {
       .find({ planId: { $exists: false } })
       .limit(limit)
       .exec();
+  }
+
+  /**
+   * Search active users by email prefix (case-insensitive).
+   * Returns minimal user info for sharing/autocomplete purposes.
+   */
+  async searchUsers(params: SearchUsersParams): Promise<UserSearchResult[]> {
+    const { query, excludeUserId, limit = 10 } = params;
+
+    const emailRegex = new RegExp(`^${escapeRegex(query)}`, 'i');
+
+    const filter: Record<string, unknown> = { email: emailRegex, status: UserStatus.ACTIVE };
+    if (excludeUserId) {
+      filter._id = { $ne: new Types.ObjectId(excludeUserId) };
+    }
+
+    const users = await this.userModel
+      .find(filter)
+      .select('email profile.firstName profile.lastName')
+      .limit(limit)
+      .exec();
+
+    return users.map((user) => ({
+      id: user._id.toString(),
+      email: user.email,
+      firstName: user.profile?.firstName,
+      lastName: user.profile?.lastName,
+    }));
   }
 }

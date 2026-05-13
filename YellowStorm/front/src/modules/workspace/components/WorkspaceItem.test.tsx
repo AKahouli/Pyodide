@@ -65,6 +65,7 @@ describe('WorkspaceItem', () => {
           allocatedStorage: 1024,
           isSystem: false,
           isPersonal: true,
+          shareCount: 0,
           createdAt: '',
           updatedAt: '',
         }}
