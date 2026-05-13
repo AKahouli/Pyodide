@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllFolders } from '../store';
-import { useDocumentDragDrop } from '../hooks';
+import { useDocumentDragDrop, useIndexingNotifications } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
 import { CreateFolderDialog } from './CreateFolderDialog';
@@ -45,6 +45,9 @@ export function WorkspaceContent() {
 
   // Drag and drop hook
   const { isDragging, draggedItems, handleDropOnRoot } = useDocumentDragDrop();
+
+  // Subscribe to indexing status notifications for real-time updates
+  useIndexingNotifications();
 
   // Wrapper for drop on root with current workspace
   const handleDropOnRootWithWorkspace = useCallback(async (e: React.DragEvent) => {
