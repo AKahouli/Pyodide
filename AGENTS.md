@@ -170,7 +170,7 @@ User task
 | `frontend-qa` | Frontend-visible UI/layout/interaction/runtime/a11y change | PASS/FAIL + browser evidence | Yes — FAIL on broken flows, console errors, failed requests |
 | `contract` | `.proto` mod, gRPC endpoint change, REST schema change, cross-service mod | PASS/FAIL: proto consistency, stub validity, breaking changes, env/secret contract | Yes — FAIL on drift or unmitigated breaking change |
 | `integration` | gRPC/REST contract change, multi-service change, post-`contract` PASS needing E2E | PASS/FAIL: connectivity, E2E flows, env consistency | Yes — FAIL on connectivity or schema mismatch |
-| `maintainer` | Tasks passing `reviewer` with Full/Light memory tier | Vault updates + behavior-preserving refactors | No |
+| `maintainer` | Tasks passing `reviewer` with Full/Light memory tier | Vault updates via Obsidian MCP (`obsidian_vault`, `obsidian_edit`, `obsidian_view`) + behavior-preserving refactors | No |
 
 ### `build` — Pre-coding Protocol
 

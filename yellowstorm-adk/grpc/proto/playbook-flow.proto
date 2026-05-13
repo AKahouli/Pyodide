@@ -1,0 +1,142 @@
+syntax = "proto3";
+
+package playbook_flow;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+service PlaybookFlowRuntime {
+  rpc Run(RunRequest) returns (stream RunEvent);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  rpc ResumeApproval(ResumeApprovalRequest) returns (ResumeApprovalResponse);
+}
+
+message RunRequest {
+  string execution_id = 1;
+  string flow_id = 2;
+  string owner_id = 3;
+  FlowSnapshot snapshot = 4;
+  google.protobuf.Struct input_context = 5;
+  RunSettings settings = 6;
+}
+
+message RunSettings {
+  int32 recursion_limit = 1;
+  int32 max_parallelism = 2;
+}
+
+message FlowSnapshot {
+  repeated FlowNode nodes = 1;
+  repeated ControlEdge control_edges = 2;
+  repeated DataBinding data_bindings = 3;
+  FlowSettings settings = 4;
+}
+
+message FlowSettings {
+  int32 recursion_limit = 1;
+  int32 max_parallelism = 2;
+}
+
+message FlowNode {
+  string id = 1;
+  string kind = 2;
+  string label = 3;
+  string task_template_id = 4;
+  string prompt_template_id = 5;
+  string output_format_id = 6;
+  FlowNodeInput input = 7;
+  FlowNodeOutput output = 8;
+  RouterConfig router_config = 9;
+  IteratorConfig iterator_config = 10;
+  HumanApprovalConfig human_approval_config = 11;
+  RetryPolicy retry_policy = 12;
+  string model_id = 13;
+  google.protobuf.Struct metadata = 14;
+}
+
+message FlowNodePort {
+  string id = 1;
+  string label = 2;
+  string type = 3;
+  bool required = 4;
+}
+
+message FlowNodeInput {
+  string raw = 1;
+  repeated FlowNodePort ports = 2;
+}
+
+message FlowNodeOutput {
+  string raw = 1;
+  repeated FlowNodePort ports = 2;
+}
+
+message RouterConfig {
+  repeated string output_labels = 1;
+  int32 max_iterations = 2;
+}
+
+message IteratorConfig {
+  string collection_path = 1;
+  int32 max_items = 2;
+}
+
+message HumanApprovalConfig {
+  string prompt_template = 1;
+  int32 timeout_seconds = 2;
+}
+
+message RetryPolicy {
+  int32 max_retries = 1;
+  int32 delay_ms = 2;
+}
+
+message ControlEdge {
+  string id = 1;
+  string kind = 2;
+  string source = 3;
+  string target = 4;
+  string router_label = 5;
+  int32 priority = 6;
+}
+
+message DataBinding {
+  string id = 1;
+  string target_node = 2;
+  string target_port = 3;
+  string source_kind = 4;
+  string source_node = 5;
+  string source_port = 6;
+  string iteration = 7;
+  string trigger_path = 8;
+  string state_path = 9;
+  google.protobuf.Value constant_value = 10;
+  string expression = 11;
+}
+
+message RunEvent {
+  string event_type = 1;
+  string execution_id = 2;
+  string node_id = 3;
+  int32 iteration = 4;
+  google.protobuf.Struct payload = 5;
+  google.protobuf.Timestamp timestamp = 6;
+}
+
+message CancelRequest {
+  string execution_id = 1;
+}
+
+message CancelResponse {
+  bool cancelled = 1;
+}
+
+message ResumeApprovalRequest {
+  string execution_id = 1;
+  string decision = 2;
+  google.protobuf.Struct payload = 3;
+}
+
+message ResumeApprovalResponse {
+  bool resumed = 1;
+}

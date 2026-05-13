@@ -1,0 +1,19 @@
+{
+  "nodes": [
+    {"id": "node-1", "kind": "step", "label": "Start", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-2", "kind": "step", "label": "Branch A", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-3", "kind": "step", "label": "Branch B", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-4", "kind": "step", "label": "Branch C", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-5", "kind": "step", "label": "Merge", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}}
+  ],
+  "control_edges": [
+    {"id": "e1", "kind": "sequential", "source": "node-1", "target": "node-2"},
+    {"id": "e2", "kind": "sequential", "source": "node-1", "target": "node-3"},
+    {"id": "e3", "kind": "sequential", "source": "node-1", "target": "node-4"},
+    {"id": "e4", "kind": "sequential", "source": "node-2", "target": "node-5"},
+    {"id": "e5", "kind": "sequential", "source": "node-3", "target": "node-5"},
+    {"id": "e6", "kind": "sequential", "source": "node-4", "target": "node-5"}
+  ],
+  "data_bindings": [],
+  "settings": {"recursion_limit": 25, "max_parallelism": 5}
+}

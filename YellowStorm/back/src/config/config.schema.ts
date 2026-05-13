@@ -154,6 +154,18 @@ export const configValidationSchema = Joi.object({
   // Playbook
   PLAYBOOK_PROMPT_REWRITE_SYSTEM_PROMPT: Joi.string().optional(),
 
+  // Playbook Flow
+  PLAYBOOK_FLOW_GRPC_URL: Joi.string().default('localhost:50052'),
+  PLAYBOOK_FLOW_GRPC_TIMEOUT_MS: Joi.number().min(5000).max(600000).default(300000),
+  PLAYBOOK_MAX_CONCURRENT_PER_USER: Joi.number().min(1).max(20).default(3),
+  PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH: Joi.number().min(1).max(500).default(50),
+  PLAYBOOK_MAX_PARALLELISM_PER_EXECUTION: Joi.number().min(1).max(20).default(5),
+  PLAYBOOK_RECURSION_LIMIT_DEFAULT: Joi.number().min(1).max(200).default(25),
+  PLAYBOOK_RECURSION_LIMIT_MAX: Joi.number().min(1).max(500).default(50),
+  PLAYBOOK_PYTHON_WORKER_POOL_SIZE: Joi.number().min(1).max(100).default(8),
+  PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: Joi.number().min(1).max(20).default(4),
+  PLAYBOOK_IDEMPOTENCY_TTL_HOURS: Joi.number().min(1).max(168).default(24),
+
   // Logging Persistence
   LOGGING_MONGODB_URI: Joi.string().optional(),
   LOGGING_BUFFER_SIZE: Joi.number().min(10).max(10000).default(100),

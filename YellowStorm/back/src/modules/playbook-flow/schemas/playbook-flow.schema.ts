@@ -1,0 +1,253 @@
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { HydratedDocument } from 'mongoose';
+
+export type FlowDocument = HydratedDocument<Flow>;
+
+@Schema({ _id: false })
+export class FlowTriggerConfig {
+  @Prop({ required: false, type: String })
+  kind?: string;
+
+  @Prop({ required: false, type: Object })
+  params?: Record<string, unknown>;
+}
+
+@Schema({ _id: false })
+export class FlowSettings {
+  @Prop({ required: true, type: Number, default: 25 })
+  recursionLimit!: number;
+
+  @Prop({ required: true, type: Number, default: 5 })
+  maxParallelism!: number;
+}
+
+@Schema({ _id: false })
+export class FlowNodePort {
+  @Prop({ required: true, type: String })
+  id!: string;
+
+  @Prop({ required: false, type: String })
+  label?: string;
+
+  @Prop({ required: false, type: String })
+  type?: string;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  required?: boolean;
+}
+
+@Schema({ _id: false })
+export class FlowNodeInput {
+  @Prop({ required: false, type: String })
+  raw?: string;
+
+  @Prop({ required: false, type: [FlowNodePort] })
+  ports?: FlowNodePort[];
+}
+
+@Schema({ _id: false })
+export class FlowNodeOutput {
+  @Prop({ required: false, type: String })
+  raw?: string;
+
+  @Prop({ required: false, type: [FlowNodePort] })
+  ports?: FlowNodePort[];
+}
+
+@Schema({ _id: false })
+export class RouterConfig {
+  @Prop({ required: true, type: [String] })
+  outputLabels!: string[];
+
+  @Prop({ required: true, type: Number, min: 1 })
+  maxIterations!: number;
+}
+
+@Schema({ _id: false })
+export class IteratorConfig {
+  @Prop({ required: true, type: String })
+  collectionPath!: string;
+
+  @Prop({ required: false, type: Number })
+  maxItems?: number;
+}
+
+@Schema({ _id: false })
+export class HumanApprovalConfig {
+  @Prop({ required: true, type: String })
+  promptTemplate!: string;
+
+  @Prop({ required: false, type: Number })
+  timeoutSeconds?: number;
+}
+
+@Schema({ _id: false })
+export class RetryPolicy {
+  @Prop({ required: true, type: Number, default: 1 })
+  maxRetries!: number;
+
+  @Prop({ required: false, type: Number, default: 1000 })
+  delayMs?: number;
+}
+
+@Schema({ _id: false })
+export class FlowNode {
+  @Prop({ required: true, type: String })
+  id!: string;
+
+  @Prop({ required: true, type: String, enum: ['step', 'router', 'iterator', 'human_approval'] })
+  kind!: string;
+
+  @Prop({ required: false, type: String })
+  label?: string;
+
+  @Prop({ required: false, type: String })
+  taskTemplateId?: string;
+
+  @Prop({ required: false, type: String })
+  promptTemplateId?: string;
+
+  @Prop({ required: false, type: String })
+  outputFormatId?: string;
+
+  @Prop({ required: false, type: FlowNodeInput })
+  input?: FlowNodeInput;
+
+  @Prop({ required: false, type: FlowNodeOutput })
+  output?: FlowNodeOutput;
+
+  @Prop({ required: false, type: RouterConfig })
+  routerConfig?: RouterConfig;
+
+  @Prop({ required: false, type: IteratorConfig })
+  iteratorConfig?: IteratorConfig;
+
+  @Prop({ required: false, type: HumanApprovalConfig })
+  humanApprovalConfig?: HumanApprovalConfig;
+
+  @Prop({ required: false, type: RetryPolicy })
+  retryPolicy?: RetryPolicy;
+
+  @Prop({ required: false, type: String })
+  modelId?: string;
+
+  @Prop({ required: false, type: Object })
+  metadata?: Record<string, unknown>;
+}
+
+@Schema({ _id: false })
+export class ControlEdge {
+  @Prop({ required: true, type: String })
+  id!: string;
+
+  @Prop({ required: true, type: String, enum: ['sequential', 'conditional'] })
+  kind!: string;
+
+  @Prop({ required: true, type: String })
+  source!: string;
+
+  @Prop({ required: true, type: String })
+  target!: string;
+
+  @Prop({ required: false, type: String })
+  routerLabel?: string;
+
+  @Prop({ required: false, type: Number, default: 0 })
+  priority?: number;
+}
+
+@Schema({ _id: false })
+export class DataBinding {
+  @Prop({ required: true, type: String })
+  id!: string;
+
+  @Prop({ required: true, type: String })
+  targetNode!: string;
+
+  @Prop({ required: true, type: String })
+  targetPort!: string;
+
+  @Prop({ required: true, type: String, enum: ['node-output', 'trigger', 'state', 'constant', 'expression'] })
+  sourceKind!: string;
+
+  @Prop({ required: false, type: String })
+  sourceNode?: string;
+
+  @Prop({ required: false, type: String })
+  sourcePort?: string;
+
+  @Prop({ required: false, type: String, enum: ['current', 'previous'], default: 'current' })
+  iteration?: string;
+
+  @Prop({ required: false, type: String })
+  triggerPath?: string;
+
+  @Prop({ required: false, type: String })
+  statePath?: string;
+
+  @Prop({ required: false, type: Object })
+  constantValue?: unknown;
+
+  @Prop({ required: false, type: String })
+  expression?: string;
+}
+
+@Schema({ timestamps: true })
+export class Flow {
+  @Prop({ required: true, type: String })
+  ownerId!: string;
+
+  @Prop({ required: true, type: Number, default: 1 })
+  schemaVersion!: number;
+
+  @Prop({ required: true, type: String, minlength: 2, maxlength: 100 })
+  name!: string;
+
+  @Prop({ required: false, type: String, maxlength: 20000 })
+  description?: string;
+
+  @Prop({ required: false, type: FlowTriggerConfig })
+  triggerConfig?: FlowTriggerConfig;
+
+  @Prop({ required: true, type: FlowSettings, default: () => ({ recursionLimit: 25, maxParallelism: 5 }) })
+  settings!: FlowSettings;
+
+  @Prop({ required: true, type: [FlowNode], default: [] })
+  nodes!: FlowNode[];
+
+  @Prop({ required: true, type: [ControlEdge], default: [] })
+  controlEdges!: ControlEdge[];
+
+  @Prop({ required: true, type: [DataBinding], default: [] })
+  dataBindings!: DataBinding[];
+
+  @Prop({ required: false, type: [String], default: [] })
+  workspaces!: string[];
+
+  @Prop({
+    required: false,
+    type: Object,
+    default: () => ({
+      inferenceModelId: null,
+      nodeSuggestionsMode: 'inherit',
+      approvalSuggestionMode: 'inherit',
+    }),
+  })
+  designSettings?: Record<string, unknown>;
+}
+
+export const FlowSchema = SchemaFactory.createForClass(Flow);
+
+FlowSchema.index({ ownerId: 1, updatedAt: -1 });
+FlowSchema.index({ ownerId: 1, name: 1 }, { unique: true });
+
+FlowSchema.set('toJSON', {
+  virtuals: true,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  transform: (_doc: any, ret: any) => {
+    ret.id = ret._id;
+    delete ret._id;
+    delete ret.__v;
+    return ret;
+  },
+});

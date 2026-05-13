@@ -1,0 +1,16 @@
+{
+  "nodes": [
+    {"id": "node-1", "kind": "step", "label": "Start", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-2", "kind": "step", "label": "Attempt", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}},
+    {"id": "node-3", "kind": "router", "label": "Retry Router", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}, "router_config": {"output_labels": ["retry", "done"], "max_iterations": 3}},
+    {"id": "node-4", "kind": "step", "label": "Finalize", "input": {"raw": "", "ports": []}, "output": {"raw": "", "ports": []}}
+  ],
+  "control_edges": [
+    {"id": "e1", "kind": "sequential", "source": "node-1", "target": "node-2"},
+    {"id": "e2", "kind": "sequential", "source": "node-2", "target": "node-3"},
+    {"id": "e3", "kind": "conditional", "source": "node-3", "target": "node-2", "router_label": "retry"},
+    {"id": "e4", "kind": "conditional", "source": "node-3", "target": "node-4", "router_label": "done"}
+  ],
+  "data_bindings": [],
+  "settings": {"recursion_limit": 25, "max_parallelism": 5}
+}

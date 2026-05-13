@@ -138,6 +138,14 @@ class Settings(BaseSettings):
     STEP_STREAM_QUEUE_MAXSIZE: int = 64
     LANGGRAPH_CHECKPOINT_PATH: Optional[str] = None
 
+    PLAYBOOK_MAX_CONCURRENT_PER_USER: int = 3
+    PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH: int = 50
+    PLAYBOOK_MAX_PARALLELISM_PER_EXECUTION: int = 5
+    PLAYBOOK_RECURSION_LIMIT_DEFAULT: int = 25
+    PLAYBOOK_RECURSION_LIMIT_MAX: int = 50
+    PLAYBOOK_PYTHON_WORKER_POOL_SIZE: int = 8
+    PLAYBOOK_PYTHON_WORKER_MAX_INFLIGHT: int = 4
+
     # External API Configuration for specific brain_ids
     EXTERNAL_API_BRAIN_IDS: List[str] = []  # Brain IDs requiring external routing
     EXTERNAL_API_URL: str  # URL of external API endpoint

@@ -1,0 +1,42 @@
+// Module
+export { UsageModule } from './usage.module';
+
+// Service
+export { UsageService } from './usage.service';
+
+// Schemas
+export { Plan, PlanSchema, PlanDocument, PlanTier } from './schemas/plan.schema';
+export { Usage, UsageSchema, UsageDocument, UsageType } from './schemas/usage.schema';
+export { UsageLog, UsageLogSchema, UsageLogDocument } from './schemas/usage-log.schema';
+
+// Guards
+export { UsageLimitGuard } from './guards/usage-limit.guard';
+
+// Decorators
+export { CheckUsage, CheckUsageOptions, CHECK_USAGE_KEY } from './decorators/check-usage.decorator';
+
+// Interfaces
+export type {
+  PlanResponse,
+  PlanSummary,
+  CreatePlanData,
+  UpdatePlanData,
+} from './interfaces/plan.interface';
+export { DEFAULT_PLANS } from './interfaces/plan.interface';
+
+export type {
+  UsageStatus,
+  UsageResponse,
+  RecordUsageData,
+  UsageHistoryQuery,
+  UsageHistoryResponse,
+  UsageAnalytics,
+  DailyUsage,
+  UsageCheckResult,
+} from './interfaces/usage.interface';
+
+// DTOs
+export { CreatePlanDto } from './dto/create-plan.dto';
+export { UpdatePlanDto } from './dto/update-plan.dto';
+export { RecordUsageDto } from './dto/record-usage.dto';
+export { UsageHistoryQueryDto } from './dto/usage-history-query.dto';
