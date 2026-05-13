@@ -1,0 +1,73 @@
+name: CI/CD Frontend
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - closed
+    paths:
+      - 'YellowStorm/front/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        description: 'Choose environment to deploy'
+        options:
+          - poc
+        required: true
+
+env:
+  IMAGE_NAME: yscrmetachatbot001.azurecr.io/yellowstorm-front-poc
+  ENV_NAME: ${{ github.event.inputs.environment }}
+
+jobs:
+  build:
+    if: (github.event.pull_request.merged == true) || (github.event_name == 'workflow_dispatch')
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    outputs:
+      image_tag: ${{ steps.version.outputs.tag }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          VERSION="1.4.${GITHUB_RUN_NUMBER}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "Version is $VERSION"
+          echo "tag=$VERSION" >> $GITHUB_OUTPUT
+
+
+      - name: Log in to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: yscrmetachatbot001.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t $IMAGE_NAME:${VERSION} YellowStorm/front
+          docker push $IMAGE_NAME:${VERSION}
+
+  deploy:
+    runs-on: ["self-hosted","Linux","X64","host142","yellowstorm","rec"]
+    needs: build
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Pull latest Docker image
+        run: |
+          docker pull $IMAGE_NAME:${{ needs.build.outputs.image_tag }}
+
+      - name: Update Compose and deploy
+        run: |
+          export IMAGE_TAG=${{ needs.build.outputs.image_tag }}
+          sed -i "s|image: .*$|image: $IMAGE_NAME:$IMAGE_TAG|" ~/yellowstorm/${ENV_NAME}/front/docker-compose.yaml
+
+          docker compose -f ~/yellowstorm/${ENV_NAME}/front/docker-compose.yaml down
+          docker compose -f ~/yellowstorm/${ENV_NAME}/front/docker-compose.yaml up -d
