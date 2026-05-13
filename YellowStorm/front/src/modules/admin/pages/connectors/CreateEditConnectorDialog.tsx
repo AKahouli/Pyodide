@@ -22,7 +22,7 @@ import {
 import type { ConnectorResponse, ConnectorActionResponse, SkillResponse, McpToolDefinition } from '../../types';
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
-import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
+import { parseMcpServerConfig } from './mcp-server-config';
 import { Loader2, Plus, TestTube2, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSkills, inspectMcp } from '../../api';
@@ -183,7 +183,6 @@ export function CreateEditConnectorDialog({
           runtimeEnvMappings: parsedRuntime.runtimeEnvMappings,
           mcpTransportType: connector.mcpTransportType || 'streamable_http',
           mcpServerUrl: connector.mcpServerUrl || '',
-          githubPatToken: parsedServerConfig.githubPatToken,
           mcpServerConfig: parsedServerConfig.serverConfigText,
           actions: connector.actions || [],
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
@@ -246,7 +245,7 @@ export function CreateEditConnectorDialog({
 
     let mcpServerConfig: Record<string, unknown> | undefined;
     try {
-      mcpServerConfig = buildMcpServerConfig(form.mcpServerConfig, form.githubPatToken);
+      mcpServerConfig = form.mcpServerConfig.trim() ? (JSON.parse(form.mcpServerConfig) as Record<string, unknown>) : undefined;
     } catch {
       toast.error(t('connectors.form.errors.invalidServerConfigJson'));
       return;
@@ -277,10 +276,6 @@ export function CreateEditConnectorDialog({
       setInspecting(false);
     }
   };
-
-  const isGitHubConnector = [form.slug, form.name, form.mcpServerUrl].some((value) =>
-    value.toLowerCase().includes('github'),
-  );
 
   const updateMappingRow = (
     field: 'runtimeHeaderMappings' | 'runtimeEnvMappings',
@@ -487,20 +482,6 @@ export function CreateEditConnectorDialog({
             <Label>MCP Server Config (JSON)</Label>
             <Textarea placeholder='{"commandArgs": ["--stdio"]}' value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
           </div>
-
-          {isGitHubConnector ? (
-            <div className='grid gap-2'>
-              <Label>{t('connectors.form.githubPat.label')}</Label>
-              <Input
-                type='password'
-                autoComplete='off'
-                placeholder={t('connectors.form.githubPat.placeholder')}
-                value={form.githubPatToken}
-                onChange={(e) => setForm({ ...form, githubPatToken: e.target.value })}
-              />
-              <p className='text-sm text-muted-foreground'>{t('connectors.form.githubPat.helper')}</p>
-            </div>
-          ) : null}
 
           <div className='flex items-center justify-between gap-3'>
             <div className='text-sm text-muted-foreground'>{t('connectors.form.inspect.helper')}</div>

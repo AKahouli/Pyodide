@@ -17,7 +17,6 @@ export interface ConnectorFormValues {
   runtimeEnvMappings: Array<{ id: string; key: string; value: string }>;
   mcpTransportType: string;
   mcpServerUrl: string;
-  githubPatToken: string;
   mcpServerConfig: string;
   actions?: ConnectorActionResponse[];
   actionsJson: string;
@@ -42,7 +41,6 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   runtimeEnvMappings: [],
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
-  githubPatToken: '',
   mcpServerConfig: '',
   actions: [],
   actionsJson: '',
