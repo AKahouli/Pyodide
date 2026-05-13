@@ -17,17 +17,24 @@ import { SearchableSelect } from '@/components/ui/searchable-select';
 import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
+import {
+  PlaybookIteratorConfigFields,
+  usePlaybookStore,
+  type PlaybookIteratorConfig,
+  type PlaybookNodeType,
+} from '@/modules/playbook';
+import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '@/modules/playbook/utils/iterator-ports';
 import apiClient from '@/lib/api/client';
 import {
   getPlaybookPrompts,
   updatePlaybookPrompt,
+  deletePlaybookPrompt,
   getPlaybookNodeTemplates,
   createPlaybookNodeTemplate,
   updatePlaybookNodeTemplate,
   deletePlaybookNodeTemplate,
 } from '../api';
 import type { PlaybookPromptResponse, PlaybookNodeTemplateResponse, PlaybookNodeTemplatePort } from '../types';
-import { usePlaybookStore } from '@/modules/playbook';
 import * as Icons from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -50,6 +57,7 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
   id: '',
   key: '',
   type: '',
+  nodeType: 'agent',
   title: '',
   description: '',
   icon: 'FileText',
@@ -71,6 +79,14 @@ const EMPTY_NODE_TEMPLATE: PlaybookNodeTemplateResponse = {
 };
 
 const EMPTY_PORT: PlaybookNodeTemplatePort = { id: '', name: '', artifactKind: 'text', required: false };
+const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
+  source: '{{items}}',
+  mode: 'item',
+  batchSize: 10,
+  itemVariable: 'item',
+  outputVariable: 'processed_items',
+  errorStrategy: 'stop',
+};
 
 // Constants for selects
 const CATEGORIES = ['content', 'generation', 'analysis', 'code', 'evaluation'];
@@ -112,6 +128,22 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
+function normalizeIteratorTemplate(template: PlaybookNodeTemplateResponse): PlaybookNodeTemplateResponse {
+  if (template.nodeType !== 'iterator') {
+    return template;
+  }
+
+  return {
+    ...template,
+    executionMode: 'agent',
+    assignedAgentId: null,
+    selectedAction: null,
+    inputPorts: getDefaultIteratorInputPorts(),
+    outputPorts: getDefaultIteratorOutputPorts(),
+    iteratorConfig: template.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG },
+  };
+}
+
 export function PlaybookPromptsPage() {
   const { t } = useModuleTranslation('admin');
   const invalidateNodeTemplates = usePlaybookStore((s) => s.invalidateNodeTemplates);
@@ -123,6 +155,8 @@ export function PlaybookPromptsPage() {
   const [promptItems, setPromptItems] = useState<PlaybookPromptResponse[]>([]);
   const [selectedPromptKey, setSelectedPromptKey] = useState('');
   const [promptDraft, setPromptDraft] = useState<PlaybookPromptResponse>(EMPTY_PROMPT);
+  const [isCreatingPrompt, setIsCreatingPrompt] = useState(false);
+  const [promptDeleteDialogOpen, setPromptDeleteDialogOpen] = useState(false);
 
   // ===== Node Templates State =====
   const [templateLoading, setTemplateLoading] = useState(true);
@@ -148,12 +182,33 @@ export function PlaybookPromptsPage() {
     setPromptDraft(item);
   };
 
+  const startCreatePrompt = () => {
+    setIsCreatingPrompt(true);
+    setSelectedPromptKey('');
+    setPromptDraft({ ...EMPTY_PROMPT, key: '', title: '', category: 'task' });
+  };
+
+  const cancelCreatePrompt = () => {
+    setIsCreatingPrompt(false);
+    const first = promptItems[0] || null;
+    setSelectedPromptKey(first?.key || '');
+    syncPromptDraft(first);
+  };
+
+  const handlePromptTitleChange = (title: string) => {
+    setPromptDraft((current) => ({
+      ...current,
+      title,
+      key: isCreatingPrompt ? slugify(title) : current.key,
+    }));
+  };
+
   const syncTemplateDraft = (item: PlaybookNodeTemplateResponse | null) => {
     if (!item) {
       setTemplateDraft(EMPTY_NODE_TEMPLATE);
       return;
     }
-    setTemplateDraft(item);
+    setTemplateDraft(normalizeIteratorTemplate(item));
   };
 
   const fetchPrompts = async () => {
@@ -162,6 +217,9 @@ export function PlaybookPromptsPage() {
       const data = await getPlaybookPrompts();
       const nextItems = data.items || [];
       setPromptItems(nextItems);
+      if (isCreatingPrompt) {
+        setIsCreatingPrompt(false);
+      }
       const first = nextItems[0] || null;
       setSelectedPromptKey((current) => current && nextItems.some((item) => item.key === current) ? current : (first?.key || ''));
       syncPromptDraft(selectedPromptKey && nextItems.some((item) => item.key === selectedPromptKey) ? nextItems.find((item) => item.key === selectedPromptKey) || null : first);
@@ -214,8 +272,10 @@ export function PlaybookPromptsPage() {
   }, []);
 
   useEffect(() => {
-    syncPromptDraft(selectedPrompt);
-  }, [selectedPrompt]);
+    if (!isCreatingPrompt) {
+      syncPromptDraft(selectedPrompt);
+    }
+  }, [selectedPrompt, isCreatingPrompt]);
 
   useEffect(() => {
     syncTemplateDraft(selectedTemplate);
@@ -225,7 +285,7 @@ export function PlaybookPromptsPage() {
     if (!promptDraft.key) return;
     setPromptSaving(true);
     try {
-      const updated = await updatePlaybookPrompt(promptDraft.key, {
+      const saved = await updatePlaybookPrompt(promptDraft.key, {
         title: promptDraft.title,
         category: promptDraft.category,
         description: promptDraft.description,
@@ -233,15 +293,38 @@ export function PlaybookPromptsPage() {
         userTemplate: promptDraft.userTemplate,
         enabled: promptDraft.enabled,
       });
-      setPromptItems((current) => current.map((item) => (item.key === updated.key ? updated : item)));
-      setPromptDraft(updated);
-      toast.success(t('playbook.prompts.toasts.saved'));
+      if (isCreatingPrompt) {
+        setPromptItems((current) => [...current, saved].sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)));
+        setSelectedPromptKey(saved.key);
+        setIsCreatingPrompt(false);
+        toast.success(t('playbook.prompts.toasts.created'));
+      } else {
+        setPromptItems((current) => current.map((item) => (item.key === saved.key ? saved : item)));
+        toast.success(t('playbook.prompts.toasts.saved'));
+      }
+      setPromptDraft(saved);
     } catch (err) {
-      toast.error(t('playbook.prompts.toasts.saveFailed'), {
+      toast.error(isCreatingPrompt ? t('playbook.prompts.toasts.createFailed') : t('playbook.prompts.toasts.saveFailed'), {
         description: err instanceof Error ? err.message : 'Unknown error',
       });
     } finally {
       setPromptSaving(false);
+    }
+  };
+
+  const handleDeletePrompt = async () => {
+    if (!promptDraft.key) return;
+    try {
+      await deletePlaybookPrompt(promptDraft.key);
+      setPromptItems((current) => current.filter((item) => item.key !== promptDraft.key));
+      setSelectedPromptKey('');
+      setPromptDraft(EMPTY_PROMPT);
+      setPromptDeleteDialogOpen(false);
+      toast.success(t('playbook.prompts.toasts.deleted'));
+    } catch (err) {
+      toast.error(t('playbook.prompts.toasts.deleteFailed'), {
+        description: err instanceof Error ? err.message : 'Unknown error',
+      });
     }
   };
 
@@ -251,25 +334,30 @@ export function PlaybookPromptsPage() {
       return;
     }
     const type = templateDraft.type || templateDraft.key;
+    const draftToSave = templateDraft.nodeType === 'iterator'
+      ? normalizeIteratorTemplate({ ...templateDraft, type })
+      : templateDraft;
     setTemplateSaving(true);
     try {
       if (isCreatingTemplate) {
         const created = await createPlaybookNodeTemplate({
-          key: templateDraft.key,
+          key: draftToSave.key,
           type,
-          title: templateDraft.title,
-          description: templateDraft.description,
-          icon: templateDraft.icon,
-          color: templateDraft.color,
-          category: templateDraft.category,
-          inputPorts: stripPortIds(templateDraft.inputPorts),
-          outputPorts: stripPortIds(templateDraft.outputPorts),
-          promptTemplate: templateDraft.promptTemplate,
-          requiredToolNames: templateDraft.requiredToolNames,
-          executionMode: templateDraft.executionMode,
-          assignedAgentId: templateDraft.assignedAgentId,
-          selectedAction: templateDraft.selectedAction,
-          enabled: templateDraft.enabled,
+          nodeType: draftToSave.nodeType,
+          title: draftToSave.title,
+          description: draftToSave.description,
+          icon: draftToSave.icon,
+          color: draftToSave.color,
+          category: draftToSave.category,
+          inputPorts: stripPortIds(draftToSave.inputPorts),
+          outputPorts: stripPortIds(draftToSave.outputPorts),
+          promptTemplate: draftToSave.promptTemplate,
+          requiredToolNames: draftToSave.requiredToolNames,
+          executionMode: draftToSave.executionMode,
+          assignedAgentId: draftToSave.assignedAgentId,
+          selectedAction: draftToSave.selectedAction,
+          iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
+          enabled: draftToSave.enabled,
         });
         setTemplateItems((current) => [...current, created].sort((a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)));
         setSelectedTemplateId(created.id);
@@ -278,21 +366,23 @@ export function PlaybookPromptsPage() {
         toast.success(t('playbook.templates.toasts.created'));
       } else if (templateDraft.id) {
         const updated = await updatePlaybookNodeTemplate(templateDraft.id, {
-          key: templateDraft.key,
+          key: draftToSave.key,
           type,
-          title: templateDraft.title,
-          description: templateDraft.description,
-          icon: templateDraft.icon,
-          color: templateDraft.color,
-          category: templateDraft.category,
-          inputPorts: stripPortIds(templateDraft.inputPorts),
-          outputPorts: stripPortIds(templateDraft.outputPorts),
-          promptTemplate: templateDraft.promptTemplate,
-          requiredToolNames: templateDraft.requiredToolNames,
-          executionMode: templateDraft.executionMode,
-          assignedAgentId: templateDraft.assignedAgentId,
-          selectedAction: templateDraft.selectedAction,
-          enabled: templateDraft.enabled,
+          nodeType: draftToSave.nodeType,
+          title: draftToSave.title,
+          description: draftToSave.description,
+          icon: draftToSave.icon,
+          color: draftToSave.color,
+          category: draftToSave.category,
+          inputPorts: stripPortIds(draftToSave.inputPorts),
+          outputPorts: stripPortIds(draftToSave.outputPorts),
+          promptTemplate: draftToSave.promptTemplate,
+          requiredToolNames: draftToSave.requiredToolNames,
+          executionMode: draftToSave.executionMode,
+          assignedAgentId: draftToSave.assignedAgentId,
+          selectedAction: draftToSave.selectedAction,
+          iteratorConfig: stripIteratorConfigIds(draftToSave.iteratorConfig),
+          enabled: draftToSave.enabled,
         });
         setTemplateItems((current) => current.map((item) => (item.id === updated.id ? updated : item)));
         setTemplateDraft(updated);
@@ -309,7 +399,7 @@ export function PlaybookPromptsPage() {
   };
 
   const handleDeleteTemplate = async () => {
-    if (!templateDraft.id || templateDraft.isBuiltIn) return;
+    if (!templateDraft.id) return;
     try {
       await deletePlaybookNodeTemplate(templateDraft.id);
       setTemplateItems((current) => current.filter((item) => item.id !== templateDraft.id));
@@ -328,7 +418,7 @@ export function PlaybookPromptsPage() {
   const startCreateTemplate = () => {
     setIsCreatingTemplate(true);
     setSelectedTemplateId('');
-    setTemplateDraft({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' });
+    setTemplateDraft(normalizeIteratorTemplate({ ...EMPTY_NODE_TEMPLATE, key: '', type: '', title: '' }));
   };
 
   const cancelCreateTemplate = () => {
@@ -350,6 +440,12 @@ export function PlaybookPromptsPage() {
 
   const stripPortIds = (ports: PlaybookNodeTemplatePort[]): PlaybookNodeTemplatePort[] =>
     ports.map(({ _id, ...rest }: any) => rest);
+
+  const stripIteratorConfigIds = (config: PlaybookIteratorConfig | null | undefined): PlaybookIteratorConfig | null => {
+    if (!config) return null;
+    const { _id, id, ...rest } = config as any;
+    return rest as PlaybookIteratorConfig;
+  };
 
   const addInputPort = () => {
     setTemplateDraft((current) => ({
@@ -414,6 +510,40 @@ export function PlaybookPromptsPage() {
     });
   };
 
+  const applyTemplateNodeType = (nodeType: PlaybookNodeType) => {
+    setTemplateDraft((current) => {
+      if (nodeType === 'iterator') {
+        return normalizeIteratorTemplate({
+          ...current,
+          nodeType: 'iterator',
+        });
+      }
+
+      if (nodeType === 'action') {
+        return {
+          ...current,
+          nodeType: 'action',
+          executionMode: 'action',
+          assignedAgentId: null,
+          selectedAction: current.selectedAction ?? 'index',
+          iteratorConfig: null,
+        };
+      }
+
+      return {
+        ...current,
+        nodeType: 'agent',
+        executionMode: 'agent',
+        selectedAction: null,
+        iteratorConfig: null,
+      };
+    });
+  };
+
+  const templateNodeType: PlaybookNodeType = templateDraft.type === 'iterator'
+    ? 'iterator'
+    : templateDraft.nodeType ?? (templateDraft.executionMode === 'action' ? 'action' : 'agent');
+
   const isLoading = promptLoading || templateLoading;
 
   // Icon component lookup
@@ -459,33 +589,58 @@ export function PlaybookPromptsPage() {
           <div className="p-4">
             <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
               <Card className="overflow-hidden">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
+                  <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2"><FileText className="h-5 w-5" /> {t('playbook.prompts.registry')}</CardTitle>
+                    <Button variant="outline" size="sm" onClick={startCreatePrompt}>
+                      <Plus className="mr-2 h-4 w-4" />
+                      {t('playbook.prompts.actions.create')}
+                    </Button>
+                  </div>
                   <CardDescription>{t('playbook.prompts.slots', { count: promptItems.length })}</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                   <ScrollArea className="h-[760px]">
                     <div className="p-3 space-y-2">
                       {promptItems.map((item) => (
-                        <button
+                        <div
                           key={item.key}
-                          type="button"
-                          onClick={() => setSelectedPromptKey(item.key)}
                           className={cn(
-                            'w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
-                            selectedPromptKey === item.key && 'border-primary bg-primary/5',
+                            'group relative rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                            selectedPromptKey === item.key && !isCreatingPrompt && 'border-primary bg-primary/5',
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium">{item.title}</div>
-                            <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground break-all">{item.key}</div>
-                          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                            <BadgeInfo className="h-3.5 w-3.5" />
-                            v{item.version}{item.isBuiltIn ? ` • ${t('playbook.prompts.builtIn')}` : ''}
-                          </div>
-                        </button>
+                          <button
+                            type="button"
+                            className="w-full text-left"
+                            onClick={() => { setIsCreatingPrompt(false); setSelectedPromptKey(item.key); }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-medium">{item.title}</div>
+                              <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.key}</div>
+                            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                              <BadgeInfo className="h-3.5 w-3.5" />
+                              v{item.version}{item.isBuiltIn ? ` • ${t('playbook.prompts.builtIn')}` : ''}
+                            </div>
+                          </button>
+                          {!item.isBuiltIn && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedPromptKey(item.key);
+                                setPromptDraft(item);
+                                setPromptDeleteDialogOpen(true);
+                              }}
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </ScrollArea>
@@ -496,12 +651,14 @@ export function PlaybookPromptsPage() {
                 <CardHeader>
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <CardTitle>{promptDraft.title || t('playbook.prompts.selectPrompt')}</CardTitle>
-                      <CardDescription className="break-all">{promptDraft.key || t('playbook.prompts.noPromptSelected')}</CardDescription>
+                      <CardTitle>{isCreatingPrompt ? t('playbook.prompts.actions.createPrompt') : (promptDraft.title || t('playbook.prompts.selectPrompt'))}</CardTitle>
+                      <CardDescription className="break-all">
+                        {isCreatingPrompt ? t('playbook.prompts.createDescription') : (promptDraft.key || t('playbook.prompts.noPromptSelected'))}
+                      </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
                       <Switch checked={promptDraft.enabled} onCheckedChange={(checked) => setPromptDraft((current) => ({ ...current, enabled: checked }))} />
-                      <span className="text-sm text-muted-foreground">Enabled</span>
+                      <span className="text-sm text-muted-foreground">{t('playbook.prompts.fields.enabled')}</span>
                     </div>
                   </div>
                 </CardHeader>
@@ -509,17 +666,35 @@ export function PlaybookPromptsPage() {
                   <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.prompts.fields.title')}</label>
-                      <Input value={promptDraft.title} onChange={(e) => setPromptDraft((current) => ({ ...current, title: e.target.value }))} />
+                      <Input
+                        value={promptDraft.title}
+                        onChange={(e) => handlePromptTitleChange(e.target.value)}
+                        placeholder={t('playbook.templates.fields.titlePlaceholder')}
+                      />
                     </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium flex items-center gap-2">
+                        {t('playbook.prompts.fields.key')}
+                        <Badge variant="outline" className="text-xs">{t('playbook.prompts.fields.keyAuto')}</Badge>
+                      </label>
+                      <Input
+                        value={promptDraft.key}
+                        disabled
+                        placeholder={t('playbook.prompts.fields.keyPlaceholder')}
+                        className="bg-muted/50"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.prompts.fields.category')}</label>
                       <Input value={promptDraft.category} onChange={(e) => setPromptDraft((current) => ({ ...current, category: e.target.value }))} />
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Description</label>
-                    <Input value={promptDraft.description || ''} onChange={(e) => setPromptDraft((current) => ({ ...current, description: e.target.value }))} />
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">{t('playbook.prompts.fields.description')}</label>
+                      <Input value={promptDraft.description || ''} onChange={(e) => setPromptDraft((current) => ({ ...current, description: e.target.value }))} />
+                    </div>
                   </div>
 
                   <Separator />
@@ -550,10 +725,20 @@ export function PlaybookPromptsPage() {
                     <p className="text-xs text-muted-foreground">{t('playbook.prompts.hints.variables')}</p>
                   </div>
 
-                  <div className="flex justify-end">
+                  <div className="flex justify-between">
+                    <div className="flex gap-2">
+                      {isCreatingPrompt ? (
+                        <Button variant="outline" onClick={cancelCreatePrompt}>{t('playbook.prompts.actions.cancel')}</Button>
+                      ) : !promptDraft.isBuiltIn && promptDraft.key ? (
+                        <Button variant="destructive" onClick={() => setPromptDeleteDialogOpen(true)}>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {t('playbook.prompts.actions.delete')}
+                        </Button>
+                      ) : null}
+                    </div>
                     <Button onClick={() => void handleSavePrompt()} disabled={!promptDraft.key || promptSaving}>
                       {promptSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                      {t('playbook.prompts.actions.save')}
+                      {isCreatingPrompt ? t('playbook.prompts.actions.createPrompt') : t('playbook.prompts.actions.save')}
                     </Button>
                   </div>
                 </CardContent>
@@ -591,25 +776,42 @@ export function PlaybookPromptsPage() {
                   <ScrollArea className="h-[760px]">
                     <div className="p-3 space-y-2">
                       {templateItems.map((item) => (
-                        <button
+                        <div
                           key={item.id}
-                          type="button"
-                          onClick={() => { setIsCreatingTemplate(false); setSelectedTemplateId(item.id); }}
                           className={cn(
-                            'w-full rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
+                            'group relative rounded-lg border p-3 text-left transition-colors hover:bg-muted/40',
                             selectedTemplateId === item.id && !isCreatingTemplate && 'border-primary bg-primary/5',
                           )}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium">{item.title}</div>
-                            <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground break-all">{item.type}</div>
-                          <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                            <BadgeInfo className="h-3.5 w-3.5" />
-                            v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
-                          </div>
-                        </button>
+                          <button
+                            type="button"
+                            className="w-full text-left"
+                            onClick={() => { setIsCreatingTemplate(false); setSelectedTemplateId(item.id); }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="font-medium">{item.title}</div>
+                              <Badge variant={item.enabled ? 'default' : 'secondary'}>{item.category}</Badge>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground break-all">{item.type}</div>
+                            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+                              <BadgeInfo className="h-3.5 w-3.5" />
+                              v{item.version}{item.isBuiltIn ? ` • ${t('playbook.templates.builtIn')}` : ''}
+                            </div>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedTemplateId(item.id);
+                              setTemplateDraft(item);
+                              setDeleteDialogOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       ))}
                     </div>
                   </ScrollArea>
@@ -662,18 +864,31 @@ export function PlaybookPromptsPage() {
                     </div>
                   </div>
 
-                  {/* Category */}
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">{t('playbook.templates.fields.category')}</label>
-                    <div className="flex gap-2">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">{t('playbook.templates.fields.category')}</label>
+                      <div className="flex gap-2">
+                        <select
+                          value={templateDraft.category}
+                          onChange={(e) => setTemplateDraft((current) => ({ ...current, category: e.target.value }))}
+                          className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {CATEGORIES.map((cat) => (
+                            <option key={cat} value={cat}>{cat}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">{t('playbook.templates.fields.nodeType')}</label>
                       <select
-                        value={templateDraft.category}
-                        onChange={(e) => setTemplateDraft((current) => ({ ...current, category: e.target.value }))}
+                        value={templateNodeType}
+                        onChange={(e) => applyTemplateNodeType(e.target.value as PlaybookNodeType)}
                         className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                       >
-                        {CATEGORIES.map((cat) => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
+                        <option value="agent">{t('playbook.templates.fields.nodeTypeAgent')}</option>
+                        <option value="action">{t('playbook.templates.fields.nodeTypeAction')}</option>
+                        <option value="iterator">{t('playbook.templates.fields.nodeTypeIterator')}</option>
                       </select>
                     </div>
                   </div>
@@ -688,8 +903,8 @@ export function PlaybookPromptsPage() {
                     />
                   </div>
 
-                  {/* Icon, Color, Execution Mode */}
-                  <div className="grid gap-4 md:grid-cols-3">
+                  {/* Icon, Color */}
+                  <div className="grid gap-4 md:grid-cols-2">
                     {/* Icon Picker */}
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.icon')}</label>
@@ -755,28 +970,16 @@ export function PlaybookPromptsPage() {
                       </Popover>
                     </div>
 
-                    {/* Execution Mode */}
-                    <div className="space-y-2">
-                      <label className="text-sm font-medium">{t('playbook.templates.fields.executionMode')}</label>
-                      <select
-                        value={templateDraft.executionMode}
-                        onChange={(e) => setTemplateDraft((current) => ({
-                          ...current,
-                          executionMode: e.target.value,
-                          assignedAgentId: e.target.value === 'agent' ? current.assignedAgentId : null,
-                          selectedAction: e.target.value === 'action' ? current.selectedAction : null,
-                        }))}
-                        className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {EXECUTION_MODES.map((mode) => (
-                          <option key={mode} value={mode}>{mode}</option>
-                        ))}
-                      </select>
-                    </div>
+
                   </div>
 
                   {/* Agent or Action based on Execution Mode */}
-                  {templateDraft.executionMode === 'agent' ? (
+                  {templateNodeType === 'iterator' && templateDraft.iteratorConfig ? (
+                    <PlaybookIteratorConfigFields
+                      value={templateDraft.iteratorConfig}
+                      onChange={(iteratorConfig) => setTemplateDraft((current) => ({ ...current, iteratorConfig }))}
+                    />
+                  ) : templateDraft.executionMode === 'agent' ? (
                     <div className="space-y-2">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.agent')}</label>
                       <SearchableSelect
@@ -816,7 +1019,7 @@ export function PlaybookPromptsPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.inputPorts')}</label>
-                      <Button variant="outline" size="sm" onClick={addInputPort}>
+                      <Button variant="outline" size="sm" onClick={addInputPort} disabled={templateNodeType === 'iterator'}>
                         <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
@@ -826,6 +1029,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portName')}</label>
                           <Input
                             value={port.name}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateInputPort(index, { ...port, name: e.target.value })}
                             placeholder={t('playbook.templates.fields.portNamePlaceholder')}
                           />
@@ -834,6 +1038,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portId')}</label>
                           <Input
                             value={port.id}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateInputPort(index, { ...port, id: e.target.value })}
                             placeholder="port-id"
                           />
@@ -842,6 +1047,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.artifactKind')}</label>
                           <select
                             value={port.artifactKind}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateInputPort(index, { ...port, artifactKind: e.target.value })}
                             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                           >
@@ -850,7 +1056,7 @@ export function PlaybookPromptsPage() {
                             ))}
                           </select>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeInputPort(index)} className="h-9 w-9">
+                        <Button variant="ghost" size="icon" onClick={() => removeInputPort(index)} className="h-9 w-9" disabled={templateNodeType === 'iterator'}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -863,16 +1069,20 @@ export function PlaybookPromptsPage() {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <label className="text-sm font-medium">{t('playbook.templates.fields.outputPorts')}</label>
-                      <Button variant="outline" size="sm" onClick={addOutputPort}>
+                      <Button variant="outline" size="sm" onClick={addOutputPort} disabled={templateNodeType === 'iterator'}>
                         <Plus className="mr-2 h-4 w-4" /> {t('playbook.templates.fields.addPort')}
                       </Button>
                     </div>
+                    {templateNodeType === 'iterator' && (
+                      <p className="text-xs text-muted-foreground">{t('playbook.templates.fields.iteratorOutputPortHint')}</p>
+                    )}
                     {templateDraft.outputPorts.map((port, index) => (
                       <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_1fr_auto] items-end rounded-lg border p-3">
                         <div className="space-y-1">
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portName')}</label>
                           <Input
                             value={port.name}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateOutputPort(index, { ...port, name: e.target.value })}
                             placeholder={t('playbook.templates.fields.portNamePlaceholder')}
                           />
@@ -881,6 +1091,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.portId')}</label>
                           <Input
                             value={port.id}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateOutputPort(index, { ...port, id: e.target.value })}
                             placeholder="port-id"
                           />
@@ -889,6 +1100,7 @@ export function PlaybookPromptsPage() {
                           <label className="text-xs text-muted-foreground">{t('playbook.templates.fields.artifactKind')}</label>
                           <select
                             value={port.artifactKind}
+                            disabled={templateNodeType === 'iterator'}
                             onChange={(e) => updateOutputPort(index, { ...port, artifactKind: e.target.value })}
                             className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors"
                           >
@@ -897,7 +1109,7 @@ export function PlaybookPromptsPage() {
                             ))}
                           </select>
                         </div>
-                        <Button variant="ghost" size="icon" onClick={() => removeOutputPort(index)} className="h-9 w-9">
+                        <Button variant="ghost" size="icon" onClick={() => removeOutputPort(index)} className="h-9 w-9" disabled={templateNodeType === 'iterator'}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
                       </div>
@@ -953,7 +1165,7 @@ export function PlaybookPromptsPage() {
                     <div className="flex gap-2">
                       {isCreatingTemplate ? (
                         <Button variant="outline" onClick={cancelCreateTemplate}>{t('playbook.templates.actions.cancel')}</Button>
-                      ) : templateDraft.id && !templateDraft.isBuiltIn ? (
+                      ) : templateDraft.id ? (
                         <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
                           <Trash2 className="mr-2 h-4 w-4" />
                           {t('playbook.templates.actions.delete')}
@@ -977,7 +1189,23 @@ export function PlaybookPromptsPage() {
         </CollapsibleContent>
       </Collapsible>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Prompt Confirmation Dialog */}
+      <Dialog open={promptDeleteDialogOpen} onOpenChange={setPromptDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('playbook.prompts.delete.title')}</DialogTitle>
+            <DialogDescription>
+              {t('playbook.prompts.delete.description', { name: promptDraft.title })}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPromptDeleteDialogOpen(false)}>{t('playbook.prompts.actions.cancel')}</Button>
+            <Button variant="destructive" onClick={() => void handleDeletePrompt()}>{t('playbook.prompts.delete.confirm')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Template Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>

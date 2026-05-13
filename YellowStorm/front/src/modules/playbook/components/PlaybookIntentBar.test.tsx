@@ -290,12 +290,16 @@ describe('PlaybookIntentBar', () => {
   it('shows applied suggestions in the inline history panel with the same card layout', () => {
     const onApplySuggestion = vi.fn();
     const onRecordHistory = vi.fn();
+    const onValueChange = vi.fn();
+    const onApplyHistorySuggestion = vi.fn();
 
     render(
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
         value="Improve this step"
+        onValueChange={onValueChange}
+        onApplyHistorySuggestion={onApplyHistorySuggestion}
         suggestions={[
           {
             id: 's1',
@@ -347,7 +351,13 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getAllByText('Improve this step').length).toBeGreaterThanOrEqual(2);
 
     fireEvent.click(screen.getByText('Add validation step'));
-    expect(onApplySuggestion).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('intentBar.history.confirmTitle')).toBeInTheDocument();
+    expect(onApplySuggestion).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByText('intentBar.history.confirmApply'));
+    expect(onValueChange).toHaveBeenCalledWith('Improve this step');
+    expect(onApplyHistorySuggestion).toHaveBeenCalledWith(expect.objectContaining({ id: 's1' }));
+    expect(onApplySuggestion).toHaveBeenCalledTimes(1);
   });
 
   it('shows empty state when intent is typed but no suggestions are returned', () => {

@@ -10,6 +10,7 @@ describe('PlaybookIntentService', () => {
   const findByKey = jest.fn();
   const render = jest.fn();
   const findDefaultAgents = jest.fn();
+  const findEnabled = jest.fn();
 
   const service = new PlaybookIntentService(
     { findById } as any,
@@ -18,6 +19,7 @@ describe('PlaybookIntentService', () => {
     { findByKey } as any,
     { render } as any,
     { findDefaultAgents } as any,
+    { findEnabled } as any,
   );
 
   beforeEach(() => {
@@ -33,12 +35,19 @@ describe('PlaybookIntentService', () => {
     findByKey.mockResolvedValue({ systemTemplate: 'sys', userTemplate: 'user-template' });
     render.mockReturnValue('rendered-user-prompt');
     findDefaultAgents.mockResolvedValue({ data: [{ id: 'agent-1', slug: 'research-agent', name: 'Research Agent', role: 'Research', description: 'Research tasks', agentType: { id: 'type-1', name: 'Research' } }], meta: { total: 1, page: 1, limit: 100, totalPages: 1 } });
+    findEnabled.mockResolvedValue({ items: [{ id: 'tpl-1', key: 'report-generator', type: 'report-generator', nodeType: 'agent', title: 'Report Generation', description: 'Generate a report', category: 'generation', inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }], outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'document' }], promptTemplate: '', recommendedAgentTypeSlug: 'research-agent', requiredToolNames: [], executionMode: 'agent', assignedAgentId: null, selectedAction: null, enabled: true, version: 1, isBuiltIn: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }] });
     findById.mockResolvedValue({
       id: 'playbook-1',
       name: 'PB',
       description: 'desc',
       designSettings: {},
-      tasks: [{ id: 'task-1', title: 'Task 1', description: 'Step' }],
+      tasks: [{
+        id: 'task-1',
+        title: 'Task 1',
+        description: 'Step',
+        inputPorts: [{ id: 'input', name: 'Input', artifactKind: 'text', required: false }],
+        outputPorts: [{ id: 'text', name: 'Text', artifactKind: 'text' }],
+      }],
       edges: [],
     });
   });
@@ -130,7 +139,266 @@ describe('PlaybookIntentService', () => {
 
     expect(render).toHaveBeenCalledWith('user-template', expect.objectContaining({
       default_agents: expect.stringContaining('research-agent'),
+      node_templates: expect.stringContaining('artifactKind'),
+      workflow_summary: expect.stringContaining('taskCount'),
     }));
+  });
+
+  it('normalizes optional port ids on workflow edge changes', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Wire extractor to summarizer',
+                summary: 'Adds a port-aware edge.',
+                reason: 'The text output should feed the text input.',
+                confidence: 0.81,
+                impact: {
+                  nodesToCreate: 0,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 1,
+                  edgesToDelete: 0,
+                  affectedTaskIds: ['task-1'],
+                  businessOutcome: 'The workflow wiring stays artifact-compatible.',
+                },
+                changes: [
+                  {
+                    type: 'create_edge',
+                    sourceTaskId: 'task-1',
+                    sourceNodeRef: null,
+                    targetTaskId: null,
+                    targetNodeRef: 'draft_summary',
+                    sourceOutputPortId: 'text',
+                    targetInputPortId: 'input',
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Connect extractor to summary step' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      changes: [
+        {
+          type: 'create_edge',
+          sourceTaskId: 'task-1',
+          targetNodeRef: 'draft_summary',
+          sourceOutputPortId: 'text',
+          targetInputPortId: 'input',
+        },
+      ],
+    });
+  });
+
+  it('normalizes custom generic task ports and anchor port ids', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Add invoice extraction step',
+                summary: 'Adds a generic task with explicit ports.',
+                reason: 'No template fits the exact structured extraction shape.',
+                confidence: 0.82,
+                impact: {
+                  nodesToCreate: 1,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 1,
+                  edgesToDelete: 0,
+                  affectedTaskIds: ['task-1'],
+                  businessOutcome: 'The extraction step can consume text and publish structured data.',
+                },
+                changes: [
+                  {
+                    type: 'create_node',
+                    nodeRef: 'extract_invoice_fields',
+                    anchor: {
+                      mode: 'after',
+                      targetTaskId: 'task-1',
+                      nodeRef: null,
+                      sourceOutputPortId: 'text',
+                      targetInputPortId: 'invoice_text',
+                    },
+                    task: {
+                      title: 'Extract invoice fields',
+                      description: 'Extract structured invoice fields from OCR text.',
+                      agentSlug: 'research-agent',
+                      inputPorts: [
+                        { id: 'invoice_text', name: 'Invoice Text', artifactKind: 'text', required: true },
+                        { id: 'bad_port', artifactKind: 'unknown' },
+                      ],
+                      outputPorts: [
+                        { id: 'invoice_data', name: 'Invoice Data', artifactKind: 'data' },
+                      ],
+                    },
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Add invoice extraction step' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      changes: [
+        {
+          type: 'create_node',
+          anchor: {
+            mode: 'after',
+            targetTaskId: 'task-1',
+            sourceOutputPortId: 'text',
+            targetInputPortId: 'invoice_text',
+          },
+          task: {
+            inputPorts: [
+              { id: 'invoice_text', artifactKind: 'text', required: true },
+            ],
+            outputPorts: [
+              { id: 'invoice_data', artifactKind: 'data' },
+            ],
+          },
+        },
+      ],
+    });
+  });
+
+  it('normalizes templateType on created task drafts', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Add report step',
+                summary: 'Adds a report generation step.',
+                reason: 'A report is needed.',
+                confidence: 0.84,
+                impact: {
+                  nodesToCreate: 1,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 0,
+                  edgesToDelete: 0,
+                  affectedTaskIds: [],
+                  businessOutcome: 'A reusable report step is added.',
+                },
+                changes: [
+                  {
+                    type: 'create_node',
+                    nodeRef: 'report_step',
+                    anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+                    task: { title: 'Generate Report', description: 'Create the final report.', templateType: 'report-generator' },
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Add a report step' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      changes: [
+        {
+          type: 'create_node',
+          task: { templateType: 'report-generator' },
+        },
+      ],
+    });
+  });
+
+  it('normalizes iterator body steps for iterator template nodes', async () => {
+    post.mockResolvedValue({
+      data: {
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              suggestions: [{
+                kind: 'workflow_plan',
+                label: 'Add iterator processing',
+                summary: 'Adds an iterator with explicit child steps.',
+                reason: 'Each item needs repeated processing.',
+                confidence: 0.88,
+                impact: {
+                  nodesToCreate: 1,
+                  nodesToUpdate: 0,
+                  nodesToDelete: 0,
+                  edgesToCreate: 0,
+                  edgesToDelete: 0,
+                  affectedTaskIds: [],
+                  businessOutcome: 'The workflow repeats a defined body per item.',
+                },
+                changes: [
+                  {
+                    type: 'create_node',
+                    nodeRef: 'iterate_items',
+                    anchor: { mode: 'append', targetTaskId: null, nodeRef: null },
+                    task: {
+                      title: 'Iterate items',
+                      description: 'Repeat processing for each item.',
+                      templateType: 'iterator',
+                      iteratorBody: {
+                        steps: [
+                          { nodeRef: 'extract_text', title: 'Extract text', description: 'Extract text from the current item.' },
+                          { nodeRef: 'classify_text', title: 'Classify text', description: 'Classify the extracted text.' },
+                        ],
+                        edges: [
+                          { sourceNodeRef: 'extract_text', sourceOutputPortId: 'text', targetNodeRef: 'classify_text', targetInputPortId: 'input' },
+                          { sourceNodeRef: 'missing_step', targetNodeRef: 'classify_text' },
+                        ],
+                      },
+                    },
+                  },
+                ],
+              }],
+            }),
+          },
+        }],
+      },
+    });
+
+    const result = await service.analyze('playbook-1', { intent: 'Add iterator processing' });
+
+    expect(result.suggestions[1]).toMatchObject({
+      kind: 'workflow_plan',
+      changes: [
+        {
+          type: 'create_node',
+          task: {
+            templateType: 'iterator',
+            iteratorBody: {
+              steps: [
+                { nodeRef: 'extract_text', title: 'Extract text' },
+                { nodeRef: 'classify_text', title: 'Classify text' },
+              ],
+              edges: [
+                { sourceNodeRef: 'extract_text', sourceOutputPortId: 'text', targetNodeRef: 'classify_text', targetInputPortId: 'input' },
+              ],
+            },
+          },
+        },
+      ],
+    });
   });
 
   it('infers workflow plan suggestions without an explicit kind for update-only plans', async () => {

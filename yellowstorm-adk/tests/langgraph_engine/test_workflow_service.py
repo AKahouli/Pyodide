@@ -1,11 +1,23 @@
+import sys
+from types import SimpleNamespace
+
 import pytest
 
 from src.langgraph_engine.workflow_service import (
     _build_resume_state_update,
     _build_task_results,
     resume_playbook,
+    resume_single_step,
     run_single_step_graph,
 )
+
+
+def _install_fake_tool_factory(monkeypatch, create_langchain_tools) -> None:
+    monkeypatch.setitem(
+        sys.modules,
+        "src.langgraph_engine.playbook_tool_factory",
+        SimpleNamespace(create_langchain_tools=create_langchain_tools),
+    )
 
 
 def test_build_resume_state_update_skips_clarification_replay() -> None:
@@ -172,7 +184,7 @@ async def test_resume_playbook_rejects_stale_interrupt_id(monkeypatch) -> None:
         return None
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_thread_graph",
+        "src.langgraph_engine.graph_cache.get_thread_graph",
         lambda _thread_id: FakeGraph(),
     )
     monkeypatch.setattr(
@@ -206,6 +218,188 @@ async def test_resume_playbook_rejects_stale_interrupt_id(monkeypatch) -> None:
 
     assert response["status"] == "failed"
     assert "Interrupt mismatch" in response["error"]
+
+
+@pytest.mark.asyncio
+async def test_resume_single_step_returns_completed_result_from_task_state(monkeypatch) -> None:
+    class FakeGraph:
+        async def aget_state(self, _config):
+            class Snapshot:
+                next = ()
+                tasks = []
+
+            return Snapshot()
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.graph_cache.get_thread_graph",
+        lambda _thread_id: FakeGraph(),
+    )
+    async def fake_consume_graph_stream(*, graph, graph_input, config, thread_id):
+        return None, {
+            "status": "in_progress",
+            "results": {
+                "step_1": {
+                    "status": "completed",
+                    "output": "done",
+                    "components": [{"type": "text", "data": {"content": "done"}}],
+                    "tool_trace": [],
+                    "usage": None,
+                }
+            },
+        }
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        fake_consume_graph_stream,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        lambda _thread_id: None,
+    )
+
+    response = await resume_single_step(
+        thread_id="th-1",
+        task_id="step_1",
+        human_response={"action": "reply", "message": "France 90 days"},
+    )
+
+    assert response["status"] == "completed"
+    assert response["interrupt"] is None
+    assert response["result"]["task_id"] == "step_1"
+    assert response["result"]["status"] == "completed"
+    assert response["result"]["output"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_resume_single_step_preserves_suspended_status_when_interrupt_remains(monkeypatch) -> None:
+    class FakeGraph:
+        async def aget_state(self, _config):
+            class Snapshot:
+                next = ("execute",)
+                tasks = []
+
+            return Snapshot()
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.graph_cache.get_thread_graph",
+        lambda _thread_id: FakeGraph(),
+    )
+    async def fake_consume_graph_stream(*, graph, graph_input, config, thread_id):
+        return {
+            "type": "clarification",
+            "task_id": "step_1",
+            "message": "Need scope?",
+            "thread_id": thread_id,
+        }, {"status": "in_progress", "results": {}}
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        fake_consume_graph_stream,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        lambda _thread_id: None,
+    )
+
+    response = await resume_single_step(
+        thread_id="th-1",
+        task_id="step_1",
+        human_response={"action": "reply", "message": "France 90 days"},
+    )
+
+    assert response["status"] == "suspended"
+    assert response["interrupt"]["type"] == "clarification"
+
+
+@pytest.mark.asyncio
+async def test_single_step_clarification_resume_completes_with_real_graph(monkeypatch) -> None:
+    clarification_calls = []
+
+    class FakeChatOpenAI:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        async def ainvoke(self, messages):
+            clarification_calls.append(messages)
+            if len(clarification_calls) == 1:
+                return SimpleNamespace(content="Which company should I analyze?")
+            return SimpleNamespace(content="CLEAR")
+
+    async def fake_direct_call(*args, **kwargs):
+        return "Final answer after clarification", {
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "total_tokens": 2,
+            "model": "test",
+        }
+
+    def fake_create_langchain_tools(*args, **kwargs):
+        return [], None
+
+    monkeypatch.setitem(
+        sys.modules,
+        "langchain_openai",
+        SimpleNamespace(ChatOpenAI=FakeChatOpenAI),
+    )
+    monkeypatch.setattr(
+        "src.config.settings.get_settings",
+        lambda: SimpleNamespace(LITELLM_API_BASE_URL="", LITELLM_API_SECRET_KEY=""),
+    )
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    async def fake_get_checkpointer():
+        return InMemorySaver()
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.workflow_service.get_checkpointer",
+        fake_get_checkpointer,
+    )
+    from src.langgraph_engine.graph_builder import DynamicGraphBuilder
+
+    monkeypatch.setattr(
+        DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
+    )
+    _install_fake_tool_factory(monkeypatch, fake_create_langchain_tools)
+
+    task = {
+        "id": "step_1",
+        "title": "Analyze company",
+        "description": "Research the company and summarize the latest quarter.",
+        "assigned_agent_id": "agent-1",
+        "allow_clarification": True,
+        "max_clarifications": 1,
+        "output_key": "step_1_output",
+        "output_ports": [{"id": "default", "name": "Default", "artifact_kind": "text"}],
+    }
+    agent = {
+        "id": "agent-1",
+        "name": "Agent",
+        "instructions": "Do it",
+        "tools": [],
+    }
+
+    first = await run_single_step_graph(
+        task=task,
+        agent=agent,
+        context_from_dependencies="Analyze the latest quarter for the target company.",
+        prompt_overrides={},
+        user_language="en",
+    )
+
+    assert first["status"] == "suspended"
+    assert first["interrupt"]["type"] == "clarification"
+    assert first["interrupt"]["message"] == "Which company should I analyze?"
+
+    resumed = await resume_single_step(
+        thread_id=first["thread_id"],
+        task_id="step_1",
+        human_response={"action": "reply", "message": "Apple"},
+    )
+
+    assert resumed["status"] == "completed"
+    assert resumed["interrupt"] is None
+    assert resumed["result"]["status"] == "completed"
+    assert resumed["result"]["output"] == "Final answer after clarification"
 
 
 def _citation_component(reference: str, source: str, content: str, parent_id: str = ""):

@@ -38,6 +38,7 @@ export function makeTask(overrides: Partial<PlaybookTask> = {}): PlaybookTask {
     notifyOnComplete: false,
     notifyEmails: [],
     inputFiles: [],
+    containerConfig: null,
     ...overrides,
   };
 }

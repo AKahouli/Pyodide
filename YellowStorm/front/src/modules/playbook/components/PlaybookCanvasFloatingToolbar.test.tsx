@@ -11,7 +11,24 @@ vi.mock('@/modules/localization', () => ({
 const fetchNodeTemplatesMock = vi.fn();
 
 vi.mock('../store', () => ({
-  usePlaybookStore: (sel: any) => sel({
+  usePlaybookStore: (sel: (state: {
+    nodeTemplates: Array<{
+      id: string;
+      type: string;
+      title: string;
+      description: string;
+      icon: string;
+      color: string;
+      category: string;
+      inputPorts: Array<{ id: string; name: string; artifactKind: string; required: boolean }>;
+      outputPorts: Array<{ id: string; name: string; artifactKind: string }>;
+      promptTemplate: string;
+      recommendedAgentTypeSlug: string | null;
+      requiredToolNames: string[];
+    }>;
+    nodeTemplatesLoading: boolean;
+    fetchNodeTemplates: typeof fetchNodeTemplatesMock;
+  }) => unknown) => sel({
     nodeTemplates: [
       {
         id: 'summarizer',
@@ -110,6 +127,7 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     );
 
     await userEvent.click(screen.getByLabelText('toolbar.tasks'));
+    expect(screen.getByRole('menu')).toHaveAttribute('data-side', 'bottom');
     await userEvent.click(screen.getAllByText('taskType.summarizer')[0]);
 
     expect(onAddStepFromTemplate).toHaveBeenCalledWith(expect.objectContaining({ id: 'summarizer' }));

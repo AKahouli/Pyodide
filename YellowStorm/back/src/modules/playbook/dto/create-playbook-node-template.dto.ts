@@ -1,4 +1,4 @@
-import { IsString, IsOptional, IsBoolean, IsArray, IsNumber, Min, MaxLength, ArrayMinSize, ValidateNested } from 'class-validator';
+import { IsString, IsOptional, IsBoolean, IsArray, MaxLength, ValidateNested, IsIn, IsInt, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 
 class TaskPortDto {
@@ -24,6 +24,37 @@ class TaskPortDto {
   description?: string;
 }
 
+class IteratorConfigDto {
+  @IsString()
+  @MaxLength(400)
+  source!: string;
+
+  @IsString()
+  @IsIn(['item', 'batch'])
+  mode!: 'item' | 'batch';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  batchSize?: number | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  itemVariable?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  outputVariable?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @IsIn(['stop', 'continue'])
+  errorStrategy?: 'stop' | 'continue';
+}
+
 export class CreatePlaybookNodeTemplateDto {
   @IsString()
   @MaxLength(120)
@@ -32,6 +63,10 @@ export class CreatePlaybookNodeTemplateDto {
   @IsString()
   @MaxLength(120)
   type!: string;
+
+  @IsString()
+  @IsIn(['agent', 'action', 'evaluation', 'iterator'])
+  nodeType!: 'agent' | 'action' | 'evaluation' | 'iterator';
 
   @IsString()
   @MaxLength(160)
@@ -94,6 +129,11 @@ export class CreatePlaybookNodeTemplateDto {
   @IsString()
   @MaxLength(40)
   selectedAction?: string | null;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => IteratorConfigDto)
+  iteratorConfig?: IteratorConfigDto | null;
 
   @IsOptional()
   @IsBoolean()

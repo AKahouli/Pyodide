@@ -46,6 +46,7 @@ import {
   topologicalSortByLevel,
   mergeWithExistingHumanFeedback,
   extractArtifactsFromResult,
+  mapGrpcIteratorIterations,
   mapGrpcPortPayloads,
   mapGrpcTaskArtifacts,
   TaskArtifactEntry,
@@ -1043,6 +1044,32 @@ export class PlaybookExecutionService {
       return sourceAllowed && targetAllowed;
     });
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
+    this.logger.log('[ITERATOR_DEBUG executePlaybook] edges', {
+      playbookId,
+      allTasks: enabledTasks.map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        taskType: t.taskType,
+        nodeType: t.nodeType,
+        hasIteratorConfig: !!t.iteratorConfig,
+        iteratorConfigSource: t.iteratorConfig?.source,
+        parentIteratorId: t.containerConfig?.parentIteratorId || null,
+      })),
+      iteratorTasks: enabledTasks
+        .filter((t: any) => t.taskType === 'iterator')
+        .map((t: any) => ({ id: t.id, title: t.title })),
+      childTasks: enabledTasks
+        .filter((t: any) => t.containerConfig?.parentIteratorId)
+        .map((t: any) => ({ id: t.id, parentIteratorId: t.containerConfig?.parentIteratorId })),
+      enabledEdges: enabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+      sanitizedEnabledEdges: sanitizedEnabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+    });
     const triggerContext = options?.triggerContext ?? null;
     this.logger.debug('////////////////////// [executePlaybook] trigger context input', {
       playbookId,
@@ -1523,6 +1550,31 @@ export class PlaybookExecutionService {
       return sourceAllowed && targetAllowed;
     });
     const sanitizedEnabledEdges = this.graphService.sanitizeEdgesForTasks(enabledTasks, enabledEdges);
+    this.logger.log('[ITERATOR_DEBUG runPlaybookWorkflow] edges', {
+      allTasks: enabledTasks.map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        taskType: t.taskType,
+        nodeType: t.nodeType,
+        hasIteratorConfig: !!t.iteratorConfig,
+        iteratorConfigSource: t.iteratorConfig?.source,
+        parentIteratorId: t.containerConfig?.parentIteratorId || null,
+      })),
+      iteratorTasks: enabledTasks
+        .filter((t: any) => t.taskType === 'iterator')
+        .map((t: any) => ({ id: t.id, title: t.title })),
+      childTasks: enabledTasks
+        .filter((t: any) => t.containerConfig?.parentIteratorId)
+        .map((t: any) => ({ id: t.id, parentIteratorId: t.containerConfig?.parentIteratorId })),
+      enabledEdges: enabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+      sanitizedEnabledEdges: sanitizedEnabledEdges.map((e: any) => ({
+        sourceId: e.sourceId || e.source_id,
+        targetId: e.targetId || e.target_id,
+      })),
+    });
 
     // Build RunPlaybookWorkflowRequest
     const stepExecutionModesForGrpc: Record<string, string> = {};
@@ -1660,6 +1712,27 @@ export class PlaybookExecutionService {
                 weights: t.evaluationConfig.weights || {},
               }
             : null,
+          task_metadata: this.toGrpcStruct({
+            ...(t.taskType === 'iterator' && t.iteratorConfig
+              ? {
+                  iterator: {
+                    source: t.iteratorConfig.source || '{{items}}',
+                    mode: t.iteratorConfig.mode === 'batch' ? 'batch' : 'item',
+                    batchSize: t.iteratorConfig.batchSize ?? 10,
+                    itemVariable: t.iteratorConfig.itemVariable || 'item',
+                    outputVariable: t.iteratorConfig.outputVariable || 'processed_items',
+                    errorStrategy: t.iteratorConfig.errorStrategy === 'continue' ? 'continue' : 'stop',
+                  },
+                }
+              : {}),
+            ...(t.containerConfig?.parentIteratorId
+              ? {
+                  container: {
+                    parentIteratorId: t.containerConfig.parentIteratorId,
+                  },
+                }
+              : {}),
+          }),
           tool_bindings: toolBindingsByTaskId.get(t.id) || [],
         };
       }),
@@ -1742,9 +1815,45 @@ export class PlaybookExecutionService {
             inputFilesByPort: t.input_files_by_port || [],
           })) || [],
     });
-    this.logger.debug('RunPlaybookWorkflow gRPC request body', {
+    this.logger.debug('RunPlaybookWorkflow bound document resolution summary', {
       executionId,
-      request: JSON.stringify(request),
+      playbookId,
+      tasks:
+        request.tasks
+          ?.filter((t: any) => t.input_files_by_port?.length > 0)
+          .map((t: any) => {
+            const boundIds = (t.input_files_by_port || []).flatMap(
+              (binding: any) => binding.document_ids || [],
+            );
+            const workspaceMatches = (request.workspace_context || []).map((ctx: any) => ({
+              workspaceId: ctx.workspace_id,
+              documents: (ctx.workspace_documents || [])
+                .filter((doc: any) => boundIds.includes(doc?._id || doc?.id))
+                .map((doc: any) => ({
+                  id: doc?._id || doc?.id || '',
+                  filename: doc?.filename || '',
+                  filepath: doc?.filepath || '',
+                })),
+            }));
+
+            return {
+              taskId: t.id,
+              inputFilesByPort: t.input_files_by_port || [],
+              boundIds,
+              workspaceMatches,
+            };
+          }) || [],
+    });
+    this.logger.debug('RunPlaybookWorkflow gRPC request body summary', {
+      executionId,
+      playbookId,
+      requestSize: JSON.stringify(request).length,
+      workspaceContextCount: request.workspace_context?.length || 0,
+      workspaceDocumentCount: (request.workspace_context || []).reduce(
+        (sum: number, ctx: any) => sum + ((ctx.workspace_documents || []).length || 0),
+        0,
+      ),
+      taskIds: (request.tasks || []).map((task: any) => task.id),
     });
 
     // Build task map for email notifications
@@ -1784,14 +1893,78 @@ export class PlaybookExecutionService {
   ): void {
     const normalizedUpdate = this.normalizeStreamStepUpdate(update);
     const { task_id: taskId, status, result, interrupt } = normalizedUpdate;
+    const scope = normalizedUpdate?.scope || '';
+    const parentIteratorId = normalizedUpdate?.parent_iterator_id || '';
+    const iterationIndex = Number(normalizedUpdate?.iteration_index || 0);
+    const isIteratorChildUpdate = scope === 'iterator_child' && Boolean(parentIteratorId);
 
     this.logger.debug('Stream step update received', {
       executionId,
       taskId,
       status,
+      scope,
+      parentIteratorId,
+      iterationIndex,
       rawStatus: update?.status || '',
       resultStatus: update?.result?.status || '',
     });
+
+    if (isIteratorChildUpdate) {
+      const grpcComps = result?.components || [];
+      const components = mapGrpcComponents(grpcComps, taskId);
+      const output = extractTextFromComponents(grpcComps);
+      const toolTrace = this.mapGrpcToolTrace(result?.tool_trace || []);
+      const llmPromptTrace = this.mapGrpcLlmPromptTrace(result?.llm_prompt_trace || []);
+      const artifacts = mapGrpcTaskArtifacts(result?.artifacts);
+      const eventBase = {
+        executionId,
+        parentIteratorId,
+        iterationIndex,
+        taskId,
+        taskTitle: normalizedUpdate?.task_title || '',
+      };
+
+      if (status === 'in_progress') {
+        if (result && (grpcComps.length > 0 || toolTrace.length > 0 || llmPromptTrace.length > 0 || artifacts.length > 0)) {
+          this.streamGateway.sendToUser(userId, {
+            type: 'playbook_iterator_child_step_update',
+            data: {
+              ...eventBase,
+              status: 'running',
+              output: output || '',
+              components,
+              artifacts,
+              toolTrace,
+              llmPromptTrace,
+            },
+          });
+        } else {
+          this.streamGateway.sendToUser(userId, {
+            type: 'playbook_iterator_child_step_start',
+            data: { ...eventBase, status: 'running' },
+          });
+        }
+        return;
+      }
+
+      if (status === 'completed' || status === 'failed' || status === 'skipped') {
+        this.streamGateway.sendToUser(userId, {
+          type: 'playbook_iterator_child_step_complete',
+          data: {
+            ...eventBase,
+            status,
+            output: output || '',
+            error: result?.error || '',
+            durationMs: parseInt(result?.duration_ms || '0', 10),
+            components,
+            artifacts,
+            toolTrace,
+            llmPromptTrace,
+          },
+        });
+        return;
+      }
+    }
 
     switch (status) {
       case 'in_progress': {
@@ -1861,6 +2034,7 @@ export class PlaybookExecutionService {
         const completedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const iteratorIterations = mapGrpcIteratorIterations(result?.iterator_iterations);
         const artifacts = this.mergeTaskArtifacts(
           grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(completedTask, grpcComps),
           emittedPayloadArtifacts,
@@ -1888,6 +2062,7 @@ export class PlaybookExecutionService {
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
           artifacts,
+          iteratorIterations,
           artifactsByPort: this.groupArtifactsByPort(artifacts),
           ...usageFields,
         } as any);
@@ -1900,6 +2075,7 @@ export class PlaybookExecutionService {
             output,
             components,
             artifacts,
+            iteratorIterations,
             toolTrace,
             llmPromptTrace,
             semanticMatch,
@@ -1938,6 +2114,7 @@ export class PlaybookExecutionService {
         const failedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const iteratorIterations = mapGrpcIteratorIterations(result?.iterator_iterations);
         const artifacts = this.mergeTaskArtifacts(
           grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(failedTask, grpcComps),
           emittedPayloadArtifacts,
@@ -1965,6 +2142,7 @@ export class PlaybookExecutionService {
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
           artifacts,
+          iteratorIterations,
           artifactsByPort: this.groupArtifactsByPort(artifacts),
           ...usageFields,
         } as any);
@@ -1976,6 +2154,7 @@ export class PlaybookExecutionService {
             status: 'failed',
             error,
             artifacts,
+            iteratorIterations,
             components,
             toolTrace,
             llmPromptTrace,
@@ -2006,6 +2185,7 @@ export class PlaybookExecutionService {
         const skippedTask = taskMap.get(taskId);
         const grpcArtifacts = mapGrpcTaskArtifacts(result?.artifacts);
         const emittedPayloadArtifacts = mapGrpcPortPayloads(result?.emitted_payloads);
+        const iteratorIterations = mapGrpcIteratorIterations(result?.iterator_iterations);
         const artifacts = this.mergeTaskArtifacts(
           grpcArtifacts.length > 0 ? grpcArtifacts : extractArtifactsFromResult(skippedTask, grpcComps),
           emittedPayloadArtifacts,
@@ -2032,6 +2212,7 @@ export class PlaybookExecutionService {
           durationMs,
           startedAt: existing?.startedAt || new Date(),
           completedAt: new Date(),
+          iteratorIterations,
           ...usageFields,
         });
         this.streamGateway.sendToUser(userId, {
@@ -2042,6 +2223,7 @@ export class PlaybookExecutionService {
             status: 'skipped',
             output: '',
             artifacts,
+            iteratorIterations,
             components,
             toolTrace,
             llmPromptTrace,
@@ -2371,13 +2553,34 @@ export class PlaybookExecutionService {
               .select('taskResults')
               .lean()
               .exec();
-            const hasPendingOrRunning = (freshExecCheck?.taskResults || []).some(
-              (tr: any) => tr.status === StepStatus.PENDING || tr.status === StepStatus.RUNNING,
+
+            const iteratorChildTaskIds = new Set<string>();
+            for (const [id, t] of taskMap) {
+              if (t?.containerConfig?.parentIteratorId) {
+                iteratorChildTaskIds.add(id);
+              }
+            }
+
+            const runningIteratorChildren = (freshExecCheck?.taskResults || []).filter(
+              (tr: any) =>
+                iteratorChildTaskIds.has(tr.taskId) &&
+                tr.status === StepStatus.RUNNING,
+            );
+            const nonIteratorPendingOrRunning = (freshExecCheck?.taskResults || []).filter(
+              (tr: any) =>
+                (tr.status === StepStatus.PENDING || tr.status === StepStatus.RUNNING) &&
+                !iteratorChildTaskIds.has(tr.taskId),
             );
 
-            if (hasPendingOrRunning) {
+            const genuinelyPendingOrRunning = [
+              ...nonIteratorPendingOrRunning,
+              ...runningIteratorChildren,
+            ];
+
+            if (genuinelyPendingOrRunning.length > 0) {
               this.logger.warn('Stream ended prematurely with tasks still pending/running', {
                 executionId,
+                pendingRunningTaskIds: genuinelyPendingOrRunning.map((tr: any) => tr.taskId),
               });
               await this.markRemainingSkippedAndFail(
                 userId,
@@ -2386,6 +2589,28 @@ export class PlaybookExecutionService {
                 startedAt,
               );
             } else {
+              const staleIteratorChildren = (freshExecCheck?.taskResults || []).filter(
+                (tr: any) =>
+                  iteratorChildTaskIds.has(tr.taskId) &&
+                  tr.status === StepStatus.PENDING,
+              );
+              if (staleIteratorChildren.length > 0) {
+                const childIds = staleIteratorChildren.map((tr: any) => tr.taskId);
+                await this.executionModel.updateOne(
+                  { _id: executionId },
+                  {
+                    $set: {
+                      'taskResults.$[elem].status': StepStatus.COMPLETED,
+                      'taskResults.$[elem].completedAt': new Date(),
+                    },
+                  },
+                  { arrayFilters: [{ 'elem.taskId': { $in: childIds } }] },
+                );
+                this.logger.debug('Auto-completed stale iterator child tasks', {
+                  executionId,
+                  childTaskIds: childIds,
+                });
+              }
               await this.markExecutionCompleted(userId, executionId, startedAt);
             }
           }
@@ -5060,6 +5285,25 @@ export class PlaybookExecutionService {
               ...entry,
               startedAt: entry.startedAt?.toISOString?.() || entry.startedAt || null,
               completedAt: entry.completedAt?.toISOString?.() || entry.completedAt || null,
+            })),
+            iteratorIterations: (merged.iteratorIterations || []).map((iteration: any) => ({
+              index: iteration.index ?? 0,
+              status: iteration.status || '',
+              itemPreview: iteration.itemPreview ?? '',
+              output: iteration.output ?? '',
+              error: iteration.error ?? '',
+              childResults: (iteration.childResults || []).map((child: any) => ({
+                taskId: child.taskId || '',
+                taskTitle: child.taskTitle || '',
+                status: child.status || '',
+                output: child.output ?? '',
+                error: child.error ?? '',
+                components: child.components || [],
+                toolTrace: child.toolTrace || [],
+                llmPromptTrace: child.llmPromptTrace || [],
+                artifacts: child.artifacts || [],
+              })),
+              artifacts: iteration.artifacts || [],
             })),
             attemptNumber: merged.attemptNumber ?? 1,
             isStale: merged.isStale ?? false,

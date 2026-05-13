@@ -24,6 +24,9 @@ import type {
   PlaybookStepStartEvent,
   PlaybookStepUpdateEvent,
   PlaybookStepCompleteEvent,
+  PlaybookIteratorChildStepStartEvent,
+  PlaybookIteratorChildStepUpdateEvent,
+  PlaybookIteratorChildStepCompleteEvent,
   PlaybookStepEvaluationUpdatedEvent,
   PlaybookStepJudgeStartedEvent,
   PlaybookStepJudgeUpdatedEvent,
@@ -154,12 +157,14 @@ const initialState: PlaybookState = {
   designerOpen: false,
   copilotMode: 'design',
   executionPanelOpen: (() => { try { return localStorage.getItem(EXEC_PANEL_KEY) === '1'; } catch { return false; } })(),
+  executionDetailTab: 'results',
   workspaceExplorerOpen: (() => { try { return localStorage.getItem(WORKSPACE_EXPLORER_KEY) === '1'; } catch { return false; } })(),
   connectorSidebarOpen: false,
   nodeEditorOpen: false,
   pageMode: 'design',
   undoStack: [],
   redoStack: [],
+  perPlaybookUndoHistory: {},
   canvasSyncVersion: 0,
   triggerSaving: false,
   triggerError: null,
@@ -223,7 +228,7 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
   judgeRefreshTimers.set(executionId, setTimeout(tick, JUDGE_REFRESH_INTERVAL_MS));
 }
 const MAX_EXECUTION_CACHE = 20;
-const MAX_UNDO_HISTORY = 50;
+const MAX_UNDO_HISTORY = 100;
 
 function getPreferredSelectedStepId(
   taskResults: Array<{ taskId: string; status: string; order?: number | null }>,
@@ -352,6 +357,186 @@ function hasRicherJudgeState(
   }
 
   return (cachedTaskResult.judgeHistory?.length || 0) > (incomingTaskResult.judgeHistory?.length || 0);
+}
+
+function buildAncestorTaskIdSet(
+  graphSource: Pick<Playbook, 'edges'> | Pick<PlaybookExecution, 'playbookSnapshot'> | null,
+  taskId: string,
+): Set<string> {
+  let edges: PlaybookEdge[] = [];
+  if (graphSource) {
+    if ('playbookSnapshot' in graphSource) {
+      edges = ((graphSource.playbookSnapshot as { edges?: PlaybookEdge[] } | null)?.edges || []);
+    } else {
+      edges = graphSource.edges || [];
+    }
+  }
+
+  if (edges.length === 0) {
+    return new Set();
+  }
+
+  const ancestors = new Set<string>();
+  const queue = [taskId];
+  while (queue.length > 0) {
+    const currentTaskId = queue.shift()!;
+    for (const edge of edges) {
+      const sourceId = edge.sourceId;
+      const targetId = edge.targetId;
+      if (targetId !== currentTaskId || !sourceId || ancestors.has(sourceId)) {
+        continue;
+      }
+      ancestors.add(sourceId);
+      queue.push(sourceId);
+    }
+  }
+
+  return ancestors;
+}
+
+function normalizeRunningTaskResultsForStart(
+  taskResults: PlaybookExecution['taskResults'],
+  startedTaskId: string,
+  graphSource: Pick<Playbook, 'edges'> | Pick<PlaybookExecution, 'playbookSnapshot'> | null,
+): PlaybookExecution['taskResults'] {
+  const ancestorTaskIds = buildAncestorTaskIdSet(graphSource, startedTaskId);
+
+  return taskResults.map((taskResult) => {
+    if (taskResult.taskId === startedTaskId) {
+      return taskResult;
+    }
+
+    if (taskResult.status !== 'running') {
+      return taskResult;
+    }
+
+    if (!ancestorTaskIds.has(taskResult.taskId)) {
+      return taskResult;
+    }
+
+    return {
+      ...taskResult,
+      status: 'completed',
+      completedAt: taskResult.completedAt || new Date().toISOString(),
+      durationMs: taskResult.durationMs ?? null,
+    };
+  });
+}
+
+function mergeIteratorChildTaskResult(
+  taskResults: PlaybookExecution['taskResults'],
+  data: {
+    parentIteratorId: string;
+    iterationIndex: number;
+    taskId: string;
+    taskTitle?: string;
+    status: 'running' | 'completed' | 'failed' | 'skipped';
+    output?: string | null;
+    error?: string | null;
+    components?: PlaybookExecution['taskResults'][number]['components'];
+    toolTrace?: PlaybookExecution['taskResults'][number]['toolTrace'];
+    llmPromptTrace?: PlaybookExecution['taskResults'][number]['llmPromptTrace'];
+    artifacts?: PlaybookExecution['taskResults'][number]['artifacts'];
+  },
+): PlaybookExecution['taskResults'] {
+  const resolveIterationStatus = (
+    childResults: NonNullable<PlaybookExecution['taskResults'][number]['iteratorIterations']>[number]['childResults'],
+  ): 'running' | 'completed' | 'failed' | 'skipped' => {
+    if (childResults.some((child) => child.status === 'running' || child.status === 'interrupted')) {
+      return 'running';
+    }
+    if (childResults.some((child) => child.status === 'failed')) {
+      return 'failed';
+    }
+    if (childResults.length > 0 && childResults.every((child) => child.status === 'skipped')) {
+      return 'skipped';
+    }
+    return 'completed';
+  };
+
+  return taskResults.map((taskResult) => {
+    if (taskResult.taskId !== data.parentIteratorId) {
+      return taskResult;
+    }
+
+    const iteratorIterations = [...(taskResult.iteratorIterations || [])];
+    const currentIteration = iteratorIterations.find((iteration) => iteration.index === data.iterationIndex);
+    const nextIteration = currentIteration
+      ? { ...currentIteration }
+      : {
+          index: data.iterationIndex,
+          status: 'running' as const,
+          itemPreview: null,
+          output: null,
+          error: null,
+          childResults: [],
+          artifacts: [],
+        };
+
+    const existingChildIndex = nextIteration.childResults.findIndex((child) => child.taskId === data.taskId);
+    const existingChild = existingChildIndex >= 0 ? nextIteration.childResults[existingChildIndex] : null;
+    const mergedChild = {
+      taskId: data.taskId,
+      taskTitle: data.taskTitle || existingChild?.taskTitle || '',
+      status: data.status,
+      output: data.output ?? existingChild?.output ?? null,
+      error: data.error ?? existingChild?.error ?? null,
+      components: data.components ?? existingChild?.components,
+      toolTrace: data.toolTrace ?? existingChild?.toolTrace,
+      llmPromptTrace: data.llmPromptTrace ?? existingChild?.llmPromptTrace,
+      artifacts: data.artifacts ?? existingChild?.artifacts,
+    };
+
+    const childResults = [...nextIteration.childResults];
+    if (existingChildIndex >= 0) {
+      childResults[existingChildIndex] = mergedChild;
+    } else {
+      childResults.push(mergedChild);
+    }
+
+    nextIteration.childResults = childResults;
+    nextIteration.status = resolveIterationStatus(childResults);
+
+    const iterationIndexInArray = iteratorIterations.findIndex((iteration) => iteration.index === data.iterationIndex);
+    if (iterationIndexInArray >= 0) {
+      iteratorIterations[iterationIndexInArray] = nextIteration;
+    } else {
+      iteratorIterations.push(nextIteration);
+      iteratorIterations.sort((left, right) => left.index - right.index);
+    }
+
+    return {
+      ...taskResult,
+      iteratorIterations,
+    };
+  });
+}
+
+function hasRicherIteratorData(
+  cachedTaskResult: PlaybookExecution['taskResults'][number],
+  incomingTaskResult: PlaybookExecution['taskResults'][number],
+): boolean {
+  const cachedIterations = cachedTaskResult.iteratorIterations || [];
+  const incomingIterations = incomingTaskResult.iteratorIterations || [];
+  if (cachedIterations.length === 0) return false;
+  if (incomingIterations.length === 0) return true;
+  const cachedTotalChildren = cachedIterations.reduce((sum, it) => sum + (it.childResults?.length || 0), 0);
+  const incomingTotalChildren = incomingIterations.reduce((sum, it) => sum + (it.childResults?.length || 0), 0);
+  return cachedTotalChildren > incomingTotalChildren;
+}
+
+function mergeRicherIteratorData(
+  cachedTaskResult: PlaybookExecution['taskResults'][number],
+  incomingTaskResult: PlaybookExecution['taskResults'][number],
+): PlaybookExecution['taskResults'][number] {
+  if (!hasRicherIteratorData(cachedTaskResult, incomingTaskResult)) {
+    return incomingTaskResult;
+  }
+
+  return {
+    ...incomingTaskResult,
+    iteratorIterations: cachedTaskResult.iteratorIterations,
+  };
 }
 
 function shouldKeepCachedTaskResult(
@@ -494,6 +679,7 @@ function buildExecutionTaskResultsFromTasks(
     judgeHistory: [],
     evaluationHistory: [],
     stepExecutions: [],
+    iteratorIterations: [],
   } as PlaybookExecution['taskResults'][number]));
 }
 
@@ -541,8 +727,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
       fetchPlaybook: async (id) => {
         set({ currentPlaybookLoading: true, error: null });
         try {
+          const { currentPlaybook, undoStack, redoStack, perPlaybookUndoHistory } = get();
+          if (currentPlaybook) {
+            perPlaybookUndoHistory[currentPlaybook.id] = { undoStack, redoStack };
+          }
+          const restored = perPlaybookUndoHistory[id] ?? { undoStack: [], redoStack: [] };
           const playbook = await api.getPlaybook(id);
-          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: [], redoStack: [], canvasSyncVersion: 0 });
+          set({ currentPlaybook: playbook, currentPlaybookLoading: false, isDirty: false, undoStack: restored.undoStack, redoStack: restored.redoStack, perPlaybookUndoHistory, canvasSyncVersion: 0 });
         } catch (err) {
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.fetchOneFailed', 'Failed to fetch playbook');
           set({ currentPlaybookLoading: false, error: msg });
@@ -569,7 +760,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       generatePlaybook: async (data: GeneratePlaybookData) => {
-        set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null, undoStack: [], redoStack: [], canvasSyncVersion: 0 });
+        const { currentPlaybook: currentPb, undoStack, redoStack, perPlaybookUndoHistory: pbHistory } = get();
+        if (currentPb) {
+          pbHistory[currentPb.id] = { undoStack, redoStack };
+        }
+        set({ isGenerating: true, currentPlaybook: null, currentPlaybookLoading: false, generateRetryData: null, undoStack: [], redoStack: [], perPlaybookUndoHistory: pbHistory, canvasSyncVersion: 0 });
         try {
           const result = await api.generatePlaybook(data);
           const playbook = await api.getPlaybook(result.id);
@@ -2077,7 +2272,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const cached = state.executionCache[data.executionId];
           if (!cached) return state;
 
-          const existing = cached.taskResults;
+          const existing = normalizeRunningTaskResultsForStart(
+            cached.taskResults,
+            data.taskId,
+            state.currentPlaybook?.id === cached.playbookId ? state.currentPlaybook : cached,
+          );
           const found = existing.some((tr) => tr.taskId === data.taskId);
           const taskResults = found
             ? existing.map((tr) =>
@@ -2227,6 +2426,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
+                iteratorIterations: data.iteratorIterations ?? tr.iteratorIterations ?? [],
                 artifacts: data.artifacts ?? undefined,
                 isStale: false,
                 staleReason: null,
@@ -2265,6 +2465,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
+                iteratorIterations: data.iteratorIterations ?? [],
                 judgeHistory: [],
                 evaluationHistory: [],
                 stepExecutions: [],
@@ -2290,6 +2491,77 @@ export const usePlaybookStore = create<PlaybookStore>()(
         if (cachedExecution?.playbookId) {
           void get().fetchExecution(cachedExecution.playbookId, data.executionId);
         }
+      },
+
+      onIteratorChildStepStart: (data: PlaybookIteratorChildStepStartEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = mergeIteratorChildTaskResult(cached.taskResults, {
+            parentIteratorId: data.parentIteratorId,
+            iterationIndex: data.iterationIndex,
+            taskId: data.taskId,
+            taskTitle: data.taskTitle,
+            status: 'running',
+          });
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onIteratorChildStepUpdate: (data: PlaybookIteratorChildStepUpdateEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = mergeIteratorChildTaskResult(cached.taskResults, {
+            parentIteratorId: data.parentIteratorId,
+            iterationIndex: data.iterationIndex,
+            taskId: data.taskId,
+            taskTitle: data.taskTitle,
+            status: 'running',
+            output: data.output ?? null,
+            components: data.components,
+            toolTrace: data.toolTrace,
+            llmPromptTrace: data.llmPromptTrace,
+            artifacts: data.artifacts,
+          });
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          return { executionCache, currentExecution };
+        });
+      },
+
+      onIteratorChildStepComplete: (data: PlaybookIteratorChildStepCompleteEvent) => {
+        set((state) => {
+          const cached = state.executionCache[data.executionId];
+          if (!cached) return state;
+
+          const taskResults = mergeIteratorChildTaskResult(cached.taskResults, {
+            parentIteratorId: data.parentIteratorId,
+            iterationIndex: data.iterationIndex,
+            taskId: data.taskId,
+            taskTitle: data.taskTitle,
+            status: data.status === 'failed' ? 'failed' : data.status === 'skipped' ? 'skipped' : 'completed',
+            output: data.output ?? null,
+            error: data.error ?? null,
+            components: data.components,
+            toolTrace: data.toolTrace,
+            llmPromptTrace: data.llmPromptTrace,
+            artifacts: data.artifacts,
+          });
+
+          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
+          const currentExecution = state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
+          return { executionCache, currentExecution };
+        });
       },
 
       onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => {
@@ -2726,6 +2998,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 if (cachedTr && shouldKeepCachedTaskResult(cachedTr, inTr)) {
                   return cachedTr;
                 }
+                if (cachedTr) {
+                  return mergeRicherIteratorData(cachedTr, inTr);
+                }
                 return inTr;
               });
               // Include any task results only present in the cache
@@ -2831,6 +3106,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
               if (cachedTr && shouldKeepCachedTaskResult(cachedTr, apiTr)) {
                 return cachedTr;
               }
+              if (cachedTr) {
+                return mergeRicherIteratorData(cachedTr, apiTr);
+              }
               return apiTr;
             });
             // Also include any task results from cache that are not in the API response
@@ -2934,6 +3212,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             isDirty: false,
             undoStack: [],
             redoStack: [],
+            perPlaybookUndoHistory: { ...state.perPlaybookUndoHistory, [playbookId]: { undoStack: [], redoStack: [] } },
             canvasSyncVersion: state.canvasSyncVersion + 1,
           }));
           toast.success(tPlaybook('store.toasts.reverted', 'Reverted to snapshot'));
@@ -2954,6 +3233,26 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set({ executionPanelOpen: false });
         }
         persistPanelOpen(open);
+      },
+
+      setExecutionDetailTab: (tab) => {
+        set({ executionDetailTab: tab });
+      },
+
+      openExecutionDetailTab: (tab, taskId) => {
+        const updates: Partial<PlaybookState> = {
+          executionDetailTab: tab,
+          executionPanelOpen: true,
+          workspaceExplorerOpen: false,
+          connectorSidebarOpen: false,
+          nodeEditorOpen: false,
+          pageMode: 'run',
+        };
+        if (taskId) {
+          updates.selectedStepId = taskId;
+        }
+        set(updates);
+        persistPanelOpen(true);
       },
 
       viewExecutionInPanel: (executionId: string) => {
@@ -3160,7 +3459,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
         });
       },
 
-      clearUndoHistory: () => set({ undoStack: [], redoStack: [] }),
+      clearUndoHistory: () => set((state) => {
+        const { currentPlaybook, perPlaybookUndoHistory } = state;
+        if (currentPlaybook) {
+          perPlaybookUndoHistory[currentPlaybook.id] = { undoStack: [], redoStack: [] };
+        }
+        return { undoStack: [], redoStack: [], perPlaybookUndoHistory: { ...perPlaybookUndoHistory } };
+      }),
 
       addIntentSuggestionHistoryEntry: (playbookId, playbookName, suggestion, intent) => {
         const { intentSuggestionHistory } = get();
@@ -3195,6 +3500,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             nodeTemplates: items.map((item) => ({
               id: item.id,
               type: item.type,
+              nodeType: item.nodeType,
               title: item.title,
               description: item.description || '',
               icon: item.icon || 'FileText',

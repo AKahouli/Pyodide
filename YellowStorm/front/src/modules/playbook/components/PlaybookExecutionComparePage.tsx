@@ -4,7 +4,7 @@ import { ArrowLeft, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
-import { StepComponents } from './ExecutionStepDetail';
+import { StepComponents } from './StepComponents';
 import { usePlaybookStore, useCurrentPlaybook, useCurrentPlaybookLoading } from '../store';
 import * as api from '../api';
 import type { PlaybookExecution, TaskResult } from '../types';

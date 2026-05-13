@@ -7,12 +7,13 @@ import pytest
 from src.langgraph_engine.step_executor import (
     _execute_with_tools,
     _attach_result_text_for_citations,
+    _collect_generated_artifacts,
     _execute_evaluation_task,
-    _build_plain_file_artifacts,
     _build_plain_text_artifact,
     _build_task_artifacts_from_structured_outputs,
     _determine_output_mode,
     _execute_replay_tool_calls,
+    _extract_json_object,
     _finalize_task_outputs,
     _parse_structured_final_response,
     _task_requires_structured_output_synthesis,
@@ -248,7 +249,7 @@ async def test_execute_evaluation_task_uses_prompt_registry_and_emits_data_artif
     assert result["artifacts"][0]["data"]["score"] == 88
 
 
-def test_task_requires_structured_output_synthesis_for_duplicate_kinds() -> None:
+def test_task_requires_structured_output_synthesis_for_multiple_ports() -> None:
     assert _task_requires_structured_output_synthesis(
         {
             "output_ports": [
@@ -256,7 +257,7 @@ def test_task_requires_structured_output_synthesis_for_duplicate_kinds() -> None
                 {"id": "context", "artifact_kind": "text"},
             ]
         }
-    ) is True
+    ) is False
 
     assert _task_requires_structured_output_synthesis(
         {
@@ -274,7 +275,7 @@ def test_determine_output_mode_prefers_plain_for_single_text_output() -> None:
     ) == "plain"
 
 
-def test_determine_output_mode_uses_structured_for_duplicate_text_ports() -> None:
+def test_determine_output_mode_prefers_plain_for_multiple_text_ports() -> None:
     assert _determine_output_mode(
         {
             "output_ports": [
@@ -282,15 +283,38 @@ def test_determine_output_mode_uses_structured_for_duplicate_text_ports() -> Non
                 {"id": "context", "artifact_kind": "text"},
             ]
         }
+    ) == "plain"
+
+
+def test_determine_output_mode_uses_structured_for_single_document_port() -> None:
+    assert _determine_output_mode(
+        {"output_ports": [{"id": "report", "artifact_kind": "document"}]}
     ) == "structured_final_response"
 
 
-def test_determine_output_mode_uses_structured_for_duplicate_document_ports() -> None:
+def test_determine_output_mode_uses_structured_for_single_code_port() -> None:
+    assert _determine_output_mode(
+        {"output_ports": [{"id": "script", "artifact_kind": "code"}]}
+    ) == "structured_final_response"
+
+
+def test_determine_output_mode_uses_structured_for_multiple_document_ports() -> None:
     assert _determine_output_mode(
         {
             "output_ports": [
                 {"id": "pdf", "artifact_kind": "document"},
                 {"id": "slides", "artifact_kind": "document"},
+            ]
+        }
+    ) == "structured_final_response"
+
+
+def test_determine_output_mode_uses_structured_for_multiple_distinct_ports() -> None:
+    assert _determine_output_mode(
+        {
+            "output_ports": [
+                {"id": "summary", "artifact_kind": "text"},
+                {"id": "metrics", "artifact_kind": "data"},
             ]
         }
     ) == "structured_final_response"
@@ -345,12 +369,12 @@ def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_fi
             {
                 "output_port_id": "client_pdf",
                 "artifact_kind": "document",
-                "filename": "client-report.pdf",
+                "content": {"filename": "client-report.pdf"},
             },
             {
                 "output_port_id": "slides",
                 "artifact_kind": "document",
-                "filename": "briefing.pptx",
+                "content": {"filename": "briefing.pptx"},
             },
         ],
         [
@@ -408,6 +432,200 @@ def test_build_task_artifacts_from_structured_outputs_accepts_prefixed_declared_
             "artifact_kind": "text",
             "content": "Executive summary",
         },
+    ]
+
+
+def test_build_task_artifacts_from_structured_outputs_routes_inline_data() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "summary", "artifact_kind": "text"},
+                {"id": "metrics", "artifact_kind": "data"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "summary",
+                "artifact_kind": "text",
+                "content": "Executive summary",
+            },
+            {
+                "output_port_id": "metrics",
+                "artifact_kind": "data",
+                "content": {"score": 88, "status": "ok"},
+            },
+        ],
+        [],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "summary",
+            "artifact_kind": "text",
+            "content": "Executive summary",
+        },
+        {
+            "port_id": "metrics",
+            "artifact_kind": "data",
+            "data": {"score": 88, "status": "ok"},
+        },
+    ]
+
+
+def test_build_task_artifacts_from_structured_outputs_uses_declared_document_kind() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "default", "artifact_kind": "document"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "default",
+                "artifact_kind": "data",
+                "content": {"filename": "report.pdf"},
+            },
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "default",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+            "mime_type": "application/pdf",
+        }
+    ]
+
+
+def test_build_task_artifacts_from_structured_outputs_uses_declared_data_kind() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "default", "artifact_kind": "data"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "default",
+                "artifact_kind": "document",
+                "content": {"score": 88, "status": "ok"},
+            },
+        ],
+        [],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "default",
+            "artifact_kind": "data",
+            "data": {"score": 88, "status": "ok"},
+        }
+    ]
+
+
+def test_build_task_artifacts_from_structured_outputs_rejects_old_data_field() -> None:
+    with pytest.raises(ValueError, match="must include content"):
+        _build_task_artifacts_from_structured_outputs(
+            {
+                "output_ports": [
+                    {"id": "metrics", "artifact_kind": "data"},
+                ]
+            },
+            [
+                {
+                    "output_port_id": "metrics",
+                    "artifact_kind": "data",
+                    "data": {"score": 88, "status": "ok"},
+                },
+            ],
+            [],
+        )
+
+
+def test_build_task_artifacts_from_structured_outputs_requires_artifact_kind() -> None:
+    with pytest.raises(ValueError, match="must include artifact_kind"):
+        _build_task_artifacts_from_structured_outputs(
+            {
+                "output_ports": [
+                    {"id": "summary", "artifact_kind": "text"},
+                ]
+            },
+            [
+                {
+                    "output_port_id": "summary",
+                    "content": "Executive summary",
+                },
+            ],
+            [],
+        )
+
+
+def test_build_task_artifacts_from_structured_outputs_skips_unknown_file_reference() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "pdf", "artifact_kind": "document"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "pdf",
+                "artifact_kind": "document",
+                "content": {"filename": "missing-report.pdf"},
+            },
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+
+    assert artifacts == []
+
+
+def test_build_task_artifacts_from_structured_outputs_maps_generated_files_by_content_file_path() -> None:
+    artifacts = _build_task_artifacts_from_structured_outputs(
+        {
+            "output_ports": [
+                {"id": "pdf", "artifact_kind": "document"},
+            ]
+        },
+        [
+            {
+                "output_port_id": "pdf",
+                "artifact_kind": "document",
+                "content": {"file_path": "https://example.com/report.pdf"},
+            },
+        ],
+        [
+            {
+                "file_path": "https://example.com/report.pdf",
+                "filename": "report.pdf",
+                "mime_type": "application/pdf",
+            }
+        ],
+    )
+
+    assert artifacts == [
+        {
+            "port_id": "pdf",
+            "artifact_kind": "document",
+            "url": "https://example.com/report.pdf",
+            "filename": "report.pdf",
+            "mime_type": "application/pdf",
+        }
     ]
 
 
@@ -474,25 +692,28 @@ def test_build_plain_text_artifact_maps_single_text_port() -> None:
     }
 
 
-def test_build_plain_file_artifacts_maps_single_generated_file() -> None:
-    artifacts = _build_plain_file_artifacts(
-        {"output_ports": [{"id": "report", "artifact_kind": "document"}]},
+def test_collect_generated_artifacts_preserves_explicit_output_metadata() -> None:
+    artifacts = _collect_generated_artifacts(
         [
             {
-                "file_path": "https://example.com/report.pdf",
-                "filename": "report.pdf",
-                "artifact_kind": "document",
-                "mime_type": "application/pdf",
+                "type": "artifact",
+                "data": {
+                    "file_path": "https://example.com/report.pdf",
+                    "filename": "report.pdf",
+                    "artifact_kind": "document",
+                    "output_port_id": "report",
+                    "mime_type": "application/pdf",
+                },
             }
-        ],
+        ]
     )
 
     assert artifacts == [
         {
-            "port_id": "report",
-            "artifact_kind": "document",
-            "url": "https://example.com/report.pdf",
+            "file_path": "https://example.com/report.pdf",
             "filename": "report.pdf",
+            "artifact_kind": "document",
+            "output_port_id": "report",
             "mime_type": "application/pdf",
         }
     ]
@@ -519,6 +740,31 @@ def test_finalize_task_outputs_parses_structured_final_response() -> None:
     ]
 
 
+def test_finalize_task_outputs_parses_structured_text_and_data_outputs() -> None:
+    response, artifacts = _finalize_task_outputs(
+        {
+            "output_ports": [
+                {"id": "summary", "artifact_kind": "text"},
+                {"id": "metrics", "artifact_kind": "data"},
+            ],
+            "declared_output_ports": ["summary", "metrics"],
+        },
+        '{"display_text": "Done", "outputs": [{"output_port_id": "summary", "artifact_kind": "text", "content": "Short"}, {"output_port_id": "metrics", "artifact_kind": "data", "content": {"score": 88, "status": "ok"}}]}',
+        [],
+        "structured_final_response",
+    )
+
+    assert response == "Done"
+    assert artifacts == [
+        {"port_id": "summary", "artifact_kind": "text", "content": "Short"},
+        {
+            "port_id": "metrics",
+            "artifact_kind": "data",
+            "data": {"score": 88, "status": "ok"},
+        },
+    ]
+
+
 def test_finalize_task_outputs_parses_structured_file_outputs() -> None:
     response, artifacts = _finalize_task_outputs(
         {
@@ -528,7 +774,7 @@ def test_finalize_task_outputs_parses_structured_file_outputs() -> None:
             ],
             "declared_output_ports": ["pdf", "slides"],
         },
-        '{"display_text": "Files ready", "outputs": [{"output_port_id": "pdf", "artifact_kind": "document", "filename": "report.pdf"}, {"output_port_id": "slides", "artifact_kind": "document", "filename": "deck.pptx"}]}',
+        '{"display_text": "Files ready", "outputs": [{"output_port_id": "pdf", "artifact_kind": "document", "content": {"filename": "report.pdf"}}, {"output_port_id": "slides", "artifact_kind": "document", "content": {"filename": "deck.pptx"}}]}',
         [
             {
                 "type": "artifact",
@@ -637,3 +883,25 @@ def test_attach_result_text_for_citations_reuses_existing_matching_text_componen
     assert len(updated) == 2
     assert updated[0]["id"] == "final-text"
     assert updated[1]["data"]["parent_id"] == "final-text"
+
+
+def test_extract_json_object_returns_last_object_from_multi_json_response() -> None:
+    # Model emitted tool-call metadata + structured response on separate lines
+    raw = (
+        '{"query":"site:example.com SIEM EDR"}\n'
+        '{"display_text":"No data","outputs":[{"output_port_id":"alerts_batch","artifact_kind":"data","content":{"alerts":[]}}]}'
+    )
+    result = _extract_json_object(raw)
+    assert result["display_text"] == "No data"
+    assert len(result["outputs"]) == 1
+    assert result["outputs"][0]["output_port_id"] == "alerts_batch"
+
+
+def test_extract_json_object_handles_single_object() -> None:
+    result = _extract_json_object('{"key": "value"}')
+    assert result == {"key": "value"}
+
+
+def test_extract_json_object_raises_on_no_json() -> None:
+    with pytest.raises(ValueError, match="did not return a JSON object"):
+        _extract_json_object("no json here")

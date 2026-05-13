@@ -326,7 +326,7 @@ export function PlaybookCanvasFloatingToolbar({
                     <ChevronDown className="h-3.5 w-3.5" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" side="right" className="w-56">
+                <DropdownMenuContent align="start" side="bottom" className="w-56">
                   <DropdownMenuItem onClick={onAddStep}>
                     <Plus className="mr-2 h-4 w-4" />
                     {t('toolbar.addBlankStep')}

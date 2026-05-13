@@ -228,6 +228,61 @@ def test_resolve_task_inputs_filters_node_inputs_by_current_source_binding() -> 
     ]
 
 
+def test_resolve_task_inputs_reads_document_metadata_from_nested_ref() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "default", "name": "Input", "artifact_kind": "document"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "source_a",
+                    "target_id": "downstream",
+                    "source_output_port_id": "default",
+                    "target_input_port_id": "default",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {},
+            "node_inputs_by_port": {
+                "default": [
+                    {
+                        "artifact_kind": "document",
+                        "ref": {
+                            "document_id": "doc-1",
+                            "workspace_id": "ws-1",
+                            "url": "https://example.com/a.pdf",
+                            "filename": "a.pdf",
+                        },
+                        "source_task_id": "source_a",
+                        "source_output_port_id": "default",
+                    }
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    default_port = resolved["ports"]["default"]
+    assert default_port["upstream_bindings"][0]["artifacts"][0]["ref"]["filename"] == "a.pdf"
+    assert default_port["staged_files"] == [
+        {
+            "document_id": "doc-1",
+            "filename": "a.pdf",
+            "filepath": "https://example.com/a.pdf",
+            "workspace_id": "ws-1",
+            "port_id": "default",
+        }
+    ]
+
+
 def test_resolve_task_inputs_filters_prefixed_node_inputs_by_normalized_source_binding() -> None:
     resolved = resolve_task_inputs(
         "downstream",
@@ -282,6 +337,61 @@ def test_resolve_task_inputs_filters_prefixed_node_inputs_by_normalized_source_b
     shared_port = resolved["ports"]["shared"]
     assert shared_port["upstream_bindings"][0]["artifacts"][0]["filename"] == "a.pdf"
     assert shared_port["upstream_bindings"][1]["artifacts"][0]["filename"] == "b.pdf"
+
+
+def test_resolve_task_inputs_consumes_iterator_output_port_artifacts() -> None:
+    resolved = resolve_task_inputs(
+        "downstream",
+        {
+            "id": "downstream",
+            "title": "Downstream",
+            "description": "",
+            "input_ports": [
+                {"id": "results_in", "name": "Results", "artifact_kind": "data"}
+            ],
+        },
+        {
+            "edges": [
+                {
+                    "source_id": "iterator-1",
+                    "target_id": "downstream",
+                    "source_output_port_id": "results",
+                    "target_input_port_id": "results_in",
+                }
+            ],
+            "results": {},
+            "task_outputs": {},
+            "artifacts_by_port": {
+                "iterator-1:results": [
+                    {
+                        "port_id": "results",
+                        "artifact_kind": "data",
+                        "data": [
+                            {"index": 0, "output": "processed-a"},
+                            {"index": 1, "output": "processed-b"},
+                        ],
+                        "source_task_id": "iterator-1",
+                        "source_output_port_id": "results",
+                    }
+                ]
+            },
+            "workspace_context": [],
+        },
+    )
+
+    results_port = resolved["ports"]["results_in"]
+    assert results_port["upstream_bindings"][0]["artifacts"] == [
+        {
+            "port_id": "results",
+            "artifact_kind": "data",
+            "data": [
+                {"index": 0, "output": "processed-a"},
+                {"index": 1, "output": "processed-b"},
+            ],
+            "source_task_id": "iterator-1",
+            "source_output_port_id": "results",
+        }
+    ]
 
 
 def test_resolve_task_inputs_rejects_artifact_kind_mismatch() -> None:
@@ -728,6 +838,38 @@ def test_build_task_prompt_context_includes_default_workspace_metadata() -> None
     }
 
 
+def test_build_task_prompt_context_includes_iterator_context() -> None:
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {},
+            "playbook_workspace_context": [],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+        iterator_context={
+            "parent_iterator_id": "iterator-1",
+            "iteration_index": 1,
+            "item_variable": "current_item",
+            "item": {"id": 2, "name": "Project Beta"},
+        },
+    )
+
+    assert prompt_context["iterator_context"] == {
+        "parent_iterator_id": "iterator-1",
+        "iteration_index": 1,
+        "item_variable": "current_item",
+        "item": {"id": 2, "name": "Project Beta"},
+    }
+
+
 def test_build_task_prompt_context_includes_normalized_retrieval_scope() -> None:
     prompt_context = build_task_prompt_context(
         {
@@ -786,6 +928,234 @@ def test_build_task_prompt_context_includes_normalized_retrieval_scope() -> None
         "brain_ids": ["ws-default", "ws-other"],
         "external_ids": ["doc-1", "doc-2", "doc-3"],
     }
+
+
+def test_build_task_prompt_context_hydrates_bound_documents_from_workspace_context() -> (
+    None
+):
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {
+                "content": {
+                    "input_port": {
+                        "id": "content",
+                        "name": "Content",
+                        "artifact_kind": "document",
+                    },
+                    "document_bindings": {
+                        "document_ids": ["doc-1", "doc-2"],
+                    },
+                    "resolved_documents": [],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                }
+            },
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "ws-default",
+                    "documents": [
+                        {
+                            "id": "doc-1",
+                            "filename": "A.docx",
+                            "filepath": "ws-default/doc-1/A.docx",
+                        },
+                        {
+                            "id": "doc-2",
+                            "filename": "B.docx",
+                            "filepath": "ws-default/doc-2/B.docx",
+                        },
+                    ],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": True,
+        },
+    )
+
+    assert prompt_context["resolved_inputs"][0]["documents"] == [
+        {
+            "document_id": "doc-1",
+            "filename": "A.docx",
+            "filepath": "ws-default/doc-1/A.docx",
+            "workspace_id": "ws-default",
+        },
+        {
+            "document_id": "doc-2",
+            "filename": "B.docx",
+            "filepath": "ws-default/doc-2/B.docx",
+            "workspace_id": "ws-default",
+        },
+    ]
+
+
+def test_build_task_prompt_context_hydrates_bound_documents_from_brain_documents() -> (
+    None
+):
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {
+                "content": {
+                    "input_port": {
+                        "id": "content",
+                        "name": "Content",
+                        "artifact_kind": "document",
+                    },
+                    "document_bindings": {
+                        "document_ids": ["69f8be8a368a76f2f5d99f0f"],
+                    },
+                    "resolved_documents": [],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                }
+            },
+            "brain_documents": [
+                {
+                    "_id": "69f8be8a368a76f2f5d99f0f",
+                    "filename": "Bound.docx",
+                    "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Bound.docx",
+                    "workspace_id": "69d0df66e522cb08903515bd",
+                }
+            ],
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "69d0df66e522cb08903515bd",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": True,
+        },
+    )
+
+    assert prompt_context["resolved_inputs"][0]["documents"] == [
+        {
+            "document_id": "69f8be8a368a76f2f5d99f0f",
+            "filename": "Bound.docx",
+            "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Bound.docx",
+            "workspace_id": "69d0df66e522cb08903515bd",
+        }
+    ]
+
+
+def test_build_task_prompt_context_emits_placeholder_documents_for_bound_ids() -> (
+    None
+):
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {
+                "content": {
+                    "input_port": {
+                        "id": "content",
+                        "name": "Content",
+                        "artifact_kind": "document",
+                    },
+                    "document_bindings": {
+                        "document_ids": ["69f8be8a368a76f2f5d99f0f"],
+                    },
+                    "resolved_documents": [],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                }
+            },
+            "brain_documents": [],
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "69d0df66e522cb08903515bd",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": True,
+        },
+    )
+
+    assert prompt_context["resolved_inputs"][0]["documents"] == [
+        {
+            "document_id": "69f8be8a368a76f2f5d99f0f",
+            "filename": "",
+            "filepath": "",
+            "workspace_id": "69d0df66e522cb08903515bd",
+        }
+    ]
+
+
+def test_build_task_prompt_context_hydrates_alias_document_metadata() -> None:
+    prompt_context = build_task_prompt_context(
+        {
+            "id": "task-1",
+            "title": "Task",
+            "description": "",
+            "output_ports": [],
+        },
+        {
+            "task_id": "task-1",
+            "ports": {
+                "content": {
+                    "input_port": {
+                        "id": "content",
+                        "name": "Content",
+                        "artifact_kind": "document",
+                    },
+                    "document_bindings": {
+                        "document_ids": ["69f8be8a368a76f2f5d99f0f"],
+                    },
+                    "resolved_documents": [],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                }
+            },
+            "brain_documents": [
+                {
+                    "external_id": "69f8be8a368a76f2f5d99f0f",
+                    "name": "Alias.docx",
+                    "file_path": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Alias.docx",
+                    "workspaceId": "69d0df66e522cb08903515bd",
+                }
+            ],
+            "playbook_workspace_context": [
+                {
+                    "workspace_id": "69d0df66e522cb08903515bd",
+                    "documents": [],
+                }
+            ],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": True,
+        },
+    )
+
+    assert prompt_context["resolved_inputs"][0]["documents"] == [
+        {
+            "document_id": "69f8be8a368a76f2f5d99f0f",
+            "filename": "Alias.docx",
+            "filepath": "69d0df66e522cb08903515bd/69f8be8a368a76f2f5d99f0f/Alias.docx",
+            "workspace_id": "69d0df66e522cb08903515bd",
+        }
+    ]
 
 
 def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_section() -> (
@@ -862,6 +1232,95 @@ def test_build_task_prompt_uses_structured_json_and_skips_duplicate_trigger_sect
     assert '"subject": "FW: Yellowsys.ai"' in prompt
     assert "Retrieval scope for MCP document tools JSON:" not in prompt
     assert "This playbook was triggered by an incoming email:" not in prompt
+
+
+def test_build_task_prompt_structured_output_contract_uses_content_only() -> None:
+    prompt = build_task_prompt(
+        {
+            "id": "downstream",
+            "title": "Task",
+            "description": "Create outputs",
+            "output_ports": [
+                {"id": "summary", "name": "Summary", "artifact_kind": "text"},
+                {"id": "metrics", "name": "Metrics", "artifact_kind": "data"},
+                {"id": "report", "name": "Report", "artifact_kind": "document"},
+            ],
+        },
+        {
+            "task_id": "downstream",
+            "ports": {},
+            "playbook_workspace_context": [],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": False,
+        },
+        output_mode="structured_final_response",
+    )
+
+    assert '"content": "artifact payload"' in prompt
+    assert "Every output object must include `artifact_kind`" in prompt
+    assert "For data outputs, `content` is the structured JSON payload." in prompt
+    assert "For file outputs, `content` is an object" in prompt
+    assert "Do not use top-level `data`, `filename`, `file_path`, or `filePath`." in prompt
+    assert '"data": {"required": "for data outputs"}' not in prompt
+    assert '"filename": "required for generated file outputs"' not in prompt
+
+
+def test_build_task_prompt_includes_iterator_context_even_with_port_sources() -> None:
+    prompt = build_task_prompt(
+        {
+            "id": "downstream",
+            "title": "Task",
+            "description": "Describe the current iterator item",
+            "output_ports": [
+                {"id": "default", "name": "Output", "artifact_kind": "text"}
+            ],
+        },
+        {
+            "task_id": "downstream",
+            "ports": {
+                "mail_in": {
+                    "input_port": {
+                        "id": "mail_in",
+                        "name": "Mail input",
+                        "artifact_kind": "data",
+                    },
+                    "upstream_bindings": [
+                        {
+                            "source_task_id": "__trigger__",
+                            "source_output_port_id": "mail_data",
+                            "artifact_kind": "data",
+                            "artifacts": [
+                                {
+                                    "artifact_kind": "data",
+                                    "data": {"subject": "FW: Yellowsys.ai"},
+                                }
+                            ],
+                        }
+                    ],
+                    "resolved_documents": [],
+                    "staged_files": [],
+                    "workspace_artifacts": [],
+                    "document_bindings": {},
+                }
+            },
+            "playbook_workspace_context": [],
+            "fallback_workspace_context": [],
+            "workspace_context_mode": "resolved_inputs_only",
+            "has_port_sources": True,
+        },
+        iterator_context={
+            "parent_iterator_id": "iterator-1",
+            "iteration_index": 0,
+            "item_variable": "current_item",
+            "item": {"id": 1, "name": "Project Alpha"},
+        },
+    )
+
+    assert "Structured inputs for this task JSON:" in prompt
+    assert "Iterator context JSON:" in prompt
+    assert '"iteration_index": 0' in prompt
+    assert '"name": "Project Alpha"' in prompt
 
 
 def test_build_task_prompt_includes_mcp_retrieval_scope_guidance() -> None:

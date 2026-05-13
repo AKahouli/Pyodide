@@ -160,6 +160,48 @@ export class EvaluationConfigDto {
   weights?: EvaluationRubricWeightsDto;
 }
 
+export class IteratorConfigDto {
+  @IsOptional()
+  @IsString()
+  source?: string;
+
+  @IsOptional()
+  @IsIn(['item', 'batch'])
+  mode?: string;
+
+  @IsOptional()
+  @IsNumber()
+  batchSize?: number | null;
+
+  @IsOptional()
+  @IsString()
+  itemVariable?: string | null;
+
+  @IsOptional()
+  @IsString()
+  outputVariable?: string | null;
+
+  @IsOptional()
+  @IsIn(['stop', 'continue'])
+  errorStrategy?: string;
+}
+
+export class IteratorLayoutDto {
+  @IsOptional()
+  @IsNumber()
+  width?: number;
+
+  @IsOptional()
+  @IsNumber()
+  height?: number;
+}
+
+export class ContainerConfigDto {
+  @IsOptional()
+  @IsString()
+  parentIteratorId?: string | null;
+}
+
 export class UpdatePlaybookTaskDto {
   @IsString()
   id!: string;
@@ -262,7 +304,7 @@ export class UpdatePlaybookTaskDto {
   inputFiles?: InputFileDto[];
 
   @IsOptional()
-  @IsEnum(['generic', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer', 'evaluation'])
+  @IsEnum(['generic', 'evaluation', 'iterator', 'summarizer', 'docxgen', 'slidegen', 'codegen', 'analyzer'])
   taskType?: string;
 
   @ApiPropertyOptional({ type: [TaskInputPortDto] })
@@ -278,6 +320,16 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested({ each: true })
   @Type(() => TaskOutputPortDto)
   outputPorts?: TaskOutputPortDto[];
+
+  @ApiPropertyOptional({ enum: ['agent', 'action', 'evaluation', 'iterator'] })
+  @IsOptional()
+  @IsString()
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | null;
+
+  @ApiPropertyOptional({ description: 'Template identity used to create this task' })
+  @IsOptional()
+  @IsString()
+  templateType?: string | null;
 
   @ApiPropertyOptional({ description: 'Connector tool bindings for this step', type: [Object] })
   @IsOptional()
@@ -297,6 +349,24 @@ export class UpdatePlaybookTaskDto {
   @ValidateNested()
   @Type(() => EvaluationConfigDto)
   evaluationConfig?: EvaluationConfigDto | null;
+
+  @ApiPropertyOptional({ type: IteratorConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => IteratorConfigDto)
+  iteratorConfig?: IteratorConfigDto | null;
+
+  @ApiPropertyOptional({ type: ContainerConfigDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ContainerConfigDto)
+  containerConfig?: ContainerConfigDto | null;
+
+  @ApiPropertyOptional({ type: IteratorLayoutDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => IteratorLayoutDto)
+  iteratorLayout?: IteratorLayoutDto | null;
 
   @ApiPropertyOptional({ description: 'Expected result text for repeatability evaluation' })
   @IsOptional()

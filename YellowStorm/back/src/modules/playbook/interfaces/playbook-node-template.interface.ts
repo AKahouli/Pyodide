@@ -1,3 +1,5 @@
+import type { PlaybookIteratorConfigData } from './playbook.interface';
+
 export interface PlaybookNodeTemplatePort {
   id: string;
   name: string;
@@ -10,6 +12,7 @@ export interface PlaybookNodeTemplateResponse {
   id: string;
   key: string;
   type: string;
+  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
   title: string;
   description?: string;
   icon?: string;
@@ -23,6 +26,7 @@ export interface PlaybookNodeTemplateResponse {
   executionMode: string;
   assignedAgentId: string | null;
   selectedAction: string | null;
+  iteratorConfig?: PlaybookIteratorConfigData | null;
   enabled: boolean;
   version: number;
   isBuiltIn: boolean;
@@ -37,6 +41,7 @@ export interface PlaybookNodeTemplateListResponse {
 export interface CreatePlaybookNodeTemplateRequest {
   key: string;
   type: string;
+  nodeType: 'agent' | 'action' | 'evaluation' | 'iterator';
   title: string;
   description?: string;
   icon?: string;
@@ -50,12 +55,14 @@ export interface CreatePlaybookNodeTemplateRequest {
   executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
+  iteratorConfig?: PlaybookIteratorConfigData | null;
   enabled?: boolean;
 }
 
 export interface UpdatePlaybookNodeTemplateRequest {
   key?: string;
   type?: string;
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator';
   title?: string;
   description?: string;
   icon?: string;
@@ -69,5 +76,6 @@ export interface UpdatePlaybookNodeTemplateRequest {
   executionMode?: string;
   assignedAgentId?: string | null;
   selectedAction?: string | null;
+  iteratorConfig?: PlaybookIteratorConfigData | null;
   enabled?: boolean;
 }

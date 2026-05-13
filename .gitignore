@@ -44,3 +44,7 @@ coverage/
 */.agents
 YellowStorm/skills-lock.json
 .claude/settings.local.json
+# Added by code-review-graph
+.code-review-graph/
+.understand-anything/intermediate/
+.understand-anything/diff-overlay.json

@@ -72,36 +72,15 @@ export function AuthProvider({ children }: AuthProviderProps) {
             return;
           }
 
-          // Token invalid or expired, try to refresh
-          try {
-            const refreshData = await authApi.refreshToken();
-            localStorage.setItem(AUTH_STORAGE_KEYS.accessToken, refreshData.accessToken);
-
-            // Reconnect SSE with new token
-            notificationsService.reconnectWithNewToken();
-
-            const refreshedUser = await authApi.getCurrentUser();
-            localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(refreshedUser));
-
-            setInitialColorTheme(refreshedUser.appearance?.colorTheme ?? globalAppearance);
-            setState({
-              user: refreshedUser,
-              isAuthenticated: true,
-              isLoading: false,
-              requiresEmailVerification: !refreshedUser.emailVerified,
-              requiresProfileCompletion: !refreshedUser.profileComplete,
-              registrationEnabled,
-            });
-          } catch {
-            // Refresh failed, clear auth data
-            clearLocalAuthData();
-            setInitialColorTheme('default');
-            setState({
-              ...initialState,
-              isLoading: false,
-              registrationEnabled,
-            });
-          }
+          // The shared axios client owns token refresh. If the bootstrap user
+          // lookup fails here, avoid issuing a second concurrent refresh call.
+          clearLocalAuthData();
+          setInitialColorTheme('default');
+          setState({
+            ...initialState,
+            isLoading: false,
+            registrationEnabled,
+          });
         } else {
           // No token - guest user, fetch registration status before finishing load
           const registrationEnabled = await fetchRegistration();
