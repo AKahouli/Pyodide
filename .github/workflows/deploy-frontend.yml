@@ -19,7 +19,7 @@ on:
 
 env:
   IMAGE_NAME: yscrmetachatbot001.azurecr.io/yellowstorm-front-poc
-  ENV_NAME: ${{ github.event.inputs.environment }}
+  ENV_NAME: ${{ github.event.inputs.environment || 'poc' }}
 
 jobs:
   build:
