@@ -276,6 +276,76 @@ describe('PlaybookExecutionGraphService', () => {
       expect(sanitized.length).toBe(0);
       expect(mockLoggerService.warn).toHaveBeenCalled();
     });
+
+    it('allows edges between siblings inside the same iterator scope', () => {
+      const tasks = [
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 't1', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-1' } },
+        { id: 't2', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-1' } },
+      ];
+      const edges = [{ id: 'e1', sourceId: 't1', targetId: 't2' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edges)).toHaveLength(1);
+    });
+
+    it('allows iterator boundary edges between container and child', () => {
+      const tasks = [
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 't1', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-1' } },
+      ];
+      const edgeIntoChild = [{ id: 'e1', sourceId: 'iterator-1', targetId: 't1' }];
+      const edgeOutOfChild = [{ id: 'e2', sourceId: 't1', targetId: 'iterator-1' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edgeIntoChild)).toHaveLength(1);
+      expect(service.sanitizeEdgesForTasks(tasks, edgeOutOfChild)).toHaveLength(1);
+    });
+
+    it('drops edges across different iterator scopes', () => {
+      const tasks = [
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 'iterator-2', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 't1', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-1' } },
+        { id: 't2', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-2' } },
+      ];
+      const edges = [{ id: 'e1', sourceId: 't1', targetId: 't2' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edges)).toHaveLength(0);
+    });
+
+    it('keeps edges from an external upstream task into an iterator parent', () => {
+      const tasks = [
+        { id: 'upstream', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+      ];
+      const edges = [{ id: 'e1', sourceId: 'upstream', targetId: 'iterator-1' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edges)).toHaveLength(1);
+    });
+
+    it('keeps edges from an iterator parent to an external downstream task', () => {
+      const tasks = [
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 'downstream', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+      ];
+      const edges = [{ id: 'e1', sourceId: 'iterator-1', targetId: 'downstream' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edges)).toHaveLength(1);
+    });
+
+    it('keeps edges from an external upstream task into an iterator child input port', () => {
+      const tasks = [
+        { id: 'upstream', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 'child', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-1' } },
+      ];
+      const edges = [{ id: 'e1', sourceId: 'upstream', targetId: 'child' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edges)).toHaveLength(1);
+    });
+
+    it('keeps edges from an iterator child to an external downstream task', () => {
+      const tasks = [
+        { id: 'iterator-1', taskType: 'iterator', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+        { id: 'child', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }], containerConfig: { parentIteratorId: 'iterator-1' } },
+        { id: 'downstream', outputPorts: [{ id: 'default' }], inputPorts: [{ id: 'default' }] },
+      ];
+      const edges = [{ id: 'e1', sourceId: 'child', targetId: 'downstream' }];
+      expect(service.sanitizeEdgesForTasks(tasks, edges)).toHaveLength(1);
+    });
   });
 
   describe('gatherContext', () => {

@@ -30,11 +30,56 @@ import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../utils/migrate-ports';
+import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
 
+const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
+  running: 5,
+  interrupted: 4,
+  failed: 3,
+  completed: 2,
+  skipped: 1,
+  pending: 0,
+};
+
+function resolveIteratorChildExecutionStatus(
+  taskResults: Array<{
+    taskId: string;
+    status?: StepStatus;
+    iteratorIterations?: Array<{
+      childResults: Array<{ taskId: string; status: StepStatus }>;
+    }>;
+  }> | null | undefined,
+  parentIteratorId: string | null | undefined,
+  taskId: string,
+): StepStatus | undefined {
+  if (!taskResults || !parentIteratorId) return undefined;
+  const parentResult = taskResults.find((taskResult) => taskResult.taskId === parentIteratorId);
+  if (!parentResult?.iteratorIterations?.length) {
+    return taskResults.find((taskResult) => taskResult.taskId === taskId)?.status;
+  }
+
+  let resolvedStatus: StepStatus | undefined;
+  for (const iteration of parentResult.iteratorIterations) {
+    for (const childResult of iteration.childResults || []) {
+      if (childResult.taskId !== taskId) continue;
+      if (!resolvedStatus || ITERATOR_CHILD_STATUS_PRIORITY[childResult.status] > ITERATOR_CHILD_STATUS_PRIORITY[resolvedStatus]) {
+        resolvedStatus = childResult.status;
+      }
+    }
+  }
+
+  if (resolvedStatus) {
+    return resolvedStatus;
+  }
+
+  return taskResults.find((taskResult) => taskResult.taskId === taskId)?.status;
+}
+
 export interface NodeContextMenuActions {
   onEdit: (nodeId: string) => void;
+  onAdvise?: (nodeId: string) => void;
   onClone: (nodeId: string) => void;
   onDelete: (nodeId: string) => void;
   onToggleEnabled: (nodeId: string) => void;
@@ -62,6 +107,9 @@ export interface ConnectorDropPayload {
 
 export interface NodeDataActions {
   updateNodeData: (nodeId: string, data: Partial<PlaybookNodeData>) => void;
+  setIteratorNodeSize?: (nodeId: string, size: { width: number; height: number }) => void;
+  resizeIteratorNode?: (nodeId: string, size: { width: number; height: number }) => void;
+  repackIteratorChildren?: (nodeId: string) => void;
   openOutputFormatEditor?: (nodeId: string) => void;
   onConnectorDrop?: (taskId: string, payload: ConnectorDropPayload) => void;
 }
@@ -267,8 +315,24 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const { t } = useModuleTranslation('playbook');
   const getAgentById = useAgentStore((s) => s.getAgentById);
   const currentTask = usePlaybookStore((s) => s.currentPlaybook?.tasks.find((t) => t.id === id));
+  const executionTaskResults = usePlaybookStore((s) => {
+    const playbookId = s.currentPlaybook?.id;
+    if (!playbookId) return null;
+    if (s.currentExecution?.playbookId === playbookId) {
+      return s.currentExecution.taskResults;
+    }
+
+    let latest = null as typeof s.currentExecution;
+    for (const execution of Object.values(s.executionCache)) {
+      if (execution.playbookId !== playbookId) continue;
+      if (!latest || execution.updatedAt > latest.updatedAt) latest = execution;
+    }
+
+    return latest?.taskResults ?? null;
+  });
   const playbookId = usePlaybookStore((s) => s.currentPlaybook?.id ?? null);
   const selectedStepId = usePlaybookStore((s) => s.selectedStepId);
+  const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
 
@@ -298,16 +362,28 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     return map;
   }, [inputFiles]);
   const effectiveTask = currentTask || data;
+  const iteratorChildExecutionStatus = useMemo(
+    () => resolveIteratorChildExecutionStatus(
+      executionTaskResults,
+      effectiveTask.containerConfig?.parentIteratorId,
+      id,
+    ),
+    [executionTaskResults, effectiveTask.containerConfig?.parentIteratorId, id],
+  );
   const agentId = effectiveTask.assignedAgentId;
   const agent = agentId ? getAgentById(agentId) : null;
+  const nodeType = getEffectiveNodeType(effectiveTask);
   const isActionMode = effectiveTask.executionMode === 'action';
-  const isConfigured = effectiveTask.taskType === 'evaluation'
+  const isIteratorMode = nodeType === 'iterator';
+  const isConfigured = nodeType === 'evaluation'
     ? !!(effectiveTask.assignedAgentId && (effectiveTask.evaluationConfig?.expectation || effectiveTask.evaluationConfig?.referenceBaselineId))
+    : isIteratorMode
+      ? Boolean(effectiveTask.iteratorConfig?.source?.trim())
     : isActionMode ? !!effectiveTask.selectedAction : !!effectiveTask.assignedAgentId;
   const selectedActionLabel = effectiveTask.selectedAction
     ? `${String(effectiveTask.selectedAction).charAt(0).toUpperCase()}${String(effectiveTask.selectedAction).slice(1)}`
     : null;
-  const status = data.stepStatus as StepStatus | undefined;
+  const status = (data.stepStatus as StepStatus | undefined) ?? iteratorChildExecutionStatus;
   const semanticMatch = data.stepSemanticMatch;
   const judgeStatus = data.stepJudgeStatus;
   const judgeResult = data.stepJudgeResult;
@@ -575,11 +651,29 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   {data.title || t('node.untitled')}
                 </NodeTitle>
               </div>
-              {status && (
-                <div className="flex items-center justify-center">
-                  <PlaybookStatusBadge status={status} size="xs" />
-                </div>
-              )}
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        actions?.onAdvise?.(id);
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('nodeAdvisor.open')}</TooltipContent>
+                </Tooltip>
+                {status && (
+                  <div className="flex items-center justify-center">
+                    <PlaybookStatusBadge status={status} size="xs" />
+                  </div>
+                )}
+              </div>
             </div>
           </NodeHeader>
 
@@ -593,6 +687,13 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                     selectedActionLabel ? 'font-medium' : 'italic text-muted-foreground',
                   )}>
                     {selectedActionLabel || t('node.notConfigured')}
+                  </span>
+                </>
+              ) : isIteratorMode ? (
+                <>
+                  <Bot className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className={cn('truncate text-xs', effectiveTask.inputPorts?.length ? 'font-medium' : 'italic text-muted-foreground')}>
+                    {effectiveTask.inputPorts?.length ? t('node.iteratorInputReady') : t('node.iteratorNotConfigured')}
                   </span>
                 </>
               ) : agent ? (
@@ -702,7 +803,22 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             )}
 
             {(judgeStatus && judgeStatus !== 'idle') || judgeResult ? (
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div
+                className="flex flex-wrap items-center gap-1.5 cursor-pointer hover:opacity-80 transition-opacity"
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openExecutionDetailTab('judge', id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    openExecutionDetailTab('judge', id);
+                  }
+                }}
+              >
                 <JudgeStateBadge status={judgeStatus} />
                 {judgeResult && (
                   <JudgeScoreBadge
@@ -720,12 +836,47 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   alwaysVisible={inputFiles.length > 0}
                 />
                 {semanticMatch && status === 'completed' ? (
-                  <SemanticScoreBadge
-                    score={semanticMatch.matchScore}
-                  />
+                  <div
+                    className="cursor-pointer hover:opacity-80 transition-opacity"
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openExecutionDetailTab('evaluation', id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openExecutionDetailTab('evaluation', id);
+                      }
+                    }}
+                  >
+                    <SemanticScoreBadge
+                      score={semanticMatch.matchScore}
+                    />
+                  </div>
                 ) : null}
               </div>
               <div className="flex items-center gap-1">
+                {status && status !== 'pending' && status !== 'running' && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-muted-foreground hover:text-primary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openExecutionDetailTab('results', id);
+                        }}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">{t('node.viewResults')}</TooltipContent>
+                  </Tooltip>
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button

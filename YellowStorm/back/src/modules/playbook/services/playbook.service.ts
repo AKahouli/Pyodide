@@ -974,6 +974,8 @@ export class PlaybookService {
         inputFiles: t.inputFiles || [],
         enabled: t.enabled !== false,
         taskType: t.taskType || null,
+        nodeType: t.nodeType || null,
+        templateType: t.templateType || null,
         inputPorts: t.inputPorts || [],
         outputPorts: t.outputPorts || [],
         hasValidatedReplay: activeReplays.has(t.id),
@@ -1007,6 +1009,27 @@ export class PlaybookService {
                 evidenceConsistency: t.evaluationConfig.weights?.evidenceConsistency ?? 5,
                 executionHealth: t.evaluationConfig.weights?.executionHealth ?? 5,
               },
+            }
+          : null,
+        iteratorConfig: t.iteratorConfig
+          ? {
+              source: t.iteratorConfig.source || '{{items}}',
+              mode: t.iteratorConfig.mode === 'batch' ? 'batch' : 'item',
+              batchSize: t.iteratorConfig.batchSize ?? 10,
+              itemVariable: t.iteratorConfig.itemVariable || 'item',
+              outputVariable: t.iteratorConfig.outputVariable || 'processed_items',
+              errorStrategy: t.iteratorConfig.errorStrategy === 'continue' ? 'continue' : 'stop',
+            }
+          : null,
+        containerConfig: t.containerConfig
+          ? {
+              parentIteratorId: t.containerConfig.parentIteratorId || null,
+            }
+          : null,
+        iteratorLayout: t.iteratorLayout
+          ? {
+              width: t.iteratorLayout.width ?? null,
+              height: t.iteratorLayout.height ?? null,
             }
           : null,
         expectedResult: t.expectedResult ?? null,
@@ -1222,6 +1245,25 @@ export class PlaybookService {
           totalTokens: entry.totalTokens ?? null,
           modelName: entry.modelName ?? null,
           artifacts: entry.artifacts || [],
+        })),
+        iteratorIterations: (tr.iteratorIterations || []).map((iteration: any) => ({
+          index: iteration.index ?? 0,
+          status: iteration.status || '',
+          itemPreview: iteration.itemPreview ?? '',
+          output: iteration.output ?? '',
+          error: iteration.error ?? '',
+          childResults: (iteration.childResults || []).map((child: any) => ({
+            taskId: child.taskId || '',
+            taskTitle: child.taskTitle || '',
+            status: child.status || '',
+            output: child.output ?? '',
+            error: child.error ?? '',
+            components: child.components || [],
+            toolTrace: child.toolTrace || [],
+            llmPromptTrace: child.llmPromptTrace || [],
+            artifacts: child.artifacts || [],
+          })),
+          artifacts: iteration.artifacts || [],
         })),
       })),
       threadId: execution.threadId,

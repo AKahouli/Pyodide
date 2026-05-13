@@ -7,7 +7,7 @@ type CanvasProps = ReactFlowProps & {
 };
 
 export const Canvas = ({ children, ...props }: CanvasProps) => (
-  <ReactFlow deleteKeyCode={['Delete']} fitView panOnDrag={false} panOnScroll selectionOnDrag={true} zoomOnDoubleClick={false} proOptions={{ hideAttribution: true }} {...props}>
+  <ReactFlow deleteKeyCode={['Delete', 'Backspace']} fitView panOnDrag={false} panOnScroll selectionOnDrag={true} zoomOnDoubleClick={false} proOptions={{ hideAttribution: true }} {...props}>
     <Background bgColor='var(--sidebar)' />
     {children}
   </ReactFlow>

@@ -4,6 +4,8 @@ import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { AdvisorResultPanel } from './AdvisorResultPanel';
+import { IteratorResultPanel } from './IteratorResultPanel';
+import { StepComponents } from './StepComponents';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -12,12 +14,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
-import { MessageProvider } from '@/components/ai-elements/message-context';
-import { mapComponentsToContentParts } from '@/modules/conversation/utils';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
-import type { TaskResult, HumanFeedbackData, PlaybookComponent, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
+import type { TaskResult, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
 
 const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
@@ -125,7 +124,6 @@ function ArtifactListItem({
     </div>
   );
 }
-import type { MessageComponent } from '@/modules/conversation/types';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
 import { downloadStepResultHtml, downloadStepResultPdf, renderStepResultHtml } from '../utils/renderStepResultHtml';
@@ -1135,7 +1133,9 @@ export function ExecutionStepDetail({
               </div>
             )}
 
-            {selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
+            {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
+              <IteratorResultPanel step={step} />
+            ) : selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
               </div>
@@ -1982,65 +1982,3 @@ function IssueSection({
   );
 }
 
-/**
- * Renders a mixed list of AI components and humanFeedback components.
- * Groups consecutive non-humanFeedback components and renders them
- * via AIMessageContent, while humanFeedback gets its own inline widget.
- */
-function dedupeMirroredTextComponents(components: PlaybookComponent[]): PlaybookComponent[] {
-  const syntheticTexts = components.filter(
-    (c) =>
-      c.type === 'text' &&
-      String((c as any).id || '').startsWith('playbook-final-text-'),
-  );
-  if (syntheticTexts.length === 0) return components;
-
-  const syntheticContents = new Set(
-    syntheticTexts.map((c) => String((c.data as any)?.content || '').trim()),
-  );
-
-  return components.filter((c) => {
-    if (c.type !== 'text') return true;
-    if (String((c as any).id || '').startsWith('playbook-final-text-')) return true;
-    return !syntheticContents.has(String((c.data as any)?.content || '').trim());
-  });
-}
-
-export function StepComponents({
-  components,
-  taskId,
-}: {
-  components: PlaybookComponent[];
-  taskId: string;
-}) {
-  const visibleComponents = dedupeMirroredTextComponents(components);
-  const groups: Array<{ type: 'ai'; items: MessageComponent[] } | { type: 'hf'; data: HumanFeedbackData }> = [];
-
-  let currentAiGroup: MessageComponent[] = [];
-  for (const comp of visibleComponents) {
-    if (comp.type === 'humanFeedback') {
-      if (currentAiGroup.length > 0) {
-        groups.push({ type: 'ai', items: currentAiGroup });
-        currentAiGroup = [];
-      }
-      groups.push({ type: 'hf', data: comp.data as unknown as HumanFeedbackData });
-    } else {
-      currentAiGroup.push(comp as MessageComponent);
-    }
-  }
-  if (currentAiGroup.length > 0) {
-    groups.push({ type: 'ai', items: currentAiGroup });
-  }
-
-  return (
-    <MessageProvider fileViewerDisplayMode="floating">
-      {groups.map((group, i) =>
-        group.type === 'ai' ? (
-          <AIMessageContent key={i} parts={mapComponentsToContentParts(group.items)} />
-        ) : (
-          <HumanFeedbackInline key={i} data={group.data} taskId={taskId} />
-        ),
-      )}
-    </MessageProvider>
-  );
-}

@@ -689,11 +689,14 @@ ENV_FILES = {
 @lru_cache()
 def get_settings() -> Settings:
     """Load and cache settings based on the `ENVIRONMENT` variable."""
+    from pathlib import Path
 
     environment = os.getenv("ENVIRONMENT", "local")
     env_file = ENV_FILES.get(environment)
     if env_file:
-        return Settings(_env_file=env_file)  # type: ignore
+        project_root = Path(__file__).parent.parent.parent
+        env_file_path = str(project_root / env_file)
+        return Settings(_env_file=env_file_path)  # type: ignore
     if environment == "prod":
         return Settings()  # type: ignore
     raise ValueError(f"Invalid environment: {environment}")

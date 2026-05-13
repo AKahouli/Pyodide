@@ -40,6 +40,7 @@ from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
 from src.langgraph_engine.types import PortPayload
+from src.langgraph_engine.playbook_node_advisor import advise_playbook_node
 
 logger = get_logger(__name__)
 app_settings = get_settings()
@@ -135,6 +136,87 @@ class ChatbotServicer(
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
         logger.info("[gRPC] ChatbotServicer initialized (V2 only)")
+
+    async def AdvisePlaybookNode(
+        self,
+        request: "chatbot_pb2.AdvisePlaybookNodeRequest",
+        context: grpc.aio.ServicerContext,
+    ) -> "chatbot_pb2.AdvisePlaybookNodeResponse":
+        payload = MessageToDict(
+            request,
+            preserving_proto_field_name=True,
+            always_print_fields_with_no_presence=True,
+        )
+        result = advise_playbook_node(payload)
+
+        suggestions = []
+        for item in result.get("suggestions", []):
+            patch = item.get("patch") or {}
+            suggestions.append(
+                chatbot_pb2.NodeAdvisorSuggestion(
+                    id=str(item.get("id") or ""),
+                    type=self._node_advisor_type_to_enum(item.get("type")),
+                    title=str(item.get("title") or ""),
+                    summary=str(item.get("summary") or ""),
+                    rationale=str(item.get("rationale") or ""),
+                    confidence=float(item.get("confidence") or 0),
+                    patch=chatbot_pb2.NodeAdvisorPatch(
+                        task_title=str(patch.get("task_title") or ""),
+                        task_description=str(patch.get("task_description") or ""),
+                        assigned_agent_id=str(patch.get("assigned_agent_id") or ""),
+                        input_ports=[
+                            chatbot_pb2.NodeAdvisorPortSuggestion(
+                                id=str(port.get("id") or ""),
+                                name=str(port.get("name") or ""),
+                                artifact_kind=str(port.get("artifact_kind") or ""),
+                                description=str(port.get("description") or ""),
+                            )
+                            for port in patch.get("input_ports", [])
+                        ],
+                        output_ports=[
+                            chatbot_pb2.NodeAdvisorPortSuggestion(
+                                id=str(port.get("id") or ""),
+                                name=str(port.get("name") or ""),
+                                artifact_kind=str(port.get("artifact_kind") or ""),
+                                description=str(port.get("description") or ""),
+                            )
+                            for port in patch.get("output_ports", [])
+                        ],
+                        datasource_suggestions=[
+                            chatbot_pb2.NodeAdvisorDatasourceSuggestion(
+                                source_task_id=str(ds.get("source_task_id") or ""),
+                                source_output_port_id=str(ds.get("source_output_port_id") or ""),
+                                target_input_port_id=str(ds.get("target_input_port_id") or ""),
+                                datasource_type=str(ds.get("datasource_type") or ""),
+                                datasource_id=str(ds.get("datasource_id") or ""),
+                                datasource_name=str(ds.get("datasource_name") or ""),
+                                rationale=str(ds.get("rationale") or ""),
+                            )
+                            for ds in patch.get("datasource_suggestions", [])
+                        ],
+                    ),
+                    warnings=[str(warning) for warning in item.get("warnings", [])],
+                )
+            )
+
+        return chatbot_pb2.AdvisePlaybookNodeResponse(
+            playbook_id=str(result.get("playbook_id") or request.playbook_id),
+            task_id=str(result.get("task_id") or request.task_id),
+            suggestions=suggestions,
+        )
+
+    @staticmethod
+    def _node_advisor_type_to_enum(value: str) -> int:
+        mapping = {
+            "task_title": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_TASK_TITLE,
+            "task_description": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_TASK_DESCRIPTION,
+            "agent_selection": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_AGENT_SELECTION,
+            "datasource_connection": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_DATASOURCE_CONNECTION,
+            "input_contract": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_INPUT_CONTRACT,
+            "output_contract": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_OUTPUT_CONTRACT,
+            "general": chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_GENERAL,
+        }
+        return mapping.get(str(value or ""), chatbot_pb2.NODE_ADVISOR_SUGGESTION_TYPE_GENERAL)
 
     @staticmethod
     def _serialize_run_agent_team_request(
@@ -1590,6 +1672,21 @@ class ChatbotServicer(
             tasks = [_proto_task_to_dict(t) for t in request.tasks]
             agents = {a.id: _proto_agent_to_dict(a) for a in request.agents}
             edges = [_proto_edge_to_dict(e) for e in request.edges]
+            logger.info(
+                "[ITERATOR_DEBUG RunPlaybookWorkflow] tasks after deserialization",
+                task_count=len(tasks),
+                tasks=[
+                    {
+                        "id": t.get("id"),
+                        "title": t.get("title"),
+                        "task_type": t.get("task_type"),
+                        "has_task_metadata": t.get("task_metadata") is not None,
+                        "task_metadata_keys": list(t["task_metadata"].keys()) if isinstance(t.get("task_metadata"), dict) else None,
+                        "task_metadata_iterator": (t.get("task_metadata") or {}).get("iterator") if isinstance(t.get("task_metadata"), dict) else None,
+                    }
+                    for t in tasks
+                ],
+            )
 
             bg_task = asyncio.create_task(
                 run_playbook(
@@ -2248,6 +2345,23 @@ class ChatbotServicer(
 # === Proto conversion helpers (playbook/langgraph) ===
 
 
+def _struct_has_fields(struct_msg) -> bool:
+    """Return True if a google.protobuf.Struct message has any fields.
+
+    Empty Struct messages are truthy in protobuf, so we have to inspect
+    `.fields` explicitly to decide whether the field is meaningful.
+    """
+    if struct_msg is None:
+        return False
+    fields = getattr(struct_msg, "fields", None)
+    if fields is None:
+        return False
+    try:
+        return len(fields) > 0
+    except TypeError:
+        return bool(fields)
+
+
 def _proto_task_to_dict(proto_task) -> dict:
     """Convert a PlaybookTaskConfig proto message to a TaskConfig dict."""
     tool_bindings = getattr(proto_task, "tool_bindings", None)
@@ -2304,6 +2418,26 @@ def _proto_task_to_dict(proto_task) -> dict:
         if proto_task.input_files_by_port
         else None,
         "task_type": proto_task.task_type or None,
+        "task_metadata": _normalize_struct_like(
+            MessageToDict(
+                getattr(proto_task, "task_metadata", None),
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            )
+        )
+        if getattr(proto_task, "task_metadata", None)
+        and _struct_has_fields(getattr(proto_task, "task_metadata", None))
+        else None,
+        "evaluation_config": _normalize_struct_like(
+            MessageToDict(
+                getattr(proto_task, "evaluation_config", None),
+                preserving_proto_field_name=True,
+                always_print_fields_with_no_presence=True,
+            )
+        )
+        if getattr(proto_task, "evaluation_config", None)
+        and _struct_has_fields(getattr(proto_task, "evaluation_config", None))
+        else None,
         "input_ports": [
             {
                 "id": p.id,
@@ -2933,7 +3067,7 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
     )
 
     # 1. Text component from agent output (first in display order)
-    if output:
+    if isinstance(output, str) and output:
         text_component = chatbot_pb2.Component(
             id=str(uuid.uuid4()),
             text=chatbot_pb2.TextComponent(content=output),
@@ -3090,6 +3224,89 @@ def _build_task_result_proto(tr: Dict[str, Any]) -> chatbot_pb2.PlaybookTaskResu
             )
         )
 
+    for iteration in tr.get("iterator_iterations", []) or []:
+        iteration_proto = chatbot_pb2.IteratorIterationResult(
+            index=int(iteration.get("index", 0) or 0),
+            status=str(iteration.get("status", "") or ""),
+            item_preview=str(iteration.get("item_preview", "") or ""),
+            output=str(iteration.get("output", "") or ""),
+            error=str(iteration.get("error", "") or ""),
+        )
+
+        for child in iteration.get("child_results", []) or []:
+            child_proto = chatbot_pb2.IteratorChildResult(
+                task_id=str(child.get("task_id", "") or ""),
+                task_title=str(child.get("task_title", "") or ""),
+                status=str(child.get("status", "") or ""),
+                output=str(child.get("output", "") or ""),
+                error=str(child.get("error", "") or ""),
+            )
+
+            for comp in child.get("components", []) or []:
+                child_proto.components.append(_dict_to_proto_component(comp))
+
+            for trace_item in child.get("tool_trace", []) or []:
+                args_struct = struct_pb2.Struct()
+                args = trace_item.get("args") or {}
+                if isinstance(args, dict):
+                    args_struct.update(args)
+                child_proto.tool_trace.append(
+                    chatbot_pb2.ToolTraceItem(
+                        call_index=int(trace_item.get("call_index", 0)),
+                        tool_name=str(trace_item.get("tool_name", "")),
+                        args=args_struct,
+                        output_summary=str(trace_item.get("output_summary", "")),
+                    )
+                )
+
+            for prompt_item in child.get("llm_prompt_trace", []) or []:
+                child_proto.llm_prompt_trace.append(
+                    chatbot_pb2.LLMPromptTraceItem(
+                        stage=str(prompt_item.get("stage", "") or ""),
+                        model=str(prompt_item.get("model", "") or ""),
+                        prompt=str(prompt_item.get("prompt", "") or ""),
+                    )
+                )
+
+            for artifact in child.get("artifacts", []) or []:
+                child_proto.artifacts.append(
+                    chatbot_pb2.TaskArtifact(
+                        port_id=str(artifact.get("port_id") or artifact.get("portId") or "default"),
+                        artifact_kind=str(
+                            artifact.get("artifact_kind")
+                            or artifact.get("artifactKind")
+                            or "text"
+                        ),
+                        content=str(artifact.get("content", "") or ""),
+                        url=str(artifact.get("url", "") or ""),
+                        filename=str(artifact.get("filename", "") or ""),
+                        mime_type=str(artifact.get("mime_type") or artifact.get("mimeType") or ""),
+                        size=int(artifact.get("size", 0) or 0),
+                    )
+                )
+                child_proto.emitted_payloads.append(_dict_to_proto_port_payload(artifact))
+
+            iteration_proto.child_results.append(child_proto)
+
+        for artifact in iteration.get("artifacts", []) or []:
+            iteration_proto.artifacts.append(
+                chatbot_pb2.TaskArtifact(
+                    port_id=str(artifact.get("port_id") or artifact.get("portId") or "default"),
+                    artifact_kind=str(
+                        artifact.get("artifact_kind")
+                        or artifact.get("artifactKind")
+                        or "text"
+                    ),
+                    content=str(artifact.get("content", "") or ""),
+                    url=str(artifact.get("url", "") or ""),
+                    filename=str(artifact.get("filename", "") or ""),
+                    mime_type=str(artifact.get("mime_type") or artifact.get("mimeType") or ""),
+                    size=int(artifact.get("size", 0) or 0),
+                )
+            )
+
+        task_result_proto.iterator_iterations.append(iteration_proto)
+
     return task_result_proto
 
 
@@ -3099,6 +3316,9 @@ def _build_step_update_chunk(update: Dict[str, Any]) -> chatbot_pb2.PlaybookStre
         task_id=update.get("task_id", ""),
         task_title=update.get("task_title", ""),
         status=update.get("status", ""),
+        scope=update.get("scope", ""),
+        parent_iterator_id=update.get("parent_iterator_id", ""),
+        iteration_index=int(update.get("iteration_index", 0) or 0),
     )
 
     result_data = update.get("result")

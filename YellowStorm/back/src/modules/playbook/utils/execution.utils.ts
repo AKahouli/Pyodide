@@ -153,6 +153,29 @@ export interface BufferedStepResult {
     size?: number;
     metadata?: Record<string, unknown>;
   }>;
+  iteratorIterations?: IteratorIterationResultEntry[];
+}
+
+export interface IteratorChildResultEntry {
+  taskId: string;
+  taskTitle: string;
+  status: string;
+  output?: string;
+  error?: string;
+  components?: Array<{ id: string; type: string; data: Record<string, unknown> }>;
+  toolTrace?: BufferedStepResult['toolTrace'];
+  llmPromptTrace?: BufferedStepResult['llmPromptTrace'];
+  artifacts?: TaskArtifactEntry[];
+}
+
+export interface IteratorIterationResultEntry {
+  index: number;
+  status: string;
+  itemPreview?: string;
+  output?: string;
+  error?: string;
+  childResults: IteratorChildResultEntry[];
+  artifacts?: TaskArtifactEntry[];
 }
 
 // ===== Utility Functions =====
@@ -199,6 +222,39 @@ export function mapGrpcComponents(
     const { type, data } = extractComponentData(comp);
     return { id: comp.id || `comp-${taskId}-${idx}`, type, data: truncateComponentData(data, maxDataBytes) };
   });
+}
+
+export function mapGrpcIteratorIterations(
+  grpcIterations: any[] | undefined | null,
+): IteratorIterationResultEntry[] {
+  return (grpcIterations || []).map((iteration: any) => ({
+    index: Number(iteration?.index || 0),
+    status: String(iteration?.status || ''),
+    itemPreview: String(iteration?.item_preview || ''),
+    output: String(iteration?.output || ''),
+    error: String(iteration?.error || ''),
+    childResults: (iteration?.child_results || []).map((child: any) => ({
+      taskId: String(child?.task_id || ''),
+      taskTitle: String(child?.task_title || ''),
+      status: String(child?.status || ''),
+      output: String(child?.output || ''),
+      error: String(child?.error || ''),
+      components: mapGrpcComponents(child?.components || [], String(child?.task_id || '')),
+      toolTrace: (child?.tool_trace || []).map((trace: any) => ({
+        callIndex: Number(trace?.call_index || 0),
+        toolName: String(trace?.tool_name || ''),
+        args: (trace?.args || {}) as Record<string, unknown>,
+        outputSummary: trace?.output_summary ? String(trace.output_summary) : null,
+      })),
+      llmPromptTrace: (child?.llm_prompt_trace || []).map((item: any) => ({
+        stage: String(item?.stage || ''),
+        model: String(item?.model || ''),
+        prompt: String(item?.prompt || ''),
+      })),
+      artifacts: mapGrpcTaskArtifacts(child?.artifacts),
+    })),
+    artifacts: mapGrpcTaskArtifacts(iteration?.artifacts),
+  }));
 }
 
 /**

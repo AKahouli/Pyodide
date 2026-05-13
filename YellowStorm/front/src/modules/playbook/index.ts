@@ -3,6 +3,7 @@ export { PlaybookListPage } from './components/PlaybookListPage';
 export { PlaybookCanvasPage } from './components/PlaybookCanvasPage';
 export { PlaybookExecutionPage } from './components/PlaybookExecutionPage';
 export { ArtifactBadge } from './components/ArtifactBadge';
+export { PlaybookIteratorConfigFields } from './components/PlaybookIteratorConfigFields';
 export { usePlaybookStore } from './store';
 export type {
   Playbook,
@@ -14,4 +15,7 @@ export type {
   TaskOutputPort,
   TaskArtifact,
   TaskTemplate,
+  PlaybookIteratorConfig,
+  PlaybookNodeType,
+  SelectedAction,
 } from './types';

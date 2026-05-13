@@ -7,7 +7,7 @@ from os import getenv
 
 from fastapi.exceptions import RequestValidationError
 from src.middleware import add_middleware
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+#from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY

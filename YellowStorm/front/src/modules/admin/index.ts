@@ -164,6 +164,7 @@ export {
   getPlaybookPrompts,
   getPlaybookPrompt,
   updatePlaybookPrompt,
+  deletePlaybookPrompt,
   getTools,
   getToolById,
   createTool,

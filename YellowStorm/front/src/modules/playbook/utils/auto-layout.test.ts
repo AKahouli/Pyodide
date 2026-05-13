@@ -26,4 +26,50 @@ describe('autoLayoutTasks', () => {
     expect(tasks[0].positionX).toBe(0);
     expect(tasks[0].positionY).toBe(0);
   });
+
+  it('preserves iterator child relative positions while moving them with the parent iterator', () => {
+    const tasks = [
+      makeTask({ id: 'iterator-1', taskType: 'iterator', nodeType: 'iterator', positionX: 40, positionY: 80 }),
+      makeTask({ id: 'child-1', executionOrder: 1, positionX: 72, positionY: 168, containerConfig: { parentIteratorId: 'iterator-1' } }),
+      makeTask({ id: 'child-2', executionOrder: 2, positionX: 520, positionY: 168, containerConfig: { parentIteratorId: 'iterator-1' } }),
+      makeTask({ id: 'child-3', executionOrder: 3, positionX: 72, positionY: 456, containerConfig: { parentIteratorId: 'iterator-1' } }),
+      makeTask({ id: 'outside', positionX: 500, positionY: 120 }),
+    ];
+    const edges = [makeEdge({ id: 'e1', sourceId: 'iterator-1', targetId: 'outside' })];
+
+    const result = autoLayoutTasks(tasks, edges);
+
+    const iterator = result.find((task) => task.id === 'iterator-1');
+    const child1 = result.find((task) => task.id === 'child-1');
+    const child2 = result.find((task) => task.id === 'child-2');
+    const child3 = result.find((task) => task.id === 'child-3');
+
+    expect(iterator).toBeTruthy();
+    expect(child1).toBeTruthy();
+    expect(child2).toBeTruthy();
+    expect(child3).toBeTruthy();
+
+    expect(child1!.positionX - iterator!.positionX).toBe(32);
+    expect(child1!.positionY - iterator!.positionY).toBe(88);
+    expect(child2!.positionX - iterator!.positionX).toBe(480);
+    expect(child2!.positionY - iterator!.positionY).toBe(88);
+    expect(child3!.positionX - iterator!.positionX).toBe(32);
+    expect(child3!.positionY - iterator!.positionY).toBe(376);
+  });
+
+  it('uses iterator container dimensions when spacing top-level nodes', () => {
+    const tasks = [
+      makeTask({ id: 'iterator-1', taskType: 'iterator', nodeType: 'iterator', positionX: 0, positionY: 0, iteratorLayout: { width: 900, height: 500 } }),
+      makeTask({ id: 'after', positionX: 100, positionY: 0 }),
+    ];
+    const edges = [makeEdge({ id: 'e1', sourceId: 'iterator-1', targetId: 'after' })];
+
+    const result = autoLayoutTasks(tasks, edges);
+    const iterator = result.find((task) => task.id === 'iterator-1');
+    const after = result.find((task) => task.id === 'after');
+
+    expect(iterator).toBeTruthy();
+    expect(after).toBeTruthy();
+    expect(after!.positionX).toBeGreaterThanOrEqual(iterator!.positionX + 900 - 384 / 2);
+  });
 });

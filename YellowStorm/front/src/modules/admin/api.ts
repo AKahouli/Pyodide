@@ -544,6 +544,10 @@ export async function updatePlaybookPrompt(
   return response.data.data;
 }
 
+export async function deletePlaybookPrompt(key: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminPlaybookPrompts.byKey(key));
+}
+
 // Playbook Node Templates API
 
 export async function getPlaybookNodeTemplates(): Promise<PlaybookNodeTemplateListResponse> {

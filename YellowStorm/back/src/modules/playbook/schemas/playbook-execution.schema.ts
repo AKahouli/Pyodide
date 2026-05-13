@@ -348,6 +348,56 @@ export class TaskResult {
   invalidatedByTaskId!: string | null;
 
   @Prop({ type: [{ type: Object }], default: [] })
+  iteratorIterations!: Array<{
+    index: number;
+    status: string;
+    itemPreview?: string;
+    output?: string;
+    error?: string;
+    childResults: Array<{
+      taskId: string;
+      taskTitle: string;
+      status: string;
+      output?: string;
+      error?: string;
+      components?: Array<{ id: string; type: string; data: Record<string, unknown> }>;
+      toolTrace?: Array<{
+        callIndex: number;
+        toolName: string;
+        args: Record<string, unknown>;
+        outputSummary: string | null;
+      }>;
+      llmPromptTrace?: Array<{
+        stage: string;
+        model: string;
+        prompt: string;
+      }>;
+      artifacts?: Array<{
+        portId: string;
+        artifactKind: string;
+        content?: string;
+        data?: Record<string, unknown>;
+        url?: string;
+        filename?: string;
+        mimeType?: string;
+        size?: number;
+        metadata?: Record<string, unknown>;
+      }>;
+    }>;
+    artifacts?: Array<{
+      portId: string;
+      artifactKind: string;
+      content?: string;
+      data?: Record<string, unknown>;
+      url?: string;
+      filename?: string;
+      mimeType?: string;
+      size?: number;
+      metadata?: Record<string, unknown>;
+    }>;
+  }>;
+
+  @Prop({ type: [{ type: Object }], default: [] })
   artifacts!: Array<{
     portId: string;
     artifactKind: string;

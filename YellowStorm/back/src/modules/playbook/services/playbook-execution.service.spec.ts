@@ -1067,6 +1067,27 @@ describe('PlaybookExecutionService', () => {
           result: {
             components: [],
             duration_ms: '1500',
+            iterator_iterations: [
+              {
+                index: 0,
+                status: 'completed',
+                item_preview: '{"company":"ACME"}',
+                output: 'Iteration output',
+                child_results: [
+                  {
+                    task_id: 'child-1',
+                    task_title: 'Fetch account',
+                    status: 'completed',
+                    output: 'Child output',
+                    components: [],
+                    tool_trace: [],
+                    llm_prompt_trace: [],
+                    artifacts: [],
+                  },
+                ],
+                artifacts: [],
+              },
+            ],
             usage: {
               input_tokens: 100,
               output_tokens: 50,
@@ -1085,6 +1106,13 @@ describe('PlaybookExecutionService', () => {
             taskId: 'task-1',
             status: 'completed',
             durationMs: 1500,
+            iteratorIterations: [
+              expect.objectContaining({
+                index: 0,
+                status: 'completed',
+                itemPreview: '{"company":"ACME"}',
+              }),
+            ],
             inputTokens: 100,
             outputTokens: 50,
             totalTokens: 150,
@@ -1131,6 +1159,56 @@ describe('PlaybookExecutionService', () => {
             status: 'completed',
             durationMs: 1500,
           }),
+        }),
+      );
+    });
+
+    it('should send scoped iterator child SSE events without top-level child step events', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const execution = createMockExecution();
+      mockPlaybookService.findRawById.mockResolvedValue(createMockPlaybook());
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, 'user@test.com');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('data', {
+        step_update: {
+          task_id: 'child-1',
+          task_title: 'Child 1',
+          status: 'in_progress',
+          scope: 'iterator_child',
+          parent_iterator_id: 'iterator-1',
+          iteration_index: 0,
+        },
+      });
+
+      expect(mockStreamGateway.sendToUser).toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_iterator_child_step_start',
+          data: expect.objectContaining({
+            executionId: objectId('exec1').toString(),
+            parentIteratorId: 'iterator-1',
+            iterationIndex: 0,
+            taskId: 'child-1',
+            status: 'running',
+          }),
+        }),
+      );
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(
+        userId,
+        expect.objectContaining({
+          type: 'playbook_step_start',
+          data: expect.objectContaining({ taskId: 'child-1' }),
         }),
       );
     });
@@ -3811,6 +3889,165 @@ describe('PlaybookExecutionService', () => {
             }),
           ],
         ]),
+      );
+    });
+
+    it('should auto-complete iterator child tasks and mark execution COMPLETED when only iterator children are pending', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const iteratorChildId = 'iter-child-1';
+      const playbook = createMockPlaybook({
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Iterator Parent',
+            description: 'Iterator task',
+            assignedAgentId: objectId('agent1'),
+            executionOrder: 0,
+            taskType: 'iterator',
+            inputKeys: [],
+            outputKey: '',
+            toObject: function () { return { ...this }; },
+          },
+          {
+            id: iteratorChildId,
+            title: 'Iterator Child',
+            description: 'Child inside iterator',
+            assignedAgentId: objectId('agent1'),
+            executionOrder: 1,
+            containerConfig: { parentIteratorId: 'task-1' },
+            inputKeys: [],
+            outputKey: '',
+            toObject: function () { return { ...this }; },
+          },
+        ],
+        edges: [],
+      });
+
+      const execution = createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.COMPLETED, components: [] },
+          { taskId: iteratorChildId, status: StepStatus.PENDING, components: [] },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockLoggerService.warn).not.toHaveBeenCalledWith(
+        'Stream ended prematurely with tasks still pending/running',
+        expect.anything(),
+      );
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        { _id: objectId('exec1').toString() },
+        {
+          $set: {
+            'taskResults.$[elem].status': StepStatus.COMPLETED,
+            'taskResults.$[elem].completedAt': expect.any(Date),
+          },
+        },
+        { arrayFilters: [{ 'elem.taskId': { $in: [iteratorChildId] } }] },
+      );
+
+      expect(mockStreamGateway.sendToUser.mock.calls).toEqual(
+        expect.arrayContaining([
+          [
+            userId,
+            expect.objectContaining({
+              type: 'playbook_execution_complete',
+              data: expect.objectContaining({
+                executionId: objectId('exec1').toString(),
+                status: ExecutionStatus.COMPLETED,
+              }),
+            }),
+          ],
+        ]),
+      );
+    });
+
+    it('should still mark execution FAILED when an iterator child is RUNNING at stream end', async () => {
+      const mockStream = createMockStream();
+      mockGrpcService.runPlaybookWorkflow.mockReturnValue(mockStream);
+
+      const iteratorChildId = 'iter-child-1';
+      const playbook = createMockPlaybook({
+        tasks: [
+          {
+            id: 'task-1',
+            title: 'Iterator Parent',
+            description: 'Iterator task',
+            assignedAgentId: objectId('agent1'),
+            executionOrder: 0,
+            taskType: 'iterator',
+            inputKeys: [],
+            outputKey: '',
+            toObject: function () { return { ...this }; },
+          },
+          {
+            id: iteratorChildId,
+            title: 'Iterator Child',
+            description: 'Child inside iterator',
+            assignedAgentId: objectId('agent1'),
+            executionOrder: 1,
+            containerConfig: { parentIteratorId: 'task-1' },
+            inputKeys: [],
+            outputKey: '',
+            toObject: function () { return { ...this }; },
+          },
+        ],
+        edges: [],
+      });
+
+      const execution = createMockExecution({
+        taskResults: [
+          { taskId: 'task-1', status: StepStatus.COMPLETED, components: [] },
+          { taskId: iteratorChildId, status: StepStatus.RUNNING, components: [] },
+        ],
+      });
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockExecutionModel.create.mockResolvedValue({
+        _id: objectId('exec1'),
+        toString: () => objectId('exec1').toString(),
+      });
+      mockExecutionModel.findById.mockReturnValue(createChainMock(execution));
+      mockExecutionModel.updateOne.mockResolvedValue({ modifiedCount: 1 });
+
+      const userId = objectId('user1').toString();
+      await service.executePlaybook(userId, objectId('pb1').toString(), {}, '');
+      await waitForWorkflowStreamReady();
+
+      mockStream.emit('end');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(mockLoggerService.warn).toHaveBeenCalledWith(
+        'Stream ended prematurely with tasks still pending/running',
+        expect.anything(),
+      );
+
+      expect(mockExecutionModel.updateOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: objectId('exec1').toString(),
+        }),
+        expect.objectContaining({
+          $set: expect.objectContaining({
+            status: ExecutionStatus.FAILED,
+          }),
+        }),
       );
     });
 

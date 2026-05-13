@@ -40,6 +40,7 @@ export interface TaskArtifact {
 export interface TaskTemplate {
   id: string;
   type: string;
+  nodeType: PlaybookNodeType;
   title: string;
   description: string;
   icon: string;
@@ -76,7 +77,28 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
-export type PlaybookNodeType = 'agent' | 'action' | 'evaluation';
+export type PlaybookNodeType = 'agent' | 'action' | 'evaluation' | 'iterator';
+
+export type IteratorMode = 'item' | 'batch';
+export type IteratorErrorStrategy = 'stop' | 'continue';
+
+export interface PlaybookIteratorConfig {
+  source: string;
+  mode: IteratorMode;
+  batchSize?: number | null;
+  itemVariable?: string | null;
+  outputVariable?: string | null;
+  errorStrategy?: IteratorErrorStrategy;
+}
+
+export interface PlaybookContainerConfig {
+  parentIteratorId?: string | null;
+}
+
+export interface PlaybookIteratorLayout {
+  width?: number;
+  height?: number;
+}
 
 export interface PlaybookEvaluationRubricWeights {
   semanticMatch: number;
@@ -192,16 +214,81 @@ export interface PlaybookTask {
   stepReplayMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   inputFiles: InputFile[];
   taskType?: string;
+  nodeType?: PlaybookNodeType | null;
+  templateType?: string | null;
   inputPorts?: TaskInputPort[];
   outputPorts?: TaskOutputPort[];
   toolBindings?: ToolBinding[];
   evaluationConfig?: PlaybookEvaluationConfig | null;
+  iteratorConfig?: PlaybookIteratorConfig | null;
+  iteratorLayout?: PlaybookIteratorLayout | null;
+  containerConfig?: PlaybookContainerConfig | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
 }
 
 export type PlaybookSuggestionMode = 'inherit' | 'auto' | 'manual';
+
+export type PlaybookNodeAdvisorSuggestionType =
+  | 'task_title'
+  | 'task_description'
+  | 'agent_selection'
+  | 'datasource_connection'
+  | 'input_contract'
+  | 'output_contract'
+  | 'general';
+
+export interface RequestPlaybookNodeAdvisorData {
+  intent?: string;
+  suggestionTypes?: PlaybookNodeAdvisorSuggestionType[];
+  includeGraphContext?: boolean;
+  title?: string;
+  description?: string;
+}
+
+export interface PlaybookNodeAdvisorPortSuggestion {
+  id: string;
+  name: string;
+  artifactKind: string;
+  description?: string;
+}
+
+export interface PlaybookNodeAdvisorDatasourceSuggestion {
+  sourceTaskId?: string | null;
+  sourceOutputPortId?: string | null;
+  targetInputPortId?: string | null;
+  datasourceType?: string | null;
+  datasourceId?: string | null;
+  datasourceName?: string | null;
+  rationale: string;
+}
+
+export interface PlaybookNodeAdvisorPatch {
+  taskTitle?: string;
+  taskDescription?: string;
+  assignedAgentId?: string;
+  inputPorts?: PlaybookNodeAdvisorPortSuggestion[];
+  outputPorts?: PlaybookNodeAdvisorPortSuggestion[];
+  datasourceSuggestions?: PlaybookNodeAdvisorDatasourceSuggestion[];
+}
+
+export interface PlaybookNodeAdvisorSuggestion {
+  id: string;
+  type: PlaybookNodeAdvisorSuggestionType;
+  title: string;
+  summary: string;
+  rationale: string;
+  confidence: number;
+  patch?: PlaybookNodeAdvisorPatch;
+  warnings?: string[];
+}
+
+export interface PlaybookNodeAdvisorResponse {
+  playbookId: string;
+  taskId: string;
+  suggestions: PlaybookNodeAdvisorSuggestion[];
+}
 
 export interface PlaybookDesignSettings {
   inferenceModelId: string | null;
@@ -224,6 +311,44 @@ export interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
   agentSlug?: string | null;
+  templateType?: string | null;
+  inputPorts?: Array<{
+    id: string;
+    name?: string | null;
+    artifactKind: ArtifactKind;
+    required?: boolean;
+  }>;
+  outputPorts?: Array<{
+    id: string;
+    name?: string | null;
+    artifactKind: ArtifactKind;
+  }>;
+  iteratorBody?: {
+    steps: Array<{
+      nodeRef: string;
+      title: string;
+      description: string;
+      agentSlug?: string | null;
+      templateType?: string | null;
+      inputPorts?: Array<{
+        id: string;
+        name?: string | null;
+        artifactKind: ArtifactKind;
+        required?: boolean;
+      }>;
+      outputPorts?: Array<{
+        id: string;
+        name?: string | null;
+        artifactKind: ArtifactKind;
+      }>;
+    }>;
+    edges: Array<{
+      sourceNodeRef: string;
+      targetNodeRef: string;
+      sourceOutputPortId?: string | null;
+      targetInputPortId?: string | null;
+    }>;
+  };
 }
 
 export interface PlaybookIntentSingleChangeSuggestion {
@@ -247,6 +372,8 @@ export interface PlaybookIntentWorkflowAnchor {
   nodeRef: string | null;
   targetTaskIds?: string[];
   nodeRefs?: string[];
+  sourceOutputPortId?: string | null;
+  targetInputPortId?: string | null;
 }
 
 export type PlaybookIntentWorkflowChange =
@@ -271,6 +398,8 @@ export type PlaybookIntentWorkflowChange =
       sourceNodeRef: string | null;
       targetTaskId: string | null;
       targetNodeRef: string | null;
+      sourceOutputPortId?: string | null;
+      targetInputPortId?: string | null;
     };
 
 export interface PlaybookIntentWorkflowImpact {
@@ -622,6 +751,28 @@ export interface StepExecutionHistoryEntry {
   artifacts?: TaskArtifact[];
 }
 
+export interface IteratorChildResult {
+  taskId: string;
+  taskTitle: string;
+  status: StepStatus;
+  output?: string | null;
+  error?: string | null;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  artifacts?: TaskArtifact[];
+}
+
+export interface IteratorIterationResult {
+  index: number;
+  status: StepStatus;
+  itemPreview?: string | null;
+  output?: string | null;
+  error?: string | null;
+  childResults: IteratorChildResult[];
+  artifacts?: TaskArtifact[];
+}
+
 export interface TaskResult {
   taskId: string;
   nodeTitle: string;
@@ -729,6 +880,7 @@ export interface TaskResult {
   isStale?: boolean;
   staleReason?: string | null;
   invalidatedByTaskId?: string | null;
+  iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
 }
 
@@ -1007,6 +1159,46 @@ export interface PlaybookStepCompleteEvent {
   totalTokens?: number;
   modelName?: string;
   semanticMatch?: SemanticMatchResult | null;
+  iteratorIterations?: IteratorIterationResult[];
+  artifacts?: TaskArtifact[];
+}
+
+export interface PlaybookIteratorChildStepStartEvent {
+  executionId: string;
+  parentIteratorId: string;
+  iterationIndex: number;
+  taskId: string;
+  taskTitle?: string;
+  status: string;
+}
+
+export interface PlaybookIteratorChildStepUpdateEvent {
+  executionId: string;
+  parentIteratorId: string;
+  iterationIndex: number;
+  taskId: string;
+  taskTitle?: string;
+  status: string;
+  output?: string;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
+  artifacts?: TaskArtifact[];
+}
+
+export interface PlaybookIteratorChildStepCompleteEvent {
+  executionId: string;
+  parentIteratorId: string;
+  iterationIndex: number;
+  taskId: string;
+  taskTitle?: string;
+  status: string;
+  output?: string;
+  error?: string;
+  durationMs?: number;
+  components?: PlaybookComponent[];
+  toolTrace?: ToolTraceItem[];
+  llmPromptTrace?: LLMPromptTraceItem[];
   artifacts?: TaskArtifact[];
 }
 
@@ -1261,12 +1453,14 @@ export interface PlaybookState {
   designerOpen: boolean;
   copilotMode: PlaybookCopilotMode;
   executionPanelOpen: boolean;
+  executionDetailTab: string;
   workspaceExplorerOpen: boolean;
   connectorSidebarOpen: boolean;
   nodeEditorOpen: boolean;
   pageMode: PlaybookPageMode;
   undoStack: PlaybookUndoSnapshot[];
   redoStack: PlaybookUndoSnapshot[];
+  perPlaybookUndoHistory: Record<string, { undoStack: PlaybookUndoSnapshot[]; redoStack: PlaybookUndoSnapshot[] }>;
   canvasSyncVersion: number;
   /** Saving automated trigger configuration */
   triggerSaving: boolean;
@@ -1379,6 +1573,9 @@ export interface PlaybookActions {
   onStepStart: (data: PlaybookStepStartEvent) => void;
   onStepUpdate: (data: PlaybookStepUpdateEvent) => void;
   onStepComplete: (data: PlaybookStepCompleteEvent) => void;
+  onIteratorChildStepStart: (data: PlaybookIteratorChildStepStartEvent) => void;
+  onIteratorChildStepUpdate: (data: PlaybookIteratorChildStepUpdateEvent) => void;
+  onIteratorChildStepComplete: (data: PlaybookIteratorChildStepCompleteEvent) => void;
   onStepEvaluationUpdated: (data: PlaybookStepEvaluationUpdatedEvent) => void;
   onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => void;
   onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => void;
@@ -1406,6 +1603,8 @@ export interface PlaybookActions {
   setDesignerOpen: (open: boolean) => void;
   setCopilotMode: (mode: PlaybookCopilotMode) => void;
   setExecutionPanelOpen: (open: boolean) => void;
+  setExecutionDetailTab: (tab: string) => void;
+  openExecutionDetailTab: (tab: string, taskId?: string) => void;
   viewExecutionInPanel: (executionId: string) => void;
 
   // Node Editor

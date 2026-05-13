@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { PermissionsGuard } from '../../authorization/guards/permissions.guard';
 import { RequirePermissions } from '../../authorization/decorators/require-permissions.decorator';
@@ -39,5 +39,13 @@ export class AdminPlaybookPromptsController {
     @CurrentUser() user: UserDocument,
   ) {
     return this.promptService.upsert(decodeURIComponent(key), dto, user._id.toString());
+  }
+
+  @Delete(':key')
+  @RequirePermissions(Permissions.ADMIN_ALL)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Delete a non-built-in playbook prompt template' })
+  async remove(@Param('key') key: string) {
+    await this.promptService.remove(decodeURIComponent(key));
   }
 }

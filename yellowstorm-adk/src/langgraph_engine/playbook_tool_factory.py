@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.config.settings import get_settings
+from src.langgraph_engine.artifact_routing import infer_artifact_kind, semantic_match_output_port
 from src.smart_rag.tools.utilities.connector_tools import (
     import_connector_items_to_workspace_request,
 )
@@ -27,56 +28,6 @@ def _log_payload(value: Any) -> str:
         return json.dumps(value, ensure_ascii=False, default=str, indent=2)
     except (TypeError, ValueError):
         return str(value)
-
-_GENERATED_ARTIFACT_KIND_BY_EXTENSION = {
-    ".pdf": "document",
-    ".doc": "document",
-    ".docx": "document",
-    ".odt": "document",
-    ".rtf": "document",
-    ".txt": "text",
-    ".md": "text",
-    ".py": "code",
-    ".js": "code",
-    ".ts": "code",
-    ".tsx": "code",
-    ".jsx": "code",
-    ".java": "code",
-    ".kt": "code",
-    ".go": "code",
-    ".rs": "code",
-    ".c": "code",
-    ".cpp": "code",
-    ".h": "code",
-    ".cs": "code",
-    ".rb": "code",
-    ".php": "code",
-    ".sh": "code",
-    ".bat": "code",
-    ".sql": "code",
-    ".r": "code",
-    ".lua": "code",
-    ".swift": "code",
-    ".csv": "data",
-    ".xlsx": "data",
-    ".xls": "data",
-    ".json": "data",
-    ".xml": "data",
-    ".yaml": "data",
-    ".yml": "data",
-    ".tsv": "data",
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".gif": "image",
-    ".bmp": "image",
-    ".svg": "image",
-    ".webp": "image",
-    ".pptx": "document",
-    ".ppt": "document",
-    ".odp": "document",
-}
-
 
 # --- ToolResultCollector ---
 
@@ -455,6 +406,7 @@ def create_langchain_tools(
     input_files: Optional[List[str]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     code_interpreter_files: Optional[List[Dict[str, str]]] = None,
+    output_ports: Optional[List[Dict[str, Any]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
     step_connector_bindings: Optional[List[Dict[str, Any]]] = None,
@@ -580,6 +532,7 @@ def create_langchain_tools(
             brain_ids,
             code_interpreter_files or brain_documents,
             collector,
+            output_ports=output_ports,
             documents_by_port=documents_by_port,
             output_workspace_id=output_workspace_id,
             workspace_context_mode=workspace_context_mode,
@@ -770,12 +723,39 @@ def _is_sandbox_local_path(path: str) -> bool:
     return normalized.startswith("/box/") or normalized.startswith("sandbox:/box/")
 
 
-def _infer_generated_artifact_kind(filename: str) -> Optional[str]:
-    normalized = str(filename or "").strip().lower()
-    if "." not in normalized:
-        return None
-    return _GENERATED_ARTIFACT_KIND_BY_EXTENSION.get(
-        normalized[normalized.rfind(".") :]
+def _select_generated_artifact_output_port(
+    output_ports: Optional[List[Dict[str, Any]]],
+    filename: str,
+    inferred_kind: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Select the declared file-capable output port for a generated file.
+
+    When only one non-text/code port exists, that port wins even if the file
+    extension suggests a different kind. This keeps tool-generated files routed
+    to the task's only file output instead of failing on filename inference.
+    """
+    ports = [
+        port
+        for port in (output_ports or [])
+        if str(port.get("artifact_kind") or "").strip() not in {"text", "code"}
+    ]
+    if len(ports) == 1:
+        return ports[0]
+    selected_port = semantic_match_output_port(
+        ports,
+        preferred_kind=inferred_kind,
+        filename=filename,
+        label=f"generated artifact '{filename}'",
+        allow_single_compatible=True,
+    )
+    if selected_port is not None:
+        return selected_port
+
+    # Keep a deterministic fallback for tool-generated files when multiple
+    # file-capable ports exist but semantic cues are weak.
+    return next(
+        (port for port in ports if str(port.get("id") or "").strip() == "default"),
+        None,
     )
 
 
@@ -1145,6 +1125,7 @@ def _create_code_interpreter_tool(
     brain_ids: list,
     code_interpreter_files: list,
     collector: ToolResultCollector,
+    output_ports: Optional[List[Dict[str, Any]]] = None,
     documents_by_port: Optional[Dict[str, List[str]]] = None,
     output_workspace_id: str = "",
     workspace_context_mode: str = "resolved_inputs_only",
@@ -1243,15 +1224,26 @@ def _create_code_interpreter_tool(
             # Collect artifact components for generated files
             for gf in result.get("generated_files", []):
                 generated_filename = gf.get("filename", gf.get("name", ""))
+                inferred_kind = (
+                    infer_artifact_kind(generated_filename) or "document"
+                )
+                selected_port = _select_generated_artifact_output_port(
+                    output_ports,
+                    generated_filename,
+                    inferred_kind,
+                )
                 collector.add_component(
                     "artifact",
                     {
                         "file_path": gf.get("azure_path", gf.get("file_path", "")),
                         "filename": generated_filename,
-                        "artifact_kind": _infer_generated_artifact_kind(
-                            generated_filename
-                        )
-                        or "document",
+                        "artifact_kind": str(
+                            (selected_port or {}).get("artifact_kind") or inferred_kind
+                        ).strip()
+                        or inferred_kind,
+                        "output_port_id": str(
+                            (selected_port or {}).get("id") or ""
+                        ).strip(),
                     },
                 )
 
