@@ -41,7 +41,6 @@ import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
 import { AnalyticsModule } from './modules/analytics';
-import { PlaybookModule } from './modules/playbook/playbook.module';
 import { PlaybookFlowModule } from './modules/playbook-flow/playbook-flow.module';
 import { EvaluationModule } from './modules/evaluation/evaluation.module';
 import { SkillModule } from './modules/skill/skill.module';
@@ -90,7 +89,6 @@ import { ConnectorModule } from './modules/connector/connector.module';
     SkillModule,
     AgentTypeModule,
     AgentModule,
-    PlaybookModule,
     PlaybookFlowModule,
     AuthProviderModule,
     AnalyticsModule,

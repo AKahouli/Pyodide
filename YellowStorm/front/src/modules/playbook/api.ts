@@ -50,6 +50,9 @@ import type {
   UpdateFlowData,
   FlowSettings,
   TaskTemplate,
+  PlaybookTask,
+  PlaybookEdge,
+  PlaybookNodeType,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -152,15 +155,23 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     }));
 
   return {
-    ...data,
+    name: data.name,
+    description: data.description,
+    designSettings: data.designSettings,
     tasks: sanitizedTasks,
     edges: sanitizedEdges,
+    workspaces: data.workspaces,
+    reflectionEnabled: data.reflectionEnabled,
+    advisorAutopilotEnabled: data.advisorAutopilotEnabled,
+    advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
+    advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
   };
 }
 
 function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData {
   return {
-    ...data,
+    name: data.name,
+    description: data.description,
     designSettings: data.designSettings
       ? {
           inferenceModelId: data.designSettings.inferenceModelId ?? null,
@@ -182,6 +193,8 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
           }
         : null,
     })),
+    edges: data.edges,
+    workspaces: data.workspaces,
     reflectionEnabled: data.reflectionEnabled,
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
@@ -200,16 +213,183 @@ export async function getPlaybooks(
   query?: PlaybookQueryParams,
 ): Promise<{ playbooks: PlaybookSummary[]; pagination: PaginatedResponse<PlaybookSummary>['pagination'] }> {
   const response = await apiClient.get<
-    ApiResponse<{ playbooks: PlaybookSummary[]; pagination: PaginatedResponse<PlaybookSummary>['pagination'] }>
+    ApiResponse<{ items: any[]; pagination: PaginatedResponse<PlaybookSummary>['pagination'] }>
   >(API_ENDPOINTS.playbooks.list, { params: query });
-  return response.data.data;
+  const { items, pagination } = response.data.data;
+  return { playbooks: items, pagination };
+}
+
+function kindToNodeType(kind: string): PlaybookNodeType | undefined {
+  switch (kind) {
+    case 'step': return 'action';
+    case 'router': return 'router';
+    case 'iterator': return 'iterator';
+    case 'human_approval': return 'human_approval';
+    default: return undefined;
+  }
+}
+
+function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask {
+  return {
+    id: node.id,
+    title: node.label ?? '',
+    description: '',
+    assignedAgentId: null,
+    executionOrder: index,
+    positionX: 0,
+    positionY: 0,
+    interruptBefore: false,
+    interruptAfter: false,
+    allowClarification: false,
+    clarificationPrompt: '',
+    maxClarifications: 0,
+    inputKeys: [],
+    outputKey: '',
+    enabled: true,
+    notifyOnComplete: false,
+    notifyEmails: [],
+    inputFiles: [],
+    nodeType: kindToNodeType(node.kind),
+    iteratorConfig: (node as any).iteratorConfig ?? null,
+    routerConfig: (node as any).routerConfig ?? null,
+    humanApprovalConfig: (node as any).humanApprovalConfig ?? null,
+  };
+}
+
+function mapControlEdgeToPlaybookEdge(ce: ControlEdge): PlaybookEdge {
+  return {
+    id: ce.id,
+    sourceId: ce.source,
+    targetId: ce.target,
+    sourceOutputPortId: undefined,
+    targetInputPortId: undefined,
+  };
+}
+
+function normalizePlaybook(raw: any): Playbook {
+  return {
+    ...raw,
+    tasks: raw.tasks ?? raw.nodes?.map(mapFlowNodeToPlaybookTask) ?? [],
+    edges: raw.edges ?? raw.controlEdges?.map(mapControlEdgeToPlaybookEdge) ?? [],
+    triggers: raw.triggers ?? [],
+    executionSchedule: raw.executionSchedule ?? null,
+    isFavorite: raw.isFavorite ?? false,
+    isActive: raw.isActive ?? true,
+    automatedTriggerType: raw.automatedTriggerType ?? null,
+    createdBy: raw.createdBy ?? raw.ownerId ?? '',
+    reflectionEnabled: raw.reflectionEnabled ?? false,
+    designSettings: raw.designSettings ?? {
+      inferenceModelId: null,
+      nodeSuggestionsMode: 'inherit',
+      approvalSuggestionMode: 'inherit',
+    },
+    effectiveDesignSettings: raw.effectiveDesignSettings ?? raw.designSettings ?? {
+      inferenceModelId: null,
+      nodeSuggestionsMode: 'inherit',
+      approvalSuggestionMode: 'inherit',
+    },
+    advisorAutopilotEnabled: raw.advisorAutopilotEnabled ?? false,
+  } as Playbook;
+}
+
+function nodeTypeToKind(nodeType?: PlaybookNodeType | null): string {
+  switch (nodeType) {
+    case 'action':
+    case 'agent':
+    case 'evaluation':
+      return 'step';
+    case 'router': return 'router';
+    case 'iterator': return 'iterator';
+    case 'human_approval': return 'human_approval';
+    default: return 'step';
+  }
+}
+
+function taskToFlowNode(task: PlaybookTask): FlowNode {
+  const node: FlowNode = {
+    id: task.id,
+    kind: nodeTypeToKind(task.nodeType) as any,
+    label: task.title,
+    metadata: {},
+  };
+
+  if (task.routerConfig) node.routerConfig = task.routerConfig;
+  if (task.iteratorConfig) {
+    node.iteratorConfig = {
+      collectionPath: task.iteratorConfig.source,
+      maxItems: task.iteratorConfig.batchSize ?? undefined,
+    };
+  }
+  if (task.humanApprovalConfig) node.humanApprovalConfig = task.humanApprovalConfig;
+
+  if (task.inputPorts && task.inputPorts.length > 0) {
+    node.input = {
+      ports: task.inputPorts.map((p) => ({
+        id: p.id,
+        label: p.name,
+        type: p.artifactKind,
+        required: p.required,
+      })),
+    };
+  }
+
+  if (task.outputPorts && task.outputPorts.length > 0) {
+    node.output = {
+      ports: task.outputPorts.map((p) => ({
+        id: p.id,
+        label: p.name,
+        type: p.artifactKind,
+      })),
+    };
+  }
+
+  const meta: Record<string, unknown> = {};
+  if (task.description) meta.description = task.description;
+  if (task.assignedAgentId) meta.assignedAgentId = task.assignedAgentId;
+  if (task.executionOrder !== undefined) meta.executionOrder = task.executionOrder;
+  if (task.positionX !== undefined) meta.positionX = task.positionX;
+  if (task.positionY !== undefined) meta.positionY = task.positionY;
+  if (task.interruptBefore) meta.interruptBefore = true;
+  if (task.interruptAfter) meta.interruptAfter = true;
+  if (task.allowClarification) meta.allowClarification = true;
+  if (task.clarificationPrompt) meta.clarificationPrompt = task.clarificationPrompt;
+  if (task.maxClarifications > 0) meta.maxClarifications = task.maxClarifications;
+  if (task.inputKeys.length > 0) meta.inputKeys = task.inputKeys;
+  if (task.outputKey) meta.outputKey = task.outputKey;
+  if (task.enabled !== undefined) meta.enabled = task.enabled;
+  if (task.selectedAction) meta.selectedAction = task.selectedAction;
+  if (task.executionMode) meta.executionMode = task.executionMode;
+  if (task.taskType) meta.taskType = task.taskType;
+  if (task.templateType) meta.templateType = task.templateType;
+  if (task.toolBindings) meta.toolBindings = task.toolBindings;
+  if (task.evaluationConfig) meta.evaluationConfig = task.evaluationConfig;
+  if (task.iteratorLayout) meta.iteratorLayout = task.iteratorLayout;
+  if (task.containerConfig) meta.containerConfig = task.containerConfig;
+  if (task.expectedResult) meta.expectedResult = task.expectedResult;
+  if (task.disableAdvisorEvaluation) meta.disableAdvisorEvaluation = true;
+  if (task.notifyOnComplete) meta.notifyOnComplete = true;
+  if (task.notifyEmails.length > 0) meta.notifyEmails = task.notifyEmails;
+  if (task.stepReplayMode) meta.stepReplayMode = task.stepReplayMode;
+  if (task.inputFiles.length > 0) meta.inputFiles = task.inputFiles;
+  if (Object.keys(meta).length > 0) node.metadata = meta;
+
+  return node;
+}
+
+function edgeToControlEdge(edge: PlaybookEdge): ControlEdge {
+  return {
+    id: edge.id,
+    kind: 'sequential' as any,
+    source: edge.sourceId,
+    target: edge.targetId,
+  };
 }
 
 export async function getPlaybook(id: string): Promise<Playbook> {
   const response = await apiClient.get<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function createPlaybook(data: CreatePlaybookData): Promise<Playbook> {
@@ -281,11 +461,36 @@ export async function updatePlaybook(
   id: string,
   data: UpdatePlaybookData,
 ): Promise<Playbook> {
+  const sanitized = sanitizePlaybookSettings(sanitizePlaybookUpdate(data));
+
+  const body: Record<string, unknown> = {
+    name: sanitized.name,
+    description: sanitized.description,
+    workspaces: sanitized.workspaces,
+  };
+
+  if (data.settings) body.settings = data.settings;
+
+  const tasks = sanitized.tasks;
+  const edges = sanitized.edges;
+  const bindings = data.dataBindings;
+
+  if (tasks && tasks.length > 0) {
+    body.nodes = tasks.map(taskToFlowNode);
+  }
+  if (edges && edges.length > 0) {
+    body.controlEdges = edges.map(edgeToControlEdge);
+  }
+  if (bindings && bindings.length > 0) {
+    body.dataBindings = bindings;
+  }
+
+  console.log('[DEBUG] updatePlaybook body:', JSON.stringify(body));
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
-    sanitizePlaybookSettings(sanitizePlaybookUpdate(data)),
+    body,
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function requestPlaybookIntent(
@@ -852,9 +1057,10 @@ export async function getFlows(
   query?: PlaybookQueryParams,
 ): Promise<{ flows: FlowSummary[]; pagination: PaginatedResponse<FlowSummary>['pagination'] }> {
   const response = await apiClient.get<
-    ApiResponse<{ flows: FlowSummary[]; pagination: PaginatedResponse<FlowSummary>['pagination'] }>
+    ApiResponse<{ items: any[]; pagination: PaginatedResponse<FlowSummary>['pagination'] }>
   >(API_ENDPOINTS.playbookFlows.list, { params: query });
-  return response.data.data;
+  const { items, pagination } = response.data.data;
+  return { flows: items, pagination };
 }
 
 export async function getFlow(id: string): Promise<Flow> {
@@ -1089,4 +1295,119 @@ export async function syncFlowMailSubscription(flowId: string, data: Record<stri
     data,
   );
   return response.data.data;
+}
+
+// ===== Phase 6c: Additional Flow API Functions =====
+
+export async function generateFlow(data: { name: string; prompt: string; workspaceIds?: string[] }): Promise<{ id: string }> {
+  const response = await apiClient.post<ApiResponse<{ id: string }>>(
+    API_ENDPOINTS.playbookFlows.generate,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function rewriteFlowPrompt(data: { prompt: string }): Promise<{ prompt: string }> {
+  const response = await apiClient.post<ApiResponse<{ prompt: string }>>(
+    API_ENDPOINTS.playbookFlows.rewritePrompt,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function designFlow(id: string, data: { query: string }): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.design(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function cloneFlow(id: string): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.clone(id),
+  );
+  return response.data.data;
+}
+
+export async function validateFlowTaskReplay(
+  flowId: string, taskId: string,
+  data: { executionId: string; iteration?: number; preserveOutputFormat?: boolean },
+): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.validateReplay(flowId, taskId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getFlowTaskReplays(flowId: string, taskId: string): Promise<any[]> {
+  const response = await apiClient.get<ApiResponse<any[]>>(
+    API_ENDPOINTS.playbookFlows.replays(flowId, taskId),
+  );
+  return response.data.data;
+}
+
+export async function activateFlowTaskReplay(flowId: string, taskId: string, replayId: string): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.activateReplay(flowId, taskId, replayId),
+  );
+  return response.data.data;
+}
+
+export async function updateFlowTaskReplayFormatGuide(
+  flowId: string, taskId: string, replayId: string,
+  data: { preserveOutputFormat?: boolean; outputFormatGuide?: string },
+): Promise<any> {
+  const response = await apiClient.patch<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.updateReplayFormatGuide(flowId, taskId, replayId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function renameFlowTaskReplay(
+  flowId: string, taskId: string, replayId: string, label: string,
+): Promise<any> {
+  const response = await apiClient.patch<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.updateReplay(flowId, taskId, replayId),
+    { label },
+  );
+  return response.data.data;
+}
+
+export async function deleteFlowTaskReplay(flowId: string, taskId: string, replayId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbookFlows.deleteReplay(flowId, taskId, replayId));
+}
+
+export async function grabFlowOutputFormatTemplate(
+  flowId: string, taskId: string, data: { executionId: string },
+): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.grabOutputFormatTemplate(flowId, taskId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function getFlowOutputFormatTemplate(flowId: string, taskId: string): Promise<any> {
+  const response = await apiClient.get<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.outputFormatTemplate(flowId, taskId),
+  );
+  return response.data.data;
+}
+
+export async function updateFlowOutputFormatTemplate(
+  flowId: string, taskId: string,
+  data: { formatGuide?: string; preserveOutputFormat?: boolean },
+): Promise<any> {
+  const response = await apiClient.patch<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.updateOutputFormatTemplate(flowId, taskId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteFlowOutputFormatTemplate(flowId: string, taskId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbookFlows.deleteOutputFormatTemplate(flowId, taskId));
 }

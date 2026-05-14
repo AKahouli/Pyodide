@@ -1,5 +1,5 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, VersioningType } from '@nestjs/common';
+import { BadRequestException, ValidationPipe, VersioningType } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -127,6 +127,14 @@ async function bootstrap() {
         enableImplicitConversion: true,
       },
       stopAtFirstError: true,
+      exceptionFactory: (errors) => {
+        console.log('[VALIDATION_ERRORS]', inspect(errors, { depth: 10, colors: false }));
+        const messages = errors.flatMap(e => {
+          if (e.constraints) return Object.values(e.constraints);
+          return [];
+        });
+        return new BadRequestException(messages);
+      },
     }),
   );
 

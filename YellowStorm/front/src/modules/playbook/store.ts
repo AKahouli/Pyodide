@@ -752,7 +752,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           id: playbook.id,
           name: playbook.name,
           description: playbook.description,
-          taskCount: playbook.tasks.length,
+          taskCount: (playbook.tasks ?? playbook.nodes ?? []).length,
           isFavorite: playbook.isFavorite,
           scheduleEnabled: playbook.executionSchedule?.enabled === true,
           executionStatus: null,
@@ -803,7 +803,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             id: playbook.id,
             name: playbook.name,
             description: playbook.description,
-            taskCount: playbook.tasks.length,
+            taskCount: (playbook.tasks ?? playbook.nodes ?? []).length,
             isFavorite: existing?.isFavorite ?? false,
             scheduleEnabled: playbook.executionSchedule?.enabled === true,
             executionStatus: existing?.executionStatus ?? null,
@@ -864,7 +864,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           id: cloned.id,
           name: cloned.name,
           description: cloned.description,
-          taskCount: cloned.tasks.length,
+          taskCount: (cloned.tasks ?? cloned.nodes ?? []).length,
           isFavorite: cloned.isFavorite,
           scheduleEnabled: cloned.executionSchedule?.enabled === true,
           executionStatus: null,
@@ -1121,6 +1121,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
           designSettings: currentPlaybook.designSettings,
           tasks: currentPlaybook.tasks,
           edges: currentPlaybook.edges,
+          dataBindings: currentPlaybook.dataBindings,
+          settings: currentPlaybook.settings,
           workspaces: currentPlaybook.workspaces,
           reflectionEnabled: currentPlaybook.reflectionEnabled,
           advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
@@ -1874,7 +1876,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             id: created.id,
             name: created.name,
             description: created.description,
-            taskCount: created.tasks.length,
+             taskCount: (created.tasks ?? created.nodes ?? []).length,
             isFavorite: created.isFavorite,
             scheduleEnabled: created.executionSchedule?.enabled === true,
             executionStatus: null,
@@ -1901,7 +1903,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             id: updated.id,
             name: updated.name,
             description: updated.description,
-            taskCount: updated.tasks.length,
+            taskCount: (updated.tasks ?? updated.nodes ?? []).length,
             isFavorite: updated.isFavorite,
             scheduleEnabled: updated.executionSchedule?.enabled === true,
             executionStatus: null,
@@ -1936,7 +1938,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               id: updated.id,
               name: updated.name,
               description: updated.description,
-              taskCount: updated.tasks.length,
+              taskCount: (updated.tasks ?? updated.nodes ?? []).length,
               isFavorite: updated.isFavorite,
               scheduleEnabled: updated.executionSchedule?.enabled === true,
               executionStatus: null,
@@ -1965,7 +1967,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             id: updated.id,
             name: updated.name,
             description: updated.description,
-            taskCount: updated.tasks.length,
+            taskCount: (updated.tasks ?? updated.nodes ?? []).length,
             isFavorite: updated.isFavorite,
             scheduleEnabled: updated.executionSchedule?.enabled === true,
             executionStatus: null,
@@ -3754,6 +3756,257 @@ export const usePlaybookStore = create<PlaybookStore>()(
           throw err;
         }
       },
+      // ===== Flow CRUD/Execution/Replay/OutputFormat Actions (Phase 6c) =====
+
+      fetchFlow: async (id: string) => {
+        set({ currentPlaybookLoading: true });
+        try {
+          const flow = await api.getFlow(id);
+          set({ currentPlaybook: flow as any, currentPlaybookLoading: false, error: null });
+          return flow;
+        } catch (err) {
+          set({ currentPlaybookLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlows: async (query?: PlaybookQueryParams) => {
+        set({ playbooksLoading: true });
+        try {
+          const result = await api.getFlows(query);
+          set({
+            playbooks: result.flows as any,
+            playbooksPagination: result.pagination,
+            playbooksLoading: false,
+            playbooksQuery: query ?? {},
+          });
+          return result;
+        } catch (err) {
+          set({ playbooksLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createFlow: async (data: any) => {
+        try {
+          const flow = await api.createFlow(data);
+          set((state) => ({ playbooks: [flow as any, ...state.playbooks] }));
+          return flow;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      updateFlow: async (id: string, data: any, idempotencyKey?: string) => {
+        try {
+          const flow = await api.updateFlow(id, data, idempotencyKey);
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook && (state.currentPlaybook as any).id === id ? flow as any : state.currentPlaybook,
+            playbooks: state.playbooks.map((p) => ((p as any).id === id ? flow as any : p)),
+          }));
+          return flow;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlow: async (id: string) => {
+        try {
+          await api.deleteFlow(id);
+          set((state) => ({
+            playbooks: state.playbooks.filter((p) => (p as any).id !== id),
+            currentPlaybook: state.currentPlaybook && (state.currentPlaybook as any).id === id ? null : state.currentPlaybook,
+          }));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      cloneFlow: async (id: string) => {
+        try {
+          const cloned = await api.cloneFlow(id);
+          set((state) => ({ playbooks: [cloned as any, ...state.playbooks] }));
+          return cloned;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      startFlowExecutionAction: async (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => {
+        try {
+          set((state) => ({
+            executingPlaybookIds: [...state.executingPlaybookIds, flowId],
+          }));
+          const result = await api.startFlowExecution(flowId, inputContext, idempotencyKey);
+          return result;
+        } catch (err) {
+          set((state) => ({
+            executingPlaybookIds: state.executingPlaybookIds.filter((id) => id !== flowId),
+          }));
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowExecutions: async (flowId: string) => {
+        set({ executionsLoading: true });
+        try {
+          const result = await api.getFlowExecutions(flowId);
+          set((state) => ({
+            executionHistory: result.executions,
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [flowId]: result.executions,
+            },
+            executionsLoading: false,
+          }));
+          return result;
+        } catch (err) {
+          set({ executionsLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowExecution: async (executionId: string) => {
+        set({ currentExecutionLoading: true });
+        try {
+          const execution = await api.getFlowExecutionDetail(executionId);
+          set((state) => ({
+            currentExecution: execution,
+            currentExecutionLoading: false,
+            executionCache: { ...state.executionCache, [executionId]: execution },
+          }));
+          return execution;
+        } catch (err) {
+          set({ currentExecutionLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      cancelFlowExecutionAction: async (executionId: string) => {
+        try {
+          await api.cancelFlowExecution(executionId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      validateFlowTaskReplay: async (flowId: string, taskId: string, data: { executionId: string; iteration?: number; preserveOutputFormat?: boolean }) => {
+        try {
+          return await api.validateFlowTaskReplay(flowId, taskId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowTaskReplays: async (flowId: string, taskId: string) => {
+        try {
+          return await api.getFlowTaskReplays(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      activateFlowTaskReplay: async (flowId: string, taskId: string, replayId: string) => {
+        try {
+          return await api.activateFlowTaskReplay(flowId, taskId, replayId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      updateFlowTaskReplayFormatGuide: async (flowId: string, taskId: string, replayId: string, data: { preserveOutputFormat?: boolean; outputFormatGuide?: string }) => {
+        try {
+          return await api.updateFlowTaskReplayFormatGuide(flowId, taskId, replayId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      renameFlowTaskReplay: async (flowId: string, taskId: string, replayId: string, label: string) => {
+        try {
+          return await api.renameFlowTaskReplay(flowId, taskId, replayId, label);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlowTaskReplay: async (flowId: string, taskId: string, replayId: string) => {
+        try {
+          await api.deleteFlowTaskReplay(flowId, taskId, replayId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      grabFlowOutputFormatTemplate: async (flowId: string, taskId: string, data: { executionId: string }) => {
+        try {
+          return await api.grabFlowOutputFormatTemplate(flowId, taskId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowOutputFormatTemplate: async (flowId: string, taskId: string) => {
+        try {
+          return await api.getFlowOutputFormatTemplate(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      updateFlowOutputFormatTemplate: async (flowId: string, taskId: string, data: { formatGuide?: string; preserveOutputFormat?: boolean }) => {
+        try {
+          return await api.updateFlowOutputFormatTemplate(flowId, taskId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlowOutputFormatTemplate: async (flowId: string, taskId: string) => {
+        try {
+          await api.deleteFlowOutputFormatTemplate(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      generateFlow: async (data: { name: string; prompt: string; workspaceIds?: string[] }) => {
+        try {
+          return await api.generateFlow(data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      designFlow: async (id: string, data: { query: string }) => {
+        try {
+          return await api.designFlow(id, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
 
       // ===== Cleanup =====
 
@@ -3766,7 +4019,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 // ===== Selector Hooks =====
 
 export const usePlaybooks = () =>
-  usePlaybookStore(useShallow((s) => s.playbooks.length > 0 ? s.playbooks : EMPTY_PLAYBOOKS));
+  usePlaybookStore(useShallow((s) => (s.playbooks?.length ?? 0) > 0 ? s.playbooks : EMPTY_PLAYBOOKS));
 
 export const usePlaybooksLoading = () => usePlaybookStore((s) => s.playbooksLoading);
 

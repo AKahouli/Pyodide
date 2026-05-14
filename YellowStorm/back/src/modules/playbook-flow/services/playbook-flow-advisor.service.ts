@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { PlaybookGrpcService } from '@modules/playbook/services/playbook-grpc.service';
+import { PlaybookFlowDesignGrpcService } from './playbook-flow-design-grpc.service';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { FlowNodeAdvisorResponse, FlowNodeAdvisorRequest } from '../interfaces/playbook-flow-advisor.interface';
 import { normalizeNodeAdvisorSuggestion } from './playbook-flow-advisor-helpers';
@@ -12,7 +12,7 @@ export type { FlowNodeAdvisorResponse, FlowNodeAdvisorRequest };
 export class PlaybookFlowAdvisorService {
   constructor(
     private readonly playbookFlowService: PlaybookFlowService,
-    private readonly playbookGrpcService: PlaybookGrpcService,
+    private readonly playbookGrpcService: PlaybookFlowDesignGrpcService,
   ) {}
 
   async adviseNode(

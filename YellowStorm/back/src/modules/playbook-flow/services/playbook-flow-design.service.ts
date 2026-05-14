@@ -6,7 +6,7 @@ import { AgentService } from '@modules/agent/agent.service';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { UsageService } from '@modules/usage/usage.service';
 import { UsageType } from '@modules/usage/schemas/usage.schema';
-import { PlaybookGrpcService } from '@modules/playbook/services/playbook-grpc.service';
+import { PlaybookFlowDesignGrpcService } from './playbook-flow-design-grpc.service';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowContextService } from './playbook-flow-context.service';
 import { PlaybookFlowSettingsService } from './playbook-flow-settings.service';
@@ -28,7 +28,7 @@ export class PlaybookFlowDesignService {
     @InjectModel(FlowDesignMessage.name)
     private readonly designMessageModel: Model<FlowDesignMessageDocument>,
     private readonly playbookFlowService: PlaybookFlowService,
-    private readonly grpcService: PlaybookGrpcService,
+    private readonly grpcService: PlaybookFlowDesignGrpcService,
     private readonly contextService: PlaybookFlowContextService,
     private readonly promptService: PlaybookFlowPromptTemplateService,
     private readonly agentService: AgentService,

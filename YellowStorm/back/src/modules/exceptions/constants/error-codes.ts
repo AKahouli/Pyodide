@@ -198,6 +198,7 @@ export enum ErrorCode {
   PLAYBOOK_FLOW_GRPC_UNAVAILABLE = 'ERR_2530',
   PLAYBOOK_FLOW_EXECUTION_TIMEOUT = 'ERR_2531',
   PLAYBOOK_FLOW_APPROVAL_NOT_FOUND = 'ERR_2532',
+  PLAYBOOK_FLOW_DUPLICATE_NAME = 'ERR_2533',
 
   // Auth Provider errors (2600-2699)
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
@@ -392,6 +393,7 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE]: 'AI service is currently unavailable for flow execution.',
   [ErrorCode.PLAYBOOK_FLOW_EXECUTION_TIMEOUT]: 'Playbook flow execution timed out.',
   [ErrorCode.PLAYBOOK_FLOW_APPROVAL_NOT_FOUND]: 'No pending approval found for this execution.',
+  [ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME]: 'A playbook with this name already exists.',
 
   [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',

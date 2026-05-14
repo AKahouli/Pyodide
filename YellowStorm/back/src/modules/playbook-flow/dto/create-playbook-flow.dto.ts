@@ -58,4 +58,10 @@ export class CreatePlaybookFlowDto {
   @ValidateNested({ each: true })
   @Type(() => DataBindingDto)
   dataBindings?: DataBindingDto[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  workspaces?: string[];
 }

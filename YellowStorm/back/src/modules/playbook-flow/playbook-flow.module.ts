@@ -15,7 +15,6 @@ import {
   WorkspaceSetting,
   WorkspaceSettingSchema,
 } from '@modules/workspace/schemas/workspace-setting.schema';
-import { PlaybookModule } from '@modules/playbook/playbook.module';
 
 import playbookFlowConfig from '@config/playbook-flow.config';
 
@@ -38,6 +37,9 @@ import { PlaybookFlowMailWebhookController } from './controllers/playbook-flow-m
 import { PlaybookFlowTemplateController } from './controllers/playbook-flow-template.controller';
 import { PlaybookFlowRepeatabilityController } from './controllers/playbook-flow-repeatability.controller';
 import { PlaybookFlowTriggerController } from './controllers/playbook-flow-trigger.controller';
+import { PlaybookFlowReplayController } from './controllers/playbook-flow-replay.controller';
+import { PlaybookFlowOutputFormatController } from './controllers/playbook-flow-output-format.controller';
+import { PlaybookFlowAdvisorController } from './controllers/playbook-flow-advisor.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookFlowReplayService } from './services/playbook-flow-replay.service';
@@ -58,6 +60,7 @@ import { PlaybookFlowContextService } from './services/playbook-flow-context.ser
 import { PlaybookFlowOutputFormatService } from './services/playbook-flow-output-format.service';
 import { PlaybookFlowDesignService } from './services/playbook-flow-design.service';
 import { PlaybookFlowAdvisorService } from './services/playbook-flow-advisor.service';
+import { PlaybookFlowDesignGrpcService } from './services/playbook-flow-design-grpc.service';
 import { PlaybookFlowMailWebhookService } from './services/playbook-flow-mail-webhook.service';
 import { PlaybookFlowMailGraphClientService } from './services/playbook-flow-mail-graph-client.service';
 import { PlaybookFlowMailEventLedgerService } from './services/playbook-flow-mail-event-ledger.service';
@@ -95,7 +98,6 @@ import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-
     UsageModule,
     WorkspaceModule,
     ConnectedAppModule,
-    PlaybookModule,
   ],
   controllers: [
     PlaybookFlowMailWebhookController,
@@ -104,6 +106,9 @@ import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-
     PlaybookFlowController,
     PlaybookFlowRepeatabilityController,
     PlaybookFlowTriggerController,
+    PlaybookFlowReplayController,
+    PlaybookFlowOutputFormatController,
+    PlaybookFlowAdvisorController,
   ],
   providers: [
     PlaybookFlowService,
@@ -121,6 +126,7 @@ import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-
     PlaybookFlowOutputFormatService,
     PlaybookFlowDesignService,
     PlaybookFlowAdvisorService,
+    PlaybookFlowDesignGrpcService,
     PlaybookFlowReplayService,
     PlaybookFlowEvaluationService,
     PlaybookFlowRepeatabilityService,

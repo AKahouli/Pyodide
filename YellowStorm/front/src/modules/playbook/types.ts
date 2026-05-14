@@ -1337,6 +1337,9 @@ export interface UpdatePlaybookData {
   designSettings?: Partial<PlaybookDesignSettings>;
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
   settings?: FlowSettings;
   workspaces?: string[];
   reflectionEnabled?: boolean;
@@ -1680,6 +1683,30 @@ export interface PlaybookActions {
   upsertFlowTriggerSchedule: (flowId: string, data: Record<string, unknown>) => Promise<any>;
   upsertFlowTriggerMail: (flowId: string, data: Record<string, unknown>) => Promise<any>;
   syncFlowMailSubscription: (flowId: string, data: Record<string, unknown>) => Promise<any>;
+
+  // Flow CRUD/Execution/Replay/OutputFormat actions (Phase 6c)
+  fetchFlow: (id: string) => Promise<any>;
+  fetchFlows: (query?: PlaybookQueryParams) => Promise<any>;
+  createFlow: (data: any) => Promise<any>;
+  updateFlow: (id: string, data: any, idempotencyKey?: string) => Promise<any>;
+  deleteFlow: (id: string) => Promise<void>;
+  cloneFlow: (id: string) => Promise<any>;
+  startFlowExecutionAction: (flowId: string, inputContext?: Record<string, unknown>, idempotencyKey?: string) => Promise<any>;
+  fetchFlowExecutions: (flowId: string) => Promise<any>;
+  fetchFlowExecution: (executionId: string) => Promise<any>;
+  cancelFlowExecutionAction: (executionId: string) => Promise<void>;
+  validateFlowTaskReplay: (flowId: string, taskId: string, data: { executionId: string; iteration?: number; preserveOutputFormat?: boolean }) => Promise<any>;
+  fetchFlowTaskReplays: (flowId: string, taskId: string) => Promise<any>;
+  activateFlowTaskReplay: (flowId: string, taskId: string, replayId: string) => Promise<any>;
+  updateFlowTaskReplayFormatGuide: (flowId: string, taskId: string, replayId: string, data: { preserveOutputFormat?: boolean; outputFormatGuide?: string }) => Promise<any>;
+  renameFlowTaskReplay: (flowId: string, taskId: string, replayId: string, label: string) => Promise<any>;
+  deleteFlowTaskReplay: (flowId: string, taskId: string, replayId: string) => Promise<void>;
+  grabFlowOutputFormatTemplate: (flowId: string, taskId: string, data: { executionId: string }) => Promise<any>;
+  fetchFlowOutputFormatTemplate: (flowId: string, taskId: string) => Promise<any>;
+  updateFlowOutputFormatTemplate: (flowId: string, taskId: string, data: { formatGuide?: string; preserveOutputFormat?: boolean }) => Promise<any>;
+  deleteFlowOutputFormatTemplate: (flowId: string, taskId: string) => Promise<void>;
+  generateFlow: (data: { name: string; prompt: string; workspaceIds?: string[] }) => Promise<any>;
+  designFlow: (id: string, data: { query: string }) => Promise<any>;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;

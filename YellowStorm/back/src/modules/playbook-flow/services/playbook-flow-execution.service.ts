@@ -269,7 +269,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         'Execution not found',
       );
     }
-    if (execution.ownerId !== ownerId) {
+    if (String(execution.ownerId) !== String(ownerId)) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
         'Execution not found',
@@ -318,7 +318,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         'Execution not found',
       );
     }
-    if (execution.ownerId !== ownerId) {
+    if (String(execution.ownerId) !== String(ownerId)) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
         'Execution not found',
@@ -356,7 +356,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         'Execution not found',
       );
     }
-    if (execution.ownerId !== ownerId) {
+    if (String(execution.ownerId) !== String(ownerId)) {
       throw new NotFoundException(
         ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
         'Execution not found',

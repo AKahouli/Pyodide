@@ -7,7 +7,7 @@ import {
   ConversationDocument,
 } from '../conversation/schemas/conversation.schema';
 import { Agent, AgentDocument } from '../agent/schemas/agent.schema';
-import { Playbook, PlaybookDocument } from '../playbook/schemas/playbook.schema';
+import { Flow, FlowDocument } from '../playbook-flow/schemas/playbook-flow.schema';
 import {
   CreateWorkspaceData,
   UpdateWorkspaceData,
@@ -33,8 +33,8 @@ export class WorkspaceService {
     private readonly conversationModel: Model<ConversationDocument>,
     @InjectModel(Agent.name)
     private readonly agentModel: Model<AgentDocument>,
-    @InjectModel(Playbook.name)
-    private readonly playbookModel: Model<PlaybookDocument>,
+    @InjectModel(Flow.name)
+    private readonly playbookModel: Model<FlowDocument>,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext('WorkspaceService');

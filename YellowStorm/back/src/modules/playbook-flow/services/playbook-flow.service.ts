@@ -6,7 +6,11 @@ import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
-import { NotFoundException, ForbiddenException } from '../../exceptions/exceptions/http.exceptions';
+import {
+  NotFoundException,
+  ForbiddenException,
+  ConflictException,
+} from '../../exceptions/exceptions/http.exceptions';
 import { PlaybookFlowQueryDto } from '../dto/playbook-flow-query.dto';
 import { IFlowResponse, IFlowListResponse } from '../interfaces/playbook-flow.interface';
 
@@ -32,10 +36,21 @@ export class PlaybookFlowService {
       nodes: dto.nodes || [],
       controlEdges: dto.controlEdges || [],
       dataBindings: dto.dataBindings || [],
+      workspaces: dto.workspaces || [],
     });
 
-    const saved = await flow.save();
-    return saved.toJSON() as unknown as IFlowResponse;
+    try {
+      const saved = await flow.save();
+      return saved.toJSON() as unknown as IFlowResponse;
+    } catch (err: any) {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${dto.name}" already exists.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async findAll(ownerId: string, query: PlaybookFlowQueryDto): Promise<IFlowListResponse> {
@@ -70,22 +85,28 @@ export class PlaybookFlowService {
   }
 
   async findOne(flowId: string, ownerId: string): Promise<IFlowResponse> {
+    if (!Types.ObjectId.isValid(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
     const flow = await this.flowModel.findById(flowId);
     if (!flow) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
     }
-    if (flow.ownerId !== ownerId) {
+    if (String(flow.ownerId) !== String(ownerId)) {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
     }
     return flow.toJSON() as unknown as IFlowResponse;
   }
 
   async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
+    if (!Types.ObjectId.isValid(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
     const existing = await this.flowModel.findById(flowId);
     if (!existing) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
     }
-    if (existing.ownerId !== ownerId) {
+    if (String(existing.ownerId) !== String(ownerId)) {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
     }
 
@@ -124,8 +145,18 @@ export class PlaybookFlowService {
       nodes, controlEdges, dataBindings, workspaces,
       settings: { recursionLimit: 25, maxParallelism: 5 },
     });
-    const saved = await flow.save();
-    return saved.toJSON() as unknown as IFlowResponse;
+    try {
+      const saved = await flow.save();
+      return saved.toJSON() as unknown as IFlowResponse;
+    } catch (err: any) {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${name}" already exists.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async updateNodesAndEdges(
@@ -144,14 +175,57 @@ export class PlaybookFlowService {
   }
 
   async remove(flowId: string, ownerId: string): Promise<void> {
+    if (!Types.ObjectId.isValid(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
     const flow = await this.flowModel.findById(flowId);
     if (!flow) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
     }
-    if (flow.ownerId !== ownerId) {
+    if (String(flow.ownerId) !== String(ownerId)) {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
     }
     await this.flowModel.findByIdAndDelete(flowId);
+  }
+
+  async clone(flowId: string, ownerId: string, nameSuffix?: string): Promise<IFlowResponse> {
+    if (!Types.ObjectId.isValid(flowId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
+    const existing = await this.flowModel.findById(flowId);
+    if (!existing) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND, 'Playbook flow not found');
+    }
+    if (String(existing.ownerId) !== String(ownerId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
+    }
+
+    const cloneName = nameSuffix ? `${existing.name} ${nameSuffix}` : `${existing.name} (copy)`;
+
+    const flow = new this.flowModel({
+      ownerId,
+      schemaVersion: existing.schemaVersion,
+      name: cloneName,
+      description: existing.description,
+      triggerConfig: existing.triggerConfig,
+      settings: existing.settings,
+      nodes: existing.nodes,
+      controlEdges: existing.controlEdges,
+      dataBindings: existing.dataBindings,
+    });
+
+    try {
+      const saved = await flow.save();
+      return saved.toJSON() as unknown as IFlowResponse;
+    } catch (err: any) {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${cloneName}" already exists.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async findAllWithTriggerKind(kind: string): Promise<Array<{ id: string; ownerId: string; triggerConfig: any }>> {

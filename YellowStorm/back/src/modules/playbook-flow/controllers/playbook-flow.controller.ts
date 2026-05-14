@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Patch, Delete, Param, Body, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
+import { PlaybookFlowDesignService } from '../services/playbook-flow-design.service';
 import { PlaybookFlowEvaluationService } from '../services/playbook-flow-evaluation.service';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
@@ -17,6 +18,7 @@ import { Permissions } from '@modules/authorization/constants/permissions';
 export class PlaybookFlowController {
   constructor(
     private readonly playbookFlowService: PlaybookFlowService,
+    private readonly designService: PlaybookFlowDesignService,
     private readonly evaluationService: PlaybookFlowEvaluationService,
   ) {}
 
@@ -69,6 +71,47 @@ export class PlaybookFlowController {
     @Param('id') id: string,
   ) {
     return this.playbookFlowService.remove(id, userId);
+  }
+
+  @Post('generate')
+  @ApiOperation({ summary: 'Generate a new playbook flow from a prompt' })
+  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
+  async generateFlow(
+    @CurrentUser('_id') userId: string,
+    @Body() body: { name: string; prompt: string; workspaceIds?: string[] },
+  ) {
+    return this.designService.generateFlow(userId, body.name, body.prompt, body.workspaceIds ?? []);
+  }
+
+  @Post('rewrite-prompt')
+  @ApiOperation({ summary: 'Rewrite a playbook generation prompt' })
+  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
+  async rewritePrompt(
+    @CurrentUser('_id') userId: string,
+    @Body() body: { prompt: string },
+  ) {
+    return this.designService.rewritePrompt(userId, body.prompt);
+  }
+
+  @Post(':id/design')
+  @ApiOperation({ summary: 'Design/refine an existing playbook flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async designFlow(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { query: string },
+  ) {
+    return this.designService.designFlow(userId, id, body.query);
+  }
+
+  @Post(':id/clone')
+  @ApiOperation({ summary: 'Clone a playbook flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
+  async cloneFlow(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.playbookFlowService.clone(id, userId);
   }
 
   @Get(':id/evaluations')

@@ -11,7 +11,7 @@ import {
 } from '../schemas/playbook-flow-output-format.schema';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { pLimit } from '@modules/playbook/utils/execution.utils';
+import { pLimit } from '../utils/p-limit';
 
 const OUTPUT_FORMAT_GUIDE_SYSTEM_PROMPT = `You are tasked with extracting and reproducing only the output structure and formatting from a given result.
 Preserve exact structural organization, section order, hierarchy, markdown formatting (headings, tables, bullets, paragraphs).
@@ -67,6 +67,27 @@ export class PlaybookFlowOutputFormatService {
       flowId: new Types.ObjectId(flowId), nodeId, status: OutputFormatStatus.ACTIVE,
     }).lean().exec();
     return template ? this.mapToResponse(template) : null;
+  }
+
+  async updateTemplate(
+    flowId: string, nodeId: string, dto: { formatGuide?: string; preserveOutputFormat?: boolean },
+  ) {
+    const update: Record<string, unknown> = {};
+    if (dto.formatGuide !== undefined) update.formatGuide = dto.formatGuide;
+    const template = await this.templateModel.findOneAndUpdate(
+      { flowId: new Types.ObjectId(flowId), nodeId, status: OutputFormatStatus.ACTIVE },
+      { $set: update },
+      { new: true },
+    ).lean().exec();
+    if (!template) return null;
+    return this.mapToResponse(template);
+  }
+
+  async deleteTemplate(flowId: string, nodeId: string): Promise<void> {
+    await this.templateModel.updateOne(
+      { flowId: new Types.ObjectId(flowId), nodeId, status: OutputFormatStatus.ACTIVE },
+      { $set: { status: OutputFormatStatus.ARCHIVED } },
+    );
   }
 
   async getActiveTemplates(flowId: string, nodeIds: string[]): Promise<Map<string, any>> {
