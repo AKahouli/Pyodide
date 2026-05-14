@@ -148,6 +148,7 @@ const initialState: PlaybookState = {
   isGenerating: false,
   generateRetryData: null,
   selectedStepId: null,
+  selectedIterationIndex: 0,
   pendingRerunTaskId: null as string | null,
   error: null,
   designMessages: [],
@@ -176,6 +177,11 @@ const initialState: PlaybookState = {
   repeatability: null,
   repeatabilityLoading: false,
   intentSuggestionHistory: loadIntentHistory(),
+  flowNodeTemplates: [],
+  flowNodeTemplatesLoading: false,
+  flowNodeKinds: [],
+  flowNodeKindsLoading: false,
+  idempotencyKeyCounters: {},
 };
 
 // ===== Stable empty references =====
@@ -1396,6 +1402,24 @@ export const usePlaybookStore = create<PlaybookStore>()(
               }
               : state.currentPlaybook,
           }));
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      traceReplayExecution: async (executionId: string) => {
+        try {
+          return await api.traceReplayExecution(executionId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      reExecuteExecution: async (executionId: string) => {
+        try {
+          return await api.reExecuteExecution(executionId);
+        } catch (err) {
           handleApiError(err);
           throw err;
         }
@@ -3153,7 +3177,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      selectStep: (taskId) => set({ selectedStepId: taskId }),
+      selectStep: (taskId, iterationIndex) => set({ selectedStepId: taskId, selectedIterationIndex: iterationIndex ?? 0 }),
 
       setPageMode: (mode: PlaybookPageMode) =>
         set({ pageMode: mode }),
@@ -3537,6 +3561,66 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       invalidateNodeTemplates: () => {
         set({ nodeTemplatesLoadedAt: 0 });
+      },
+
+      // ===== Flow Node Templates (Phase 4) =====
+
+      fetchFlowNodeTemplates: async () => {
+        set({ flowNodeTemplatesLoading: true });
+        try {
+          const data = await api.getFlowNodeTemplates();
+          const items = Array.isArray(data.items) ? data.items : [];
+          set({
+            flowNodeTemplates: items.map((item) => ({
+              ...item,
+              type: item.type,
+              nodeType: item.nodeType,
+              description: item.description || '',
+              icon: item.icon || 'FileText',
+              color: item.color || 'blue',
+              category: item.category as TaskTemplate['category'],
+              inputPorts: Array.isArray(item.inputPorts) ? item.inputPorts : [],
+              outputPorts: Array.isArray(item.outputPorts) ? item.outputPorts : [],
+              promptTemplate: item.promptTemplate || '',
+              requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
+            })),
+            flowNodeTemplatesLoading: false,
+          });
+        } catch (err) {
+          set({ flowNodeTemplatesLoading: false });
+          handleApiError(err, { showToast: true });
+        }
+      },
+
+      fetchFlowNodeKinds: async () => {
+        set({ flowNodeKindsLoading: true });
+        try {
+          const data = await api.getFlowNodeKinds();
+          set({
+            flowNodeKinds: Array.isArray(data.kinds) ? data.kinds : [],
+            flowNodeKindsLoading: false,
+          });
+        } catch (err) {
+          set({ flowNodeKindsLoading: false });
+          handleApiError(err, { showToast: true });
+        }
+      },
+
+      invalidateFlowNodeTemplates: () => {
+        // Force refetch on next call
+      },
+
+      generateIdempotencyKey: (flowId: string) => {
+        const state = get();
+        const counter = (state.idempotencyKeyCounters[flowId] || 0) + 1;
+        const key = `${flowId}-${counter}-${Date.now()}`;
+        set({
+          idempotencyKeyCounters: {
+            ...state.idempotencyKeyCounters,
+            [flowId]: counter,
+          },
+        });
+        return key;
       },
 
       // ===== Cleanup =====

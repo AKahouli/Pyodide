@@ -29,6 +29,7 @@ export function PlaybookExecutionPage() {
       : null;
   const executionLoading = useCurrentExecutionLoading();
   const selectedStepId = useSelectedStep();
+  const selectedIterationIndex = usePlaybookStore((s) => s.selectedIterationIndex);
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
@@ -48,15 +49,17 @@ export function PlaybookExecutionPage() {
   }, [id, executionId, fetchExecution]);
 
   const handleSelectStep = useCallback(
-    (taskId: string) => {
-      selectStep(taskId);
+    (taskId: string, iterationIndex?: number) => {
+      selectStep(taskId, iterationIndex);
     },
     [selectStep],
   );
 
-  const selectedResult = execution?.taskResults.find(
-    (tr) => tr.taskId === selectedStepId,
-  ) || null;
+  const selectedResult = (() => {
+    if (!execution) return null;
+    const group = execution.taskResults.filter((tr) => tr.taskId === selectedStepId).sort((a, b) => a.order - b.order);
+    return group[selectedIterationIndex] || group[0] || null;
+  })();
 
   if (!execution || executionLoading) {
     return (
@@ -74,6 +77,7 @@ export function PlaybookExecutionPage() {
         <ExecutionStepList
           taskResults={execution.taskResults}
           selectedStepId={selectedStepId}
+          selectedIterationIndex={selectedIterationIndex}
           onSelectStep={handleSelectStep}
         />
         <ExecutionStepDetail step={selectedResult} execution={execution} />

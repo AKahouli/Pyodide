@@ -1,6 +1,6 @@
 /**
  * Playbook Canvas Hook
- * Bridges ReactFlow state with Zustand store
+ * Bridges ReactFlow state with Zustand store using serialization helpers.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -17,276 +17,22 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
-import { migrateEdge, remapIteratorEdgePorts } from '../utils/migrate-ports';
-import { normalizeIteratorTaskPorts } from '../utils/iterator-ports';
+import {
+  tasksToNodes,
+  nodesToTasks,
+  buildTriggerNode,
+  TRIGGER_NODE_ID,
+  repackIteratorChildrenInTasks,
+  getIteratorChildAbsolutePositionForNewChild,
+} from './helpers/node-serializer';
+import {
+  playbookEdgesToFlowEdges,
+  flowEdgesToPlaybookEdges,
+} from './helpers/control-edge-serializer';
+import { wouldCreateCycle } from './helpers/cycle-router-validator';
+import type { PlaybookTask, PlaybookNodeData } from '../types';
 import { getEffectiveNodeType } from '../utils/node-type';
-import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
-const TRIGGER_NODE_ID = '__trigger__';
-const ITERATOR_HEADER_HEIGHT = 56;
-const ITERATOR_PADDING = 32;
-const ITERATOR_MIN_WIDTH = 360;
-const ITERATOR_MIN_HEIGHT = 220;
-const ITERATOR_CHILD_HORIZONTAL_GAP = 192;
-const ITERATOR_CHILD_VERTICAL_GAP = 192;
-const ITERATOR_CHILD_MAX_COLUMNS = 3;
-const ITERATOR_CHILD_NODE_WIDTH = 384;
-const ITERATOR_CHILD_NODE_HEIGHT = 240;
-
-const MAIL_TRIGGER_PORTS = [
-  { id: 'mail_data', name: 'Mail data', artifactKind: 'data' as ArtifactKind },
-  { id: 'mail_attachments', name: 'Mail attachments', artifactKind: 'document' as ArtifactKind },
-];
-
-function buildTriggerNode(): Node {
-  return {
-    id: TRIGGER_NODE_ID,
-    type: 'playbookTrigger',
-    position: { x: 40, y: 160 },
-    draggable: true,
-    selectable: true,
-    data: {
-      title: 'Mail Trigger',
-      outputPorts: MAIL_TRIGGER_PORTS,
-      triggerType: 'mail',
-    },
-  };
-}
-
-function getIteratorChildTasks(tasks: PlaybookTask[], iteratorId: string): PlaybookTask[] {
-  return tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId);
-}
-
-function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask[]): Node {
-  const normalizedTask = normalizeIteratorTaskPorts(task);
-  const bounds = childTasks.reduce(
-    (acc, child) => {
-      const relativeX = child.positionX - task.positionX;
-      const relativeY = child.positionY - task.positionY;
-      acc.maxX = Math.max(acc.maxX, relativeX + ITERATOR_CHILD_NODE_WIDTH);
-      acc.maxY = Math.max(acc.maxY, relativeY + ITERATOR_CHILD_NODE_HEIGHT);
-      return acc;
-    },
-    {
-      maxX: ITERATOR_MIN_WIDTH,
-      maxY: ITERATOR_MIN_HEIGHT,
-    },
-  );
-
-  const autoWidth = Math.max(ITERATOR_MIN_WIDTH, bounds.maxX + ITERATOR_PADDING);
-  const autoHeight = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING);
-  const manualWidth = normalizedTask.iteratorLayout?.width ?? 0;
-  const manualHeight = normalizedTask.iteratorLayout?.height ?? 0;
-  const width = Math.max(autoWidth, manualWidth);
-  const height = Math.max(autoHeight, manualHeight);
-
-  return {
-    id: normalizedTask.id,
-    type: 'playbookIteratorContainer',
-    position: { x: normalizedTask.positionX, y: normalizedTask.positionY },
-    data: { ...normalizedTask, width, height, childTaskIds: childTasks.map((child) => child.id) } as PlaybookNodeData,
-    style: { width, height },
-  };
-}
-
-function getIteratorNodeMap(tasks: PlaybookTask[]): Map<string, PlaybookTask> {
-  return new Map(tasks.filter((task) => getEffectiveNodeType(task) === 'iterator').map((task) => [task.id, task]));
-}
-
-function toAbsoluteTaskPosition(node: Node, nodeMap: Map<string, Node>): { x: number; y: number } {
-  if (!node.parentId) {
-    return { x: node.position.x, y: node.position.y };
-  }
-
-  const parentNode = nodeMap.get(node.parentId);
-  if (!parentNode) {
-    return { x: node.position.x, y: node.position.y };
-  }
-
-  return {
-    x: parentNode.position.x + node.position.x,
-    y: parentNode.position.y + node.position.y,
-  };
-}
-
-function buildChildFlowNode(task: PlaybookTask, iteratorTasks: Map<string, PlaybookTask>): Node {
-  const parentIteratorId = task.containerConfig?.parentIteratorId;
-  const parentIterator = parentIteratorId ? iteratorTasks.get(parentIteratorId) : null;
-  const isScoped = Boolean(parentIteratorId && parentIterator);
-
-  return {
-    id: task.id,
-    type: 'playbookStep',
-    position: isScoped && parentIterator
-      ? {
-          x: task.positionX - parentIterator.positionX,
-          y: task.positionY - parentIterator.positionY,
-        }
-      : { x: task.positionX, y: task.positionY },
-    parentId: isScoped ? parentIteratorId ?? undefined : undefined,
-    extent: isScoped ? 'parent' as const : undefined,
-    data: { ...task } as PlaybookNodeData,
-  };
-}
-
-function getIteratorChildAbsolutePosition(
-  tasks: PlaybookTask[],
-  iteratorId: string,
-  childIndex: number,
-): { x: number; y: number } | null {
-  const iteratorTask = tasks.find((task) => task.id === iteratorId && getEffectiveNodeType(task) === 'iterator');
-  if (!iteratorTask) {
-    return null;
-  }
-
-  const existingSiblingCount = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId).length;
-  const totalChildren = Math.max(existingSiblingCount, childIndex + 1);
-  const columnCount = Math.min(
-    ITERATOR_CHILD_MAX_COLUMNS,
-    Math.max(1, Math.ceil(Math.sqrt(totalChildren))),
-  );
-  const column = childIndex % columnCount;
-  const row = Math.floor(childIndex / columnCount);
-
-  return {
-    x: iteratorTask.positionX + ITERATOR_PADDING + column * (ITERATOR_CHILD_NODE_WIDTH + ITERATOR_CHILD_HORIZONTAL_GAP),
-    y: iteratorTask.positionY + ITERATOR_HEADER_HEIGHT + 16 + row * (ITERATOR_CHILD_NODE_HEIGHT + ITERATOR_CHILD_VERTICAL_GAP),
-  };
-}
-
-function repackIteratorChildrenInTasks(tasks: PlaybookTask[], iteratorId: string): PlaybookTask[] {
-  const childTasks = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId);
-  if (childTasks.length === 0) {
-    return tasks;
-  }
-
-  const orderedChildIds = [...childTasks]
-    .sort((a, b) => {
-      if (a.executionOrder !== b.executionOrder) {
-        return a.executionOrder - b.executionOrder;
-      }
-      return a.id.localeCompare(b.id);
-    })
-    .map((task) => task.id);
-
-  return tasks.map((task) => {
-    const childIndex = orderedChildIds.indexOf(task.id);
-    if (childIndex === -1) {
-      return task;
-    }
-
-    const nextPosition = getIteratorChildAbsolutePosition(tasks, iteratorId, childIndex);
-    if (!nextPosition) {
-      return task;
-    }
-
-    return {
-      ...task,
-      positionX: nextPosition.x,
-      positionY: nextPosition.y,
-    };
-  });
-}
-
-export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
-  const iteratorTasks = getIteratorNodeMap(tasks);
-  const iteratorNodes = tasks
-    .filter((task) => getEffectiveNodeType(task) === 'iterator')
-    .map((task) => buildIteratorContainerNode(task, getIteratorChildTasks(tasks, task.id)));
-  const stepNodes = tasks
-    .filter((task) => getEffectiveNodeType(task) !== 'iterator')
-    .map((task) => buildChildFlowNode(task, iteratorTasks));
-  const taskNodes: Node[] = [...iteratorNodes, ...stepNodes];
-
-  return includeTriggerNode ? [buildTriggerNode(), ...taskNodes] : taskNodes;
-}
-
-function nodesToTasks(nodes: Node[]): PlaybookTask[] {
-  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  return nodes.filter((node) => node.type === 'playbookStep' || node.type === 'playbookIteratorContainer').map((node) => {
-    const data = node.data as PlaybookNodeData;
-    const absolutePosition = toAbsoluteTaskPosition(node, nodeMap);
-    return {
-      ...data,
-      id: node.id,
-      positionX: absolutePosition.x,
-      positionY: absolutePosition.y,
-      containerConfig:
-        node.type === 'playbookStep'
-          ? {
-              parentIteratorId: node.parentId || null,
-            }
-          : data.containerConfig ?? null,
-    };
-  });
-}
-
-function playbookEdgesToFlowEdges(edges: PlaybookEdge[], tasks: PlaybookTask[]): Edge[] {
-  return edges
-    .filter((edge) => edge.sourceId !== edge.targetId)
-    .map((edge) => {
-      const normalizedEdge = remapIteratorEdgePorts(edge, tasks);
-
-      return {
-        id: normalizedEdge.id,
-        source: normalizedEdge.sourceId,
-        target: normalizedEdge.targetId,
-        sourceHandle: normalizedEdge.sourceOutputPortId || undefined,
-        targetHandle: normalizedEdge.targetInputPortId || undefined,
-        type: 'animated',
-        data: {
-          sourceOutputPortId: normalizedEdge.sourceOutputPortId || 'default',
-          targetInputPortId: normalizedEdge.targetInputPortId || 'default',
-          isTypeMatch: undefined,
-        },
-      };
-    });
-}
-
-function flowEdgesToPlaybookEdges(edges: Edge[]): PlaybookEdge[] {
-  return edges.map((edge) => {
-    const data = (edge.data || {}) as Record<string, unknown>;
-    return migrateEdge({
-      id: edge.id,
-      sourceId: edge.source,
-      targetId: edge.target,
-      sourceOutputPortId: data.sourceOutputPortId as string | undefined,
-      targetInputPortId: data.targetInputPortId as string | undefined,
-    });
-  });
-}
-
-/** Returns true if adding an edge from source→target would create a cycle. */
-function wouldCreateCycle(
-  edges: Edge[],
-  source: string,
-  target: string,
-): boolean {
-  const adjacency = new Map<string, string[]>();
-  for (const edge of edges) {
-    const children = adjacency.get(edge.source) ?? [];
-    children.push(edge.target);
-    adjacency.set(edge.source, children);
-  }
-
-  const visited = new Set<string>();
-  const queue = [target];
-  while (queue.length > 0) {
-    const current = queue.pop()!;
-    if (current === source) return true;
-    if (visited.has(current)) continue;
-    visited.add(current);
-    for (const neighbor of adjacency.get(current) ?? []) {
-      queue.push(neighbor);
-    }
-  }
-  return false;
-}
-
-/**
- * Defers a store update to the next macrotask so it doesn't run
- * inside a React setState updater (which causes infinite update loops).
- */
 function deferStoreUpdate(fn: () => void) {
   setTimeout(fn, 0);
 }
@@ -308,126 +54,66 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
 
-  // Keep a ref to the latest nodes so we can read them outside setState updaters
   const nodesRef = useRef<Node[]>(nodes);
   nodesRef.current = nodes;
-
-  // Track which playbook snapshot we've synced to avoid re-syncing on every store update
   const syncedKeyRef = useRef<string | null>(null);
+  const triggerPosRef = useRef({ x: 40, y: 160 });
 
-  // Remember trigger node position across rebuilds (not persisted to backend)
-  const triggerPositionRef = useRef({ x: 40, y: 160 });
-
-  function buildNodesWithTrigger(tasks: PlaybookTask[], includeTrigger: boolean): Node[] {
+  function buildNodes(tasks: PlaybookTask[], includeTrigger: boolean): Node[] {
     return tasksToNodes(tasks, includeTrigger).map((n) =>
-      n.id === TRIGGER_NODE_ID ? { ...n, position: triggerPositionRef.current } : n,
+      n.id === TRIGGER_NODE_ID ? { ...n, position: triggerPosRef.current } : n,
     );
   }
 
-  function preserveNodeUiState(nextNodes: Node[], previousNodes: Node[]): Node[] {
-    const previousById = new Map(previousNodes.map((node) => [node.id, node]));
-    return nextNodes.map((node) => {
-      const previous = previousById.get(node.id);
-      if (!previous) {
-        return node;
-      }
-      return {
-        ...node,
-        selected: previous.selected,
-        dragging: previous.dragging,
-      };
+  function preserveUI(nodes: Node[], prev: Node[]): Node[] {
+    const prevById = new Map(prev.map((n) => [n.id, n]));
+    return nodes.map((n) => {
+      const prevNode = prevById.get(n.id);
+      if (!prevNode) return n;
+      return { ...n, selected: prevNode.selected, dragging: prevNode.dragging };
     });
   }
 
-  function applyTaskPatch(tasks: PlaybookTask[], taskId: string, patch: Partial<PlaybookTask>): PlaybookTask[] {
-    const previousTask = tasks.find((task) => task.id === taskId);
-    const nextParentIteratorId = patch.containerConfig
-      ? patch.containerConfig.parentIteratorId ?? null
-      : previousTask?.containerConfig?.parentIteratorId ?? null;
-
-    return tasks.map((task) => {
-      if (task.id !== taskId) {
-        return task;
-      }
-
-      const nextTask: PlaybookTask = {
-        ...task,
-        ...patch,
-        containerConfig: patch.containerConfig ?? task.containerConfig,
-      };
-
-      if (nextParentIteratorId && nextParentIteratorId !== task.containerConfig?.parentIteratorId) {
-        const assignedPosition = getIteratorChildAbsolutePosition(
-          tasks,
-          nextParentIteratorId,
-          tasks.filter((candidate) => candidate.containerConfig?.parentIteratorId === nextParentIteratorId).length,
-        );
-        if (assignedPosition) {
-          nextTask.positionX = assignedPosition.x;
-          nextTask.positionY = assignedPosition.y;
-        }
-      }
-
-      return nextTask;
-    });
-  }
-
-  // Sync ReactFlow state when playbook is loaded/changed from the API
+  // Sync on playbook load / data change
   useEffect(() => {
-    if (!playbook) {
-      syncedKeyRef.current = null;
-      return;
-    }
-
-    // Sync when playbook ID changes (navigation) or updatedAt changes (design/revert)
-    const syncKey = `${playbook.id}::${playbook.updatedAt}`;
-    if (syncedKeyRef.current !== syncKey) {
-      syncedKeyRef.current = syncKey;
-      setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
+    if (!playbook) return;
+    const key = `${playbook.id}::${playbook.updatedAt}`;
+    if (syncedKeyRef.current !== key) {
+      syncedKeyRef.current = key;
+      const includeTrigger = playbook.automatedTriggerType === 'mail';
+      setNodes(buildNodes(playbook.tasks, includeTrigger));
       setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
     }
   }, [playbook]);
 
-  // Re-sync ReactFlow state after undo/redo (canvasSyncVersion bump)
+  // Sync on undo/redo
   useEffect(() => {
     if (!playbook || canvasSyncVersion === 0) return;
-    syncedKeyRef.current = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
-    setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
+    const key = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
+    syncedKeyRef.current = key;
+    const includeTrigger = playbook.automatedTriggerType === 'mail';
+    setNodes(buildNodes(playbook.tasks, includeTrigger));
     setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
   }, [canvasSyncVersion, playbook]);
 
-  // Keep node metadata in sync when task data changes locally in the store
-  // without a server-backed updatedAt change, e.g. after saving/activating
-  // a replay baseline. This preserves current ReactFlow position/selection.
+  // Sync node metadata when tasks change locally
   useEffect(() => {
     if (!playbook) return;
-
     setNodes((nds) => {
-      const rebuilt = preserveNodeUiState(
-        buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'),
+      const rebuilt = preserveUI(
+        buildNodes(playbook.tasks, playbook.automatedTriggerType === 'mail'),
         nds,
       );
-
-      if (JSON.stringify(rebuilt) === JSON.stringify(nds)) {
-        return nds;
-      }
-
-      return rebuilt;
+      return JSON.stringify(rebuilt) === JSON.stringify(nds) ? nds : rebuilt;
     });
   }, [playbook?.tasks, playbook?.automatedTriggerType]);
 
-  // Node position changes: just update local ReactFlow state (no store sync).
-  // Store sync happens in onNodeDragStop.
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
-      const selectChanges = changes.filter((change) => change.type === 'select' && 'selected' in change);
+      const selectChanges = changes.filter((c) => c.type === 'select' && 'selected' in c);
       if (selectChanges.length > 0) {
-        const selectTrue = selectChanges.filter((c) => c.selected === true);
-        if (selectTrue.length === 1) {
-          selectStep(selectTrue[0].id);
-        } else if (selectTrue.length === 0) {
-          selectStep(null);
-        }
+        const selected = selectChanges.filter((c) => c.selected === true);
+        selectStep(selected.length === 1 ? selected[0].id : null);
       }
 
       const removes = changes.filter((c) => c.type === 'remove');
@@ -436,7 +122,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         if (removedIds.size > 0) {
           captureSnapshot();
           setNodes((nds) => {
-        const updated = nds.filter((n) => !removedIds.has(n.id));
+            const updated = nds.filter((n) => !removedIds.has(n.id));
             deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
             return updated;
           });
@@ -447,26 +133,20 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
             deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
             return updated;
           });
-          const nonRemoveChanges = changes.filter((c) => c.type !== 'remove');
-          if (nonRemoveChanges.length > 0) {
-            setNodes((nds) => applyNodeChanges(nonRemoveChanges, nds));
-          }
+          const nonRemove = changes.filter((c) => c.type !== 'remove');
+          if (nonRemove.length > 0) setNodes((nds) => applyNodeChanges(nonRemove, nds));
           return;
         }
       }
-
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
     [selectStep, updateTasks, updateEdges, captureSnapshot],
   );
 
-  // Sync positions to store only when drag ends.
-  // Reads from nodesRef instead of setState updater to avoid nested updates.
-  // Trigger node position is kept in a ref only (not persisted to backend).
   const onNodeDragStop: OnNodeDrag = useCallback(
     (_event, node) => {
       if (node.id === TRIGGER_NODE_ID) {
-        triggerPositionRef.current = { ...node.position };
+        triggerPosRef.current = { ...node.position };
         return;
       }
       captureSnapshot();
@@ -478,7 +158,6 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const onEdgesChange: OnEdgesChange = useCallback(
     (changes) => {
       const removes = changes.filter((c) => c.type === 'remove');
-
       setEdges((eds) => {
         const updated = applyEdgeChanges(changes, eds);
         if (removes.length > 0) {
@@ -494,34 +173,53 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
       setEdges((eds) => {
-        if (wouldCreateCycle(eds, connection.source, connection.target)) {
-          return eds;
-        }
-
-        const sourceOutputPortId = connection.sourceHandle ?? 'default';
-        const targetInputPortId = connection.targetHandle ?? 'default';
-
-        const newEdgeId = `e-${connection.source}-${sourceOutputPortId}-${connection.target}-${targetInputPortId}`;
-        if (eds.some((e) => e.id === newEdgeId)) {
-          return eds;
-        }
-
+        const currentTasks = nodesToTasks(nodesRef.current);
         const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
-        const targetNode = nodesRef.current.find((n) => n.id === connection.target);
         const sourceData = sourceNode?.data as PlaybookNodeData | undefined;
+        const sourceType = sourceData ? getEffectiveNodeType(sourceData) : null;
+        const isRouterSource = sourceType === 'router';
+        const routerLabel = isRouterSource ? (connection.sourceHandle ?? null) : null;
+
+        const cycleNodes = currentTasks.map((t) => ({
+          id: t.id,
+          data: { ...t, nodeType: t.nodeType ?? undefined },
+        }));
+        if (wouldCreateCycle(eds, connection.source, connection.target, cycleNodes)) {
+          return eds;
+        }
+
+        const sourceHandleId = connection.sourceHandle ?? 'default';
+        const targetHandleId = connection.targetHandle ?? 'default';
+        const edgeId = `e-${connection.source}-${sourceHandleId}-${connection.target}-${targetHandleId}`;
+        if (eds.some((e) => e.id === edgeId)) return eds;
+
+        const targetNode = nodesRef.current.find((n) => n.id === connection.target);
         const targetData = targetNode?.data as PlaybookNodeData | undefined;
-        const sourcePort = sourceData?.outputPorts?.find((p) => p.id === sourceOutputPortId);
-        const targetPort = targetData?.inputPorts?.find((p) => p.id === targetInputPortId);
-        const isTypeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
+        const sourcePort = sourceData?.outputPorts?.find((p) => p.id === sourceHandleId);
+        const targetPort = targetData?.inputPorts?.find((p) => p.id === targetHandleId);
+        const typeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
+        const isErrorEdge = routerLabel === '__error__';
 
         const newEdge: Edge = {
-          id: newEdgeId,
+          id: edgeId,
           source: connection.source,
           target: connection.target,
           sourceHandle: connection.sourceHandle,
           targetHandle: connection.targetHandle,
-          type: isTypeMatch !== false ? 'animated' : 'animated-warning',
-          data: { sourceOutputPortId, targetInputPortId, isTypeMatch },
+          type: isRouterSource ? 'conditional' : (typeMatch !== false ? 'animated' : 'animated-warning'),
+          animated: !isRouterSource,
+          data: {
+            sourceOutputPortId: sourceHandleId,
+            targetInputPortId: targetHandleId,
+            isTypeMatch: isRouterSource ? undefined : typeMatch,
+            routerLabel,
+          },
+          style: isRouterSource
+            ? {
+                strokeDasharray: '6 4',
+                ...(isErrorEdge ? { stroke: 'var(--destructive)' } : {}),
+              }
+            : undefined,
         };
         captureSnapshot();
         deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges([...eds, newEdge])));
@@ -535,8 +233,8 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     (task: PlaybookTask) => {
       setNodes((nds) => {
         const tasks = [...nodesToTasks(nds), task];
-        const updated = preserveNodeUiState(
-          buildNodesWithTrigger(tasks, playbook?.automatedTriggerType === 'mail'),
+        const updated = preserveUI(
+          buildNodes(tasks, playbook?.automatedTriggerType === 'mail'),
           nds,
         );
         captureSnapshot();
@@ -550,8 +248,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const removeNode = useCallback(
     (nodeId: string) => {
       if (nodeId === TRIGGER_NODE_ID) {
-        if (!playbook?.id || !triggerActions) return;
-        void triggerActions.onDelete(playbook.id);
+        if (playbook?.id && triggerActions) void triggerActions.onDelete(playbook.id);
         return;
       }
       captureSnapshot();
@@ -561,9 +258,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         return updated;
       });
       setEdges((eds) => {
-        const updated = eds.filter(
-          (e) => e.source !== nodeId && e.target !== nodeId,
-        );
+        const updated = eds.filter((e) => e.source !== nodeId && e.target !== nodeId);
         deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
         return updated;
       });
@@ -574,9 +269,32 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const updateNodeData = useCallback(
     (nodeId: string, data: Partial<PlaybookTask>) => {
       setNodes((nds) => {
-        const patchedTasks = applyTaskPatch(nodesToTasks(nds), nodeId, data);
-        const updated = preserveNodeUiState(
-          buildNodesWithTrigger(patchedTasks, playbook?.automatedTriggerType === 'mail'),
+        const tasks = nodesToTasks(nds);
+        const prevTask = tasks.find((t) => t.id === nodeId);
+        const nextParentId = data.containerConfig
+          ? data.containerConfig.parentIteratorId ?? null
+          : prevTask?.containerConfig?.parentIteratorId ?? null;
+        const isNewAssignment =
+          nextParentId && nextParentId !== prevTask?.containerConfig?.parentIteratorId;
+
+        const patched = tasks.map((t) => {
+          if (t.id !== nodeId) return t;
+          const nextTask = {
+            ...t,
+            ...data,
+            containerConfig: data.containerConfig ?? t.containerConfig,
+          };
+          if (isNewAssignment) {
+            const pos = getIteratorChildAbsolutePositionForNewChild(tasks, nextParentId!);
+            if (pos) {
+              nextTask.positionX = pos.x;
+              nextTask.positionY = pos.y;
+            }
+          }
+          return nextTask;
+        });
+        const updated = preserveUI(
+          buildNodes(patched, playbook?.automatedTriggerType === 'mail'),
           nds,
         );
         captureSnapshot();
@@ -587,42 +305,39 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
 
-  const setIteratorNodeSize = useCallback((nodeId: string, size: { width: number; height: number }) => {
-    setNodes((nds) => nds.map((node) => {
-      if (node.id !== nodeId || node.type !== 'playbookIteratorContainer') {
-        return node;
-      }
-
-      const nextWidth = Math.round(size.width);
-      const nextHeight = Math.round(size.height);
-      return {
-        ...node,
-        style: {
-          ...(node.style || {}),
-          width: nextWidth,
-          height: nextHeight,
-        },
-        data: {
-          ...(node.data as PlaybookNodeData),
-          width: nextWidth,
-          height: nextHeight,
-        },
-      };
-    }));
-  }, []);
-
-  const repackIteratorChildren = useCallback((nodeId: string) => {
-    setNodes((nds) => {
-      const repackedTasks = repackIteratorChildrenInTasks(nodesToTasks(nds), nodeId);
-      const updated = preserveNodeUiState(
-        buildNodesWithTrigger(repackedTasks, playbook?.automatedTriggerType === 'mail'),
-        nds,
+  const setIteratorNodeSize = useCallback(
+    (nodeId: string, size: { width: number; height: number }) => {
+      setNodes((nds) =>
+        nds.map((node) => {
+          if (node.id !== nodeId || node.type !== 'playbookIteratorContainer') return node;
+          const w = Math.round(size.width);
+          const h = Math.round(size.height);
+          return {
+            ...node,
+            style: { ...(node.style || {}), width: w, height: h },
+            data: { ...(node.data as PlaybookNodeData), width: w, height: h },
+          };
+        }),
       );
-      captureSnapshot();
-      updateTasks(nodesToTasks(updated));
-      return updated;
-    });
-  }, [captureSnapshot, playbook?.automatedTriggerType, updateTasks]);
+    },
+    [],
+  );
+
+  const repackIteratorChildren = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => {
+        const repacked = repackIteratorChildrenInTasks(nodesToTasks(nds), nodeId);
+        const updated = preserveUI(
+          buildNodes(repacked, playbook?.automatedTriggerType === 'mail'),
+          nds,
+        );
+        captureSnapshot();
+        updateTasks(nodesToTasks(updated));
+        return updated;
+      });
+    },
+    [captureSnapshot, playbook?.automatedTriggerType, updateTasks],
+  );
 
   return {
     nodes,

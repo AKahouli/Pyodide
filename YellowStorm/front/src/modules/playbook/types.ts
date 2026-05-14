@@ -77,7 +77,11 @@ export interface InputFile {
 
 export type TaskExecutionMode = 'agent' | 'action';
 export type SelectedAction = 'index' | 'delete' | 'read';
-export type PlaybookNodeType = 'agent' | 'action' | 'evaluation' | 'iterator';
+export type PlaybookNodeType = 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval';
+export type FlowNodeKind = 'step' | 'router' | 'iterator' | 'human_approval';
+export type ControlEdgeKind = 'sequential' | 'conditional';
+export type DataBindingSourceKind = 'node-output' | 'trigger' | 'state' | 'constant' | 'expression';
+export type DataBindingIterationRef = 'current' | 'previous';
 
 export type IteratorMode = 'item' | 'batch';
 export type IteratorErrorStrategy = 'stop' | 'continue';
@@ -223,6 +227,8 @@ export interface PlaybookTask {
   iteratorConfig?: PlaybookIteratorConfig | null;
   iteratorLayout?: PlaybookIteratorLayout | null;
   containerConfig?: PlaybookContainerConfig | null;
+  routerConfig?: RouterConfig | null;
+  humanApprovalConfig?: HumanApprovalConfig | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
@@ -690,6 +696,10 @@ export interface Playbook {
   advisorAutopilotMaxTurns?: number | null;
   createdAt: string;
   updatedAt: string;
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  settings?: FlowSettings;
 }
 
 export interface CloneShareResult {
@@ -941,6 +951,10 @@ export interface PlaybookExecution {
   totalInputTokens: number;
   totalOutputTokens: number;
   totalTokens: number;
+  queuePosition?: number | null;
+  totalQueueSize?: number | null;
+  recursionBudgetUsed?: number | null;
+  recursionBudgetMax?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1017,7 +1031,7 @@ export interface OutputFormatTemplate {
 
 // ===== Enums =====
 
-export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted';
+export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted' | 'queued' | 'pending_approval';
 export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
 export type PlaybookPageMode = 'design' | 'run';
 export type PlaybookCopilotMode = 'design' | 'interrupt';
@@ -1323,6 +1337,7 @@ export interface UpdatePlaybookData {
   designSettings?: Partial<PlaybookDesignSettings>;
   tasks?: PlaybookTask[];
   edges?: PlaybookEdge[];
+  settings?: FlowSettings;
   workspaces?: string[];
   reflectionEnabled?: boolean;
   advisorAutopilotEnabled?: boolean;
@@ -1444,6 +1459,7 @@ export interface PlaybookState {
   isGenerating: boolean;
   generateRetryData: GeneratePlaybookData | null;
   selectedStepId: string | null;
+  selectedIterationIndex: number;
   pendingRerunTaskId: string | null;
   error: string | null;
   designMessages: DesignMessage[];
@@ -1474,6 +1490,12 @@ export interface PlaybookState {
   repeatability: PlaybookRepeatabilitySummary | null;
   repeatabilityLoading: boolean;
   intentSuggestionHistory: Record<string, IntentSuggestionHistoryEntry[]>;
+  /** Flow model fields (Phase 4) */
+  flowNodeTemplates: TaskTemplate[];
+  flowNodeTemplatesLoading: boolean;
+  flowNodeKinds: Array<{ kind: string; label: string }>;
+  flowNodeKindsLoading: boolean;
+  idempotencyKeyCounters: Record<string, number>;
 }
 
 export interface PlaybookActions {
@@ -1540,6 +1562,8 @@ export interface PlaybookActions {
   activateTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<ValidatedTaskReplay>;
   deleteTaskReplay: (playbookId: string, taskId: string, replayId: string) => Promise<{ removed: boolean; wasActive: boolean }>;
   renameTaskReplay: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<ValidatedTaskReplay>;
+  traceReplayExecution: (executionId: string) => Promise<any>;
+  reExecuteExecution: (executionId: string) => Promise<any>;
   fetchEvaluationExecutions: (playbookId: string, taskId?: string) => Promise<PlaybookEvaluationExecution[]>;
   fetchEvaluationBaseline: (playbookId: string, taskId: string) => Promise<PlaybookEvaluationBaseline | null>;
   createEvaluationBaselineFromExecution: (playbookId: string, taskId: string, executionId: string) => Promise<PlaybookEvaluationBaseline>;
@@ -1592,7 +1616,7 @@ export interface PlaybookActions {
   // History
   fetchExecutions: (playbookId: string) => Promise<void>;
   fetchExecution: (playbookId: string, execId: string) => Promise<void>;
-  selectStep: (taskId: string | null) => void;
+  selectStep: (taskId: string | null, iterationIndex?: number) => void;
   setPageMode: (mode: PlaybookPageMode) => void;
 
   // Designer
@@ -1637,6 +1661,12 @@ export interface PlaybookActions {
 
   // Intent Suggestion History
   addIntentSuggestionHistoryEntry: (playbookId: string, playbookName: string, suggestion: PlaybookIntentSuggestion, intent: string) => void;
+
+  // Flow model actions (Phase 4)
+  fetchFlowNodeTemplates: () => Promise<void>;
+  fetchFlowNodeKinds: () => Promise<void>;
+  invalidateFlowNodeTemplates: () => void;
+  generateIdempotencyKey: (flowId: string) => string;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;
@@ -1684,4 +1714,144 @@ export interface PlaybookRepeatabilitySummary {
   overallAdvisorScore: number | null;
   generatedAt: string;
   iterations: RepeatabilityIterationSummary[];
+}
+
+// ===== Phase 4: Flow Model Types =====
+
+export interface FlowNodePort {
+  id: string;
+  label?: string;
+  type?: string;
+  required?: boolean;
+}
+
+export interface FlowNodeInput {
+  raw?: string;
+  ports?: FlowNodePort[];
+}
+
+export interface FlowNodeOutput {
+  raw?: string;
+  ports?: FlowNodePort[];
+}
+
+export interface RouterConfig {
+  outputLabels: string[];
+  maxIterations: number;
+}
+
+export interface FlowIteratorConfig {
+  collectionPath: string;
+  maxItems?: number;
+}
+
+export interface HumanApprovalConfig {
+  promptTemplate: string;
+  timeoutSeconds?: number;
+}
+
+export interface RetryPolicy {
+  maxRetries: number;
+  delayMs?: number;
+}
+
+export interface FlowNode {
+  id: string;
+  kind: FlowNodeKind;
+  label?: string;
+  taskTemplateId?: string;
+  promptTemplateId?: string;
+  outputFormatId?: string;
+  input?: FlowNodeInput;
+  output?: FlowNodeOutput;
+  routerConfig?: RouterConfig;
+  iteratorConfig?: FlowIteratorConfig;
+  humanApprovalConfig?: HumanApprovalConfig;
+  retryPolicy?: RetryPolicy;
+  modelId?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ControlEdge {
+  id: string;
+  kind: ControlEdgeKind;
+  source: string;
+  target: string;
+  routerLabel?: string;
+  priority?: number;
+}
+
+export interface DataBinding {
+  id: string;
+  targetNode: string;
+  targetPort: string;
+  sourceKind: DataBindingSourceKind;
+  sourceNode?: string;
+  sourcePort?: string;
+  iteration?: DataBindingIterationRef;
+  triggerPath?: string;
+  statePath?: string;
+  constantValue?: unknown;
+  expression?: string;
+}
+
+export interface FlowTriggerConfig {
+  kind?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface FlowSettings {
+  recursionLimit: number;
+  maxParallelism: number;
+}
+
+export interface Flow {
+  id: string;
+  ownerId: string;
+  schemaVersion: number;
+  name: string;
+  description?: string;
+  triggerConfig?: FlowTriggerConfig;
+  settings: FlowSettings;
+  nodes: FlowNode[];
+  controlEdges: ControlEdge[];
+  dataBindings: DataBinding[];
+  workspaces: string[];
+  designSettings?: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FlowSummary {
+  id: string;
+  name: string;
+  description: string;
+  nodeCount: number;
+  scheduleEnabled: boolean;
+  executionStatus?: ExecutionStatus | null;
+  lastExecutionAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateFlowData {
+  name: string;
+  description?: string;
+  triggerConfig?: FlowTriggerConfig;
+  settings?: Partial<FlowSettings>;
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+}
+
+export interface UpdateFlowData {
+  name?: string;
+  description?: string;
+  triggerConfig?: FlowTriggerConfig;
+  settings?: Partial<FlowSettings>;
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  workspaces?: string[];
+  designSettings?: Record<string, unknown>;
 }

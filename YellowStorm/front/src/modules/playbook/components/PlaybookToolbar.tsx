@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2, Square } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -17,7 +17,6 @@ interface Props {
   pageMode: PlaybookPageMode;
   onPageModeChange: (mode: PlaybookPageMode) => void;
   hasExecutionContext?: boolean;
-  hasPendingInterrupt?: boolean;
   onRun: () => void;
   onStop?: () => void;
   onSave: () => void;
@@ -37,13 +36,16 @@ interface Props {
   triggersOpen?: boolean;
   designSettings?: PlaybookDesignSettings;
   onDesignSettingsChange?: (settings: Partial<PlaybookDesignSettings>) => void;
+  dataLayer?: 'legacy' | 'flow';
+  onDataLayerChange?: (layer: 'legacy' | 'flow') => void;
+  /** Opens flow settings drawer (canvas header area). */
+  onOpenFlowSettings?: () => void;
 }
 
 export function PlaybookToolbar({
   pageMode,
   onPageModeChange,
   hasExecutionContext = false,
-  hasPendingInterrupt = false,
   onRun,
   onStop,
   onSave,
@@ -62,10 +64,19 @@ export function PlaybookToolbar({
   triggersOpen = false,
   designSettings,
   onDesignSettingsChange,
+  dataLayer = 'legacy',
+  onDataLayerChange,
+  onOpenFlowSettings,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
   const [runSettingsOpen, setRunSettingsOpen] = useState(false);
+
+  const handleDataLayerToggle = () => {
+    const next = dataLayer === 'legacy' ? 'flow' : 'legacy';
+    localStorage.setItem('playbook-data-layer', next);
+    onDataLayerChange?.(next);
+  };
 
   return (
     <div className="flex items-center gap-1 sm:gap-2">
@@ -83,6 +94,25 @@ export function PlaybookToolbar({
           </Button>
         ))}
       </div>
+      {pageMode === 'design' && onDataLayerChange && (
+        <Button
+          variant={dataLayer === 'flow' ? 'default' : 'outline'}
+          size="sm"
+          className="px-2 sm:px-3"
+          title={`${t('toolbar.dataLayer')}: ${t(dataLayer === 'flow' ? 'toolbar.dataLayerFlow' : 'toolbar.dataLayerLegacy')}`}
+          onClick={handleDataLayerToggle}
+        >
+          <Layers className="h-4 w-4 sm:mr-1" />
+          <span className="hidden sm:inline">
+            {t(dataLayer === 'flow' ? 'toolbar.dataLayerFlow' : 'toolbar.dataLayerLegacy')}
+          </span>
+        </Button>
+      )}
+      {pageMode === 'design' && onOpenFlowSettings && (
+        <Button variant="outline" size="sm" className="px-2" title={t('flowSettings.title')} onClick={onOpenFlowSettings}>
+          <Settings2 className="h-4 w-4" />
+        </Button>
+      )}
       {showExecutionsAction && (
         <Button variant="outline" size="sm" onClick={onViewExecutions} className="px-2 sm:px-3">
           <History className="h-4 w-4 sm:mr-1" />

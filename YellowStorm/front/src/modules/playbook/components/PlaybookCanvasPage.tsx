@@ -57,11 +57,15 @@ import { ExecutionPanel } from './ExecutionPanel';
 import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
-import { usePlaybookCanvas, tasksToNodes, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
+import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
+import { tasksToNodes } from '../hooks/helpers/node-serializer';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
+import { RouterNode } from './RouterNode';
+import { HumanApprovalNode } from './HumanApprovalNode';
+import { ConditionalEdge } from './ConditionalEdge';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
@@ -77,13 +81,14 @@ import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
-import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../utils/iterator-ports';
+import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion } from '../types';
-import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../utils/intent-edge-ports';
+import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
+import { PlaybookFlowSettingsDrawer } from './PlaybookFlowSettingsDrawer';
 import { showError } from '@/lib/notifications';
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
@@ -182,10 +187,12 @@ function isIteratorChildTask(task: Pick<PlaybookTask, 'containerConfig'> | null 
 const STEP_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
   interrupted: 4,
+  pending_approval: 4,
   failed: 3,
   completed: 2,
   skipped: 1,
   pending: 0,
+  queued: 0,
 };
 
 export function buildCanvasStepStatusMap(
@@ -382,6 +389,11 @@ function PlaybookCanvasInner() {
 
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
+  const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
+  const [dataLayer, setDataLayer] = useState<'legacy' | 'flow'>(() => {
+    const stored = localStorage.getItem('playbook-data-layer');
+    return stored === 'flow' ? 'flow' : 'legacy';
+  });
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
   const defaultAgents = useDefaultAgents();
@@ -535,10 +547,17 @@ function PlaybookCanvasInner() {
     prevIsDesigning.current = isDesigning;
   }, [currentExecution?.id, currentExecution?.status, currentExecution?.taskResults, execution?.id, execution?.status, execution?.taskResults, id, isGenerating, isDesigning, refreshUsage]);
 
-  const nodeTypes = useMemo(() => ({ playbookStep: PlaybookNode, playbookTrigger: PlaybookTriggerNode, playbookIteratorContainer: PlaybookIteratorContainerNode }), []);
+  const nodeTypes = useMemo(() => ({
+    playbookStep: PlaybookNode,
+    playbookTrigger: PlaybookTriggerNode,
+    playbookIteratorContainer: PlaybookIteratorContainerNode,
+    playbookRouter: RouterNode,
+    playbookHumanApproval: HumanApprovalNode,
+  }), []);
   const edgeTypes = useMemo(() => ({
     animated: AiEdge.Animated,
     'animated-warning': AiEdge.AnimatedWarning,
+    conditional: ConditionalEdge,
   }), []);
   const executionForCanvas =
     currentExecution?.playbookId === id
@@ -705,6 +724,80 @@ function PlaybookCanvasInner() {
     };
     addNode(newTask);
   }, [addNode, playbook?.tasks.length, reactFlow]);
+
+  const handleAddRouterNode = useCallback(() => {
+    const taskId = crypto.randomUUID();
+    const existingCount = playbook?.tasks.length || 0;
+    const canvasEl = document.querySelector('.react-flow');
+    const w = canvasEl?.clientWidth ?? 800;
+    const h = canvasEl?.clientHeight ?? 600;
+    const center = reactFlow.screenToFlowPosition({ x: w / 2, y: h / 2 });
+
+    const newTask: PlaybookTask = {
+      id: taskId,
+      title: t('routerNode.defaultTitle'),
+      description: '',
+      assignedAgentId: null,
+      executionMode: 'agent',
+      executionOrder: existingCount,
+      positionX: center.x,
+      positionY: center.y,
+      interruptBefore: false,
+      interruptAfter: false,
+      allowClarification: false,
+      clarificationPrompt: '',
+      maxClarifications: 3,
+      inputKeys: [],
+      outputKey: '',
+      enabled: true,
+      notifyOnComplete: false,
+      notifyEmails: [],
+      inputFiles: [],
+      taskType: 'generic',
+      nodeType: 'router',
+      inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+      outputPorts: [],
+      routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+    };
+    addNode(newTask);
+  }, [addNode, playbook?.tasks.length, reactFlow, t]);
+
+  const handleAddHumanApprovalNode = useCallback(() => {
+    const taskId = crypto.randomUUID();
+    const existingCount = playbook?.tasks.length || 0;
+    const canvasEl = document.querySelector('.react-flow');
+    const w = canvasEl?.clientWidth ?? 800;
+    const h = canvasEl?.clientHeight ?? 600;
+    const center = reactFlow.screenToFlowPosition({ x: w / 2, y: h / 2 });
+
+    const newTask: PlaybookTask = {
+      id: taskId,
+      title: t('humanApprovalNode.defaultTitle'),
+      description: '',
+      assignedAgentId: null,
+      executionMode: 'agent',
+      executionOrder: existingCount,
+      positionX: center.x,
+      positionY: center.y,
+      interruptBefore: false,
+      interruptAfter: false,
+      allowClarification: false,
+      clarificationPrompt: '',
+      maxClarifications: 3,
+      inputKeys: [],
+      outputKey: '',
+      enabled: true,
+      notifyOnComplete: false,
+      notifyEmails: [],
+      inputFiles: [],
+      taskType: 'generic',
+      nodeType: 'human_approval',
+      inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+      outputPorts: [{ id: 'default', name: 'Output', artifactKind: 'text' }],
+      humanApprovalConfig: { promptTemplate: '', timeoutSeconds: 3600 },
+    };
+    addNode(newTask);
+  }, [addNode, playbook?.tasks.length, reactFlow, t]);
 
   const handleAddStepFromTemplate = useCallback(
     (template: TaskTemplate) => {
@@ -2373,7 +2466,6 @@ function PlaybookCanvasInner() {
             pageMode={pageMode}
             onPageModeChange={handlePageModeChange}
             hasExecutionContext={Boolean(currentExecution || execution)}
-            hasPendingInterrupt={Boolean(currentExecution?.interruptPayload)}
             onRun={handleRun}
             onStop={handleStop}
             onSave={saveNow}
@@ -2383,7 +2475,7 @@ function PlaybookCanvasInner() {
             isExecuting={isExecuting}
             hasActiveExecution={hasActiveExecution}
             isStopping={isStopping}
-            canRun={playbook.tasks.length > 0 && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
+            canRun={(playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0) && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
@@ -2399,6 +2491,9 @@ function PlaybookCanvasInner() {
                 },
               });
             }}
+            dataLayer={dataLayer}
+            onDataLayerChange={setDataLayer}
+            onOpenFlowSettings={() => setFlowSettingsOpen(true)}
           />
         </div>
       </div>
@@ -2410,6 +2505,21 @@ function PlaybookCanvasInner() {
             playbookId={id}
             schedule={playbook.executionSchedule}
           mailTrigger={playbook.triggers.find((trigger) => trigger.type === 'mail') ?? null}
+        />
+      )}
+      {id && (
+        <PlaybookFlowSettingsDrawer
+          open={flowSettingsOpen}
+          onOpenChange={setFlowSettingsOpen}
+          settings={playbook.settings || { recursionLimit: 25, maxParallelism: 4 }}
+          onSettingsChange={(settings) => {
+            void updatePlaybook(playbook.id, {
+              settings: {
+                ...(playbook.settings || { recursionLimit: 25, maxParallelism: 4 }),
+                ...settings,
+              },
+            });
+          }}
         />
       )}
 
@@ -2491,6 +2601,8 @@ function PlaybookCanvasInner() {
                 <PlaybookCanvasFloatingToolbar
                   containerRef={canvasChromeRef}
                   onAddStep={handleAddStep}
+                  onAddRouterNode={handleAddRouterNode}
+                  onAddHumanApprovalNode={handleAddHumanApprovalNode}
                   onAddStepFromTemplate={handleAddStepFromTemplate}
                   onAutoLayout={handleAutoLayout}
                   onUndo={undo}

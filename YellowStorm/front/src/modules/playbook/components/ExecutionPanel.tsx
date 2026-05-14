@@ -228,6 +228,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     : currentExecution;
   const playbook = useCurrentPlaybook();
   const selectedStepId = useSelectedStep();
+  const selectedIterationIndex = usePlaybookStore((s) => s.selectedIterationIndex);
   const history = playbookId ? useExecutionHistoryForPlaybook(playbookId) : useExecutionHistory();
   const isStopping = useIsStopping();
   const isExecuting = useIsExecuting(execution?.playbookId);
@@ -337,8 +338,8 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   }, [execution?.taskResults, selectedStepId, selectStep, visibleExecutionStatus]);
 
   const handleSelectStep = useCallback(
-    (taskId: string) => {
-      selectStep(taskId);
+    (taskId: string, iterationIndex?: number) => {
+      selectStep(taskId, iterationIndex);
     },
     [selectStep],
   );
@@ -441,9 +442,11 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
   const canDeleteCurrentExecution = Boolean(execution && visibleExecutionStatus !== 'running' && visibleExecutionStatus !== 'interrupted');
 
-  const selectedResult = execution?.taskResults.find(
-    (tr) => tr.taskId === selectedStepId,
-  ) || null;
+  const selectedResult = (() => {
+    if (!execution) return null;
+    const group = execution.taskResults.filter((tr) => tr.taskId === selectedStepId).sort((a, b) => a.order - b.order);
+    return group[selectedIterationIndex] || group[0] || null;
+  })();
   const selectedTask = playbook?.tasks.find((task) => task.id === selectedResult?.taskId) || null;
   useEffect(() => {
     let cancelled = false;
@@ -606,6 +609,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
         <ExecutionStepList
           taskResults={execution.taskResults}
           selectedStepId={selectedStepId}
+          selectedIterationIndex={selectedIterationIndex}
           onSelectStep={handleSelectStep}
           pageMode={pageMode}
         />
@@ -613,6 +617,8 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           step={selectedResult}
           execution={execution}
           pageMode={pageMode}
+          iterationIndex={selectedIterationIndex}
+          onSelectIteration={handleSelectStep}
           onRequestValidateReplay={(taskId) => {
             void handleValidateStep(taskId, { preserveOutputFormat: false });
           }}

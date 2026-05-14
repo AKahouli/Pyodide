@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2 } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -21,6 +21,8 @@ import type { InterruptType, TaskTemplate } from '../types';
 interface Props {
   containerRef: RefObject<HTMLElement>;
   onAddStep: () => void;
+  onAddRouterNode?: () => void;
+  onAddHumanApprovalNode?: () => void;
   onAddStepFromTemplate: (template: TaskTemplate) => void;
   onAutoLayout: () => void;
   onUndo: () => void;
@@ -50,6 +52,8 @@ const STORAGE_KEY = 'playbook-canvas-floating-toolbar-position';
 export function PlaybookCanvasFloatingToolbar({
   containerRef,
   onAddStep,
+  onAddRouterNode,
+  onAddHumanApprovalNode,
   onAddStepFromTemplate,
   onAutoLayout,
   onUndo,
@@ -331,6 +335,18 @@ export function PlaybookCanvasFloatingToolbar({
                     <Plus className="mr-2 h-4 w-4" />
                     {t('toolbar.addBlankStep')}
                   </DropdownMenuItem>
+                  {onAddRouterNode && (
+                    <DropdownMenuItem onClick={onAddRouterNode}>
+                      <GitBranch className="mr-2 h-4 w-4 text-muted-foreground" />
+                      {t('toolbar.addRouterNode')}
+                    </DropdownMenuItem>
+                  )}
+                  {onAddHumanApprovalNode && (
+                    <DropdownMenuItem onClick={onAddHumanApprovalNode}>
+                      <Hand className="mr-2 h-4 w-4 text-muted-foreground" />
+                      {t('toolbar.addHumanApprovalNode')}
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   {nodeTemplatesLoading ? (
                     <DropdownMenuItem disabled>

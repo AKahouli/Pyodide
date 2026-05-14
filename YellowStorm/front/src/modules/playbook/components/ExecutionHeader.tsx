@@ -59,6 +59,16 @@ export function ExecutionHeader({ execution, playbook }: Props) {
         {execution && (
           <>
             <PlaybookStatusBadge status={visibleStatus || execution.status} size="md" />
+            {execution.queuePosition != null && execution.totalQueueSize != null && (
+              <span className="text-sm text-muted-foreground">
+                {t('execution.queuePosition', { position: execution.queuePosition, total: execution.totalQueueSize })}
+              </span>
+            )}
+            {visibleStatus === 'running' && execution.recursionBudgetUsed != null && execution.recursionBudgetMax != null && (
+              <span className="text-sm text-muted-foreground">
+                {t('execution.recursionBudget', { used: execution.recursionBudgetUsed, max: execution.recursionBudgetMax })}
+              </span>
+            )}
             <div className="flex items-center gap-1 text-sm text-muted-foreground">
               <Clock className="h-3.5 w-3.5" />
               <span>{formatDuration(execution.durationMs)}</span>

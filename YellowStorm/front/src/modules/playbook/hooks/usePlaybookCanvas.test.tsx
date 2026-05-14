@@ -1,6 +1,7 @@
 import { act, renderHook } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { usePlaybookCanvas, tasksToNodes } from './usePlaybookCanvas';
+import { usePlaybookCanvas } from './usePlaybookCanvas';
+import { tasksToNodes } from './helpers/node-serializer';
 import { makePlaybook, makeTask } from '../test-utils';
 
 const storeFns = vi.hoisted(() => ({

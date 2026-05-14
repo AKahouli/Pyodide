@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Play, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -152,6 +152,8 @@ interface Props {
   step: TaskResult | null;
   execution?: PlaybookExecution | null;
   pageMode?: PlaybookPageMode;
+  iterationIndex?: number;
+  onSelectIteration?: (taskId: string, iterationIndex: number) => void;
   onBackToRunMode?: () => void;
   onRequestValidateReplay?: (taskId: string) => void;
   onRequestRunEvaluation?: (taskId: string) => void;
@@ -340,6 +342,8 @@ export function ExecutionStepDetail({
   step,
   execution = null,
   pageMode = 'run',
+  iterationIndex = 0,
+  onSelectIteration,
   onBackToRunMode,
   onRequestValidateReplay,
   onRequestRunEvaluation,
@@ -368,6 +372,8 @@ export function ExecutionStepDetail({
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
+  const traceReplayExecution = usePlaybookStore((s) => s.traceReplayExecution);
+  const reExecuteExecution = usePlaybookStore((s) => s.reExecuteExecution);
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
@@ -393,6 +399,11 @@ export function ExecutionStepDetail({
   }, [execution?.playbookSnapshot, step?.taskId]);
   const playbookTask = currentPlaybook?.tasks.find((task) => task.id === step?.taskId) || null;
   const currentTask = (playbookTask || executionSnapshotTask || null) as any;
+  const iterationCount = useMemo(() => {
+    if (!step || !execution) return 1;
+    return execution.taskResults.filter((r) => r.taskId === step.taskId).length;
+  }, [step?.taskId, execution?.taskResults]);
+  const showIterationSelector = iterationCount > 1;
   useEffect(() => {
     setStepReplayModeValue(currentTask?.stepReplayMode ?? 'live');
   }, [currentTask?.id, currentTask?.stepReplayMode]);
@@ -909,6 +920,31 @@ export function ExecutionStepDetail({
         className="h-full overflow-y-auto p-6"
       >
         <div className="mb-6">
+          {showIterationSelector && (
+            <div className="mb-2 flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={iterationIndex <= 0}
+                onClick={() => onSelectIteration?.(step!.taskId, iterationIndex - 1)}
+              >
+                &larr;
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                {t('execution.iteration')} {iterationIndex + 1} / {iterationCount}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={iterationIndex >= iterationCount - 1}
+                onClick={() => onSelectIteration?.(step!.taskId, iterationIndex + 1)}
+              >
+                &rarr;
+              </Button>
+            </div>
+          )}
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
             {showReplayBadge && (
@@ -1107,6 +1143,25 @@ export function ExecutionStepDetail({
         {step.isStale && (
           <div className="mb-4 rounded-md border border-amber-500/30 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             {t('detail.staleMessage')}
+          </div>
+        )}
+
+        {step.status === 'completed' && hasReplayBaseline && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => execution && traceReplayExecution(execution.id)} disabled={isRunningEvaluation}>
+              <RotateCcw className="mr-1 h-4 w-4" />
+              {t('detail.actions.traceReplay')}
+            </Button>
+            <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.traceReplayHint')}</span>
+          </div>
+        )}
+        {step.status === 'completed' && (
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Button size="sm" variant="default" onClick={() => execution && reExecuteExecution(execution.id)}>
+              <Play className="mr-1 h-4 w-4" />
+              {t('detail.actions.reExecute')}
+            </Button>
+            <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.reExecuteHint')}</span>
           </div>
         )}
 

@@ -20,6 +20,9 @@ import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
 import { usePlaybookStore } from '../store';
 import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
+import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
+import { PlaybookHumanApprovalConfigSection } from './PlaybookHumanApprovalConfigSection';
+import { PlaybookDataBindingSection } from './PlaybookDataBindingSection';
 import type {
   PlaybookTask,
   ValidatedTaskReplay,
@@ -30,6 +33,8 @@ import type {
   PlaybookEvaluationConfig,
   PlaybookNodeType,
   PlaybookIteratorConfig,
+  RouterConfig,
+  HumanApprovalConfig,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -38,7 +43,7 @@ import {
   DEFAULT_ITERATOR_INPUT_PORT,
   getDefaultIteratorInputPorts,
   getDefaultIteratorOutputPorts,
-} from '../utils/iterator-ports';
+} from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 
 const MIN_WIDTH = 320;
@@ -62,6 +67,8 @@ interface EditorDraft {
   outputPorts: TaskOutputPort[];
   evaluationConfig: PlaybookEvaluationConfig | null;
   iteratorConfig: PlaybookIteratorConfig | null;
+  routerConfig: RouterConfig | null;
+  humanApprovalConfig: HumanApprovalConfig | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
 }
@@ -73,6 +80,16 @@ const DEFAULT_ITERATOR_CONFIG: PlaybookIteratorConfig = {
   itemVariable: 'item',
   outputVariable: 'processed_items',
   errorStrategy: 'stop',
+};
+
+const DEFAULT_ROUTER_CONFIG: RouterConfig = {
+  outputLabels: ['retry', 'done', '__error__'],
+  maxIterations: 3,
+};
+
+const DEFAULT_HUMAN_APPROVAL_CONFIG: HumanApprovalConfig = {
+  promptTemplate: '',
+  timeoutSeconds: 3600,
 };
 
 const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
@@ -122,6 +139,12 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
     iteratorConfig: task.iteratorConfig
       ? { ...task.iteratorConfig }
       : { ...DEFAULT_ITERATOR_CONFIG },
+    routerConfig: task.routerConfig
+      ? { ...task.routerConfig, outputLabels: [...task.routerConfig.outputLabels] }
+      : null,
+    humanApprovalConfig: task.humanApprovalConfig
+      ? { ...task.humanApprovalConfig }
+      : null,
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
   };
@@ -146,6 +169,8 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     outputPorts: draft.nodeType === 'iterator' ? getDefaultIteratorOutputPorts() : [...draft.outputPorts],
     evaluationConfig: draft.evaluationConfig,
     iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
+    routerConfig: draft.nodeType === 'router' ? draft.routerConfig : null,
+    humanApprovalConfig: draft.nodeType === 'human_approval' ? draft.humanApprovalConfig : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
   };
@@ -202,6 +227,8 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     outputPorts: [],
     evaluationConfig: null,
     iteratorConfig: null,
+    routerConfig: null,
+    humanApprovalConfig: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
   });
@@ -558,16 +585,43 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 if (nextType === 'evaluation') {
                   patch.executionMode = 'agent';
                   patch.iteratorConfig = null;
+                  patch.routerConfig = null;
+                  patch.humanApprovalConfig = null;
                 } else if (nextType === 'action') {
                   patch.executionMode = 'action';
                   patch.assignedAgentId = null;
                   patch.iteratorConfig = null;
+                  patch.routerConfig = null;
+                  patch.humanApprovalConfig = null;
                 } else if (nextType === 'iterator') {
                   patch.executionMode = 'agent';
                   patch.assignedAgentId = null;
                   patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
                   patch.inputPorts = getDefaultIteratorInputPorts();
                   patch.outputPorts = getDefaultIteratorOutputPorts();
+                  patch.routerConfig = null;
+                  patch.humanApprovalConfig = null;
+                } else if (nextType === 'router') {
+                  patch.executionMode = 'agent';
+                  patch.assignedAgentId = null;
+                  patch.routerConfig = draft.routerConfig ?? { ...DEFAULT_ROUTER_CONFIG, outputLabels: [...DEFAULT_ROUTER_CONFIG.outputLabels] };
+                  patch.outputPorts = draft.routerConfig?.outputLabels.map((label) => ({
+                    id: label,
+                    name: label,
+                    artifactKind: 'text' as ArtifactKind,
+                  })) ?? DEFAULT_ROUTER_CONFIG.outputLabels.map((label) => ({
+                    id: label,
+                    name: label,
+                    artifactKind: 'text' as ArtifactKind,
+                  }));
+                  patch.iteratorConfig = null;
+                  patch.humanApprovalConfig = null;
+                } else if (nextType === 'human_approval') {
+                  patch.executionMode = 'agent';
+                  patch.assignedAgentId = null;
+                  patch.humanApprovalConfig = draft.humanApprovalConfig ?? { ...DEFAULT_HUMAN_APPROVAL_CONFIG };
+                  patch.iteratorConfig = null;
+                  patch.routerConfig = null;
                 } else {
                   patch.executionMode = 'agent';
                   patch.iteratorConfig = null;
@@ -580,6 +634,8 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
               <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
               <option value="iterator">{t('nodeEditor.nodeTypeIterator')}</option>
               <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
+              <option value="router">{t('nodeEditor.nodeTypeRouter')}</option>
+              <option value="human_approval">{t('nodeEditor.nodeTypeHumanApproval')}</option>
             </select>
           </div>
 
@@ -667,6 +723,35 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
               </div>
             </div>
           )}
+
+          {draft.nodeType === 'router' && draft.routerConfig && (
+            <div className="space-y-4">
+              <PlaybookRouterConfigSection
+                value={draft.routerConfig}
+                onChange={(routerConfig) =>
+                  updateDraft({
+                    routerConfig,
+                    outputPorts: routerConfig.outputLabels.map((label) => ({
+                      id: label,
+                      name: label,
+                      artifactKind: 'text' as ArtifactKind,
+                    })),
+                  })
+                }
+              />
+            </div>
+          )}
+
+          {draft.nodeType === 'human_approval' && draft.humanApprovalConfig && (
+            <div className="space-y-4">
+              <PlaybookHumanApprovalConfigSection
+                value={draft.humanApprovalConfig}
+                onChange={(humanApprovalConfig) => updateDraft({ humanApprovalConfig })}
+              />
+            </div>
+          )}
+
+          <PlaybookDataBindingSection />
 
           <div className="space-y-2">
             <Label>{t('nodeEditor.description')}</Label>

@@ -17,6 +17,7 @@ interface BaselineBadgePopoverProps {
   toneClassName: string;
   badgeLabel: string;
   isBusy: boolean;
+  iterationIndex?: number;
   onRemove: (playbookId: string, taskId: string, replayId: string) => Promise<void>;
   onRename: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<void>;
 }
@@ -29,6 +30,7 @@ export function BaselineBadgePopover({
   toneClassName,
   badgeLabel,
   isBusy,
+  iterationIndex,
   onRemove,
   onRename,
 }: BaselineBadgePopoverProps) {
@@ -47,8 +49,10 @@ export function BaselineBadgePopover({
     }
   }, [isRenaming]);
 
+  const displayLabel = iterationIndex != null ? `${badgeLabel} #${iterationIndex + 1}` : badgeLabel;
+
   if (!replayId) {
-    return <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', toneClassName)}>{badgeLabel}</span>;
+    return <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', toneClassName)}>{displayLabel}</span>;
   }
 
   const handleStartRename = () => {
@@ -106,7 +110,7 @@ export function BaselineBadgePopover({
           onClick={(e) => { e.stopPropagation(); }}
         >
           {isBusy && <span className="h-2.5 w-2.5 animate-spin border-2 border-current border-t-transparent rounded-full" />}
-          <span>{badgeLabel}</span>
+          <span>{displayLabel}</span>
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-56 p-1" side="bottom" align="start" onClick={(e) => e.stopPropagation()}>

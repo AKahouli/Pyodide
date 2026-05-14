@@ -3,6 +3,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
+import { PlaybookFlowReplayService } from '../services/playbook-flow-replay.service';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
@@ -16,6 +17,7 @@ import { Request } from 'express';
 export class PlaybookFlowExecutionController {
   constructor(
     private readonly executionService: PlaybookFlowExecutionService,
+    private readonly replayService: PlaybookFlowReplayService,
   ) {}
 
   @Post('playbooks/:flowId/executions')
@@ -72,6 +74,26 @@ export class PlaybookFlowExecutionController {
     @Body() body: { decision: string; payload?: Record<string, unknown> },
   ) {
     return this.executionService.resumeApproval(executionId, userId, body);
+  }
+
+  @Post('executions/:executionId/trace-replay')
+  @ApiOperation({ summary: 'Trace replay an execution deterministically from recorded events' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async traceReplay(
+    @CurrentUser('_id') userId: string,
+    @Param('executionId') executionId: string,
+  ) {
+    return this.replayService.traceReplay(executionId, userId);
+  }
+
+  @Post('executions/:executionId/re-execute')
+  @ApiOperation({ summary: 'Re-execute a flow with the same inputs (may diverge)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async reExecute(
+    @CurrentUser('_id') userId: string,
+    @Param('executionId') executionId: string,
+  ) {
+    return this.replayService.reExecute(executionId, userId);
   }
 
   @Get('executions/:executionId/router-decisions')

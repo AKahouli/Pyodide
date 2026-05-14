@@ -41,6 +41,15 @@ import type {
   PlaybookIntentResponse,
   RequestPlaybookNodeAdvisorData,
   PlaybookNodeAdvisorResponse,
+  Flow,
+  FlowSummary,
+  FlowNode,
+  ControlEdge,
+  DataBinding,
+  CreateFlowData,
+  UpdateFlowData,
+  FlowSettings,
+  TaskTemplate,
 } from './types';
 
 interface PaginatedResponse<T> {
@@ -833,6 +842,251 @@ export async function getTaskRepeatability(
   const response = await apiClient.get<ApiResponse<RepeatabilityTaskExecutionSummary[]>>(
     API_ENDPOINTS.playbooks.repeatabilityTask(playbookId, taskId),
     { params: { limit } },
+  );
+  return response.data.data;
+}
+
+// ===== Phase 4: Flow API Functions =====
+
+export async function getFlows(
+  query?: PlaybookQueryParams,
+): Promise<{ flows: FlowSummary[]; pagination: PaginatedResponse<FlowSummary>['pagination'] }> {
+  const response = await apiClient.get<
+    ApiResponse<{ flows: FlowSummary[]; pagination: PaginatedResponse<FlowSummary>['pagination'] }>
+  >(API_ENDPOINTS.playbookFlows.list, { params: query });
+  return response.data.data;
+}
+
+export async function getFlow(id: string): Promise<Flow> {
+  const response = await apiClient.get<ApiResponse<Flow>>(
+    API_ENDPOINTS.playbookFlows.byId(id),
+  );
+  return response.data.data;
+}
+
+export async function createFlow(data: CreateFlowData): Promise<Flow> {
+  const response = await apiClient.post<ApiResponse<Flow>>(
+    API_ENDPOINTS.playbookFlows.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateFlow(id: string, data: UpdateFlowData, idempotencyKey?: string): Promise<Flow> {
+  const response = await apiClient.patch<ApiResponse<Flow>>(
+    API_ENDPOINTS.playbookFlows.byId(id),
+    data,
+    idempotencyKey
+      ? { headers: { 'Idempotency-Key': idempotencyKey } }
+      : undefined,
+  );
+  return response.data.data;
+}
+
+export async function deleteFlow(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbookFlows.byId(id));
+}
+
+export async function startFlowExecution(
+  flowId: string,
+  inputContext?: Record<string, unknown>,
+  idempotencyKey?: string,
+): Promise<{ executionId: string }> {
+  const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
+    API_ENDPOINTS.playbookFlows.execute(flowId),
+    { inputContext },
+    idempotencyKey
+      ? { headers: { 'Idempotency-Key': idempotencyKey } }
+      : undefined,
+  );
+  return response.data.data;
+}
+
+export async function getFlowExecutions(
+  flowId: string,
+  page?: number,
+  limit?: number,
+): Promise<{ executions: PlaybookExecution[]; pagination: PaginatedResponse<PlaybookExecution>['pagination'] }> {
+  const response = await apiClient.get<
+    ApiResponse<{ executions: PlaybookExecution[]; pagination: PaginatedResponse<PlaybookExecution>['pagination'] }>
+  >(API_ENDPOINTS.playbookFlows.executions(flowId), { params: { page, limit } });
+  return response.data.data;
+}
+
+export async function getFlowExecutionDetail(executionId: string): Promise<PlaybookExecution> {
+  const response = await apiClient.get<ApiResponse<PlaybookExecution>>(
+    API_ENDPOINTS.playbookFlows.executionDetail(executionId),
+  );
+  return response.data.data;
+}
+
+export async function cancelFlowExecution(executionId: string): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.playbookFlows.cancelExecution(executionId));
+}
+
+export async function resumeFlowApproval(
+  executionId: string,
+  decision: string,
+  payload?: Record<string, unknown>,
+): Promise<void> {
+  await apiClient.post(API_ENDPOINTS.playbookFlows.resumeApproval(executionId), {
+    decision,
+    payload,
+  });
+}
+
+export async function getFlowRouterDecisions(
+  executionId: string,
+): Promise<Array<{ nodeId: string; label: string; iteration: number }>> {
+  const response = await apiClient.get<
+    ApiResponse<Array<{ nodeId: string; label: string; iteration: number }>>
+  >(API_ENDPOINTS.playbookFlows.routerDecisions(executionId));
+  return response.data.data;
+}
+
+export async function getFlowNodeTemplates(): Promise<{
+  items: TaskTemplate[];
+}> {
+  const response = await apiClient.get<ApiResponse<{ items: TaskTemplate[] }>>(
+    API_ENDPOINTS.playbookFlowTemplates.list,
+  );
+  return response.data.data;
+}
+
+export async function getFlowNodeTemplatesEnabled(): Promise<{
+  items: TaskTemplate[];
+}> {
+  const response = await apiClient.get<ApiResponse<{ items: TaskTemplate[] }>>(
+    API_ENDPOINTS.playbookFlowTemplates.enabled,
+  );
+  return response.data.data;
+}
+
+export async function getFlowNodeKinds(): Promise<{
+  kinds: Array<{ kind: string; label: string }>;
+}> {
+  const response = await apiClient.get<ApiResponse<{ kinds: Array<{ kind: string; label: string }> }>>(
+    API_ENDPOINTS.playbookFlowTemplates.nodeKinds,
+  );
+  return response.data.data;
+}
+
+export async function createFlowNodeTemplate(data: Partial<TaskTemplate>): Promise<TaskTemplate> {
+  const response = await apiClient.post<ApiResponse<TaskTemplate>>(
+    API_ENDPOINTS.playbookFlowTemplates.list,
+    data,
+  );
+  return response.data.data;
+}
+
+export async function updateFlowNodeTemplate(id: string, data: Partial<TaskTemplate>): Promise<TaskTemplate> {
+  const response = await apiClient.patch<ApiResponse<TaskTemplate>>(
+    API_ENDPOINTS.playbookFlowTemplates.byId(id),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function deleteFlowNodeTemplate(id: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbookFlowTemplates.byId(id));
+}
+
+export async function traceReplayExecution(executionId: string): Promise<Array<Record<string, unknown>>> {
+  const response = await apiClient.post<ApiResponse<Array<Record<string, unknown>>>>(
+    API_ENDPOINTS.playbookFlows.traceReplay(executionId),
+  );
+  return response.data.data;
+}
+
+export async function reExecuteExecution(
+  executionId: string,
+): Promise<{ executionId: string; divergenceWarning: boolean }> {
+  const response = await apiClient.post<ApiResponse<{ executionId: string; divergenceWarning: boolean }>>(
+    API_ENDPOINTS.playbookFlows.reExecute(executionId),
+  );
+  return response.data.data;
+}
+
+export async function getFlowEvaluationExecutions(flowId: string, taskId?: string): Promise<any[]> {
+  const response = await apiClient.get<ApiResponse<any[]>>(
+    API_ENDPOINTS.playbookFlows.evaluations(flowId),
+    { params: taskId ? { taskId } : undefined },
+  );
+  return response.data.data;
+}
+
+export async function getFlowEvaluationBaseline(flowId: string, taskId: string): Promise<any> {
+  const response = await apiClient.get<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.evaluationBaseline(flowId, taskId),
+  );
+  return response.data.data;
+}
+
+export async function createFlowEvaluationBaselineFromExecution(
+  flowId: string, taskId: string, executionId: string, iteration?: number,
+): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.evaluationBaselineFromExecution(flowId, taskId),
+    { executionId, iteration },
+  );
+  return response.data.data;
+}
+
+export async function createFlowEvaluationBaselineFromCurrentExecution(
+  flowId: string, taskId: string, executionId: string, evaluationExecutionId: string, iteration?: number,
+): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.evaluationBaselineFromCurrentExecution(flowId, taskId),
+    { executionId, evaluationExecutionId, iteration },
+  );
+  return response.data.data;
+}
+
+export async function deleteFlowEvaluationBaseline(flowId: string, taskId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.playbookFlows.deleteEvaluationBaseline(flowId, taskId));
+}
+
+export async function getFlowRepeatability(flowId: string): Promise<any> {
+  const response = await apiClient.get<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.repeatability(flowId),
+  );
+  return response.data.data;
+}
+
+export async function getFlowTaskRepeatability(flowId: string, taskId: string): Promise<any> {
+  const response = await apiClient.get<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.repeatabilityTask(flowId, taskId),
+  );
+  return response.data.data;
+}
+
+export async function getFlowTriggers(flowId: string): Promise<any> {
+  const response = await apiClient.get<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.triggers(flowId),
+  );
+  return response.data.data;
+}
+
+export async function upsertFlowTriggerSchedule(flowId: string, data: Record<string, unknown>): Promise<any> {
+  const response = await apiClient.patch<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.triggerSchedule(flowId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function upsertFlowTriggerMail(flowId: string, data: Record<string, unknown>): Promise<any> {
+  const response = await apiClient.patch<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.triggerMail(flowId),
+    data,
+  );
+  return response.data.data;
+}
+
+export async function syncFlowMailSubscription(flowId: string, data: Record<string, unknown>): Promise<any> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.syncMailSubscription(flowId),
+    data,
   );
   return response.data.data;
 }

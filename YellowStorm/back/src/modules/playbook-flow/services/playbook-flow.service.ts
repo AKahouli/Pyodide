@@ -153,4 +153,17 @@ export class PlaybookFlowService {
     }
     await this.flowModel.findByIdAndDelete(flowId);
   }
+
+  async findAllWithTriggerKind(kind: string): Promise<Array<{ id: string; ownerId: string; triggerConfig: any }>> {
+    const flows = await this.flowModel
+      .find({ 'triggerConfig.kind': kind })
+      .select('ownerId triggerConfig')
+      .lean()
+      .exec();
+    return flows.map((f) => ({
+      id: (f as any)._id.toString(),
+      ownerId: f.ownerId,
+      triggerConfig: f.triggerConfig,
+    }));
+  }
 }

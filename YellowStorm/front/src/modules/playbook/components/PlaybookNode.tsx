@@ -29,7 +29,7 @@ import type { Agent } from '@/modules/agent/types';
 import { usePlaybookStore } from '../store';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
-import { migrateTask } from '../utils/migrate-ports';
+import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
 import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
@@ -37,10 +37,12 @@ import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPo
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
   interrupted: 4,
+  pending_approval: 4,
   failed: 3,
   completed: 2,
   skipped: 1,
   pending: 0,
+  queued: 0,
 };
 
 function resolveIteratorChildExecutionStatus(
@@ -125,6 +127,8 @@ const STATUS_RING: Record<StepStatus, string> = {
   failed: 'ring-2 ring-destructive/60',
   skipped: '',
   interrupted: 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10',
+  queued: '',
+  pending_approval: 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10',
 };
 
 const STATUS_HEADER_BG: Record<StepStatus, string> = {
@@ -134,6 +138,8 @@ const STATUS_HEADER_BG: Record<StepStatus, string> = {
   failed: 'bg-destructive/10',
   skipped: '',
   interrupted: 'bg-yellow-500/10',
+  queued: '',
+  pending_approval: 'bg-yellow-500/10',
 };
 
 function getSemanticScoreTone(score: number): {

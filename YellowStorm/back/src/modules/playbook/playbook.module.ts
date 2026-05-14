@@ -57,7 +57,7 @@ import { AdminPlaybookPromptsController } from './controllers/admin-playbook-pro
 import { AdminPlaybookSettingsController } from './controllers/admin-playbook-settings.controller';
 import { AdminPlaybookNodeTemplatesController } from './controllers/admin-playbook-node-templates.controller';
 import { PlaybookNodeTemplatesController } from './controllers/playbook-node-templates.controller';
-import { PlaybookMailWebhookController } from './controllers/playbook-mail-webhook.controller';
+// import { PlaybookMailWebhookController } from './controllers/playbook-mail-webhook.controller';
 
 // Services
 import { PlaybookService } from './services/playbook.service';
@@ -146,7 +146,7 @@ import playbookConfig from './config/playbook.config';
     PlaybookStreamController, // Must be before PlaybookController to avoid route conflict with :id param
     PlaybookController,
     PlaybookNodeAdvisorController,
-    PlaybookMailWebhookController,
+    // PlaybookMailWebhookController,
     PlaybookExecutionController,
     AdminPlaybookPromptsController,
     AdminPlaybookSettingsController,
