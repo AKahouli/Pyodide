@@ -57,8 +57,6 @@ import { AdminPlaybookPromptsController } from './controllers/admin-playbook-pro
 import { AdminPlaybookSettingsController } from './controllers/admin-playbook-settings.controller';
 import { AdminPlaybookNodeTemplatesController } from './controllers/admin-playbook-node-templates.controller';
 import { PlaybookNodeTemplatesController } from './controllers/playbook-node-templates.controller';
-// import { PlaybookMailWebhookController } from './controllers/playbook-mail-webhook.controller';
-
 // Services
 import { PlaybookService } from './services/playbook.service';
 import { PlaybookExecutionService } from './services/playbook-execution.service';
@@ -81,7 +79,6 @@ import { PlaybookMailTriggerOrchestrationService } from './services/playbook-mai
 import { PlaybookMailTriggerHandoffService } from './services/playbook-mail-trigger-handoff.service';
 import { PlaybookMailTriggerTestEventService } from './services/playbook-mail-trigger-test-event.service';
 import { PlaybookMailGraphClientService } from './services/playbook-mail-graph-client.service';
-import { PlaybookMailWebhookService } from './services/playbook-mail-webhook.service';
 import { PlaybookMailSubscriptionRenewalService } from './services/playbook-mail-subscription-renewal.service';
 import { PlaybookExecutionGraphService } from './services/playbook-execution-graph.service';
 import { PlaybookExecutionNotificationService } from './services/playbook-execution-notification.service';
@@ -146,7 +143,6 @@ import playbookConfig from './config/playbook.config';
     PlaybookStreamController, // Must be before PlaybookController to avoid route conflict with :id param
     PlaybookController,
     PlaybookNodeAdvisorController,
-    // PlaybookMailWebhookController,
     PlaybookExecutionController,
     AdminPlaybookPromptsController,
     AdminPlaybookSettingsController,
@@ -175,7 +171,6 @@ import playbookConfig from './config/playbook.config';
     PlaybookMailTriggerHandoffService,
     PlaybookMailTriggerTestEventService,
     PlaybookMailGraphClientService,
-    PlaybookMailWebhookService,
     PlaybookMailSubscriptionRenewalService,
     PlaybookExecutionGraphService,
     PlaybookExecutionNotificationService,

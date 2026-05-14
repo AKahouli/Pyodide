@@ -3623,6 +3623,138 @@ export const usePlaybookStore = create<PlaybookStore>()(
         return key;
       },
 
+      // ===== Flow Evaluation/Repeatability/Trigger Actions (Phase 5) =====
+
+      fetchFlowEvaluationExecutions: async (flowId: string, taskId?: string) => {
+        try {
+          return await api.getFlowEvaluationExecutions(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowEvaluationBaseline: async (flowId: string, taskId: string) => {
+        try {
+          const baseline = await api.getFlowEvaluationBaseline(flowId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createFlowEvaluationBaseline: async (flowId: string, taskId: string, executionId: string, iteration?: number) => {
+        try {
+          const baseline = await api.createFlowEvaluationBaselineFromExecution(flowId, taskId, executionId, iteration);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      createFlowEvaluationBaselineFromCurrentExecution: async (flowId: string, taskId: string, executionId: string, evaluationExecutionId: string, iteration?: number) => {
+        try {
+          const baseline = await api.createFlowEvaluationBaselineFromCurrentExecution(flowId, taskId, executionId, evaluationExecutionId, iteration);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: baseline,
+            },
+          }));
+          return baseline;
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      deleteFlowEvaluationBaseline: async (flowId: string, taskId: string) => {
+        try {
+          await api.deleteFlowEvaluationBaseline(flowId, taskId);
+          set((state) => ({
+            evaluationBaselinesByTask: {
+              ...state.evaluationBaselinesByTask,
+              [taskId]: null,
+            },
+          }));
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowRepeatability: async (flowId: string) => {
+        set({ repeatabilityLoading: true });
+        try {
+          const result = await api.getFlowRepeatability(flowId);
+          set({ repeatability: result, repeatabilityLoading: false });
+          return result;
+        } catch (err) {
+          set({ repeatabilityLoading: false });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowTaskRepeatability: async (flowId: string, taskId: string) => {
+        try {
+          return await api.getFlowTaskRepeatability(flowId, taskId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      fetchFlowTriggers: async (flowId: string) => {
+        try {
+          return await api.getFlowTriggers(flowId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      upsertFlowTriggerSchedule: async (flowId: string, data: Record<string, unknown>) => {
+        try {
+          return await api.upsertFlowTriggerSchedule(flowId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      upsertFlowTriggerMail: async (flowId: string, data: Record<string, unknown>) => {
+        try {
+          return await api.upsertFlowTriggerMail(flowId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
+      syncFlowMailSubscription: async (flowId: string, data: Record<string, unknown>) => {
+        try {
+          return await api.syncFlowMailSubscription(flowId, data);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       // ===== Cleanup =====
 
       reset: () => set(initialState),

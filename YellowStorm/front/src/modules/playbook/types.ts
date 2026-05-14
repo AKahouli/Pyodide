@@ -1667,6 +1667,19 @@ export interface PlaybookActions {
   fetchFlowNodeKinds: () => Promise<void>;
   invalidateFlowNodeTemplates: () => void;
   generateIdempotencyKey: (flowId: string) => string;
+
+  // Flow evaluation/repeatability/trigger actions (Phase 5)
+  fetchFlowEvaluationExecutions: (flowId: string, taskId?: string) => Promise<any>;
+  fetchFlowEvaluationBaseline: (flowId: string, taskId: string) => Promise<any>;
+  createFlowEvaluationBaseline: (flowId: string, taskId: string, executionId: string, iteration?: number) => Promise<any>;
+  createFlowEvaluationBaselineFromCurrentExecution: (flowId: string, taskId: string, executionId: string, evaluationExecutionId: string, iteration?: number) => Promise<any>;
+  deleteFlowEvaluationBaseline: (flowId: string, taskId: string) => Promise<void>;
+  fetchFlowRepeatability: (flowId: string) => Promise<any>;
+  fetchFlowTaskRepeatability: (flowId: string, taskId: string) => Promise<any>;
+  fetchFlowTriggers: (flowId: string) => Promise<any>;
+  upsertFlowTriggerSchedule: (flowId: string, data: Record<string, unknown>) => Promise<any>;
+  upsertFlowTriggerMail: (flowId: string, data: Record<string, unknown>) => Promise<any>;
+  syncFlowMailSubscription: (flowId: string, data: Record<string, unknown>) => Promise<any>;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;
