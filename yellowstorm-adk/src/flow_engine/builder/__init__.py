@@ -13,6 +13,7 @@ from structlog import get_logger
 
 from src.flow_engine.builder.sequential import add_sequential_edges
 from src.flow_engine.builder.conditional import add_conditional_edges
+from src.flow_engine.builder.iterator import add_iterator_edges
 from src.flow_engine.builder.guards import inject_iteration_counter, inject_error_routing
 from src.flow_engine.builder.human_approval import configure_human_approval
 from src.flow_engine.nodes.step import run_step
@@ -46,13 +47,14 @@ def compose(
 
     graph = inject_iteration_counter(graph, raw_edges, raw_nodes)
     graph = inject_error_routing(graph, raw_edges, raw_nodes)
+    add_iterator_edges(graph, raw_edges, raw_nodes)
     graph = configure_human_approval(graph, raw_nodes)
 
     recursion_limit = settings.get("recursion_limit", 25)
     compiled = graph.compile(
         checkpointer=checkpointer,
-        interrupt_before=_collect_interrupt_before(raw_nodes),
-        interrupt_after=[],
+        interrupt_before=[],
+        interrupt_after=_collect_interrupt_after(raw_nodes),
     )
     return compiled
 
@@ -82,5 +84,5 @@ def _add_start_edges(graph: StateGraph, raw_edges: list[dict[str, Any]], raw_nod
         logger.info("[builder] Added START edges to entrypoints", count=len(entrypoints))
 
 
-def _collect_interrupt_before(raw_nodes: list[dict[str, Any]]) -> list[str]:
+def _collect_interrupt_after(raw_nodes: list[dict[str, Any]]) -> list[str]:
     return [n["id"] for n in raw_nodes if n.get("kind") == "human_approval"]

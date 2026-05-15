@@ -6,6 +6,7 @@ payload dict for a single node.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 
 from src.flow_engine.bindings import (
@@ -78,16 +79,42 @@ def resolve_node_inputs(
     return resolved
 
 
+_TEMPLATE_VAR_RE = re.compile(r"\{\{\s*([\w.]+)\s*\}\}")
+
+
 def _resolve_expression(expression: str, state: ExecutionState) -> Optional[str]:
+    context: dict[str, Any] = {
+        "inputs": state.get("inputs", {}),
+        "iterations": state.get("iterations", {}),
+        "router_decisions": state.get("router_decisions", {}),
+        "task_outputs": _flatten_task_outputs(state.get("task_outputs", {})),
+        "execution_id": state.get("execution_id", ""),
+        "flow_id": state.get("flow_id", ""),
+    }
+
+    def _replacer(match: re.Match[str]) -> str:
+        path = match.group(1)
+        parts = path.split(".")
+        current: Any = context
+        for part in parts:
+            if isinstance(current, dict):
+                current = current.get(part)
+            else:
+                current = None
+                break
+        return str(current) if current is not None else ""
+
     try:
-        safe_globals: dict[str, Any] = {}
-        safe_locals: dict[str, Any] = {
-            "state": dict(state),
-            "inputs": state.get("inputs", {}),
-            "iterations": state.get("iterations", {}),
-            "router_decisions": state.get("router_decisions", {}),
-        }
-        result = eval(expression, safe_globals, safe_locals)
-        return str(result) if result is not None else None
+        result = _TEMPLATE_VAR_RE.sub(_replacer, expression)
+        return result if result else None
     except Exception:
         return None
+
+
+def _flatten_task_outputs(task_outputs: dict[tuple[str, int], Any]) -> dict[str, Any]:
+    flat: dict[str, Any] = {}
+    for (node_id, iteration), value in task_outputs.items():
+        entry = flat.setdefault(node_id, {})
+        if isinstance(entry, dict):
+            entry[str(iteration)] = value
+    return flat
