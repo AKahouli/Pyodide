@@ -1,17 +1,16 @@
 import { useEffect, useState, useMemo } from 'react';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { PlaybookStatusBadge } from './PlaybookStatusBadge';
 import { StepComponents } from './StepComponents';
-import { usePlaybookStore, useCurrentPlaybook, useCurrentPlaybookLoading } from '../store';
+import { usePlaybookStore, useCurrentPlaybook, useCurrentPlaybookLoading, useExecutionHistoryForPlaybook } from '../store';
 import * as api from '../api';
 import type { PlaybookExecution, TaskResult } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 
 function formatDuration(ms: number | null): string {
-  if (ms === null) return '-';
+  if (ms == null || Number.isNaN(ms)) return '-';
   if (ms < 1000) return `${ms}ms`;
   const seconds = Math.floor(ms / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -30,6 +29,31 @@ function formatTokens(n: number | null | undefined): string {
   return n.toLocaleString();
 }
 
+function getRouteStateFromHash(): { id: string | null; executionA: string | null; executionB: string | null } {
+  if (typeof window === 'undefined') {
+    return { id: null, executionA: null, executionB: null };
+  }
+
+  const [, hash = ''] = window.location.href.split('#');
+  const [pathPart = '', queryString = ''] = hash.split('?');
+  const segments = pathPart.split('/').filter(Boolean);
+  const params = new URLSearchParams(queryString);
+
+  return {
+    id: segments[0] === 'playbooks' && segments[1] ? segments[1] : null,
+    executionA: params.get('a'),
+    executionB: params.get('b'),
+  };
+}
+
+function navigateToHash(path: string): void {
+  window.location.hash = path;
+}
+
+function isObjectIdLike(value: string | null): value is string {
+  return Boolean(value && /^[a-f\d]{24}$/i.test(value));
+}
+
 /** Color-coded diff indicator for a numeric value */
 function DiffIndicator({ left, right, lowerIsBetter = true }: { left: number | null; right: number | null; lowerIsBetter?: boolean }) {
   if (left === null || right === null) return null;
@@ -45,17 +69,15 @@ function DiffIndicator({ left, right, lowerIsBetter = true }: { left: number | n
 }
 
 export function PlaybookExecutionComparePage() {
-  const { id } = useParams<{ id: string }>();
-  const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
+  const { id, executionA: execIdA, executionB: execIdB } = getRouteStateFromHash();
   const { t } = useModuleTranslation('playbook');
+  const hasValidExecutionIds = isObjectIdLike(execIdA) && isObjectIdLike(execIdB);
 
   const playbook = useCurrentPlaybook();
   const playbookLoading = useCurrentPlaybookLoading();
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
-
-  const execIdA = searchParams.get('a');
-  const execIdB = searchParams.get('b');
+  const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
+  const executionHistory = useExecutionHistoryForPlaybook(id ?? undefined);
 
   const [execA, setExecA] = useState<PlaybookExecution | null>(null);
   const [execB, setExecB] = useState<PlaybookExecution | null>(null);
@@ -63,23 +85,44 @@ export function PlaybookExecutionComparePage() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   useEffect(() => {
-    if (id) fetchPlaybook(id);
-  }, [id, fetchPlaybook]);
+    if (!id) return;
+    fetchPlaybook(id);
+    fetchExecutions(id);
+  }, [id, fetchPlaybook, fetchExecutions]);
+
+  const summarizeExecution = (execution: PlaybookExecution): PlaybookExecution => {
+    const summary = executionHistory.find((candidate) => candidate.id === execution.id);
+    if (!summary) return execution;
+
+    return {
+      ...execution,
+      executionNumber: summary.executionNumber,
+      executionTrigger: summary.executionTrigger,
+      durationMs: summary.durationMs ?? execution.durationMs,
+      startedAt: summary.startedAt ?? execution.startedAt,
+      completedAt: summary.completedAt ?? execution.completedAt,
+    };
+  };
 
   useEffect(() => {
-    if (!id || !execIdA || !execIdB) return;
+    if (!id || !hasValidExecutionIds) {
+      setLoading(false);
+      setExecA(null);
+      setExecB(null);
+      return;
+    }
     setLoading(true);
     Promise.all([
       api.getExecution(id, execIdA),
       api.getExecution(id, execIdB),
     ]).then(([a, b]) => {
-      setExecA(a);
-      setExecB(b);
+      setExecA(summarizeExecution(a));
+      setExecB(summarizeExecution(b));
       setLoading(false);
     }).catch(() => {
       setLoading(false);
     });
-  }, [id, execIdA, execIdB]);
+  }, [executionHistory, hasValidExecutionIds, id, execIdA, execIdB]);
 
   // Merge task lists from both executions to get a unified step list
   const unifiedSteps = useMemo(() => {
@@ -120,11 +163,19 @@ export function PlaybookExecutionComparePage() {
     );
   }
 
+  if (!hasValidExecutionIds) {
+    return (
+      <div className="flex items-center justify-center h-full text-muted-foreground">
+        {t('compare.loadError')}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full w-full">
       {/* Header */}
       <div className="flex items-center gap-2 px-4 py-2 border-b bg-background">
-        <Button variant="ghost" size="icon" onClick={() => navigate(`/playbooks/${id}/executions`)}>
+        <Button variant="ghost" size="icon" onClick={() => navigateToHash(`/playbooks/${id}/executions`)}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="text-lg font-semibold">

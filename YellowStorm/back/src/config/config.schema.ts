@@ -155,7 +155,7 @@ export const configValidationSchema = Joi.object({
   PLAYBOOK_PROMPT_REWRITE_SYSTEM_PROMPT: Joi.string().optional(),
 
   // Playbook Flow
-  PLAYBOOK_FLOW_GRPC_URL: Joi.string().default('localhost:50052'),
+  PLAYBOOK_FLOW_GRPC_URL: Joi.string().default('localhost:50051'),
   PLAYBOOK_FLOW_GRPC_TIMEOUT_MS: Joi.number().min(5000).max(600000).default(300000),
   PLAYBOOK_MAX_CONCURRENT_PER_USER: Joi.number().min(1).max(20).default(3),
   PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH: Joi.number().min(1).max(500).default(50),

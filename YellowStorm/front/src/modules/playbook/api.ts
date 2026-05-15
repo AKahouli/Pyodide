@@ -319,6 +319,113 @@ function normalizePlaybook(raw: any): Playbook {
   } as Playbook;
 }
 
+function toNullableString(value: unknown): string | null {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return null;
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value, null, 2); } catch { return null; }
+  }
+  return null;
+}
+
+function toNullableNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function computeDurationMs(startedAt: string | null, completedAt: string | null): number | null {
+  if (!startedAt || !completedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(completedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+function deriveExecutionNumber(
+  index: number,
+  pagination?: PaginatedResponse<PlaybookExecutionSummary>['pagination'],
+): number {
+  if (!pagination) return index + 1;
+  const offset = (pagination.page - 1) * pagination.limit;
+  return Math.max(1, pagination.total - offset - index);
+}
+
+function normalizeTaskResult(raw: any, index: number): import('./types').TaskResult {
+  const startedAt = toNullableString(raw.startedAt);
+  const completedAt = toNullableString(raw.completedAt ?? raw.endedAt);
+
+  return {
+    taskId: toNullableString(raw.taskId) ?? `task-${index + 1}`,
+    nodeTitle: toNullableString(raw.nodeTitle) ?? toNullableString(raw.taskTitle) ?? toNullableString(raw.taskId) ?? '',
+    agentName: toNullableString(raw.agentName) ?? '',
+    order: typeof raw.order === 'number' ? raw.order : index + 1,
+    status: raw.status ?? 'pending',
+    output: toNullableString(raw.output),
+    error: toNullableString(raw.error),
+    durationMs: toNullableNumber(raw.durationMs) ?? computeDurationMs(startedAt, completedAt),
+    startedAt,
+    completedAt,
+    components: Array.isArray(raw.components) ? raw.components : [],
+    toolTrace: Array.isArray(raw.toolTrace) ? raw.toolTrace : [],
+    llmPromptTrace: Array.isArray(raw.llmPromptTrace) ? raw.llmPromptTrace : [],
+    inputTokens: toNullableNumber(raw.inputTokens),
+    outputTokens: toNullableNumber(raw.outputTokens),
+    totalTokens: toNullableNumber(raw.totalTokens),
+    modelName: toNullableString(raw.modelName),
+    artifacts: Array.isArray(raw.artifacts) ? raw.artifacts : [],
+    iteratorIterations: Array.isArray(raw.iteratorIterations) ? raw.iteratorIterations : [],
+  };
+}
+
+function normalizeExecutionSummary(
+  raw: any,
+  index = 0,
+  pagination?: PaginatedResponse<PlaybookExecutionSummary>['pagination'],
+): PlaybookExecutionSummary {
+  const startedAt = toNullableString(raw.startedAt ?? raw.createdAt);
+  const completedAt = toNullableString(raw.completedAt ?? raw.endedAt);
+
+  return {
+    id: toNullableString(raw.id ?? raw._id) ?? '',
+    playbookId: toNullableString(raw.playbookId ?? raw.flowId) ?? '',
+    executedBy: toNullableString(raw.executedBy ?? raw.ownerId) ?? '',
+    executionNumber: typeof raw.executionNumber === 'number' ? raw.executionNumber : deriveExecutionNumber(index, pagination),
+    currentAttemptNumber: typeof raw.currentAttemptNumber === 'number' ? raw.currentAttemptNumber : undefined,
+    status: raw.status ?? 'queued',
+    executionTrigger: raw.executionTrigger === 'scheduled' ? 'scheduled' : 'manual',
+    error: toNullableString(raw.error),
+    durationMs: toNullableNumber(raw.durationMs) ?? computeDurationMs(startedAt, completedAt),
+    startedAt,
+    completedAt,
+    singleStepTaskId: toNullableString(raw.singleStepTaskId),
+    createdAt: toNullableString(raw.createdAt) ?? startedAt ?? '',
+    updatedAt: toNullableString(raw.updatedAt) ?? completedAt ?? startedAt ?? '',
+  };
+}
+
+function normalizeExecution(raw: any): PlaybookExecution {
+  const summary = normalizeExecutionSummary(raw);
+
+  return {
+    ...summary,
+    taskResults: Array.isArray(raw.taskResults) ? raw.taskResults.map(normalizeTaskResult) : [],
+    threadId: toNullableString(raw.threadId),
+    interruptPayload: raw.interruptPayload ?? null,
+    waitingForHumanInput: Boolean(raw.waitingForHumanInput ?? raw.pendingApproval),
+    currentInterruptId: toNullableString(raw.currentInterruptId),
+    currentInterruptTaskId: toNullableString(raw.currentInterruptTaskId ?? raw.pendingApproval?.nodeId),
+    hitlHistory: Array.isArray(raw.hitlHistory) ? raw.hitlHistory : [],
+    playbookSnapshot: raw.playbookSnapshot ?? null,
+    totalInputTokens: toNullableNumber(raw.totalInputTokens) ?? 0,
+    totalOutputTokens: toNullableNumber(raw.totalOutputTokens) ?? 0,
+    totalTokens: toNullableNumber(raw.totalTokens) ?? 0,
+    queuePosition: toNullableNumber(raw.queuePosition),
+    totalQueueSize: toNullableNumber(raw.totalQueueSize),
+    recursionBudgetUsed: toNullableNumber(raw.recursionBudgetUsed),
+    recursionBudgetMax: toNullableNumber(raw.recursionBudgetMax) ?? toNullableNumber(raw.recursionLimit),
+    error: summary.error,
+  };
+}
+
 function nodeTypeToKind(nodeType?: PlaybookNodeType | null): string {
   switch (nodeType) {
     case 'action':
@@ -871,19 +978,24 @@ export async function getExecutions(
   query?: Record<string, unknown>,
 ): Promise<{ executions: PlaybookExecutionSummary[]; pagination: PaginatedResponse<PlaybookExecutionSummary>['pagination'] }> {
   const response = await apiClient.get<
-    ApiResponse<{ executions: PlaybookExecutionSummary[]; pagination: PaginatedResponse<PlaybookExecutionSummary>['pagination'] }>
+    ApiResponse<{ items?: any[]; executions?: any[]; pagination: PaginatedResponse<PlaybookExecutionSummary>['pagination'] }>
   >(API_ENDPOINTS.playbooks.executions(playbookId), { params: query });
-  return response.data.data;
+  const items = response.data.data.items ?? response.data.data.executions ?? [];
+  const { pagination } = response.data.data;
+  return {
+    executions: items.map((item, index) => normalizeExecutionSummary(item, index, pagination)),
+    pagination,
+  };
 }
 
 export async function getExecution(
   _playbookId: string,
   executionId: string,
 ): Promise<PlaybookExecution> {
-  const response = await apiClient.get<ApiResponse<PlaybookExecution>>(
+  const response = await apiClient.get<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.executionDetail(executionId),
   );
-  return response.data.data;
+  return normalizeExecution(response.data.data);
 }
 
 export async function deleteExecution(
@@ -929,10 +1041,10 @@ export async function bulkDeletePlaybooks(ids: string[]): Promise<{ deleted: num
 }
 
 export async function getActiveExecutions(): Promise<PlaybookExecution[]> {
-  const response = await apiClient.get<ApiResponse<PlaybookExecution[]>>(
+  const response = await apiClient.get<ApiResponse<any[]>>(
     API_ENDPOINTS.playbooks.activeExecutions,
   );
-  return response.data.data;
+  return Array.isArray(response.data.data) ? response.data.data.map(normalizeExecution) : [];
 }
 
 export async function upsertPlaybookTriggerSchedule(

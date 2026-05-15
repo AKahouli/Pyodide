@@ -3086,7 +3086,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const result = await api.getExecutions(playbookId);
           const executions = result.executions.slice(0, MAX_EXECUTION_HISTORY);
           set((state) => ({
-            executionHistory: state.currentPlaybook?.id === playbookId ? executions : state.executionHistory,
+            executionHistory: executions,
             executionHistoryByPlaybook: {
               ...state.executionHistoryByPlaybook,
               [playbookId]: executions,
@@ -3122,12 +3122,24 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
         try {
           const apiExecution = await api.getExecution(playbookId, execId);
+          const summary = get().executionHistoryByPlaybook[playbookId]?.find((execution) => execution.id === execId)
+            ?? get().executionHistory.find((execution) => execution.id === execId);
+          const normalizedExecution = summary
+            ? {
+                ...apiExecution,
+                executionNumber: summary.executionNumber,
+                executionTrigger: summary.executionTrigger,
+                durationMs: summary.durationMs ?? apiExecution.durationMs,
+                startedAt: summary.startedAt ?? apiExecution.startedAt,
+                completedAt: summary.completedAt ?? apiExecution.completedAt,
+              }
+            : apiExecution;
           // Smart merge: for each task result, keep the version with the more advanced status
           const latestCached = get().executionCache[execId];
-          let merged = apiExecution;
+          let merged = normalizedExecution;
           if (latestCached) {
             const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [tr.taskId, tr]));
-            const mergedTaskResults = apiExecution.taskResults.map((apiTr) => {
+            const mergedTaskResults = normalizedExecution.taskResults.map((apiTr) => {
               const cachedTr = cachedResultMap.get(apiTr.taskId);
               if (cachedTr && shouldKeepCachedTaskResult(cachedTr, apiTr)) {
                 return cachedTr;
@@ -3146,13 +3158,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
             // Use the more advanced execution-level status
             const mergedStatus = shouldKeepRunningExecution(latestCached, apiExecution)
               ? latestCached.status
-              : isNewerStatus(latestCached.status, apiExecution.status)
-                ? latestCached.status : apiExecution.status;
+              : isNewerStatus(latestCached.status, normalizedExecution.status)
+                ? latestCached.status : normalizedExecution.status;
             merged = {
-              ...apiExecution,
+              ...normalizedExecution,
               taskResults: mergedTaskResults,
               status: mergedStatus,
-              interruptPayload: latestCached.interruptPayload || apiExecution.interruptPayload,
+              interruptPayload: latestCached.interruptPayload || normalizedExecution.interruptPayload,
             };
           }
 

@@ -390,10 +390,6 @@ function PlaybookCanvasInner() {
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
   const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
-  const [dataLayer, setDataLayer] = useState<'legacy' | 'flow'>(() => {
-    const stored = localStorage.getItem('playbook-data-layer');
-    return stored === 'flow' ? 'flow' : 'legacy';
-  });
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
   const defaultAgents = useDefaultAgents();
@@ -2491,8 +2487,6 @@ function PlaybookCanvasInner() {
                 },
               });
             }}
-            dataLayer={dataLayer}
-            onDataLayerChange={setDataLayer}
             onOpenFlowSettings={() => setFlowSettingsOpen(true)}
           />
         </div>

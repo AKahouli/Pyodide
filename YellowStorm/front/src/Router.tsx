@@ -9,6 +9,8 @@ import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from 
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
 import { UpgradePage } from './modules/usage';
 import { RootGuard } from './modules/auth/components/RootGuard';
+import { PlaybookExecutionListPage as PlaybookExecutionListRoute } from './modules/playbook/components/PlaybookExecutionListPage';
+import { PlaybookExecutionComparePage as PlaybookExecutionCompareRoute } from './modules/playbook/components/PlaybookExecutionComparePage';
 
 // Lazy-loaded connected apps
 const ConnectedAppsPage = React.lazy(() => import('./modules/connected-app/components/ConnectedAppsPage').then((m) => ({ default: m.ConnectedAppsPage })));
@@ -22,12 +24,6 @@ const PlaybookCanvasPage = React.lazy(() =>
 );
 const PlaybookExecutionPage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookExecutionPage").then((m) => ({ default: m.PlaybookExecutionPage }))
-);
-const PlaybookExecutionListPage = React.lazy(() =>
-  import("./modules/playbook/components/PlaybookExecutionListPage").then((m) => ({ default: m.PlaybookExecutionListPage }))
-);
-const PlaybookExecutionComparePage = React.lazy(() =>
-  import("./modules/playbook/components/PlaybookExecutionComparePage").then((m) => ({ default: m.PlaybookExecutionComparePage }))
 );
 import {
   AdminGuard,
@@ -111,16 +107,16 @@ export const router = createHashRouter([
       {
         path: 'playbooks/:id/executions',
         element: (
-          <Suspense fallback={null}>
-            <PlaybookExecutionListPage />
+            <Suspense fallback={null}>
+            <PlaybookExecutionListRoute />
           </Suspense>
         ),
       },
       {
         path: 'playbooks/:id/executions/compare',
         element: (
-          <Suspense fallback={null}>
-            <PlaybookExecutionComparePage />
+            <Suspense fallback={null}>
+            <PlaybookExecutionCompareRoute />
           </Suspense>
         ),
       },

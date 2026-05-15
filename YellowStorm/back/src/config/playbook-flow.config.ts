@@ -1,7 +1,7 @@
 import { registerAs } from '@nestjs/config';
 
 export default registerAs('playbook-flow', () => ({
-  grpcUrl: process.env.PLAYBOOK_FLOW_GRPC_URL || 'localhost:50052',
+  grpcUrl: process.env.PLAYBOOK_FLOW_GRPC_URL || 'localhost:50051',
   grpcTimeoutMs: parseInt(process.env.PLAYBOOK_FLOW_GRPC_TIMEOUT_MS || '300000', 10),
   maxConcurrentPerUser: parseInt(process.env.PLAYBOOK_MAX_CONCURRENT_PER_USER || '3', 10),
   executionQueueMaxDepth: parseInt(process.env.PLAYBOOK_EXECUTION_QUEUE_MAX_DEPTH || '50', 10),

@@ -946,7 +946,7 @@ export function ExecutionStepDetail({
             </div>
           )}
           <div className="mb-2 flex flex-wrap items-center gap-2">
-            <h2 className="text-lg font-semibold">{step.nodeTitle}</h2>
+            <h2 className="text-lg font-semibold">{currentTask?.title || step.nodeTitle}</h2>
             {showReplayBadge && (
               <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/30 bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                 {isReplayBadgeBusy && <Loader2 className="h-3 w-3 animate-spin" />}
