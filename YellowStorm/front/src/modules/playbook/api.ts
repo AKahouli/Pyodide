@@ -230,29 +230,56 @@ function kindToNodeType(kind: string): PlaybookNodeType | undefined {
 }
 
 function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask {
+  const meta = (node.metadata ?? {}) as Record<string, unknown>;
+  const inputPorts = node.input?.ports?.map((p) => ({
+    id: p.id,
+    name: p.label ?? p.id,
+    artifactKind: (p.type ?? 'text') as any,
+    required: p.required ?? false,
+  }));
+  const outputPorts = node.output?.ports?.map((p) => ({
+    id: p.id,
+    name: p.label ?? p.id,
+    artifactKind: (p.type ?? 'text') as any,
+  }));
   return {
     id: node.id,
     title: node.label ?? '',
-    description: '',
-    assignedAgentId: null,
-    executionOrder: index,
-    positionX: 0,
-    positionY: 0,
-    interruptBefore: false,
-    interruptAfter: false,
-    allowClarification: false,
-    clarificationPrompt: '',
-    maxClarifications: 0,
-    inputKeys: [],
-    outputKey: '',
-    enabled: true,
-    notifyOnComplete: false,
-    notifyEmails: [],
-    inputFiles: [],
+    description: (meta.description as string) ?? '',
+    assignedAgentId: (meta.assignedAgentId as string | null) ?? null,
+    executionOrder: (meta.executionOrder as number) ?? index,
+    positionX: (meta.positionX as number) ?? 0,
+    positionY: (meta.positionY as number) ?? 0,
+    interruptBefore: (meta.interruptBefore as boolean) ?? false,
+    interruptAfter: (meta.interruptAfter as boolean) ?? false,
+    allowClarification: (meta.allowClarification as boolean) ?? false,
+    clarificationPrompt: (meta.clarificationPrompt as string) ?? '',
+    maxClarifications: (meta.maxClarifications as number) ?? 0,
+    inputKeys: (meta.inputKeys as string[]) ?? [],
+    outputKey: (meta.outputKey as string) ?? '',
+    enabled: (meta.enabled as boolean) ?? true,
+    notifyOnComplete: (meta.notifyOnComplete as boolean) ?? false,
+    notifyEmails: (meta.notifyEmails as string[]) ?? [],
+    inputFiles: (meta.inputFiles as any[]) ?? [],
+    selectedAction: (meta.selectedAction as any) ?? undefined,
+    executionMode: (meta.executionMode as any) ?? undefined,
+    taskType: (meta.taskType as string) ?? undefined,
+    templateType: (meta.templateType as string) ?? undefined,
+    toolBindings: (meta.toolBindings as any) ?? undefined,
+    evaluationConfig: (meta.evaluationConfig as any) ?? undefined,
+    iteratorLayout: (meta.iteratorLayout as any) ?? undefined,
+    containerConfig: (meta.containerConfig as any) ?? null,
+    expectedResult: (meta.expectedResult as any) ?? undefined,
+    disableAdvisorEvaluation: (meta.disableAdvisorEvaluation as boolean) ?? false,
+    stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
     nodeType: kindToNodeType(node.kind),
-    iteratorConfig: (node as any).iteratorConfig ?? null,
-    routerConfig: (node as any).routerConfig ?? null,
-    humanApprovalConfig: (node as any).humanApprovalConfig ?? null,
+    iteratorConfig: node.iteratorConfig
+      ? { source: node.iteratorConfig.collectionPath, batchSize: node.iteratorConfig.maxItems ?? undefined } as any
+      : (meta.iteratorConfig as any) ?? null,
+    routerConfig: node.routerConfig ?? (meta.routerConfig as any) ?? null,
+    humanApprovalConfig: node.humanApprovalConfig ?? (meta.humanApprovalConfig as any) ?? null,
+    ...(inputPorts ? { inputPorts } : {}),
+    ...(outputPorts ? { outputPorts } : {}),
   };
 }
 
@@ -377,11 +404,14 @@ function taskToFlowNode(task: PlaybookTask): FlowNode {
 }
 
 function edgeToControlEdge(edge: PlaybookEdge): ControlEdge {
+  // An edge from a router node uses the output port id as the label; treat it as conditional.
+  const hasRouterLabel = edge.sourceOutputPortId && edge.sourceOutputPortId !== 'default';
   return {
     id: edge.id,
-    kind: 'sequential' as any,
+    kind: hasRouterLabel ? 'conditional' : 'sequential',
     source: edge.sourceId,
     target: edge.targetId,
+    ...(hasRouterLabel ? { routerLabel: edge.sourceOutputPortId } : {}),
   };
 }
 
@@ -588,7 +618,7 @@ export async function executePlaybook(
   data?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
-    API_ENDPOINTS.playbooks.execute(id),
+    API_ENDPOINTS.playbookFlows.execute(id),
     data || {},
   );
   return response.data.data;
@@ -847,11 +877,11 @@ export async function getExecutions(
 }
 
 export async function getExecution(
-  playbookId: string,
+  _playbookId: string,
   executionId: string,
 ): Promise<PlaybookExecution> {
   const response = await apiClient.get<ApiResponse<PlaybookExecution>>(
-    API_ENDPOINTS.playbooks.execution(playbookId, executionId),
+    API_ENDPOINTS.playbookFlows.executionDetail(executionId),
   );
   return response.data.data;
 }

@@ -30,7 +30,8 @@ export class PlaybookFlowExecutionController {
     @Body() body: any,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.executionService.start(flowId, userId, body.inputContext, idempotencyKey);
+    const execution = await this.executionService.start(flowId, userId, body.inputContext, idempotencyKey);
+    return { executionId: (execution as any).id ?? (execution as any)._id?.toString() };
   }
 
   @Get('playbooks/:flowId/executions')
