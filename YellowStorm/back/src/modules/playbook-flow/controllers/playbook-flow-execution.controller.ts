@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Param, Body, Query, UseGuards, Headers, Req,
+  Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Headers, Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
@@ -95,6 +95,27 @@ export class PlaybookFlowExecutionController {
     @Param('executionId') executionId: string,
   ) {
     return this.replayService.reExecute(executionId, userId);
+  }
+
+  @Delete('executions/:executionId')
+  @ApiOperation({ summary: 'Delete a single execution and its associated records' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async delete(
+    @CurrentUser('_id') userId: string,
+    @Param('executionId') executionId: string,
+  ) {
+    await this.executionService.delete(executionId, userId);
+    return { deleted: true };
+  }
+
+  @Delete('playbooks/:flowId/executions')
+  @ApiOperation({ summary: 'Delete all executions for a flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async deleteAll(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+  ) {
+    return this.executionService.deleteAll(flowId, userId);
   }
 
   @Get('executions/:executionId/router-decisions')

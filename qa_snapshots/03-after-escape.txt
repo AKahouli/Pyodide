@@ -1,0 +1,131 @@
+uid=16_0 RootWebArea "POC" url="http://localhost:5173/#/playbooks/6a05fbb773bafe948eca9f70"
+  uid=26_0 link url="http://localhost:5173/#/"
+  uid=26_1 button "Nouvelle discussion"
+  uid=26_2 button "Projets" disableable disabled
+  uid=26_3 button "Workspace"
+  uid=26_4 button expandable haspopup="menu"
+  uid=26_5 button "Agents"
+  uid=26_6 button expandable haspopup="menu"
+  uid=26_7 button "Playbooks BETA"
+  uid=26_8 button "Applications"
+  uid=26_9 link "Admin" url="http://localhost:5173/#/admin"
+    uid=26_10 StaticText "Admin"
+  uid=26_11 button "Historique" expandable
+  uid=26_12 navigation
+    uid=26_13 button "AG" expandable haspopup="menu"
+  uid=26_14 button "Basculer la barre latérale"
+  uid=16_16 main
+    uid=26_15 button
+    uid=26_16 heading "test123" level="1"
+    uid=26_17 button "Évaluation"
+    uid=26_18 button "Cloner le playbook" description="Cloner le playbook"
+    uid=26_19 button "Partager"
+    uid=26_20 combobox expandable haspopup="dialog" value="playbook"
+    uid=26_21 StaticText "Illimité"
+    uid=26_22 button "Conception"
+    uid=26_23 button "Exécution"
+    uid=26_24 button "Exécutions"
+    uid=26_25 button "Paramètres d'exécution" expandable haspopup="dialog"
+    uid=26_26 button "Enregistré" disableable disabled
+    uid=26_27 button "Exécuter"
+    uid=26_28 group "Edge from 75700c10-6668-4b97-a114-3506f751369f to 36e26d2b-92b3-4137-bcf3-e93eae52c59a" description="Press enter or space to select an edge. You can then press delete to remove it or escape to cancel." roledescription="edge"
+    uid=26_29 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=26_30 StaticText "Input"
+      uid=26_31 StaticText "Output"
+      uid=26_32 StaticText "1"
+      uid=26_33 StaticText "Step 2"
+      uid=26_34 button
+      uid=26_35 StaticText "Terminé"
+      uid=26_36 button "LLM Agent"
+      uid=26_37 StaticText "hi"
+      uid=26_38 button
+      uid=26_39 button
+      uid=26_40 button
+      uid=26_41 button
+      uid=26_42 button
+      uid=26_43 button
+    uid=26_44 group description="Press enter or space to select a node. You can then use the arrow keys to move the node around. Press delete to remove it and escape to cancel." roledescription="node"
+      uid=26_45 StaticText "Input"
+      uid=26_46 StaticText "Output"
+      uid=26_47 StaticText "2"
+      uid=26_48 StaticText "Step 2 (copy)"
+      uid=26_49 button
+      uid=26_50 StaticText "Terminé"
+      uid=26_51 button "LLM Agent"
+      uid=26_52 StaticText "tell me more about ifrs"
+      uid=26_53 button
+      uid=26_54 button
+      uid=26_55 button
+      uid=26_56 button
+      uid=26_57 button
+      uid=26_58 button
+    uid=26_59 button "Zoom In" description="Zoom In"
+    uid=26_60 button "Zoom Out" description="Zoom Out"
+    uid=26_61 button "Fit View" description="Fit View"
+    uid=26_62 button "Toggle Interactivity" description="Toggle Interactivity"
+    uid=24_35 generic atomic live="assertive" relevant="additions text"
+    uid=26_63 button "Assistant IA du workflow"
+    uid=26_64 button "Réduire la barre d'intention"
+    uid=26_65 textbox "Améliorer ou prolonger "Step 2 (copy)"" multiline
+    uid=26_66 switch "Application auto" checked
+    uid=26_67 StaticText "Application auto"
+    uid=26_68 button "Suggestions récentes" description="Suggestions récentes" disableable disabled expandable
+    uid=26_69 button "Suggérer" disableable disabled
+    uid=26_70 StaticText "OUTILS CANVAS"
+    uid=26_71 button "Déplacer la barre d'outils du canvas" description="Déplacer la barre d'outils du canvas"
+    uid=26_72 button "Replier la barre d'outils du canvas" description="Replier la barre d'outils du canvas"
+    uid=26_73 button "Étape vide"
+    uid=26_74 button "Tâches" expandable haspopup="menu"
+    uid=26_75 button "Annuler" disableable disabled
+    uid=26_76 button "Rétablir" disableable disabled
+    uid=26_77 button "Disposition auto"
+    uid=26_78 button "Afficher l'explorateur"
+    uid=26_79 button "Afficher les connecteurs"
+    uid=26_80 button "Télécharger tous les résultats"
+    uid=26_81 button "Designer"
+    uid=26_82 button "Supprimer toutes les étapes"
+    uid=26_83 heading "Assistant Designer" level="3"
+    uid=26_84 button
+    uid=26_85 StaticText "Demandez à l'IA de modifier votre playbook"
+    uid=26_86 StaticText "Décrivez les modifications souhaitées pour ce workflow."
+    uid=26_87 textbox "Décrivez vos modifications..."
+    uid=26_88 button disableable disabled
+    uid=26_89 StaticText "Exécution"
+    uid=26_90 StaticText "Terminé"
+    uid=26_91 StaticText "10s"
+    uid=26_92 button "Comparer"
+    uid=26_93 button "#1" expandable haspopup="menu"
+    uid=26_94 button "Collapse sidebar" description="Collapse sidebar"
+    uid=26_95 heading "Étapes" level="3"
+    uid=26_96 button "Step 1"
+    uid=26_97 button "Step 2"
+    uid=26_98 heading "Step 2 (copy)" level="2"
+    uid=26_99 StaticText "Mode de l'étape :"
+    uid=26_100 combobox expandable haspopup="listbox" value="Live"
+    uid=26_101 StaticText "(pas de baseline)"
+    uid=26_102 StaticText "Exécutions de l'étape"
+    uid=26_103 button "Tentative - | 15/05/2026 19:26:45" expandable haspopup="menu"
+    uid=26_104 button "Actions" expandable focusable focused haspopup="menu"
+    uid=26_105 StaticText "Début"
+    uid=26_106 StaticText ": "
+    uid=26_107 StaticText "19:26:44"
+    uid=26_108 StaticText "Terminé"
+    uid=26_109 StaticText ": "
+    uid=26_110 StaticText "19:26:45"
+    uid=26_111 StaticText "Durée"
+    uid=26_112 StaticText ": "
+    uid=26_113 StaticText "1.0s"
+    uid=26_114 button "Ré-exécuter"
+    uid=26_115 StaticText "Exécuter cette étape en direct"
+    uid=26_116 tablist orientation="horizontal"
+      uid=26_117 tab "Résultats" selectable selected
+      uid=26_118 tab "Évaluation replay" selectable
+      uid=26_119 tab "Advisor" selectable
+      uid=26_120 tab "Traces" selectable
+    uid=26_121 tabpanel "Résultats"
+      uid=26_122 button "Télécharger en HTML"
+      uid=26_123 button "Télécharger en PDF"
+      uid=26_124 button "Copier dans le presse-papiers"
+      uid=26_125 StaticText "{"output":"Step 2 copied.","iteration":0,"node_id":"36e26d2b-92b3-4137-bcf3-e93eae52c59a"}"
+  uid=26_126 button "Changer le thème" expandable haspopup="menu"
+  uid=16_33 region "Notifications alt+T" live="polite" relevant="additions text"

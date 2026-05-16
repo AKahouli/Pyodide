@@ -7,6 +7,8 @@ import { makePlaybook, makeTask } from '../test-utils';
 const storeFns = vi.hoisted(() => ({
   updateTasks: vi.fn(),
   updateEdges: vi.fn(),
+  updateControlEdges: vi.fn(),
+  updateDataBindings: vi.fn(),
   captureSnapshot: vi.fn(),
   selectStep: vi.fn(),
   canvasSyncVersion: 0,
@@ -155,13 +157,12 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateControlEdges).toHaveBeenLastCalledWith([
       {
         id: 'e-__trigger__-mail_data-task-1-default',
-        sourceId: '__trigger__',
-        targetId: 'task-1',
-        sourceOutputPortId: 'mail_data',
-        targetInputPortId: 'default',
+        kind: 'sequential',
+        source: '__trigger__',
+        target: 'task-1',
       },
     ]);
   });
@@ -174,7 +175,7 @@ describe('usePlaybookCanvas', () => {
     });
 
     act(() => vi.runAllTimers());
-    expect(storeFns.updateEdges).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateControlEdges).toHaveBeenCalledTimes(1);
   });
 
   it('syncs node positions to store on node drag stop', () => {
@@ -294,20 +295,18 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateControlEdges).toHaveBeenLastCalledWith([
       {
         id: 'e-task-1-out-1-task-2-in-1',
-        sourceId: 'task-1',
-        targetId: 'task-2',
-        sourceOutputPortId: 'out-1',
-        targetInputPortId: 'in-1',
+        kind: 'sequential',
+        source: 'task-1',
+        target: 'task-2',
       },
       {
         id: 'e-task-1-out-2-task-2-in-2',
-        sourceId: 'task-1',
-        targetId: 'task-2',
-        sourceOutputPortId: 'out-2',
-        targetInputPortId: 'in-2',
+        kind: 'sequential',
+        source: 'task-1',
+        target: 'task-2',
       },
     ]);
   });
@@ -346,13 +345,12 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateControlEdges).toHaveBeenLastCalledWith([
       {
         id: 'e-iterator-1-results-task-2-metrics',
-        sourceId: 'iterator-1',
-        targetId: 'task-2',
-        sourceOutputPortId: 'results',
-        targetInputPortId: 'metrics',
+        kind: 'sequential',
+        source: 'iterator-1',
+        target: 'task-2',
       },
     ]);
   });
@@ -366,7 +364,7 @@ describe('usePlaybookCanvas', () => {
     act(() => vi.runAllTimers());
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
-    expect(storeFns.updateEdges).toHaveBeenCalled();
+    expect(storeFns.updateControlEdges).toHaveBeenCalled();
   });
 
   it('delegates trigger node deletion to triggerActions.onDelete', () => {

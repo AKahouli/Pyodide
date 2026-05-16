@@ -42,6 +42,7 @@ vi.mock('@/modules/auth', () => ({
 vi.mock('../store', () => ({
   usePlaybookStore: (selector: (state: Record<string, unknown>) => unknown) =>
     selector(storeState),
+  useCurrentPlaybook: () => storeState.currentPlaybook,
 }));
 
 vi.mock('@/components/ui/sheet', () => ({

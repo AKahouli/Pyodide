@@ -11,13 +11,12 @@ const apiMock = vi.hoisted(() => ({
   deletePlaybook: vi.fn(),
   clonePlaybook: vi.fn(),
   executePlaybook: vi.fn(),
-  stopPlaybook: vi.fn(),
-  resumePlaybook: vi.fn(),
-  resumePlaybookFromStep: vi.fn(),
-  rerunPlaybookStep: vi.fn(),
+  cancelFlowExecution: vi.fn(),
+  resumeFlowApproval: vi.fn(),
+  deleteExecution: vi.fn(),
+  deleteAllExecutions: vi.fn(),
   getExecutions: vi.fn(),
   getExecution: vi.fn(),
-  deleteAllExecutions: vi.fn(),
   toggleFavorite: vi.fn(),
   bulkDeletePlaybooks: vi.fn(),
   getDesignMessages: vi.fn(),
@@ -549,7 +548,6 @@ describe('playbook store', () => {
   });
 
   it('resumes execution with interrupt id and clears waiting state optimistically', async () => {
-    apiMock.resumePlaybook.mockResolvedValueOnce({ status: 'resumed' });
     const execution = makeExecution({
       id: 'e1',
       playbookId: 'p1',
@@ -584,13 +582,15 @@ describe('playbook store', () => {
       message: 'Here you go',
     });
 
-    expect(apiMock.resumePlaybook).toHaveBeenCalledWith('p1', expect.objectContaining({
-      executionId: 'e1',
-      taskId: 'task-1',
-      interruptId: 'interrupt-1',
-      action: 'reply',
-      message: 'Here you go',
-    }));
+    expect(apiMock.resumeFlowApproval).toHaveBeenCalledWith(
+      'e1',
+      'reply',
+      expect.objectContaining({
+        taskId: 'task-1',
+        interruptId: 'interrupt-1',
+        message: 'Here you go',
+      }),
+    );
     const updated = usePlaybookStore.getState().executionCache.e1;
     expect(updated.status).toBe('running');
     expect(updated.interruptPayload).toBeNull();
@@ -598,6 +598,14 @@ describe('playbook store', () => {
     expect(updated.currentInterruptId).toBeNull();
     expect(updated.currentInterruptTaskId).toBeNull();
     expect(updated.hitlHistory?.[0]).toMatchObject({ status: 'answered', responseAction: 'reply', responseMessage: 'Here you go' });
+  });
+
+  it('stopExecution uses flow cancellation route', async () => {
+    apiMock.cancelFlowExecution.mockResolvedValueOnce(undefined);
+
+    await usePlaybookStore.getState().stopExecution('p1', 'e1');
+
+    expect(apiMock.cancelFlowExecution).toHaveBeenCalledWith('e1');
   });
 
   // ===== Execution Panel =====
@@ -652,31 +660,53 @@ describe('playbook store', () => {
     expect(apiMock.getExecution).toHaveBeenCalledWith('p1', 'e2');
   });
 
-  it('deleteAllExecutions removes non-running executions for the playbook', async () => {
-    const active = makeExecution({ id: 'e-active', playbookId: 'p1', status: 'running' });
-    const completed = makeExecution({ id: 'e-done', playbookId: 'p1', status: 'completed' });
-    const otherPlaybook = makeExecution({ id: 'e-other', playbookId: 'p2', status: 'completed' });
-    apiMock.deleteAllExecutions.mockResolvedValueOnce({ deleted: 1, kept: 1 });
+  it('deleteAllExecutions calls api and clears cached state', async () => {
+    apiMock.deleteAllExecutions.mockResolvedValueOnce({ deleted: 3, kept: 0 });
 
     usePlaybookStore.setState({
-      executionHistory: [
-        makeExecutionSummary({ id: 'e-active', playbookId: 'p1', status: 'running' }),
-        makeExecutionSummary({ id: 'e-done', playbookId: 'p1', status: 'completed' }),
-        makeExecutionSummary({ id: 'e-other', playbookId: 'p2', status: 'completed' }),
-      ],
-      executionCache: { 'e-active': active, 'e-done': completed, 'e-other': otherPlaybook },
-      currentExecution: completed,
-      selectedStepId: 'task-1',
+      currentExecution: { id: 'e1', playbookId: 'p1', status: 'failed' } as any,
+      executionCache: { e1: { id: 'e1', playbookId: 'p1' } as any, e2: { id: 'e2', playbookId: 'p1' } as any },
+      executionHistory: [{ id: 'e1', playbookId: 'p1' } as any, { id: 'e3', playbookId: 'p2' } as any],
+      executionHistoryByPlaybook: { p1: [{ id: 'e1', playbookId: 'p1' } as any], p2: [{ id: 'e3', playbookId: 'p2' } as any] },
       executionPanelOpen: true,
     });
 
     await usePlaybookStore.getState().deleteAllExecutions('p1');
 
+    expect(apiMock.deleteAllExecutions).toHaveBeenCalledWith('p1');
     const state = usePlaybookStore.getState();
-    expect(state.executionHistory.map((e) => e.id)).toEqual(['e-active', 'e-other']);
-    expect(Object.keys(state.executionCache).sort()).toEqual(['e-active', 'e-other']);
+    expect(state.executionCache).not.toHaveProperty('e1');
+    expect(state.executionCache).not.toHaveProperty('e2');
+    expect(state.executionHistory).toEqual([{ id: 'e3', playbookId: 'p2' }]);
+    expect(state.executionHistoryByPlaybook.p1).toEqual([]);
     expect(state.currentExecution).toBeNull();
-    expect(state.selectedStepId).toBeNull();
+    expect(state.executionPanelOpen).toBe(false);
+  });
+
+  it('deleteExecution calls api and removes from cache', async () => {
+    apiMock.deleteExecution.mockResolvedValueOnce(undefined);
+
+    usePlaybookStore.setState({
+      currentExecution: { id: 'e1', playbookId: 'p1', status: 'failed' } as any,
+      executionCache: { e1: { id: 'e1', playbookId: 'p1' } as any, e2: { id: 'e2', playbookId: 'p2' } as any },
+      executionHistory: [{ id: 'e1', playbookId: 'p1' } as any, { id: 'e2', playbookId: 'p2' } as any],
+      executionHistoryByPlaybook: {
+        p1: [{ id: 'e1', playbookId: 'p1' } as any],
+        p2: [{ id: 'e2', playbookId: 'p2' } as any],
+      },
+      executionPanelOpen: true,
+    });
+
+    await usePlaybookStore.getState().deleteExecution('p1', 'e1');
+
+    expect(apiMock.deleteExecution).toHaveBeenCalledWith('p1', 'e1');
+    const state = usePlaybookStore.getState();
+    expect(state.executionCache).not.toHaveProperty('e1');
+    expect(state.executionCache).toHaveProperty('e2');
+    expect(state.executionHistory).toEqual([{ id: 'e2', playbookId: 'p2' }]);
+    expect(state.executionHistoryByPlaybook.p1).toEqual([]);
+    expect(state.currentExecution).toBeNull();
+    expect(state.executionPanelOpen).toBe(false);
   });
 
   it('setExecutionPanelOpen toggles panel state', () => {
@@ -1160,270 +1190,21 @@ describe('playbook store', () => {
       ],
     });
 
-    apiMock.resumePlaybookFromStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
-    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e1', playbookId: 'p1', taskResults: execution.taskResults }));
-    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
-
     usePlaybookStore.setState({
       executionCache: { e1: execution },
       currentExecution: execution,
       selectedStepId: 't1',
     });
 
-    const promise = usePlaybookStore.getState().resumeFromStep('p1', 'e1', 't2');
-    let state = usePlaybookStore.getState();
+    await usePlaybookStore.getState().resumeFromStep('p1', 'e1', 't2');
 
-    expect(state.currentExecution?.status).toBe('running');
-    expect(state.selectedStepId).toBe('t2');
-    expect(state.currentExecution?.taskResults[1]).toMatchObject({
-      taskId: 't2',
-      status: 'running',
-      output: null,
-      isStale: false,
-      staleReason: null,
-    });
-    expect(state.currentExecution?.taskResults[2]).toMatchObject({
-      taskId: 't3',
-      status: 'pending',
-      output: null,
-      isStale: false,
-      staleReason: null,
-      startedAt: null,
-      completedAt: null,
-    });
-
-    await promise;
-    state = usePlaybookStore.getState();
-
-    expect(state.currentExecution?.taskResults[1]).toMatchObject({
-      taskId: 't2',
-      status: 'running',
-      output: null,
-      isStale: false,
-    });
-    expect(state.currentExecution?.taskResults[2]).toMatchObject({
-      taskId: 't3',
-      status: 'pending',
-      output: null,
-      isStale: false,
-    });
-    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', { taskId: 't2', streaming: false });
+    expect(toastMock.warning).toHaveBeenCalled();
   });
 
-  it('optimistically updates the rerun step status immediately', async () => {
-    const execution = makeExecution({
-      id: 'e1',
-      playbookId: 'p1',
-      status: 'completed',
-      taskResults: [
-        {
-          taskId: 't1',
-          nodeTitle: 'Step 1',
-          agentName: 'A1',
-          order: 1,
-          status: 'completed',
-          output: 'old',
-          error: null,
-          durationMs: 100,
-          startedAt: '2025-01-01T00:00:00.000Z',
-          completedAt: '2025-01-01T00:00:01.000Z',
-          isStale: true,
-          staleReason: 'Invalidated',
-          invalidatedByTaskId: 't0',
-        },
-        {
-          taskId: 't2',
-          nodeTitle: 'Step 2',
-          agentName: 'A2',
-          order: 2,
-          status: 'completed',
-          output: 'downstream stale',
-          error: null,
-          durationMs: 100,
-          startedAt: '2025-01-01T00:00:02.000Z',
-          completedAt: '2025-01-01T00:00:03.000Z',
-          isStale: true,
-          staleReason: 'Invalidated',
-          invalidatedByTaskId: 't1',
-        },
-      ],
-    });
+  it('rerunStepInExecution warns until the new runtime supports targeted reruns', async () => {
+    await usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1');
 
-    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
-    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e1', playbookId: 'p1', taskResults: execution.taskResults }));
-    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
-
-    usePlaybookStore.setState({
-      executionCache: { e1: execution },
-      currentExecution: execution,
-      selectedStepId: null,
-    });
-
-    const promise = usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1');
-    let state = usePlaybookStore.getState();
-
-    expect(state.currentExecution?.status).toBe('running');
-    expect(state.selectedStepId).toBe('t1');
-    expect(state.currentExecution?.taskResults[0]).toMatchObject({
-      taskId: 't1',
-      status: 'running',
-      output: null,
-      isStale: false,
-      staleReason: null,
-    });
-
-    await promise;
-    state = usePlaybookStore.getState();
-
-    expect(state.currentExecution?.taskResults[0]).toMatchObject({
-      taskId: 't1',
-      status: 'running',
-      output: null,
-      isStale: false,
-    });
-    expect(state.currentExecution?.taskResults[1]).toMatchObject({
-      taskId: 't2',
-      status: 'pending',
-      output: null,
-      isStale: false,
-      startedAt: null,
-      completedAt: null,
-    });
-  });
-
-  it('preserves previous workflow results when rerunning a step in replay flex mode', async () => {
-    const execution = makeExecution({
-      id: 'e1',
-      playbookId: 'p1',
-      status: 'completed',
-      taskResults: [
-        {
-          taskId: 't1',
-          nodeTitle: 'Step 1',
-          agentName: 'A1',
-          order: 1,
-          status: 'completed',
-          output: 'old step 1',
-          error: null,
-          durationMs: 100,
-          startedAt: '2025-01-01T00:00:00.000Z',
-          completedAt: '2025-01-01T00:00:01.000Z',
-          isStale: false,
-          staleReason: null,
-          invalidatedByTaskId: null,
-        },
-        {
-          taskId: 't2',
-          nodeTitle: 'Step 2',
-          agentName: 'A2',
-          order: 2,
-          status: 'completed',
-          output: 'keep this result',
-          error: null,
-          durationMs: 100,
-          startedAt: '2025-01-01T00:00:02.000Z',
-          completedAt: '2025-01-01T00:00:03.000Z',
-          isStale: false,
-          staleReason: null,
-          invalidatedByTaskId: null,
-        },
-      ],
-    });
-
-    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
-    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
-
-    usePlaybookStore.setState({
-      executionCache: { e1: execution },
-      currentExecution: execution,
-      selectedStepId: null,
-    });
-
-    const promise = usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1', false, 'replay_flex');
-    const state = usePlaybookStore.getState();
-
-    expect(state.currentExecution?.taskResults[0]).toMatchObject({
-      taskId: 't1',
-      status: 'running',
-      output: null,
-    });
-    expect(state.currentExecution?.taskResults[1]).toMatchObject({
-      taskId: 't2',
-      status: 'completed',
-      output: 'keep this result',
-      startedAt: '2025-01-01T00:00:02.000Z',
-      completedAt: '2025-01-01T00:00:03.000Z',
-    });
-
-    await promise;
-  });
-
-  it('focuses the rerun execution immediately when the panel is showing an older execution', async () => {
-    const rerunTarget = makeExecution({
-      id: 'e1',
-      playbookId: 'p1',
-      status: 'completed',
-      taskResults: [
-        {
-          taskId: 't1',
-          nodeTitle: 'Step 1',
-          agentName: 'A1',
-          order: 1,
-          status: 'completed',
-          output: 'old',
-          error: null,
-          durationMs: 100,
-          startedAt: '2025-01-01T00:00:00.000Z',
-          completedAt: '2025-01-01T00:00:01.000Z',
-          isStale: false,
-          staleReason: null,
-          invalidatedByTaskId: null,
-        },
-      ],
-    });
-    const olderVisibleExecution = makeExecution({
-      id: 'e0',
-      playbookId: 'p1',
-      status: 'completed',
-      taskResults: [
-        {
-          taskId: 't9',
-          nodeTitle: 'Older',
-          agentName: 'A9',
-          order: 1,
-          status: 'completed',
-          output: 'older result',
-          error: null,
-          durationMs: 100,
-          startedAt: '2025-01-01T00:00:00.000Z',
-          completedAt: '2025-01-01T00:00:01.000Z',
-        },
-      ] as any,
-    });
-
-    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
-    apiMock.getExecution.mockResolvedValueOnce(makeExecution({ id: 'e1', playbookId: 'p1', status: 'running', taskResults: rerunTarget.taskResults }));
-    apiMock.getExecutions.mockResolvedValueOnce({ executions: [], pagination: { page: 1, limit: 20, total: 0, totalPages: 1 } });
-
-    usePlaybookStore.setState({
-      currentPlaybook: makePlaybook({ id: 'p1' }),
-      currentExecution: olderVisibleExecution,
-      executionCache: { e0: olderVisibleExecution, e1: rerunTarget },
-      executionHistory: [
-        makeExecutionSummary({ id: 'e0', playbookId: 'p1', executionNumber: 1, status: 'completed' }),
-        makeExecutionSummary({ id: 'e1', playbookId: 'p1', executionNumber: 2, status: 'completed' }),
-      ],
-      selectedStepId: null,
-    });
-
-    const promise = usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1');
-    const state = usePlaybookStore.getState();
-
-    expect(state.currentExecution?.id).toBe('e1');
-    expect(state.currentExecution?.status).toBe('running');
-    expect(state.executionHistory.find((entry) => entry.id === 'e1')?.status).toBe('running');
-
-    await promise;
+    expect(toastMock.warning).toHaveBeenCalled();
   });
 
   // ===== Schedule =====

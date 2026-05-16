@@ -40,6 +40,7 @@ import { PlaybookFlowTriggerController } from './controllers/playbook-flow-trigg
 import { PlaybookFlowReplayController } from './controllers/playbook-flow-replay.controller';
 import { PlaybookFlowOutputFormatController } from './controllers/playbook-flow-output-format.controller';
 import { PlaybookFlowAdvisorController } from './controllers/playbook-flow-advisor.controller';
+import { PlaybookFlowStreamController } from './controllers/playbook-flow-stream.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookFlowReplayService } from './services/playbook-flow-replay.service';
@@ -69,6 +70,9 @@ import { PlaybookFlowMailTriggerMatcherService } from './services/playbook-flow-
 import { PlaybookFlowMailTriggerOrchestrationService } from './services/playbook-flow-mail-trigger-orchestration.service';
 import { PlaybookFlowMailTriggerHandoffService } from './services/playbook-flow-mail-trigger-handoff.service';
 import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-flow-mail-subscription-renewal.service';
+import { PlaybookFlowStreamGatewayService } from './services/playbook-flow-stream-gateway.service';
+import { PlaybookFlowStreamEventsService } from './services/playbook-flow-stream-events.service';
+import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 
 @Module({
   imports: [
@@ -109,6 +113,7 @@ import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-
     PlaybookFlowReplayController,
     PlaybookFlowOutputFormatController,
     PlaybookFlowAdvisorController,
+    PlaybookFlowStreamController,
   ],
   providers: [
     PlaybookFlowService,
@@ -139,6 +144,9 @@ import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-
     PlaybookFlowMailTriggerOrchestrationService,
     PlaybookFlowMailTriggerHandoffService,
     PlaybookFlowMailSubscriptionRenewalService,
+    PlaybookFlowStreamGatewayService,
+    PlaybookFlowStreamEventsService,
+    PlaybookFlowStreamAuthGuard,
   ],
   exports: [
     PlaybookFlowService,

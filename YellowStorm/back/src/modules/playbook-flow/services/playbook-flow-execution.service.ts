@@ -17,6 +17,7 @@ import { PlaybookFlowQueueService } from './playbook-flow-queue.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowBuilderService } from './playbook-flow-builder.service';
+import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   NotFoundException,
@@ -88,6 +89,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly flowService: PlaybookFlowService,
     private readonly builderService: PlaybookFlowBuilderService,
     private readonly agentService: AgentService,
+    private readonly streamEvents: PlaybookFlowStreamEventsService,
   ) {}
 
   onModuleInit() {
@@ -238,6 +240,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         queuePosition: 0,
       }).exec();
 
+      this.streamEvents.emitExecutionStart(executionId, flowId, ownerId);
+
     this.logger.log(`Starting playbook flow execution ${executionId} with ${snapshot.nodes.length} nodes, ${agentIds.size} agent IDs found, ${agentMap.size} agents resolved`);
 
     for (const n of enrichedNodes) {
@@ -332,6 +336,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     const call = this.playbookFlowClient.Run(request);
     let finalized = false;
+    let completionEmitted = false;
     const releaseOnce = () => {
       if (finalized) return;
       finalized = true;
@@ -341,12 +346,24 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.handleRunEvent(executionId, event).catch((err) => {
         this.logger.error(`Failed to handle run event for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
       });
+      const eventType = event.event_type as string;
+      if (eventType === 'ExecutionCompleted') {
+        completionEmitted = true;
+        this.streamEvents.emitExecutionComplete(executionId, 'completed');
+      } else if (eventType === 'ExecutionFailed') {
+        completionEmitted = true;
+        const p = (event.payload as Record<string, unknown>) || {};
+        this.streamEvents.emitExecutionComplete(executionId, 'failed', String(p.error || 'Execution failed'));
+      }
     });
     call.on('error', (err: Error) => {
       this.logger.error(`gRPC stream error for execution ${executionId}: ${err.message}`, err.stack);
       this.executionModel
         .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
         .exec();
+      if (!completionEmitted) {
+        this.streamEvents.emitExecutionComplete(executionId, 'failed', err.message);
+      }
       releaseOnce();
     });
     call.on('end', () => {
@@ -357,6 +374,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           { status: 'completed', endedAt: new Date() },
         )
         .exec();
+      if (!completionEmitted) {
+        this.streamEvents.emitExecutionComplete(executionId, 'completed');
+      }
       releaseOnce();
     });
     } catch (err) {
@@ -366,6 +386,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         endedAt: new Date(),
         error: err instanceof Error ? err.message : String(err),
       }).exec();
+      this.streamEvents.emitExecutionComplete(executionId, 'failed', err instanceof Error ? err.message : String(err));
       this.queueService.release(ownerId);
     }
   }
@@ -461,6 +482,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         },
         { upsert: true },
       );
+      this.streamEvents.emitStepStart(executionId, taskNodeId);
     } else if (eventType === 'NodeToken') {
       const token = String(payload.token ?? '');
       if (token) {
@@ -478,6 +500,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           ],
           { upsert: true },
         );
+        this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
       }
     } else if (eventType === 'NodeCompleted') {
       const rawOutput = payload.output ?? payload;
@@ -503,13 +526,19 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         },
         { upsert: true },
       );
+      this.streamEvents.emitStepComplete(
+        executionId,
+        taskNodeId,
+        typeof cleanOutput === 'string' ? cleanOutput : JSON.stringify(cleanOutput),
+      );
     } else if (eventType === 'NodeFailed') {
+      const errorMessage = String(payload.error || 'Node execution failed');
       await this.taskResultModel.updateOne(
         { executionId, taskId: taskNodeId, iteration },
         {
           $set: {
             status: 'failed',
-            error: String(payload.error || 'Node execution failed'),
+            error: errorMessage,
             endedAt: new Date(),
           },
           $setOnInsert: {
@@ -523,9 +552,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
       await this.executionModel.findByIdAndUpdate(executionId, {
         status: 'failed',
-        error: String(payload.error || 'Node execution failed'),
+        error: errorMessage,
         endedAt: new Date(),
       }).exec();
+      this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, errorMessage, iteration);
     } else if (eventType === 'RouterDecision') {
       await this.routerDecisionModel.create({
         executionId,
@@ -534,6 +564,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         label: String(payload.label || ''),
         decidedAt: new Date(),
       });
+      this.streamEvents.emitRouterDecision(executionId, taskNodeId, String(payload.label || ''), iteration);
     } else if (eventType === 'ApprovalRequested') {
       await this.executionModel.findByIdAndUpdate(executionId, {
         status: 'pending_approval',
@@ -544,6 +575,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           requestedAt: new Date(),
         },
       }).exec();
+      this.streamEvents.emitInterrupt(
+        executionId,
+        String(payload.node_id || taskNodeId),
+        String(payload.prompt || ''),
+        iteration,
+        executionId,
+      );
     } else if (eventType === 'ExecutionCompleted') {
       await this.executionModel.findByIdAndUpdate(executionId, {
         status: 'completed',
@@ -663,6 +701,42 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     this.queueService.release(ownerId);
     return execution.toJSON() as unknown as IFlowExecutionResponse;
+  }
+
+  async delete(executionId: string, ownerId: string): Promise<void> {
+    const execution = await this.executionModel.findById(executionId);
+    if (!execution || String(execution.ownerId) !== String(ownerId)) {
+      throw new NotFoundException(
+        ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+        'Execution not found',
+      );
+    }
+
+    if (execution.status === 'running') {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Cannot delete a running execution. Cancel it first.',
+      );
+    }
+
+    await this.taskResultModel.deleteMany({ executionId });
+    await this.routerDecisionModel.deleteMany({ executionId });
+    await this.executionModel.findByIdAndDelete(executionId);
+  }
+
+  async deleteAll(flowId: string, ownerId: string): Promise<{ deleted: number }> {
+    const flow = await this.flowService.findOne(flowId, ownerId);
+
+    const executions = await this.executionModel.find({ flowId, ownerId }, { _id: 1 }).lean();
+    const executionIds = executions.map((e: Record<string, unknown>) => String(e._id));
+
+    if (executionIds.length > 0) {
+      await this.taskResultModel.deleteMany({ executionId: { $in: executionIds } });
+      await this.routerDecisionModel.deleteMany({ executionId: { $in: executionIds } });
+    }
+
+    const result = await this.executionModel.deleteMany({ flowId, ownerId });
+    return { deleted: result.deletedCount ?? 0 };
   }
 
   async resumeApproval(

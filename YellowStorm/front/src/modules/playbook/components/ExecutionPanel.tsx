@@ -4,13 +4,6 @@ import { AlertCircle, Clock, Square, ChevronDown, History, GitCompareArrows, Pan
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -233,19 +226,17 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   const isStopping = useIsStopping();
   const isExecuting = useIsExecuting(execution?.playbookId);
   const selectStep = usePlaybookStore((s) => s.selectStep);
+  const setCopilotMode = usePlaybookStore((s) => s.setCopilotMode);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
-  const deleteAllExecutions = usePlaybookStore((s) => s.deleteAllExecutions);
   const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
+  const deleteAllExecutions = usePlaybookStore((s) => s.deleteAllExecutions);
   const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
-  const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
-  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
-  const [deleteExecutionDialogOpen, setDeleteExecutionDialogOpen] = useState(false);
   const executionDetailTab = usePlaybookStore((s) => s.executionDetailTab);
   const setExecutionDetailTab = usePlaybookStore((s) => s.setExecutionDetailTab);
 
@@ -340,8 +331,14 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   const handleSelectStep = useCallback(
     (taskId: string, iterationIndex?: number) => {
       selectStep(taskId, iterationIndex);
+      if (execution?.waitingForHumanInput) {
+        const interruptedTaskId = execution.interruptPayload?.taskId || execution.currentInterruptTaskId;
+        if (taskId === interruptedTaskId) {
+          setCopilotMode('interrupt');
+        }
+      }
     },
-    [selectStep],
+    [selectStep, execution?.waitingForHumanInput, execution?.interruptPayload?.taskId, execution?.currentInterruptTaskId, setCopilotMode],
   );
 
   const handleValidateStep = useCallback(
@@ -394,53 +391,11 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     [execution, fetchExecution, grabOutputFormatTemplate],
   );
 
-  const handleRunEvaluation = useCallback(
-    async (taskId: string) => {
-      if (!execution || !playbook) return;
-      setActiveDetailTab('evaluation');
-      const task = playbook.tasks.find((candidate) => candidate.id === taskId);
-      await rerunStepInExecution(
-        execution.playbookId,
-        execution.id,
-        taskId,
-        true,
-        task?.stepReplayMode || 'live',
-        false,
-        playbook.reflectionEnabled !== false,
-        execution.advisorAutopilotEnabled === true,
-        execution.advisorAutopilotTargetScore,
-        execution.advisorAutopilotMaxTurns,
-      );
-    },
-    [execution, playbook, rerunStepInExecution],
-  );
-
-  const handleRunAdvisorEvaluation = useCallback(
-    async (taskId: string) => {
-      if (!execution || !playbook) return;
-      setActiveDetailTab('judge');
-      const task = playbook.tasks.find((candidate) => candidate.id === taskId);
-      const taskResult = execution.taskResults.find((tr) => tr.taskId === taskId);
-      const stepCompleted = taskResult?.status === 'completed';
-      await rerunStepInExecution(
-        execution.playbookId,
-        execution.id,
-        taskId,
-        false,
-        task?.stepReplayMode || 'live',
-        false,
-        true,
-        execution.advisorAutopilotEnabled === true,
-        execution.advisorAutopilotTargetScore,
-        execution.advisorAutopilotMaxTurns,
-        stepCompleted,
-      );
-    },
-    [execution, playbook, rerunStepInExecution],
-  );
-
   const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
-  const canDeleteCurrentExecution = Boolean(execution && visibleExecutionStatus !== 'running' && visibleExecutionStatus !== 'interrupted');
+  const canDeleteCurrentExecution = Boolean(
+    execution && visibleExecutionStatus !== 'running',
+  );
+
 
   const selectedResult = (() => {
     if (!execution) return null;
@@ -480,7 +435,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   ]);
 
   const compareUrl = playbook ? `/playbooks/${playbook.id}/executions` : null;
-  const canDeleteAll = history.some((exec) => exec.status !== 'running' && exec.status !== 'interrupted');
+  const canDeleteAll = history.length > 0;
 
   const handleStepReplayModeChange = useCallback(
     (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => {
@@ -492,13 +447,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
     },
     [playbook, updateTasks],
   );
-
-  const handleDeleteAllExecutions = useCallback(async () => {
-    const targetPlaybookId = execution?.playbookId || playbook?.id;
-    if (!targetPlaybookId) return;
-    await deleteAllExecutions(targetPlaybookId);
-    setDeleteAllDialogOpen(false);
-  }, [deleteAllExecutions, execution?.playbookId, playbook?.id]);
 
   if (!execution) {
     return (
@@ -527,9 +475,9 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           historyPickerLabel={t('execution.workflowExecutions')}
           baselineExecutionId={baselineExecutionId}
           history={history}
-          onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
+          onDeleteCurrentExecution={undefined}
           canDeleteCurrentExecution={canDeleteCurrentExecution}
-          onDeleteAll={() => setDeleteAllDialogOpen(true)}
+          onDeleteAll={playbook ? () => { deleteAllExecutions(playbook.id).catch(() => {}); } : undefined}
           canDeleteAll={canDeleteAll}
           onCollapse={onCollapse}
         />
@@ -596,9 +544,9 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           currentExecutionId={execution.id}
           baselineExecutionId={baselineExecutionId}
           history={history}
-          onDeleteCurrentExecution={() => setDeleteExecutionDialogOpen(true)}
+          onDeleteCurrentExecution={() => { deleteExecution(execution.playbookId, execution.id).catch(() => {}); }}
           canDeleteCurrentExecution={canDeleteCurrentExecution}
-          onDeleteAll={() => setDeleteAllDialogOpen(true)}
+          onDeleteAll={() => { deleteAllExecutions(execution.playbookId).catch(() => {}); }}
           canDeleteAll={canDeleteAll}
           onCollapse={onCollapse}
         />
@@ -622,8 +570,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           onRequestValidateReplay={(taskId) => {
             void handleValidateStep(taskId, { preserveOutputFormat: false });
           }}
-          onRequestRunEvaluation={handleRunEvaluation}
-          onRequestRunAdvisorEvaluation={handleRunAdvisorEvaluation}
           onRequestGrabOutputFormat={handleGrabOutputFormat}
           onOpenOutputFormatEditor={onOpenOutputFormatEditor}
           onStepReplayModeChange={handleStepReplayModeChange}
@@ -632,61 +578,6 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           onActiveTabChange={setActiveDetailTab}
         />
       </div>
-
-      <Dialog open={deleteAllDialogOpen} onOpenChange={setDeleteAllDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete all executions</DialogTitle>
-          </DialogHeader>
-          <div className="text-sm text-muted-foreground">
-            Delete all saved executions for this playbook in one shot. Running or interrupted executions will be kept.
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteAllDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => void handleDeleteAllExecutions()}
-            >
-              Delete All
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={deleteExecutionDialogOpen} onOpenChange={setDeleteExecutionDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete execution</DialogTitle>
-          </DialogHeader>
-          <div className="text-sm text-muted-foreground">
-            Delete the selected workflow execution from this playbook. This action cannot be undone.
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteExecutionDialogOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => {
-                if (execution) {
-                  void deleteExecution(execution.playbookId, execution.id);
-                }
-                setDeleteExecutionDialogOpen(false);
-              }}
-            >
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

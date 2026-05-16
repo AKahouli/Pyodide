@@ -788,6 +788,7 @@ export interface TaskResult {
   nodeTitle: string;
   agentName: string;
   order: number;
+  iteration?: number;
   status: StepStatus;
   output: string | null;
   error: string | null;
@@ -955,6 +956,7 @@ export interface PlaybookExecution {
   totalQueueSize?: number | null;
   recursionBudgetUsed?: number | null;
   recursionBudgetMax?: number | null;
+  routerDecisions?: RouterDecision[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1032,7 +1034,7 @@ export interface OutputFormatTemplate {
 // ===== Enums =====
 
 export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted' | 'queued' | 'pending_approval';
-export type ExecutionStatus = 'pending' | 'running' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
+export type ExecutionStatus = 'queued' | 'pending' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
 export type PlaybookPageMode = 'design' | 'run';
 export type PlaybookCopilotMode = 'design' | 'interrupt';
 
@@ -1102,6 +1104,7 @@ export interface PlaybookNodeData extends PlaybookTask {
   stepSemanticMatch?: SemanticMatchResult | null;
   stepJudgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   stepJudgeResult?: TaskResult['judgeResult'];
+  activeRouterLabel?: string;
   [key: string]: unknown;
 }
 
@@ -1523,6 +1526,8 @@ export interface PlaybookActions {
   // Canvas
   updateTasks: (tasks: PlaybookTask[]) => void;
   updateEdges: (edges: PlaybookEdge[]) => void;
+  updateControlEdges: (controlEdges: ControlEdge[]) => void;
+  updateDataBindings: (dataBindings: DataBinding[]) => void;
   updateWorkspaces: (workspaces: string[]) => void;
   setDirty: (dirty: boolean) => void;
   saveCurrentPlaybook: () => Promise<void>;
@@ -1833,6 +1838,13 @@ export interface DataBinding {
   statePath?: string;
   constantValue?: unknown;
   expression?: string;
+}
+
+export interface RouterDecision {
+  nodeId: string;
+  label: string;
+  iteration: number;
+  createdAt?: string;
 }
 
 export interface FlowTriggerConfig {

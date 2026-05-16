@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Trash2, Pencil, Play, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Play, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -359,8 +359,6 @@ export function ExecutionStepDetail({
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
-  const deleteExecution = usePlaybookStore((s) => s.deleteExecution);
-  const deleteStepExecution = usePlaybookStore((s) => s.deleteStepExecution);
   const updatePlaybookFromJudge = usePlaybookStore((s) => s.updatePlaybookFromJudge);
   const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
   const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
@@ -1020,11 +1018,6 @@ export function ExecutionStepDetail({
                     <DropdownMenuContent align="start" className="w-[380px] p-1">
                       {stepExecutions.map((entry) => {
                         const isSelected = entry.id === selectedStepExecution?.id;
-                        const canDeleteEntry = Boolean(
-                          execution
-                          && entry.attemptNumber !== (step.attemptNumber ?? null)
-                          && !entry.id.startsWith('current:'),
-                        );
                         return (
                           <div
                             key={entry.id}
@@ -1043,29 +1036,6 @@ export function ExecutionStepDetail({
                               </div>
                               <div className="text-xs text-muted-foreground">{entry.status}</div>
                             </button>
-                            {canDeleteEntry && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7 shrink-0"
-                                title={t('detail.results.deleteStepExecution')}
-                                onClick={async (event) => {
-                                  event.preventDefault();
-                                  event.stopPropagation();
-                                  if (!execution || !window.confirm(t('detail.results.deleteStepExecutionConfirm'))) {
-                                    return;
-                                  }
-                                  setSelectedStepExecutionId((current) => {
-                                    if (current !== entry.id) return current;
-                                    const remaining = stepExecutions.filter((candidate) => candidate.id !== entry.id);
-                                    return remaining[0]?.id ?? null;
-                                  });
-                                  await deleteStepExecution(execution.playbookId, execution.id, step.taskId, entry.id);
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            )}
                           </div>
                         );
                       })}
@@ -1087,7 +1057,7 @@ export function ExecutionStepDetail({
                     {t('detail.actions.saveReplay')}
                   </DropdownMenuItem>
                 )}
-                {execution && (
+                {execution && onRequestRunEvaluation && (
                   <DropdownMenuItem onClick={() => onRequestRunEvaluation?.(step.taskId)} disabled={isRunningEvaluation}>
                     <FileText className="mr-2 h-4 w-4" />
                     {t('detail.actions.runReplayEvaluation')}
@@ -1112,18 +1082,6 @@ export function ExecutionStepDetail({
                     <DropdownMenuItem onClick={() => void handleCopyToClipboard()}>
                       <ClipboardCopy className="mr-2 h-4 w-4" />
                       {t('detail.actions.copyToClipboard')}
-                    </DropdownMenuItem>
-                  </>
-                )}
-                {execution && (
-                  <>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive focus:text-destructive"
-                      onClick={() => void deleteExecution(execution.playbookId, execution.id)}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      {t('detail.actions.deleteExecution')}
                     </DropdownMenuItem>
                   </>
                 )}
@@ -1279,17 +1237,19 @@ export function ExecutionStepDetail({
                     </Select>
                   </div>
                 )}
-                {execution && (
+                {execution && (onRequestRunEvaluation || currentTask?.taskType === 'evaluation') && (
                   <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => onRequestRunEvaluation?.(step.taskId)}
-                      disabled={isRunningEvaluation}
-                      className="shrink-0"
-                    >
-                      {isRunningEvaluation ? t('execution.running') : t('detail.actions.runReplayEvaluation')}
-                    </Button>
+                    {onRequestRunEvaluation && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onRequestRunEvaluation(step.taskId)}
+                        disabled={isRunningEvaluation}
+                        className="shrink-0"
+                      >
+                        {isRunningEvaluation ? t('execution.running') : t('detail.actions.runReplayEvaluation')}
+                      </Button>
+                    )}
                     {currentTask?.taskType === 'evaluation' && (
                       <Button
                         variant="outline"
@@ -1577,7 +1537,7 @@ export function ExecutionStepDetail({
           </TabsContent>
 
           <TabsContent value="judge" className="space-y-4">
-            {execution && (
+            {execution && onRequestRunAdvisorEvaluation && (
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   size="sm"

@@ -18,6 +18,8 @@ import type {
   PlaybookSummary,
   PlaybookTask,
   PlaybookEdge,
+  ControlEdge,
+  DataBinding,
   PlaybookExecution,
   PlaybookExecutionSummary,
   PlaybookExecutionStartEvent,
@@ -68,6 +70,15 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
     return result;
   }
   return fallback;
+}
+
+function warnUnsupportedExecutionAction() {
+  toast.warning(
+    tPlaybook(
+      'store.toasts.executionActionUnavailable',
+      'This execution action is not available in the new flow runtime yet.',
+    ),
+  );
 }
 
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
@@ -1099,6 +1110,26 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
       },
 
+      updateControlEdges: (controlEdges: ControlEdge[]) => {
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, controlEdges }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
+      updateDataBindings: (dataBindings: DataBinding[]) => {
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, dataBindings }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
       updateWorkspaces: (workspaces: string[]) => {
         set((state) => ({
           currentPlaybook: state.currentPlaybook
@@ -1121,6 +1152,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           designSettings: currentPlaybook.designSettings,
           tasks: currentPlaybook.tasks,
           edges: currentPlaybook.edges,
+          controlEdges: currentPlaybook.controlEdges,
           dataBindings: currentPlaybook.dataBindings,
           settings: currentPlaybook.settings,
           workspaces: currentPlaybook.workspaces,
@@ -1216,7 +1248,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       stopExecution: async (playbookId, executionId) => {
         set({ isStopping: true });
         try {
-          await api.stopPlaybook(playbookId, { executionId });
+          await api.cancelFlowExecution(executionId);
         } catch (err) {
           set({ isStopping: false });
           handleApiError(err);
@@ -1224,117 +1256,69 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      skipExecutionStep: async (playbookId, executionId, taskId) => {
-        try {
-          await api.skipPlaybookStep(playbookId, { executionId, taskId });
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
+      skipExecutionStep: async (_playbookId, _executionId, _taskId) => {
+        warnUnsupportedExecutionAction();
       },
 
       deleteExecution: async (playbookId, executionId) => {
         try {
           await api.deleteExecution(playbookId, executionId);
-          set((state) => {
-            const executionHistory = state.executionHistory.filter((ex) => ex.id !== executionId);
-            const executionCache = { ...state.executionCache };
-            delete executionCache[executionId];
-
-            const currentExecution =
-              state.currentExecution?.id === executionId
-                ? null
-                : state.currentExecution;
-
-            return {
-              executionHistory,
-              executionCache,
-              currentExecution,
-              selectedStepId: state.currentExecution?.id === executionId ? null : state.selectedStepId,
-              executionPanelOpen: executionHistory.length > 0 ? state.executionPanelOpen : false,
-            };
-          });
-          toast.success(tPlaybook('store.toasts.deleted', 'Execution deleted'));
         } catch (err) {
           handleApiError(err);
           throw err;
         }
+        const currentId = get().currentExecution?.id;
+        if (currentId === executionId) {
+          persistPanelOpen(false);
+        }
+        set((state) => {
+          const { [executionId]: _removed, ...restCache } = state.executionCache;
+          return {
+            executionCache: restCache,
+            executionHistory: state.executionHistory.filter((h) => h.id !== executionId),
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [playbookId]: (state.executionHistoryByPlaybook[playbookId] || []).filter((h) => h.id !== executionId),
+            },
+            currentExecution: currentId === executionId ? null : state.currentExecution,
+            executionPanelOpen: currentId === executionId ? false : state.executionPanelOpen,
+          };
+        });
       },
 
-      deleteStepExecution: async (playbookId, executionId, taskId, stepExecutionId) => {
-        try {
-          await api.deleteStepExecution(playbookId, executionId, taskId, stepExecutionId);
-          set((state) => {
-            const currentExecution = state.executionCache[executionId];
-            if (!currentExecution) return state;
-
-            const taskResults = currentExecution.taskResults.map((taskResult) =>
-              taskResult.taskId === taskId
-                ? {
-                  ...taskResult,
-                  stepExecutions: (taskResult.stepExecutions || []).filter((entry) => entry.id !== stepExecutionId),
-                }
-                : taskResult,
-            );
-
-            const updatedExecution = { ...currentExecution, taskResults, updatedAt: new Date().toISOString() };
-            const executionCache = { ...state.executionCache, [executionId]: updatedExecution };
-
-            return {
-              executionCache,
-              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
-            };
-          });
-          toast.success(tPlaybook('store.toasts.deleted', 'Execution deleted'));
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
+      deleteStepExecution: async (_playbookId, _executionId, _taskId, _stepExecutionId) => {
+        warnUnsupportedExecutionAction();
       },
 
       deleteAllExecutions: async (playbookId) => {
         try {
-          const result = await api.deleteAllExecutions(playbookId);
-          set((state) => {
-            const executionHistory = state.executionHistory.filter(
-              (ex) => ex.playbookId !== playbookId || ex.status === 'running' || ex.status === 'interrupted',
-            );
-
-            const executionCache = Object.fromEntries(
-              Object.entries(state.executionCache).filter(([, execution]) =>
-                execution.playbookId !== playbookId || execution.status === 'running' || execution.status === 'interrupted',
-              ),
-            );
-
-            const keepCurrentExecution = !state.currentExecution
-              || state.currentExecution.playbookId !== playbookId
-              || state.currentExecution.status === 'running'
-              || state.currentExecution.status === 'interrupted';
-
-            const currentExecution = keepCurrentExecution ? state.currentExecution : null;
-            const hasRemainingForPlaybook = executionHistory.some((ex) => ex.playbookId === playbookId)
-              || currentExecution?.playbookId === playbookId;
-
-            return {
-              executionHistory,
-              executionCache,
-              currentExecution,
-              selectedStepId: keepCurrentExecution ? state.selectedStepId : null,
-              executionPanelOpen: hasRemainingForPlaybook ? state.executionPanelOpen : false,
-            };
-          });
-
-          if (result.kept > 0) {
-            toast.success(tPlaybook('store.toasts.deletedAllExecutions', 'Executions deleted'), {
-              description: `${result.deleted} deleted, ${result.kept} active execution(s) kept.`,
-            });
-          } else {
-            toast.success(tPlaybook('store.toasts.deletedAllExecutions', 'Executions deleted'));
-          }
+          await api.deleteAllExecutions(playbookId);
         } catch (err) {
           handleApiError(err);
           throw err;
         }
+        const currentExec = get().currentExecution;
+        if (currentExec && currentExec.playbookId === playbookId) {
+          persistPanelOpen(false);
+        }
+        set((state) => {
+          const newCache = { ...state.executionCache };
+          for (const [id, exec] of Object.entries(newCache)) {
+            if ((exec as PlaybookExecution).playbookId === playbookId) {
+              delete newCache[id];
+            }
+          }
+          return {
+            executionCache: newCache,
+            executionHistory: state.executionHistory.filter((h) => h.playbookId !== playbookId),
+            executionHistoryByPlaybook: {
+              ...state.executionHistoryByPlaybook,
+              [playbookId]: [],
+            },
+            currentExecution: currentExec?.playbookId === playbookId ? null : state.currentExecution,
+            executionPanelOpen: currentExec?.playbookId === playbookId ? false : state.executionPanelOpen,
+          };
+        });
       },
 
       validateTaskReplay: async (playbookId, taskId, executionId, options) => {
@@ -2058,160 +2042,30 @@ export const usePlaybookStore = create<PlaybookStore>()(
           };
         });
         try {
-          await api.resumePlaybook(id, data);
+          await api.resumeFlowApproval(
+            data.executionId,
+            action,
+            {
+              taskId: data.taskId,
+              interruptId,
+              message: data.message,
+              approved: data.approved,
+              reason: data.reason,
+              feedback: data.feedback,
+            },
+          );
         } catch (err) {
           handleApiError(err);
           throw err;
         }
       },
 
-      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, skipStepExecution = false) => {
-        clearJudgeRefreshTimer(executionId);
-        set((state) => {
-          const cachedExecution = state.executionCache[executionId];
-          if (!cachedExecution) return state;
-
-          if (skipStepExecution) {
-            const taskResults = cachedExecution.taskResults.map((tr) =>
-              tr.taskId === taskId
-                ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
-                : tr,
-            );
-            const updatedExecution = {
-              ...cachedExecution,
-              taskResults,
-              updatedAt: new Date().toISOString(),
-            };
-            return {
-              executionCache: { ...state.executionCache, [executionId]: updatedExecution },
-              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
-              selectedStepId: taskId,
-            };
-          }
-
-          const shouldPreserveOtherTaskResults = executionMode === 'replay_strict'
-            || executionMode === 'replay_flex'
-            || executionMode === 'replay_adaptive';
-          const updatedExecution = cachedExecution
-            ? {
-              ...cachedExecution,
-              status: 'running' as const,
-              interruptPayload: null,
-              waitingForHumanInput: false,
-              currentInterruptId: null,
-              currentInterruptTaskId: null,
-              taskResults: shouldPreserveOtherTaskResults
-                ? buildRerunStepTaskResults(cachedExecution.taskResults, taskId)
-                : buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
-              updatedAt: new Date().toISOString(),
-            }
-            : null;
-          const executionCache = updatedExecution
-            ? { ...state.executionCache, [executionId]: updatedExecution }
-            : state.executionCache;
-          const executionHistory = state.executionHistory.map((execution) =>
-            execution.id === executionId
-              ? { ...execution, status: 'running' as const, error: null, completedAt: null, updatedAt: new Date().toISOString() }
-              : execution,
-          );
-          const shouldFocusExecution = Boolean(updatedExecution) && (
-            state.currentExecution?.id === executionId
-            || state.currentPlaybook?.id === playbookId
-          );
-
-          return {
-            executingPlaybookIds: state.executingPlaybookIds.includes(playbookId)
-              ? state.executingPlaybookIds
-              : [...state.executingPlaybookIds, playbookId],
-            error: null,
-            executionCache,
-            currentExecution: shouldFocusExecution ? (updatedExecution ?? state.currentExecution) : state.currentExecution,
-            selectedStepId: updatedExecution ? taskId : state.selectedStepId,
-            executionHistory,
-            playbooks: updatePlaybookExecutionStatus(state.playbooks, playbookId, 'running'),
-          };
-        });
-        try {
-          await api.rerunPlaybookStep(playbookId, executionId, {
-            taskId,
-            runEvaluation,
-            executionMode,
-            streaming,
-            runNodeReflection,
-            advisorAutopilotEnabled,
-            advisorAutopilotTargetScore,
-            advisorAutopilotMaxTurns,
-            skipStepExecution,
-          });
-          await get().fetchExecution(playbookId, executionId);
-          const exec = get().executionCache[executionId];
-          if (exec && !isActiveExecutionStatus(exec.status)) {
-            set((state) => ({
-              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-            }));
-          }
-        } catch (err) {
-          if (!skipStepExecution) {
-            set((state) => ({
-              executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-            }));
-          }
-          handleApiError(err);
-          throw err;
-        }
+      rerunStepInExecution: async (_playbookId, _executionId, _taskId, _runEvaluation = false, _executionMode = 'live', _streaming = false, _runNodeReflection = true, _advisorAutopilotEnabled = false, _advisorAutopilotTargetScore, _advisorAutopilotMaxTurns, _skipStepExecution = false) => {
+        warnUnsupportedExecutionAction();
       },
 
-      resumeFromStep: async (playbookId, executionId, taskId, streaming = false) => {
-        clearJudgeRefreshTimer(executionId);
-        set((state) => {
-          const cachedExecution = state.executionCache[executionId];
-          const updatedExecution = cachedExecution
-            ? {
-              ...cachedExecution,
-              status: 'running' as const,
-              interruptPayload: null,
-              waitingForHumanInput: false,
-              currentInterruptId: null,
-              currentInterruptTaskId: null,
-              taskResults: buildResumeFromStepTaskResults(cachedExecution.taskResults, taskId),
-              updatedAt: new Date().toISOString(),
-            }
-            : null;
-          const executionCache = updatedExecution
-            ? { ...state.executionCache, [executionId]: updatedExecution }
-            : state.executionCache;
-          const executionHistory = state.executionHistory.map((execution) =>
-            execution.id === executionId
-              ? { ...execution, status: 'running' as const, error: null, completedAt: null, updatedAt: new Date().toISOString() }
-              : execution,
-          );
-          const shouldFocusExecution = Boolean(updatedExecution) && (
-            state.currentExecution?.id === executionId
-            || state.currentPlaybook?.id === playbookId
-          );
-
-          return {
-            executingPlaybookIds: state.executingPlaybookIds.includes(playbookId)
-              ? state.executingPlaybookIds
-              : [...state.executingPlaybookIds, playbookId],
-            error: null,
-            executionCache,
-            currentExecution: shouldFocusExecution ? (updatedExecution ?? state.currentExecution) : state.currentExecution,
-            selectedStepId: updatedExecution ? taskId : state.selectedStepId,
-            executionHistory,
-            playbooks: updatePlaybookExecutionStatus(state.playbooks, playbookId, 'running'),
-          };
-        });
-        try {
-          await api.resumePlaybookFromStep(playbookId, executionId, { taskId, streaming });
-          await get().fetchExecutions(playbookId);
-        } catch (err) {
-          set((state) => ({
-            executingPlaybookIds: state.executingPlaybookIds.filter((pid) => pid !== playbookId),
-          }));
-          handleApiError(err);
-          throw err;
-        }
+      resumeFromStep: async (_playbookId, _executionId, _taskId, _streaming = false) => {
+        warnUnsupportedExecutionAction();
       },
 
       // ===== SSE Handlers =====

@@ -17,6 +17,8 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
+import { showWarning } from '@/lib/notifications';
+import { useModuleTranslation } from '@/modules/localization';
 import {
   tasksToNodes,
   nodesToTasks,
@@ -28,6 +30,8 @@ import {
 import {
   playbookEdgesToFlowEdges,
   flowEdgesToPlaybookEdges,
+  controlEdgesToFlowEdges,
+  flowEdgesToControlEdges,
 } from './helpers/control-edge-serializer';
 import { wouldCreateCycle } from './helpers/cycle-router-validator';
 import type { PlaybookTask, PlaybookNodeData } from '../types';
@@ -45,8 +49,10 @@ export interface TriggerNodeActions {
 
 export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const playbook = useCurrentPlaybook();
+  const { t } = useModuleTranslation('playbook');
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
+  const updateControlEdges = usePlaybookStore((s) => s.updateControlEdges);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const canvasSyncVersion = usePlaybookStore((s) => s.canvasSyncVersion);
@@ -82,7 +88,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       syncedKeyRef.current = key;
       const includeTrigger = playbook.automatedTriggerType === 'mail';
       setNodes(buildNodes(playbook.tasks, includeTrigger));
-      setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
+      if (playbook.controlEdges && playbook.controlEdges.length > 0) {
+        setEdges(controlEdgesToFlowEdges(playbook.controlEdges));
+      } else {
+        setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
+      }
     }
   }, [playbook]);
 
@@ -93,7 +103,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     syncedKeyRef.current = key;
     const includeTrigger = playbook.automatedTriggerType === 'mail';
     setNodes(buildNodes(playbook.tasks, includeTrigger));
-    setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
+    if (playbook.controlEdges && playbook.controlEdges.length > 0) {
+      setEdges(controlEdgesToFlowEdges(playbook.controlEdges));
+    } else {
+      setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
+    }
   }, [canvasSyncVersion, playbook]);
 
   // Sync node metadata when tasks change locally
@@ -130,7 +144,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
             const updated = eds.filter(
               (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
             );
-            deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
+            deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges(updated)));
             return updated;
           });
           const nonRemove = changes.filter((c) => c.type !== 'remove');
@@ -162,7 +176,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         const updated = applyEdgeChanges(changes, eds);
         if (removes.length > 0) {
           captureSnapshot();
-          deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
+          deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges(updated)));
         }
         return updated;
       });
@@ -185,6 +199,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
           data: { ...t, nodeType: t.nodeType ?? undefined },
         }));
         if (wouldCreateCycle(eds, connection.source, connection.target, cycleNodes)) {
+          showWarning(t('canvas.cycleRejected'));
           return eds;
         }
 
@@ -222,7 +237,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
             : undefined,
         };
         captureSnapshot();
-        deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges([...eds, newEdge])));
+        deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges([...eds, newEdge])));
         return [...eds, newEdge];
       });
     },
@@ -259,7 +274,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       });
       setEdges((eds) => {
         const updated = eds.filter((e) => e.source !== nodeId && e.target !== nodeId);
-        deferStoreUpdate(() => updateEdges(flowEdgesToPlaybookEdges(updated)));
+        deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges(updated)));
         return updated;
       });
     },

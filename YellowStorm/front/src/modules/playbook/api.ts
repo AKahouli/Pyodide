@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Playbook API Functions
  */
 
@@ -53,7 +53,13 @@ import type {
   PlaybookTask,
   PlaybookEdge,
   PlaybookNodeType,
+  RouterDecision,
 } from './types';
+import {
+  normalizePlaybook,
+  taskToFlowNode,
+  edgeToControlEdge,
+} from './api.compat';
 
 interface PaginatedResponse<T> {
   data: T[];
@@ -293,32 +299,6 @@ function mapControlEdgeToPlaybookEdge(ce: ControlEdge): PlaybookEdge {
   };
 }
 
-function normalizePlaybook(raw: any): Playbook {
-  return {
-    ...raw,
-    tasks: raw.tasks ?? raw.nodes?.map(mapFlowNodeToPlaybookTask) ?? [],
-    edges: raw.edges ?? raw.controlEdges?.map(mapControlEdgeToPlaybookEdge) ?? [],
-    triggers: raw.triggers ?? [],
-    executionSchedule: raw.executionSchedule ?? null,
-    isFavorite: raw.isFavorite ?? false,
-    isActive: raw.isActive ?? true,
-    automatedTriggerType: raw.automatedTriggerType ?? null,
-    createdBy: raw.createdBy ?? raw.ownerId ?? '',
-    reflectionEnabled: raw.reflectionEnabled ?? false,
-    designSettings: raw.designSettings ?? {
-      inferenceModelId: null,
-      nodeSuggestionsMode: 'inherit',
-      approvalSuggestionMode: 'inherit',
-    },
-    effectiveDesignSettings: raw.effectiveDesignSettings ?? raw.designSettings ?? {
-      inferenceModelId: null,
-      nodeSuggestionsMode: 'inherit',
-      approvalSuggestionMode: 'inherit',
-    },
-    advisorAutopilotEnabled: raw.advisorAutopilotEnabled ?? false,
-  } as Playbook;
-}
-
 function toNullableString(value: unknown): string | null {
   if (typeof value === 'string') return value;
   if (value === null || value === undefined) return null;
@@ -426,102 +406,6 @@ function normalizeExecution(raw: any): PlaybookExecution {
   };
 }
 
-function nodeTypeToKind(nodeType?: PlaybookNodeType | null): string {
-  switch (nodeType) {
-    case 'action':
-    case 'agent':
-    case 'evaluation':
-      return 'step';
-    case 'router': return 'router';
-    case 'iterator': return 'iterator';
-    case 'human_approval': return 'human_approval';
-    default: return 'step';
-  }
-}
-
-function taskToFlowNode(task: PlaybookTask): FlowNode {
-  const node: FlowNode = {
-    id: task.id,
-    kind: nodeTypeToKind(task.nodeType) as any,
-    label: task.title,
-    metadata: {},
-  };
-
-  if (task.routerConfig) node.routerConfig = task.routerConfig;
-  if (task.iteratorConfig) {
-    node.iteratorConfig = {
-      collectionPath: task.iteratorConfig.source,
-      maxItems: task.iteratorConfig.batchSize ?? undefined,
-    };
-  }
-  if (task.humanApprovalConfig) node.humanApprovalConfig = task.humanApprovalConfig;
-
-  if (task.inputPorts && task.inputPorts.length > 0) {
-    node.input = {
-      ports: task.inputPorts.map((p) => ({
-        id: p.id,
-        label: p.name,
-        type: p.artifactKind,
-        required: p.required,
-      })),
-    };
-  }
-
-  if (task.outputPorts && task.outputPorts.length > 0) {
-    node.output = {
-      ports: task.outputPorts.map((p) => ({
-        id: p.id,
-        label: p.name,
-        type: p.artifactKind,
-      })),
-    };
-  }
-
-  const meta: Record<string, unknown> = {};
-  if (task.description) meta.description = task.description;
-  if (task.assignedAgentId) meta.assignedAgentId = task.assignedAgentId;
-  if (task.executionOrder !== undefined) meta.executionOrder = task.executionOrder;
-  if (task.positionX !== undefined) meta.positionX = task.positionX;
-  if (task.positionY !== undefined) meta.positionY = task.positionY;
-  if (task.interruptBefore) meta.interruptBefore = true;
-  if (task.interruptAfter) meta.interruptAfter = true;
-  if (task.allowClarification) meta.allowClarification = true;
-  if (task.clarificationPrompt) meta.clarificationPrompt = task.clarificationPrompt;
-  if (task.maxClarifications > 0) meta.maxClarifications = task.maxClarifications;
-  if (task.inputKeys.length > 0) meta.inputKeys = task.inputKeys;
-  if (task.outputKey) meta.outputKey = task.outputKey;
-  if (task.enabled !== undefined) meta.enabled = task.enabled;
-  if (task.selectedAction) meta.selectedAction = task.selectedAction;
-  if (task.executionMode) meta.executionMode = task.executionMode;
-  if (task.taskType) meta.taskType = task.taskType;
-  if (task.templateType) meta.templateType = task.templateType;
-  if (task.toolBindings) meta.toolBindings = task.toolBindings;
-  if (task.evaluationConfig) meta.evaluationConfig = task.evaluationConfig;
-  if (task.iteratorLayout) meta.iteratorLayout = task.iteratorLayout;
-  if (task.containerConfig) meta.containerConfig = task.containerConfig;
-  if (task.expectedResult) meta.expectedResult = task.expectedResult;
-  if (task.disableAdvisorEvaluation) meta.disableAdvisorEvaluation = true;
-  if (task.notifyOnComplete) meta.notifyOnComplete = true;
-  if (task.notifyEmails.length > 0) meta.notifyEmails = task.notifyEmails;
-  if (task.stepReplayMode) meta.stepReplayMode = task.stepReplayMode;
-  if (task.inputFiles.length > 0) meta.inputFiles = task.inputFiles;
-  if (Object.keys(meta).length > 0) node.metadata = meta;
-
-  return node;
-}
-
-function edgeToControlEdge(edge: PlaybookEdge): ControlEdge {
-  // An edge from a router node uses the output port id as the label; treat it as conditional.
-  const hasRouterLabel = edge.sourceOutputPortId && edge.sourceOutputPortId !== 'default';
-  return {
-    id: edge.id,
-    kind: hasRouterLabel ? 'conditional' : 'sequential',
-    source: edge.sourceId,
-    target: edge.targetId,
-    ...(hasRouterLabel ? { routerLabel: edge.sourceOutputPortId } : {}),
-  };
-}
-
 export async function getPlaybook(id: string): Promise<Playbook> {
   const response = await apiClient.get<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
@@ -608,21 +492,16 @@ export async function updatePlaybook(
 
   if (data.settings) body.settings = data.settings;
 
-  const tasks = sanitized.tasks;
-  const edges = sanitized.edges;
-  const bindings = data.dataBindings;
-
-  if (tasks && tasks.length > 0) {
-    body.nodes = tasks.map(taskToFlowNode);
+  if (sanitized.tasks !== undefined) {
+    body.nodes = sanitized.tasks.map(taskToFlowNode);
   }
-  if (edges && edges.length > 0) {
-    body.controlEdges = edges.map(edgeToControlEdge);
+  if (sanitized.edges !== undefined) {
+    body.controlEdges = sanitized.edges.map(edgeToControlEdge);
   }
-  if (bindings && bindings.length > 0) {
-    body.dataBindings = bindings;
+  if (data.dataBindings !== undefined) {
+    body.dataBindings = data.dataBindings;
   }
 
-  console.log('[DEBUG] updatePlaybook body:', JSON.stringify(body));
   const response = await apiClient.patch<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.byId(id),
     body,

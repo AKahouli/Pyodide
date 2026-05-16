@@ -1,6 +1,6 @@
 import { useEffect, useContext } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { GitBranch, Trash2, Copy, Pencil } from 'lucide-react';
+import { GitBranch, Trash2, Copy, Pencil, CheckCircle2, AlertTriangle } from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
@@ -103,9 +103,17 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
               </p>
             )}
 
+            {data.activeRouterLabel && (
+              <div className="flex items-center gap-1 rounded bg-green-500/10 border border-green-500/30 px-1.5 py-0.5 text-[10px] font-medium text-green-600">
+                <GitBranch className="h-2.5 w-2.5" />
+                {data.activeRouterLabel}
+              </div>
+            )}
+
             <div className="space-y-0.5 pt-1">
               {outputLabels.map((label, idx) => {
                 const isError = label === '__error__';
+                const isDone = label === 'done';
                 const top = `${getPortTopPercent(idx, outputLabels.length)}%`;
                 return (
                   <div
@@ -118,9 +126,13 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
                         'rounded px-1.5 py-0.5 text-[10px] font-medium nodrag nopan',
                         isError
                           ? 'bg-destructive/10 text-destructive border border-destructive/30'
-                          : 'bg-primary/10 text-primary border border-primary/30',
+                          : isDone
+                            ? 'bg-green-500/10 text-green-600 border border-green-500/30'
+                            : 'bg-primary/10 text-primary border border-primary/30',
                       )}
                     >
+                      {isError && <AlertTriangle className="mr-0.5 h-2.5 w-2.5 inline" />}
+                      {isDone && <CheckCircle2 className="mr-0.5 h-2.5 w-2.5 inline" />}
                       {label}
                     </span>
                     <Handle

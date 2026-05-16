@@ -275,9 +275,6 @@ function PlaybookCanvasInner() {
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
-  const rerunStepInExecution = usePlaybookStore((s) => s.rerunStepInExecution);
-  const resumeFromStep = usePlaybookStore((s) => s.resumeFromStep);
-  const skipExecutionStep = usePlaybookStore((s) => s.skipExecutionStep);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
   const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
@@ -599,6 +596,17 @@ function PlaybookCanvasInner() {
     return map;
   }, [executionTaskResults]);
 
+  // Map router node IDs to their most recent active decision label
+  const activeRouterLabelMap = useMemo(() => {
+    const decisions = executionForCanvas?.routerDecisions;
+    if (!decisions || decisions.length === 0) return new Map<string, string>();
+    const map = new Map<string, string>();
+    for (const d of decisions) {
+      map.set(d.nodeId, d.label);
+    }
+    return map;
+  }, [executionForCanvas?.routerDecisions]);
+
   // Overlay step statuses onto nodes.
   const TRIGGER_NODE_ID = '__trigger__';
   const mailTrigger = playbook?.triggers.find((tr) => tr.type === 'mail');
@@ -625,6 +633,7 @@ function PlaybookCanvasInner() {
       const semanticMatch = stepSemanticMatchMap.get(node.id);
       const judgeStatus = stepJudgeStatusMap.get(node.id);
       const judgeResult = stepJudgeResultMap.get(node.id);
+      const routerLabel = activeRouterLabelMap.get(node.id);
       const nextSelected = node.id === selectedStepId;
       const nextData = {
         ...currentData,
@@ -632,12 +641,14 @@ function PlaybookCanvasInner() {
         ...(semanticMatch !== undefined ? { stepSemanticMatch: semanticMatch } : {}),
         ...(judgeStatus !== undefined ? { stepJudgeStatus: judgeStatus } : {}),
         ...(judgeResult !== undefined ? { stepJudgeResult: judgeResult } : {}),
+        ...(routerLabel !== undefined ? { activeRouterLabel: routerLabel } : {}),
       } as PlaybookNodeData;
 
       const dataChanged = currentData.stepStatus !== nextData.stepStatus
         || currentData.stepSemanticMatch !== nextData.stepSemanticMatch
         || (currentData as any).stepJudgeStatus !== (nextData as any).stepJudgeStatus
-        || (currentData as any).stepJudgeResult !== (nextData as any).stepJudgeResult;
+        || (currentData as any).stepJudgeResult !== (nextData as any).stepJudgeResult
+        || currentData.activeRouterLabel !== nextData.activeRouterLabel;
 
       if (!dataChanged && node.selected === nextSelected) {
         return node;
@@ -649,7 +660,7 @@ function PlaybookCanvasInner() {
         data: nextData,
       };
     });
-  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
+  }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
   // Style edges based on source node status
   const liveEdges = useMemo(() => {
@@ -752,7 +763,11 @@ function PlaybookCanvasInner() {
       taskType: 'generic',
       nodeType: 'router',
       inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
-      outputPorts: [],
+      outputPorts: [
+        { id: 'retry', name: 'retry', artifactKind: 'text' },
+        { id: 'done', name: 'done', artifactKind: 'text' },
+        { id: '__error__', name: '__error__', artifactKind: 'text' },
+      ],
       routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
     };
     addNode(newTask);
@@ -984,29 +999,9 @@ function PlaybookCanvasInner() {
       const task = node?.data as unknown as PlaybookTask | undefined;
       const selectedStepMode = task?.stepReplayMode || 'live';
       const requiresExistingExecution = selectedStepMode !== 'live' || Boolean(task?.activeReplayId || task?.hasValidatedReplay);
-      let targetExecution =
-        (currentExecution?.playbookId === id ? currentExecution : null)
-        || execution
-        || null;
-
-      if (!targetExecution) {
-        const latestHistory = executionHistory.find(
-          (e) => e.status === 'completed' || e.status === 'failed' || e.status === 'interrupted',
-        );
-        if (latestHistory) {
-          await fetchExecution(id, latestHistory.id);
-          targetExecution = usePlaybookStore.getState().executionCache[latestHistory.id] || null;
-        }
-      }
-
       try {
-        if (targetExecution) {
-          await rerunStepInExecution(id, targetExecution.id, nodeId, false, selectedStepMode, true, nodeReflectionEnabled, advisorAutopilotEnabled);
-          return;
-        }
-
         if (requiresExistingExecution) {
-          showError(t('errors.replayStepRequiresReusableExecution'));
+          showError(t('errors.executionActionUnavailable'));
           return;
         }
 
@@ -1022,82 +1017,22 @@ function PlaybookCanvasInner() {
         // handled in store
       }
     },
-    [id, isDirty, saveNow, currentExecution, execution, executionHistory, fetchExecution, rerunStepInExecution, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled],
-  );
-
-  const handleResumeFromStep = useCallback(
-    async (nodeId: string) => {
-      if (!id) return;
-      if (isDirty) await saveNow();
-      const targetExecution =
-        (currentExecution?.playbookId === id ? currentExecution : null)
-        || execution
-        || null;
-      if (!targetExecution) return;
-      try {
-        await resumeFromStep(id, targetExecution.id, nodeId, true);
-      } catch {
-        // handled in store
-      }
-    },
-    [id, isDirty, saveNow, currentExecution, execution, resumeFromStep],
+    [id, isDirty, saveNow, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled, t],
   );
 
   const handleRerunAfterOptimization = useCallback(async () => {
-    if (!pendingRerunTaskId || !id) return;
-    const taskId = pendingRerunTaskId;
     setPendingRerunTaskId(null);
-    const node = nodes.find((n) => n.id === taskId);
-    const task = node?.data as unknown as PlaybookTask | undefined;
-    const selectedStepMode = task?.stepReplayMode || 'live';
-    let targetExecution =
-      (currentExecution?.playbookId === id ? currentExecution : null)
-      || execution
-      || null;
-
-    if (!targetExecution) {
-      const latestHistory = executionHistory.find(
-        (e) => e.status === 'completed' || e.status === 'failed' || e.status === 'interrupted',
-      );
-      if (latestHistory) {
-        await fetchExecution(id, latestHistory.id);
-        targetExecution = usePlaybookStore.getState().executionCache[latestHistory.id] || null;
-      }
-    }
-
-    if (!targetExecution) {
-      showError(t('rerunPrompt.noExecution'));
-      return;
-    }
-
-    try {
-      await rerunStepInExecution(
-        id,
-        targetExecution.id,
-        taskId,
-        false,
-        selectedStepMode,
-        true,
-        nodeReflectionEnabled,
-        advisorAutopilotEnabled,
-      );
-    } catch {
-      // handled in store
-    }
+    showError(t('errors.executionActionUnavailable'));
   }, [
-    pendingRerunTaskId,
-    id,
     setPendingRerunTaskId,
-    nodes,
-    currentExecution,
-    execution,
-    executionHistory,
-    fetchExecution,
-    rerunStepInExecution,
-    nodeReflectionEnabled,
-    advisorAutopilotEnabled,
     t,
   ]);
+
+  useEffect(() => {
+    if (!pendingRerunTaskId) return;
+    showError(t('errors.executionActionUnavailable'));
+    setPendingRerunTaskId(null);
+  }, [pendingRerunTaskId, setPendingRerunTaskId, t]);
 
   const handleDismissRerunPrompt = useCallback(() => {
     setPendingRerunTaskId(null);
@@ -1165,14 +1100,6 @@ function PlaybookCanvasInner() {
     }
   }, [deleteOutputFormatTemplate, editingOutputFormatTaskId, id]);
 
-  const handleSkipStep = useCallback(
-    async (nodeId: string) => {
-      if (!id || !currentExecution || currentExecution.playbookId !== id) return;
-      await skipExecutionStep(id, currentExecution.id, nodeId);
-    },
-    [id, currentExecution, skipExecutionStep],
-  );
-
   const executionForNodeActions =
     currentExecution?.playbookId === id
       ? currentExecution
@@ -1235,30 +1162,13 @@ function PlaybookCanvasInner() {
   );
 
   const canSkipStep = useCallback(
-    (nodeId: string) => {
-      if (!currentExecution || currentExecution.playbookId !== id) return false;
-      return getVisibleExecutionStatus(currentExecution) === 'interrupted'
-        && currentExecution.interruptPayload?.taskId === nodeId;
-    },
-    [currentExecution, id],
+    (_nodeId: string) => false,
+    [],
   );
 
   const canResumeFromStep = useCallback(
-    (_nodeId: string) => {
-      const targetExecution =
-        (currentExecution?.playbookId === id ? currentExecution : null)
-        || execution
-        || null;
-      if (!targetExecution) return false;
-      const node = nodes.find((candidate) => candidate.id === _nodeId);
-      const task = node?.data as unknown as PlaybookTask | undefined;
-      const snapshotTasks = ((targetExecution.playbookSnapshot as { tasks?: Partial<PlaybookTask>[] } | null)?.tasks) || [];
-      const snapshotTask = snapshotTasks.find((candidate) => candidate.id === task?.id);
-      if (!snapshotTask) return false;
-      if (!canReuseExecutionForTask(targetExecution, task)) return false;
-      return getVisibleExecutionStatus(targetExecution) !== 'running';
-    },
-    [currentExecution, execution, id, nodes],
+    (_nodeId: string) => false,
+    [],
   );
 
   const activeExecutionForEditor = (currentExecution?.playbookId === id ? currentExecution : null) || execution || null;
@@ -1326,8 +1236,8 @@ function PlaybookCanvasInner() {
       onDelete: removeNode,
       onToggleEnabled: handleToggleEnabled,
       onExecuteStep: handleExecuteStep,
-      onResumeFromStep: handleResumeFromStep,
-      onSkipStep: handleSkipStep,
+      onResumeFromStep: () => undefined,
+      onSkipStep: () => undefined,
       onSaveBaseline: handleSaveBaseline,
       onGrabOutputFormat: handleGrabOutputFormat,
       onRemoveReplayBaseline: handleRemoveReplayBaseline,
@@ -1346,8 +1256,6 @@ function PlaybookCanvasInner() {
       removeNode,
       handleToggleEnabled,
       handleExecuteStep,
-      handleResumeFromStep,
-      handleSkipStep,
       handleSaveBaseline,
       handleGrabOutputFormat,
       handleRemoveReplayBaseline,

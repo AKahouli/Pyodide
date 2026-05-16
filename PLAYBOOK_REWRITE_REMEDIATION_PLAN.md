@@ -205,6 +205,105 @@ Recommended route policy:
 | Repeatability task | Use `/repeatability/tasks/:taskId`, update frontend config |
 | Templates | Use `/playbook-flow-templates` during rewrite, rename in Phase 6 if desired |
 
+## Priority 7: Backend ↔ LangGraph Flow Engine Contract Gaps
+
+The backend module at `YellowStorm/back/src/modules/playbook-flow` and the Python runtime at `yellowstorm-adk/src/flow_engine` must be treated as a hard process boundary. The current proto files are mirrored (`playbook-flow.proto` exists on both sides with matching fields), but several semantic gaps can still prevent the feature from working end to end.
+
+### Boundary Contract Inventory
+
+| Boundary Item | Backend Side | Flow Engine Side | Current Risk |
+|---|---|---|---|
+| Proto file | `back/src/modules/playbook-flow/proto/playbook-flow.proto` | `yellowstorm-adk/grpc/proto/playbook-flow.proto` | Files currently match, but there is no explicit drift check in the remediation plan |
+| Runtime service | `PlaybookFlowExecutionService` gRPC client | `PlaybookFlowRuntimeServicer` | Backend calls `Run`, `Cancel`, `ResumeApproval`; Python implements `Cancel` and `ResumeApproval` as acknowledgements only |
+| Snapshot payload | Backend builds `FlowSnapshot` and maps camelCase to snake_case gRPC fields | Python converts protobuf snapshot to dict and composes LangGraph graph | Data shape mostly aligns, but metadata and `Struct` fields remain high-risk silent-drop areas |
+| Input context | Backend sends `input_context: toGrpcStruct(inputContext)` | Python converts `Struct` via `_struct_to_dict` | Shape aligns if `toGrpcStruct()` is always used |
+| Data bindings | Backend sends `source_kind`, `source_node`, `constant_value`, etc. | Python resolver expects those snake_case names | Shape aligns, but step/router nodes do not yet use the resolver consistently |
+| Execution events | Backend handles `NodeStarted`, `NodeToken`, `NodeCompleted`, `NodeFailed`, `RouterDecision`, `ApprovalRequested`, `ExecutionCompleted`, `ExecutionFailed` | Python emits those events from `runtime/events.py` | Persistence exists, but no SSE fanout yet |
+| Runtime settings | Backend sends `recursion_limit` and `max_parallelism` in request and snapshot | Python `Run` currently calls `stream_graph(..., config=config)` without passing request recursion/max-parallelism | Recursion/max-parallelism contract not enforced end to end |
+
+### Critical Backend/Engine Gaps
+
+| Gap | Evidence | Impact | Remediation |
+|---|---|---|---|
+| Python `Cancel` is not wired into running graphs | `Cancel()` returns `CancelResponse(cancelled=True)` only | Frontend may show cancelled while Python continues execution and emits later events | Implement cancellation registry/checkpointer update in `flow_engine`, have node guards check `cancelled`, and make backend ignore late events after cancellation |
+| Python `ResumeApproval` does not resume LangGraph checkpoint | `ResumeApproval()` returns `ResumeApprovalResponse(resumed=True)` only | HITL approval appears accepted but graph does not continue | Implement LangGraph `Command(resume=...)` resume path using the execution checkpoint/thread id |
+| Backend clears pending approval before confirming Python resume | Backend sets `pendingApproval = null` before gRPC callback result | Failed resume can orphan execution state | Only clear `pendingApproval` after successful `ResumeApproval`, or mark a transient `resuming_approval` state |
+| Recursion limit is sent but not applied | Backend sends `settings.recursion_limit`; Python `stream_graph` default remains `25` | Flow-specific recursion settings may be ignored | Pass `request.settings.recursion_limit` into `stream_graph(..., recursion_limit=...)`; enforce hard maximum in backend and Python |
+| Max parallelism is sent but not applied | Backend sends `max_parallelism`; Python builder/invoker does not enforce it | Runtime may exceed intended concurrency or ignore user settings | Define how `max_parallelism` maps to LangGraph concurrency / worker limits and enforce it |
+| Iterator implementation is not equivalent to planned iterator runtime | `builder/iterator.py` creates item summaries but does not execute child subgraph per item | Iterator flows may appear successful without executing child nodes | Implement real iterator subgraph execution with per-item iteration keys and child node events |
+| Data bindings are implemented but not consistently consumed by step/router nodes | Resolver exists in `bindings/resolver.py`; `run_step` uses only `state.inputs`; router uses global state | Strict separation of control flow and data flow is not actually enforced at execution time | Call `resolve_node_inputs()` at every node entry and use resolved inputs for LLM/tool prompts and router decisions |
+| Backend event payload unwrapping is fragile | Backend handles several `Struct`/`Value` shapes manually | Silent payload drops can corrupt outputs, router decisions, or HITL prompts | Add boundary tests that send nested Struct/List/Value payloads from Python to backend and assert DB writes exactly |
+| `NodeFailed` currently marks whole execution failed | Backend sets execution status to `failed` on every `NodeFailed` | This conflicts with first-class `__error__` recovery routing | Only fail the execution on `ExecutionFailed`; for recoverable node failures, persist failed task result and let router decision continue flow |
+| Queue release occurs on gRPC stream end, not necessarily final DB state | Backend `end` handler marks queued/running execution completed | If Python emitted `ExecutionFailed`, `pending_approval`, or was cancelled, stream end can overwrite or race final state | Make finalization idempotent and conditional on known terminal event state; do not mark completed blindly on stream end |
+| Backend starts gRPC immediately after enqueue regardless of queue position | `start()` enqueues then calls `callGrpcRun()` if gRPC available | Per-user concurrency queue may not actually gate execution start | Queue service must own dispatch/start, or `start()` must only run immediately when position permits |
+| Proto package is copied but not verified in CI | Matching files observed now | Future backend/Python drift can silently break runtime | Add CI check comparing backend and ADK `playbook-flow.proto`, regenerate stubs, and fail on drift |
+
+### Event Semantics Remediation
+
+The backend should not treat every runtime event as a terminal state transition. Runtime events should be classified first:
+
+| Event | Backend Persistence | SSE Fanout | Terminal? |
+|---|---|---|---|
+| `NodeStarted` | Upsert task result `running` for `(executionId, taskId, iteration)` | `playbook_step_start` | No |
+| `NodeToken` | Append/merge partial output | `playbook_step_update` | No |
+| `NodeCompleted` | Mark task result `completed` | `playbook_step_complete` | No |
+| `NodeFailed` | Mark task result `failed`; append error detail | `playbook_step_complete` or error update | Not by itself if `__error__` routing handles it |
+| `RouterDecision` | Append router decision | Router decision update / step update | No |
+| `IterationIncremented` | Persist/update iteration metadata if needed | Iteration update | No |
+| `ApprovalRequested` | Set execution `pending_approval` | HITL interrupt/update | No; suspended state |
+| `ApprovalResolved` | Clear pending approval after backend confirms resume | HITL resolved/update | No |
+| `ExecutionCompleted` | Mark execution `completed` | `playbook_execution_complete` | Yes |
+| `ExecutionFailed` | Mark execution `failed` | `playbook_execution_error` | Yes |
+
+Backend finalization rules:
+
+1. Only `ExecutionCompleted`, `ExecutionFailed`, or confirmed cancellation can make an execution terminal.
+2. `NodeFailed` is not terminal when the graph can route via `__error__`.
+3. gRPC stream `end` should release resources, but must not blindly set `completed`.
+4. Late events after `cancelled`, `failed`, or `completed` must be ignored or logged as stale.
+
+### Snapshot/Data Contract Remediation
+
+The new runtime depends on exact field naming and shape across NestJS, proto-loader, generated Python protobuf classes, and LangGraph. Add explicit contract tests for these cases:
+
+| Case | Required Assertion |
+|---|---|
+| Node metadata with nested agent/tool config | Python receives all metadata keys and nested structures intact |
+| `input_context` with nested objects/lists/nulls | Python `_struct_to_dict()` receives exact values |
+| `DataBinding.constantValue` object/list/null | Python resolver receives exact constant through `constant_value` |
+| Router labels including `__error__` | Python conditional dispatch sees exact labels |
+| Human approval config | Python receives prompt template and timeout seconds |
+| Iteration binding `previous` | Python resolver returns previous iteration output and `None` on first iteration |
+| Output payload with nested JSON | Backend `unwrapGrpcValue()` stores exact output without protobuf wrapper artifacts |
+
+### Backend/Engine Remediation Sequence
+
+1. Add a proto drift CI check and regenerate Python stubs from the checked-in proto.
+2. Add an integration fixture that starts a flow through the NestJS backend and asserts Python receives the exact `FlowSnapshot`.
+3. Pass `recursion_limit` and `max_parallelism` from `RunRequest.settings` into the Python invoker.
+4. Implement real cancellation propagation and stale-event protection.
+5. Implement real HITL resume from checkpoint before wiring frontend approval UI.
+6. Make `NodeFailed` recoverable when `__error__` routing exists; reserve execution failure for `ExecutionFailed`.
+7. Replace placeholder iterator behavior with real child subgraph execution and iteration-keyed events.
+8. Ensure every executable node resolves `DataBindings` at node entry and uses those resolved inputs.
+9. Bridge every persisted runtime event to the SSE gateway from Priority 1.
+10. Add end-to-end tests for linear, router loop, `__error__` recovery, iterator, HITL, cancel, trace replay, and re-execute.
+
+### Backend/Engine Acceptance Criteria
+
+This boundary is healthy only when all of the following are true:
+
+1. Backend and ADK proto files are identical in CI.
+2. A backend-started execution reaches Python and runs without manual ADK test harness setup.
+3. `RunRequest.snapshot`, `input_context`, and `DataBinding.constantValue` preserve nested JSON exactly.
+4. `recursionLimit` and `maxParallelism` are enforced by the runtime.
+5. Cancel stops a running execution and prevents later events from changing the terminal state.
+6. HITL approval pauses, persists `pendingApproval`, resumes from checkpoint, and completes the graph.
+7. A failing node can route through `__error__` without marking the whole execution failed.
+8. Iterator child nodes actually execute and emit iteration-keyed events.
+9. Trace replay emits the same logical timeline as the original persisted events.
+10. Backend DB state, SSE stream state, and Python runtime state agree for the same execution id.
+
 ## Suggested Remediation Sequence
 
 1. Restore new SSE stream gateway and event mapping.
