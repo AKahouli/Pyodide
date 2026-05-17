@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Headers, Req,
+  Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Headers, HttpException, HttpStatus,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
@@ -8,7 +8,6 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { Permissions } from '@modules/authorization/constants/permissions';
-import { Request } from 'express';
 
 @ApiTags('Playbook Flow Executions')
 @ApiBearerAuth()
@@ -30,7 +29,10 @@ export class PlaybookFlowExecutionController {
     @Body() body: any,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    const execution = await this.executionService.start(flowId, userId, body.inputContext, idempotencyKey);
+    const singleStepTaskId: string | undefined = body.singleStepTaskId;
+    const execution = await this.executionService.start(
+      flowId, userId, body.inputContext, idempotencyKey, singleStepTaskId,
+    );
     return { executionId: (execution as any).id ?? (execution as any)._id?.toString() };
   }
 
@@ -127,5 +129,100 @@ export class PlaybookFlowExecutionController {
   ) {
     const detail = await this.executionService.findOne(executionId, userId);
     return detail.routerDecisions;
+  }
+
+  // --- Execution compat routes (old playbook API surfaces) ---
+
+  @Post('playbooks/:flowId/resume')
+  @ApiOperation({ summary: 'Resume a paused execution (compat)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatResume(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Body() body: { executionId: string },
+  ) {
+    return this.executionService.resumeApproval(body.executionId, userId, { decision: 'approved' });
+  }
+
+  @Post('playbooks/:flowId/stop')
+  @ApiOperation({ summary: 'Stop/cancel execution (compat)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatStop(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Body() body: { executionId: string },
+  ) {
+    return this.executionService.cancel(body.executionId, userId);
+  }
+
+  @Post('playbooks/:flowId/steps/skip')
+  @ApiOperation({ summary: 'Skip a step mid-execution (not yet implemented)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatSkipStep(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Body() body: { executionId: string; taskId: string },
+  ) {
+    throw new HttpException('Step skipping is not available in this version', HttpStatus.NOT_IMPLEMENTED);
+  }
+
+  @Post('playbooks/:flowId/executions/:executionId/rerun-step')
+  @ApiOperation({ summary: 'Re-run a single step (not yet implemented)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatRerunStep(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Param('executionId') executionId: string,
+    @Body() body: { taskId: string },
+  ) {
+    throw new HttpException('Step re-running is not available in this version', HttpStatus.NOT_IMPLEMENTED);
+  }
+
+  @Post('playbooks/:flowId/executions/:executionId/resume-from-step')
+  @ApiOperation({ summary: 'Resume execution from a step (not yet implemented)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatResumeFromStep(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Param('executionId') executionId: string,
+    @Body() body: { taskId: string; streaming?: boolean },
+  ) {
+    throw new HttpException('Resume-from-step is not available in this version', HttpStatus.NOT_IMPLEMENTED);
+  }
+
+  @Get('playbooks/:flowId/executions/:executionId')
+  @ApiOperation({ summary: 'Get execution detail nested under playbook (compat)' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async compatGetExecution(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Param('executionId') executionId: string,
+  ) {
+    return this.executionService.findOne(executionId, userId);
+  }
+
+  @Delete('playbooks/:flowId/executions/:executionId')
+  @ApiOperation({ summary: 'Delete execution nested under playbook (compat)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatDeleteExecution(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Param('executionId') executionId: string,
+  ) {
+    await this.executionService.delete(executionId, userId);
+    return { deleted: true };
+  }
+
+  @Delete('playbooks/:flowId/executions/:executionId/tasks/:taskId/step-executions/:stepExecutionId')
+  @ApiOperation({ summary: 'Delete a step-execution record (not yet implemented)' })
+  @RequirePermissions(Permissions.PLAYBOOK_EXECUTE)
+  async compatDeleteStepExecution(
+    @CurrentUser('_id') userId: string,
+    @Param('flowId') flowId: string,
+    @Param('executionId') executionId: string,
+    @Param('taskId') taskId: string,
+    @Param('stepExecutionId') stepExecutionId: string,
+  ) {
+    throw new HttpException('Step execution deletion is not available in this version', HttpStatus.NOT_IMPLEMENTED);
   }
 }

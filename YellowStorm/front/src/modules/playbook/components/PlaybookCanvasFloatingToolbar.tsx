@@ -75,9 +75,9 @@ export function PlaybookCanvasFloatingToolbar({
   interruptType = null,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
-  const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
-  const nodeTemplatesLoading = usePlaybookStore((s) => s.nodeTemplatesLoading);
-  const fetchNodeTemplates = usePlaybookStore((s) => s.fetchNodeTemplates);
+  const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
+  const flowNodeTemplatesLoading = usePlaybookStore((s) => s.flowNodeTemplatesLoading);
+  const fetchFlowNodeTemplates = usePlaybookStore((s) => s.fetchFlowNodeTemplates);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
   const dragOffsetRef = useRef<Position>({ x: 0, y: 0 });
@@ -87,8 +87,8 @@ export function PlaybookCanvasFloatingToolbar({
   const titleId = useId();
 
   useEffect(() => {
-    void fetchNodeTemplates();
-  }, [fetchNodeTemplates]);
+    void fetchFlowNodeTemplates();
+  }, [fetchFlowNodeTemplates]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -348,15 +348,15 @@ export function PlaybookCanvasFloatingToolbar({
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />
-                  {nodeTemplatesLoading ? (
+                  {flowNodeTemplatesLoading ? (
                     <DropdownMenuItem disabled>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       {t('common.loading')}
                     </DropdownMenuItem>
-                  ) : nodeTemplates.length === 0 ? (
+                  ) : flowNodeTemplates.length === 0 ? (
                     <DropdownMenuItem disabled>{t('toolbar.noTemplatesAvailable')}</DropdownMenuItem>
                   ) : (
-                    nodeTemplates.map((template) => {
+                    flowNodeTemplates.map((template) => {
                       const KindIcon = PORT_COLORS[template.inputPorts[0]?.artifactKind || 'text'].icon;
                       return (
                         <DropdownMenuItem key={template.id} onClick={() => onAddStepFromTemplate(template)}>

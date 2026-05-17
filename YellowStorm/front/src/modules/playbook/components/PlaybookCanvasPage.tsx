@@ -820,6 +820,17 @@ function PlaybookCanvasInner() {
       const h = canvasEl?.clientHeight ?? 600;
       const center = reactFlow.screenToFlowPosition({ x: w / 2, y: h / 2 });
 
+      const isRouterTemplate = template.nodeType === 'router';
+      const routerConfig = isRouterTemplate
+        ? {
+            outputLabels: [...(template.routerConfig?.outputLabels ?? ['retry', 'done', '__error__'])],
+            maxIterations: template.routerConfig?.maxIterations ?? 3,
+          }
+        : null;
+      const outputPorts = isRouterTemplate
+        ? routerConfig!.outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' as const }))
+        : template.outputPorts.map((p) => ({ ...p }));
+      // Flow templates carry node-specific defaults that the blank add actions already initialize manually.
       const newTask: PlaybookTask = {
         id: taskId,
         title: `${template.title} ${existingCount + 1}`,
@@ -845,7 +856,22 @@ function PlaybookCanvasInner() {
         nodeType: template.nodeType,
         templateType: template.type,
         inputPorts: template.inputPorts.map((p) => ({ ...p })),
-        outputPorts: template.outputPorts.map((p) => ({ ...p })),
+        outputPorts,
+        iteratorConfig: template.iteratorConfig
+          ? { ...template.iteratorConfig }
+          : null,
+        routerConfig,
+        humanApprovalConfig: template.nodeType === 'human_approval'
+          ? template.humanApprovalConfig
+            ? {
+                promptTemplate: template.humanApprovalConfig.promptTemplate,
+                timeoutSeconds: template.humanApprovalConfig.timeoutSeconds,
+              }
+            : {
+                promptTemplate: '',
+                timeoutSeconds: 3600,
+              }
+          : null,
       };
       addNode(newTask);
     },

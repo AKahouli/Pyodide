@@ -102,6 +102,9 @@ export class FlowNode {
   label?: string;
 
   @Prop({ required: false, type: String })
+  description?: string;
+
+  @Prop({ required: false, type: String })
   taskTemplateId?: string;
 
   @Prop({ required: false, type: String })
@@ -234,6 +237,9 @@ export class Flow {
     }),
   })
   designSettings?: Record<string, unknown>;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  isFavorite?: boolean;
 }
 
 export const FlowSchema = SchemaFactory.createForClass(Flow);

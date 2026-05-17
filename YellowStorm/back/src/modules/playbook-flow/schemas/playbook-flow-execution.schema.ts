@@ -50,6 +50,9 @@ export class FlowExecution {
   @Prop({ required: false, type: Object })
   inputContext?: Record<string, unknown>;
 
+  @Prop({ required: false, type: Object, select: false })
+  snapshot?: Record<string, unknown>;
+
   @Prop({ required: false, type: String })
   idempotencyKey?: string;
 
@@ -61,12 +64,16 @@ export class FlowExecution {
 
   @Prop({ required: false, type: String })
   threadId?: string;
+
+  @Prop({ required: false, type: String })
+  singleStepTaskId?: string;
 }
 
 export const FlowExecutionSchema = SchemaFactory.createForClass(FlowExecution);
 
 FlowExecutionSchema.index({ flowId: 1, createdAt: -1 });
 FlowExecutionSchema.index({ ownerId: 1, status: 1 });
+FlowExecutionSchema.index({ ownerId: 1, status: 1, createdAt: 1 });
 FlowExecutionSchema.index({ ownerId: 1, idempotencyKey: 1 });
 
 FlowExecutionSchema.set('toJSON', {

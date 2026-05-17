@@ -54,6 +54,9 @@ export interface TaskTemplate {
   executionMode?: TaskExecutionMode;
   assignedAgentId?: string | null;
   selectedAction?: SelectedAction;
+  iteratorConfig?: PlaybookIteratorConfig | null;
+  routerConfig?: RouterConfig | null;
+  humanApprovalConfig?: HumanApprovalConfig | null;
 }
 
 // ===== Domain Entities =====
@@ -1499,6 +1502,7 @@ export interface PlaybookState {
   /** Flow model fields (Phase 4) */
   flowNodeTemplates: TaskTemplate[];
   flowNodeTemplatesLoading: boolean;
+  flowNodeTemplatesLoadedAt: number;
   flowNodeKinds: Array<{ kind: string; label: string }>;
   flowNodeKindsLoading: boolean;
   idempotencyKeyCounters: Record<string, number>;
@@ -1792,7 +1796,7 @@ export interface FlowIteratorConfig {
 
 export interface HumanApprovalConfig {
   promptTemplate: string;
-  timeoutSeconds?: number;
+  timeoutSeconds?: number | null;
 }
 
 export interface RetryPolicy {

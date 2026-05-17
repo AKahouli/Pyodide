@@ -18,6 +18,7 @@ from structlog import get_logger
 from langgraph.config import get_stream_writer
 
 from src.config.settings import get_settings
+from src.flow_engine.nodes.step_prompt import build_step_prompt
 from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
@@ -25,25 +26,31 @@ settings = get_settings()
 
 DEFAULT_MODEL = "gpt-4o-mini"
 
-
 def _build_prompt(
-    input_context: dict[str, Any],
     label: str,
-    agent_description: str = "",
+    node_id: str,
+    input_context: dict[str, Any],
+    node_description: str = "",
+    output_contract: dict[str, Any] | None = None,
+    iteration: int = 0,
+    trigger_context: dict[str, Any] | None = None,
 ) -> str:
-    lines = [f"Task: {label}"]
-    if agent_description:
-        lines.append(f"Context: {agent_description}")
-    if input_context:
-        lines.append(f"Input: {json.dumps(input_context, indent=2, default=str)}")
-    lines.append("Provide your response:")
-    return "\n".join(lines)
+    return build_step_prompt(
+        label=label,
+        node_id=node_id,
+        input_context=input_context,
+        node_description=node_description,
+        output_contract=output_contract,
+        iteration=iteration,
+        trigger_context=trigger_context,
+    )
 
 
 async def run_step(
     node_id: str,
     node_config: dict[str, Any],
     state: ExecutionState,
+    node_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     iteration = state["iterations"].get(node_id, 0)
     label = str(node_config.get("label") or node_id)
@@ -55,9 +62,18 @@ async def run_step(
     agent_description = str(metadata.get("agent_description") or "")
     agent_model = metadata.get("agent_model") or node_config.get("model_id")
     agent_prompt = str(metadata.get("agent_prompt") or "")
+    node_description = str(
+        node_config.get("description")
+        or metadata.get("description")
+        or ""
+    )
+    output_contract = node_config.get("output") or None
 
     model_id = str(agent_model or DEFAULT_MODEL)
-    system_prompt = str(agent_prompt or metadata.get("system_prompt", "") or f"You are executing the step: {label}. Respond concisely.")
+    fallback_system_prompt = f"You are executing the step: {label}. Respond concisely."
+    if agent_description:
+        fallback_system_prompt = f"{agent_description}\n\n{fallback_system_prompt}"
+    system_prompt = str(agent_prompt or metadata.get("system_prompt", "") or fallback_system_prompt)
     has_agent = bool(agent_name)
 
     logger.info(
@@ -79,8 +95,17 @@ async def run_step(
         "payload": {"label": label},
     })
 
-    input_context = state.get("inputs", {})
-    user_msg = _build_prompt(input_context, label, agent_description)
+    input_context = node_inputs if node_inputs is not None else state.get("inputs", {})
+    trigger_context = state.get("inputs", {})
+    user_msg = _build_prompt(
+        label=label,
+        node_id=node_id,
+        input_context=input_context,
+        node_description=node_description,
+        output_contract=output_contract if isinstance(output_contract, dict) else None,
+        iteration=iteration,
+        trigger_context=trigger_context if isinstance(trigger_context, dict) else None,
+    )
 
     try:
         litellm.api_base = settings.LITELLM_API_BASE_URL

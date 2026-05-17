@@ -110,6 +110,30 @@ export class FlowNodeTemplate {
   @Prop({ type: Boolean, default: true, index: true })
   enabled!: boolean;
 
+  @Prop({
+    type: {
+      outputLabels: { type: [String], default: [] },
+      maxIterations: { type: Number, min: 1, default: 1 },
+    },
+    default: null,
+  })
+  routerConfig!: {
+    outputLabels: string[];
+    maxIterations: number;
+  } | null;
+
+  @Prop({
+    type: {
+      promptTemplate: { type: String, trim: true, default: '' },
+      timeoutSeconds: { type: Number, min: 0, default: null },
+    },
+    default: null,
+  })
+  humanApprovalConfig!: {
+    promptTemplate: string;
+    timeoutSeconds?: number | null;
+  } | null;
+
   @Prop({ type: Number, default: 1, min: 1 })
   version!: number;
 

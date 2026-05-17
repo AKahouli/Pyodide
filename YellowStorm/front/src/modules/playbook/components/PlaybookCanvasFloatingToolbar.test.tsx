@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
 
@@ -8,13 +8,14 @@ vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
 }));
 
-const fetchNodeTemplatesMock = vi.fn();
+const fetchFlowNodeTemplatesMock = vi.fn();
 
 vi.mock('../store', () => ({
   usePlaybookStore: (sel: (state: {
-    nodeTemplates: Array<{
+    flowNodeTemplates: Array<{
       id: string;
       type: string;
+      nodeType: string;
       title: string;
       description: string;
       icon: string;
@@ -25,14 +26,18 @@ vi.mock('../store', () => ({
       promptTemplate: string;
       recommendedAgentTypeSlug: string | null;
       requiredToolNames: string[];
+      iteratorConfig: null;
+      routerConfig: { outputLabels: string[]; maxIterations: number } | null;
+      humanApprovalConfig: { promptTemplate: string; timeoutSeconds?: number } | null;
     }>;
-    nodeTemplatesLoading: boolean;
-    fetchNodeTemplates: typeof fetchNodeTemplatesMock;
+    flowNodeTemplatesLoading: boolean;
+    fetchFlowNodeTemplates: typeof fetchFlowNodeTemplatesMock;
   }) => unknown) => sel({
-    nodeTemplates: [
+    flowNodeTemplates: [
       {
         id: 'summarizer',
         type: 'summarizer',
+        nodeType: 'action',
         title: 'taskType.summarizer',
         description: 'Summarize',
         icon: 'FileText',
@@ -43,10 +48,31 @@ vi.mock('../store', () => ({
         promptTemplate: '',
         recommendedAgentTypeSlug: null,
         requiredToolNames: [],
+        iteratorConfig: null,
+        routerConfig: null,
+        humanApprovalConfig: null,
+      },
+      {
+        id: 'router-default',
+        type: 'router-default',
+        nodeType: 'router',
+        title: 'taskType.routerDefault',
+        description: 'Route work',
+        icon: 'GitBranch',
+        color: 'blue',
+        category: 'analysis',
+        inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'text', required: false }],
+        outputPorts: [],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+        iteratorConfig: null,
+        routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+        humanApprovalConfig: null,
       },
     ],
-    nodeTemplatesLoading: false,
-    fetchNodeTemplates: fetchNodeTemplatesMock,
+    flowNodeTemplatesLoading: false,
+    fetchFlowNodeTemplates: fetchFlowNodeTemplatesMock,
   }),
 }));
 
@@ -61,6 +87,10 @@ describe('PlaybookCanvasFloatingToolbar', () => {
   });
 
   const containerRef = { current: container };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
 
   it('renders canvas edit actions and calls handlers', async () => {
     const onAddStep = vi.fn();
@@ -131,5 +161,28 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     await userEvent.click(screen.getAllByText('taskType.summarizer')[0]);
 
     expect(onAddStepFromTemplate).toHaveBeenCalledWith(expect.objectContaining({ id: 'summarizer' }));
+  });
+
+  it('loads flow node templates for the toolbar menu', () => {
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+      />,
+    );
+
+    expect(fetchFlowNodeTemplatesMock).toHaveBeenCalledOnce();
   });
 });

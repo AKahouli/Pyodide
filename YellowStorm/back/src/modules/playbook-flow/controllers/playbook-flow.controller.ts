@@ -3,9 +3,11 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { PlaybookFlowService } from '../services/playbook-flow.service';
 import { PlaybookFlowDesignService } from '../services/playbook-flow-design.service';
 import { PlaybookFlowEvaluationService } from '../services/playbook-flow-evaluation.service';
+import { PlaybookFlowIntentService } from '../services/playbook-flow-intent.service';
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowQueryDto } from '../dto/playbook-flow-query.dto';
+import { RequestPlaybookFlowIntentDto } from '../dto/request-playbook-flow-intent.dto';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
@@ -20,6 +22,7 @@ export class PlaybookFlowController {
     private readonly playbookFlowService: PlaybookFlowService,
     private readonly designService: PlaybookFlowDesignService,
     private readonly evaluationService: PlaybookFlowEvaluationService,
+    private readonly playbookFlowIntentService: PlaybookFlowIntentService,
   ) {}
 
   @Post()
@@ -40,6 +43,15 @@ export class PlaybookFlowController {
     @Query() query: PlaybookFlowQueryDto,
   ) {
     return this.playbookFlowService.findAll(userId, query);
+  }
+
+  @Get('active-executions')
+  @ApiOperation({ summary: 'List active executions across playbooks' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getActiveExecutions(
+    @CurrentUser('_id') userId: string,
+  ) {
+    return this.playbookFlowService.getActiveExecutions(userId);
   }
 
   @Get(':id')
@@ -174,5 +186,70 @@ export class PlaybookFlowController {
     @Param('taskId') taskId: string,
   ) {
     await this.evaluationService.removeActiveBaseline(flowId, taskId);
+  }
+
+  @Get(':id/design-messages')
+  @ApiOperation({ summary: 'Get design message history for a flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async getDesignMessages(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.designService.getDesignMessages(id, userId);
+  }
+
+  @Post(':id/design-messages/:msgId/revert')
+  @ApiOperation({ summary: 'Revert flow to a prior design snapshot' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async revertDesign(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Param('msgId') msgId: string,
+  ) {
+    return this.designService.revertToSnapshot(id, msgId, userId);
+  }
+
+  @Post(':id/favorite')
+  @ApiOperation({ summary: 'Toggle favorite status on a playbook' })
+  @RequirePermissions(Permissions.PLAYBOOK_UPDATE)
+  async toggleFavorite(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.playbookFlowService.toggleFavorite(id, userId);
+  }
+
+  @Post('bulk-delete')
+  @ApiOperation({ summary: 'Delete multiple playbooks' })
+  @RequirePermissions(Permissions.PLAYBOOK_DELETE)
+  async bulkDelete(
+    @CurrentUser('_id') userId: string,
+    @Body() body: { ids: string[] },
+  ) {
+    return this.playbookFlowService.bulkDelete(body.ids, userId);
+  }
+
+  @Post(':id/clone-share')
+  @ApiOperation({ summary: 'Clone and share a playbook' })
+  @RequirePermissions(Permissions.PLAYBOOK_CREATE)
+  async cloneShare(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() body: { emails: string[] },
+  ) {
+    return this.playbookFlowService.cloneShare(id, userId, body.emails);
+  }
+
+  // Note: integration-link and public-execute endpoints are deferred to a future integration-token service slice with durable storage.
+
+  @Post(':id/intent')
+  @ApiOperation({ summary: 'Analyze a canvas-level playbook intent without mutating the flow' })
+  @RequirePermissions(Permissions.PLAYBOOK_READ)
+  async analyzeIntent(
+    @CurrentUser('_id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: RequestPlaybookFlowIntentDto,
+  ) {
+    return this.playbookFlowIntentService.analyze(id, userId, dto);
   }
 }

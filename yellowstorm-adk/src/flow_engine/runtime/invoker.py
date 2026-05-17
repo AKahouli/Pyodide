@@ -24,33 +24,40 @@ STREAM_MODE_CUSTOM = "custom"
 
 async def invoke_graph(
     graph: CompiledGraph,
-    initial_state: ExecutionState,
+    graph_input: Any,
     recursion_limit: int = 25,
+    max_parallelism: Optional[int] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> ExecutionState:
-    merged_config = {
-        "recursion_limit": recursion_limit,
-        **(config or {}),
-    }
-    logger.info("[invoker] Invoking graph", recursion_limit=recursion_limit)
-    result = await graph.ainvoke(initial_state, merged_config)
+    merged_config = dict(config or {})
+    merged_config["recursion_limit"] = recursion_limit
+    if max_parallelism is not None:
+        merged_config["max_concurrency"] = max_parallelism
+    logger.info("[invoker] Invoking graph", recursion_limit=recursion_limit, max_parallelism=max_parallelism)
+    result = await graph.ainvoke(graph_input, merged_config)
     return result
 
 
 async def stream_graph(
     graph: CompiledGraph,
-    initial_state: ExecutionState,
+    graph_input: Any,
     recursion_limit: int = 25,
+    max_parallelism: Optional[int] = None,
     config: Optional[dict[str, Any]] = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
-    merged_config = {
-        "recursion_limit": recursion_limit,
-        **(config or {}),
-    }
-    logger.info("[invoker] Streaming graph", recursion_limit=recursion_limit, thread_id=merged_config.get("configurable", {}).get("thread_id"))
+    merged_config = dict(config or {})
+    merged_config["recursion_limit"] = recursion_limit
+    if max_parallelism is not None:
+        merged_config["max_concurrency"] = max_parallelism
+    logger.info(
+        "[invoker] Streaming graph",
+        recursion_limit=recursion_limit,
+        max_parallelism=max_parallelism,
+        thread_id=merged_config.get("configurable", {}).get("thread_id"),
+    )
 
     async for chunk in graph.astream(
-        initial_state,
+        graph_input,
         merged_config,
         stream_mode=[STREAM_MODE_UPDATES, STREAM_MODE_CUSTOM],
     ):

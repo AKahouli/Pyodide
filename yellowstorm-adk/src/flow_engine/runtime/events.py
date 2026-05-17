@@ -13,6 +13,7 @@ State updates still detect router decisions, approvals, and errors.
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncGenerator, Optional
 
 from google.protobuf import timestamp_pb2
@@ -158,9 +159,8 @@ async def emit_events(
 
                     yield _build_event(EVENT_NODE_STARTED, execution_id, node_id, update, _extract_iteration(node_id, update))
 
-        yield _build_event(EVENT_EXECUTION_COMPLETED, execution_id, "", {}, 0)
-    except Exception as e:
-        yield _build_event(EVENT_EXECUTION_FAILED, execution_id, "", {"error": str(e)}, 0)
+    except asyncio.CancelledError:
+        raise
 
 
 def _extract_task_output(node_id: str, update: dict[str, Any]) -> Optional[tuple[int, dict[str, Any]]]:

@@ -5,6 +5,7 @@ import { LoggerService } from '@modules/logger';
 import { ModelsService } from '@modules/models/models.service';
 import { LiteLLMConnectionService } from '@modules/models/litellm-connection.service';
 import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-execution.schema';
+import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow-task-result.schema';
 import {
   OutputFormatGenerationStatus, OutputFormatStatus,
   FlowOutputFormat, FlowOutputFormatDocument,
@@ -25,6 +26,7 @@ export class PlaybookFlowOutputFormatService {
   constructor(
     @InjectModel(FlowOutputFormat.name) private readonly templateModel: Model<FlowOutputFormatDocument>,
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
+    @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
     private readonly modelsService: ModelsService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly logger: LoggerService,
@@ -36,9 +38,12 @@ export class PlaybookFlowOutputFormatService {
       throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_NOT_FOUND);
     }
 
-    const taskResults = (execution as any).taskResults || [];
-    const taskResult = taskResults.find((item: any) => item.nodeId === nodeId);
-    if (!taskResult || taskResult.status !== 'completed' || !taskResult.output) {
+    const taskResult = await this.taskResultModel
+      .findOne({ executionId, taskId: nodeId, status: 'completed' })
+      .sort({ iteration: -1 })
+      .lean()
+      .exec();
+    if (!taskResult || !taskResult.output) {
       throw new BadRequestException(ErrorCode.BAD_REQUEST);
     }
 

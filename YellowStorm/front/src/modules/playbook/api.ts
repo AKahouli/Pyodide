@@ -146,6 +146,18 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
             parentIteratorId: task.containerConfig.parentIteratorId ?? null,
           }
         : null,
+      routerConfig: task.routerConfig
+        ? {
+            outputLabels: [...task.routerConfig.outputLabels],
+            maxIterations: task.routerConfig.maxIterations,
+          }
+        : null,
+      humanApprovalConfig: task.humanApprovalConfig
+        ? {
+            promptTemplate: task.humanApprovalConfig.promptTemplate,
+            timeoutSeconds: task.humanApprovalConfig.timeoutSeconds ?? null,
+          }
+        : null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
     }));
@@ -934,14 +946,14 @@ export async function upsertPlaybookTriggerSchedule(
     API_ENDPOINTS.playbooks.triggerSchedule(playbookId),
     data,
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function clearPlaybookTriggerSchedule(playbookId: string): Promise<Playbook> {
   const response = await apiClient.delete<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.triggerSchedule(playbookId),
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function getPlaybookTriggers(playbookId: string): Promise<PlaybookTriggersData> {
@@ -959,14 +971,14 @@ export async function upsertPlaybookTriggerMail(
     API_ENDPOINTS.playbooks.triggerMail(playbookId),
     data,
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function clearPlaybookTriggerMail(playbookId: string): Promise<Playbook> {
   const response = await apiClient.delete<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.triggerMail(playbookId),
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function syncPlaybookTriggerMailSubscription(
@@ -974,7 +986,7 @@ export async function syncPlaybookTriggerMailSubscription(
   data: SyncPlaybookMailSubscriptionData,
 ): Promise<Record<string, unknown>> {
   const response = await apiClient.post<ApiResponse<Record<string, unknown>>>(
-    API_ENDPOINTS.playbooks.triggerMail(playbookId) + '/sync-subscription',
+    API_ENDPOINTS.playbooks.syncMailSubscription(playbookId),
     data,
   );
   return response.data.data;

@@ -39,7 +39,7 @@ export class PlaybookFlowReplayService {
   ) { this.logger.setContext('PlaybookFlowReplayService'); }
 
   async traceReplay(executionId: string, userId: string): Promise<TraceReplayEvent[]> {
-    const execution = await this.executionModel.findOne({ id: executionId, ownerId: userId }).lean();
+    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).lean();
     if (!execution) throw new NotFoundException('Execution not found');
 
     const [taskResults, routerDecisions] = await Promise.all([
@@ -95,7 +95,7 @@ export class PlaybookFlowReplayService {
   }
 
   async reExecute(executionId: string, userId: string): Promise<{ executionId: string; divergenceWarning: boolean }> {
-    const execution = await this.executionModel.findOne({ id: executionId, ownerId: userId }).lean();
+    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).lean();
     if (!execution) throw new NotFoundException('Execution not found');
 
     const result = await this.executionService.start(
@@ -115,7 +115,7 @@ export class PlaybookFlowReplayService {
     executionId: string,
     dto?: ValidateTaskReplayDto,
   ): Promise<FlowValidatedReplayDocument> {
-    const execution = await this.executionModel.findOne({ id: executionId, ownerId: userId }).lean();
+    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).lean();
     if (!execution) throw new NotFoundException('Execution not found');
 
     const taskResult = await this.taskResultModel.findOne({ executionId, taskId, iteration }).lean();

@@ -190,6 +190,7 @@ const initialState: PlaybookState = {
   intentSuggestionHistory: loadIntentHistory(),
   flowNodeTemplates: [],
   flowNodeTemplatesLoading: false,
+  flowNodeTemplatesLoadedAt: 0,
   flowNodeKinds: [],
   flowNodeKindsLoading: false,
   idempotencyKeyCounters: {},
@@ -3434,6 +3435,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Flow Node Templates (Phase 4) =====
 
       fetchFlowNodeTemplates: async () => {
+        const { flowNodeTemplatesLoadedAt } = get();
+        const now = Date.now();
+        if (now - flowNodeTemplatesLoadedAt < 30_000) return;
+
         set({ flowNodeTemplatesLoading: true });
         try {
           const data = await api.getFlowNodeTemplates();
@@ -3451,8 +3456,12 @@ export const usePlaybookStore = create<PlaybookStore>()(
               outputPorts: Array.isArray(item.outputPorts) ? item.outputPorts : [],
               promptTemplate: item.promptTemplate || '',
               requiredToolNames: Array.isArray(item.requiredToolNames) ? item.requiredToolNames : [],
+              iteratorConfig: item.iteratorConfig ?? null,
+              routerConfig: item.routerConfig ?? null,
+              humanApprovalConfig: item.humanApprovalConfig ?? null,
             })),
             flowNodeTemplatesLoading: false,
+            flowNodeTemplatesLoadedAt: now,
           });
         } catch (err) {
           set({ flowNodeTemplatesLoading: false });
@@ -3475,7 +3484,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       invalidateFlowNodeTemplates: () => {
-        // Force refetch on next call
+        set({ flowNodeTemplatesLoadedAt: 0 });
       },
 
       generateIdempotencyKey: (flowId: string) => {

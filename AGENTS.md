@@ -19,12 +19,61 @@ Behavioral guidelines to reduce common LLM coding mistakes. Bias toward caution 
 - No error handling for impossible scenarios.
 - 200 lines that should be 50 → rewrite.
 
+
+## Non-Negotiable Principles
+
+- **SRP** — one file, one class, one function = one reason to change. If you can describe the unit with the word "and", split it.
+- **DRY** — no copy-pasted logic across modules. Extract to a service, util, or hook *the second* time a pattern appears, not the third.
+- **KISS** — prefer the boring solution. No premature abstraction, no generic-for-future-use, no plugin systems unless a second consumer exists today.
+- **YAGNI** — do not add fields, params, options, or branches "in case we need them". Add them when a caller requires them.
+
+## Hard Size Limits
+
+| Unit | Hard cap | Soft target |
+|------|----------|-------------|
+| File | **300 lines** | 200 |
+| Function / method | **50 lines** (one screen) | 25 |
+| Class | **150 lines** | 100 |
+| Function parameters | **4** (use a typed object beyond that) | 3 |
+| Cyclomatic complexity | **10** per function | 6 |
+| Nesting depth | **3** levels | 2 |
+
+
+Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibility, not arbitrarily — splitting a 400-line file into two 200-line halves that always change together fails SRP and is rejected.
+
+## Naming
+
+- **Verbs for functions, nouns for data, adjectives for booleans.** `buildGraph`, `taskResult`, `isStale`.
+- **No abbreviations** except universally understood (`id`, `url`, `dto`).
+- **No Hungarian prefixes** (`strName`, `IFoo`). Interfaces are not `I`-prefixed.
+- **Names encode role, not type.** `validatedAnswer`, not `answerString`.
+- **A renamed concept is renamed everywhere** in the same PR — schema, DTO, service, frontend type, locale key, test fixture.
+
+## Comments
+
+The default is **no comment**. Code names things, comments explain things code cannot.
+
+- **Comment the WHY**, never the WHAT. `// retry once: gRPC stream drops on token refresh` is good. `// loop over tasks` is noise.
+- **Public API documentation** (exported services, exported types, controllers, router functions): JSDoc / docstring with purpose, params semantics, return semantics, and any non-obvious invariant. One paragraph max.
+- **Inline comments** only for: non-obvious invariants, intentional workarounds, performance-critical decisions, references to external specs/issues.
+- **No banner comments** (`// ===== HELPERS =====`). If a file needs sections, it's two files.
+- **No commit-log comments** (`// added for feature X`, `// fixes bug Y`). That belongs in git.
+- **No restating the signature** in the doc (`@param id The id`).
+
+## Errors
+
+- **Never `catch {}`**. Never `catch (e) { /* ignore */ }`.
+- **Never `throw new Error(...)`** in a reachable code path — always `AppException` subclasses with `ErrorCode` (backend) or typed domain errors (Python).
+- **Validate at boundaries only** (DTO at HTTP, proto at gRPC, Zod at form). Internal callers are trusted — do not re-validate.
+- **No defensive `if (!x)` for arguments the type system guarantees.** Trust your types.
+- **Loop-specific:** every router must have a terminal label (one route to `END` or a non-router node). The builder rejects router configs that can only loop.
+
+
 ## 3. Surgical Changes
 
 **Touch only what you must. Clean up only your own mess.**
 
 - Don't "improve" adjacent code, comments, or formatting.
-- Don't refactor things that aren't broken.
 - Match existing style.
 - If you notice unrelated dead code, mention — don't delete.
 - Remove imports/variables/functions YOUR changes orphaned. Don't remove pre-existing dead code unless asked.
@@ -339,9 +388,7 @@ npx ctx7@latest docs <libraryId> "<question>"
 - Never include credentials.
 - Quota errors → tell user to run `npx ctx7@latest login`.
 
-**Use for:** adding/changing external API usage, version-specific behavior, unclear framework behavior, suspected library misuse.
-
-**Not for:** refactoring, scripts from scratch, business-logic debugging, simple review, local test patterns, general concepts.
+**Use for:** adding/changing external API usage, version-specific behavior, unclear framework behavior, suspected library misuse, etc ...
 
 ---
 
@@ -351,6 +398,7 @@ npx ctx7@latest docs <libraryId> "<question>"
 2. `plan` if criteria met → action plan.
 3. `build` implements (pre-coding protocol mandatory).
 4. Run verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`; `poetry run pytest` in `yellowstorm-adk`.
+4.1 if need to run python in the terminal must always activate the python virtual env through conda activate meta 
 5. `frontend-qa` validates frontend-visible changes → must PASS.
 6. `reviewer` validates → must PASS.
 7. `diagnostics` if test gaps.

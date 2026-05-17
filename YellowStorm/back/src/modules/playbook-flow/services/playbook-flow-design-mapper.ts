@@ -13,10 +13,11 @@ export function mapGrpcResponseToFlow(response: any): {
     id: node.id || `node-${idx}`,
     kind: node.kind || 'step',
     label: node.title || `Step ${idx + 1}`,
+    description: node.description || undefined,
     taskTemplateId: node.task_type || undefined,
     promptTemplateId: node.prompt_template_id || undefined,
     outputFormatId: node.output_format_id || undefined,
-    modelId: node.assigned_agent_id || undefined,
+    modelId: node.model_id || undefined,
     input: { ports: (node.input_ports || []).map((p: any) => ({
       id: p.id || `in-${idx}`, label: p.name || 'Input',
       type: p.artifact_kind || 'text', required: p.required ?? false,
@@ -28,7 +29,7 @@ export function mapGrpcResponseToFlow(response: any): {
     routerConfig: node.output_labels ? {
       outputLabels: node.output_labels, maxIterations: node.max_iterations || 5,
     } : undefined,
-    metadata: {},
+    metadata: node.assigned_agent_id ? { assignedAgentId: node.assigned_agent_id } : {},
   }));
 
   const controlEdges = grpcEdges.map((edge: any, idx: number) => ({

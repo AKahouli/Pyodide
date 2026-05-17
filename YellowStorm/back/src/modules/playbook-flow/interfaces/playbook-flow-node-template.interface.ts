@@ -15,6 +15,16 @@ export interface FlowNodeTemplateIteratorConfig {
   errorStrategy?: 'stop' | 'continue';
 }
 
+export interface FlowNodeTemplateRouterConfig {
+  outputLabels: string[];
+  maxIterations: number;
+}
+
+export interface FlowNodeTemplateHumanApprovalConfig {
+  promptTemplate: string;
+  timeoutSeconds?: number | null;
+}
+
 export interface FlowNodeTemplateResponse {
   id: string;
   key: string;
@@ -34,6 +44,8 @@ export interface FlowNodeTemplateResponse {
   assignedAgentId: string | null;
   selectedAction: string | null;
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
+  routerConfig?: FlowNodeTemplateRouterConfig | null;
+  humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | null;
   enabled: boolean;
   version: number;
   isBuiltIn: boolean;
@@ -63,6 +75,8 @@ export interface CreateFlowNodeTemplateRequest {
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
+  routerConfig?: FlowNodeTemplateRouterConfig | null;
+  humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | null;
   enabled?: boolean;
 }
 
@@ -84,5 +98,7 @@ export interface UpdateFlowNodeTemplateRequest {
   assignedAgentId?: string | null;
   selectedAction?: string | null;
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
+  routerConfig?: FlowNodeTemplateRouterConfig | null;
+  humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | null;
   enabled?: boolean;
 }

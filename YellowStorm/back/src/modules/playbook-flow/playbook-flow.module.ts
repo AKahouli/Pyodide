@@ -30,6 +30,7 @@ import { FlowValidatedReplay, FlowValidatedReplaySchema } from './schemas/playbo
 import { FlowEvaluationBaseline, FlowEvaluationBaselineSchema } from './schemas/playbook-flow-evaluation-baseline.schema';
 import { FlowEvaluationExecution, FlowEvaluationExecutionSchema } from './schemas/playbook-flow-evaluation-execution.schema';
 import { FlowMailEventLedger, FlowMailEventLedgerSchema } from './schemas/playbook-flow-mail-event-ledger.schema';
+import { FlowIdempotencyRecord, FlowIdempotencyRecordSchema } from './schemas/playbook-flow-idempotency-record.schema';
 
 import { PlaybookFlowController } from './controllers/playbook-flow.controller';
 import { PlaybookFlowExecutionController } from './controllers/playbook-flow-execution.controller';
@@ -72,6 +73,7 @@ import { PlaybookFlowMailTriggerHandoffService } from './services/playbook-flow-
 import { PlaybookFlowMailSubscriptionRenewalService } from './services/playbook-flow-mail-subscription-renewal.service';
 import { PlaybookFlowStreamGatewayService } from './services/playbook-flow-stream-gateway.service';
 import { PlaybookFlowStreamEventsService } from './services/playbook-flow-stream-events.service';
+import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 
 @Module({
@@ -90,6 +92,7 @@ import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.
       { name: FlowEvaluationBaseline.name, schema: FlowEvaluationBaselineSchema },
       { name: FlowEvaluationExecution.name, schema: FlowEvaluationExecutionSchema },
       { name: FlowMailEventLedger.name, schema: FlowMailEventLedgerSchema },
+      { name: FlowIdempotencyRecord.name, schema: FlowIdempotencyRecordSchema },
       { name: Workspace.name, schema: WorkspaceSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
     ]),
@@ -146,6 +149,7 @@ import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.
     PlaybookFlowMailSubscriptionRenewalService,
     PlaybookFlowStreamGatewayService,
     PlaybookFlowStreamEventsService,
+    PlaybookFlowIntentService,
     PlaybookFlowStreamAuthGuard,
   ],
   exports: [

@@ -45,6 +45,8 @@ export class PlaybookFlowNodeTemplateService {
       assignedAgentId: doc.assignedAgentId ?? null,
       selectedAction: doc.selectedAction ?? null,
       iteratorConfig: doc.iteratorConfig ?? null,
+      routerConfig: doc.routerConfig ?? null,
+      humanApprovalConfig: doc.humanApprovalConfig ?? null,
       enabled: doc.enabled,
       version: doc.version,
       isBuiltIn: doc.isBuiltIn,
@@ -103,6 +105,8 @@ export class PlaybookFlowNodeTemplateService {
       assignedAgentId: dto.assignedAgentId ?? null,
       selectedAction: dto.selectedAction ?? null,
       iteratorConfig: dto.iteratorConfig ?? null,
+      routerConfig: dto.routerConfig ?? null,
+      humanApprovalConfig: dto.humanApprovalConfig ?? null,
       enabled: dto.enabled ?? true, version: 1, isBuiltIn: false,
       createdBy: new Types.ObjectId(userId), updatedBy: new Types.ObjectId(userId),
     });
@@ -145,6 +149,8 @@ export class PlaybookFlowNodeTemplateService {
     if (dto.assignedAgentId !== undefined) updatePayload.assignedAgentId = dto.assignedAgentId;
     if (dto.selectedAction !== undefined) updatePayload.selectedAction = dto.selectedAction;
     if (dto.iteratorConfig !== undefined) updatePayload.iteratorConfig = dto.iteratorConfig;
+    if (dto.routerConfig !== undefined) updatePayload.routerConfig = dto.routerConfig;
+    if (dto.humanApprovalConfig !== undefined) updatePayload.humanApprovalConfig = dto.humanApprovalConfig;
     if (dto.enabled !== undefined) updatePayload.enabled = dto.enabled;
 
     const updated = await this.templateModel.findByIdAndUpdate(id, { $set: updatePayload }, { new: true }).exec();

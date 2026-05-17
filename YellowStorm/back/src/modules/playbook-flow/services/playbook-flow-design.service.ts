@@ -12,7 +12,7 @@ import { PlaybookFlowContextService } from './playbook-flow-context.service';
 import { PlaybookFlowSettingsService } from './playbook-flow-settings.service';
 import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-template.service';
 import { FlowDesignMessage, FlowDesignMessageDocument } from '../schemas/playbook-flow-design-message.schema';
-import { BadRequestException, ServiceUnavailableException } from '@modules/exceptions';
+import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { mapGrpcResponseToFlow } from './playbook-flow-design-mapper';
 
@@ -100,8 +100,10 @@ export class PlaybookFlowDesignService {
         workspace_context: workspaceContexts,
         existing_playbook: {
           nodes: (flow.nodes || []).map((n: any) => ({
-            id: n.id, title: n.label || n.id, description: n.taskTemplateId || '',
-            assigned_agent_id: n.modelId || '', execution_order: 0,
+            id: n.id,
+            title: n.label || n.id,
+            description: n.description || n.metadata?.description || '',
+            assigned_agent_id: n.metadata?.assignedAgentId || '', execution_order: 0,
           })),
           edges: (flow.controlEdges || []).map((e: any) => ({
             source_id: e.source, target_id: e.target,
@@ -186,6 +188,57 @@ export class PlaybookFlowDesignService {
     if (edgesAdded > 0) parts.push(`Added ${edgesAdded} connection${edgesAdded > 1 ? 's' : ''}`);
     if (edgesRemoved > 0) parts.push(`Removed ${edgesRemoved} connection${edgesRemoved > 1 ? 's' : ''}`);
     return parts.length > 0 ? parts.join(', ') : 'No structural changes';
+  }
+
+  async getDesignMessages(flowId: string, userId: string): Promise<any[]> {
+    const flow = await this.playbookFlowService.findById(flowId);
+    if (String(flow.ownerId) !== String(userId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN);
+    }
+    const messages = await this.designMessageModel
+      .find({ flowId: new Types.ObjectId(flowId) })
+      .sort({ createdAt: -1 })
+      .lean();
+    return messages.map((m) => this.mapMessageToResponse(m));
+  }
+
+  async revertToSnapshot(flowId: string, msgId: string, userId: string) {
+    const flow = await this.playbookFlowService.findById(flowId);
+    if (String(flow.ownerId) !== String(userId)) {
+      throw new ForbiddenException(ErrorCode.FORBIDDEN);
+    }
+
+    if (!Types.ObjectId.isValid(msgId)) {
+      throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid message ID');
+    }
+
+    const message = await this.designMessageModel.findById(msgId);
+    if (!message || String(message.flowId) !== String(flowId)) {
+      throw new NotFoundException(ErrorCode.NOT_FOUND, 'Design message not found');
+    }
+
+    const snapshot = message.snapshotBefore;
+    const updatedFlow = await this.playbookFlowService.updateNodesAndEdges(flowId, {
+      nodes: snapshot.nodes || [],
+      controlEdges: snapshot.controlEdges || [],
+      dataBindings: snapshot.dataBindings || [],
+    });
+
+    const revertedMessage = await this.designMessageModel.create({
+      flowId: new Types.ObjectId(flowId),
+      createdBy: new Types.ObjectId(userId),
+      userQuery: `Reverted to snapshot from ${msgId}`,
+      aiSummary: 'Flow reverted to previous design snapshot',
+      snapshotBefore: {
+        nodes: (flow.nodes || []).map((n: any) => ({ ...n })),
+        controlEdges: (flow.controlEdges || []).map((e: any) => ({ ...e })),
+        dataBindings: (flow.dataBindings || []).map((b: any) => ({ ...b })),
+      },
+      status: 'reverted',
+      revertedFromMessageId: message._id,
+    });
+
+    return { flow: updatedFlow, message: this.mapMessageToResponse(revertedMessage) };
   }
 
   private mapMessageToResponse(message: any) {

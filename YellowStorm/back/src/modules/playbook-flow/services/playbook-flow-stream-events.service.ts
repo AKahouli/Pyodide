@@ -189,4 +189,24 @@ export class PlaybookFlowStreamEventsService {
       },
     });
   }
+
+  emitExecutionQueued(executionId: string, flowId: string, queuePosition: number): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_execution_queued',
+      data: { executionId, playbookId: flowId, status: 'queued', queuePosition },
+    });
+  }
+
+  emitQueuePositionUpdate(executionId: string, queuePosition: number): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_execution_queue_update',
+      data: { executionId, queuePosition },
+    });
+  }
 }

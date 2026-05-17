@@ -276,6 +276,53 @@ The new runtime depends on exact field naming and shape across NestJS, proto-loa
 | Iteration binding `previous` | Python resolver returns previous iteration output and `None` on first iteration |
 | Output payload with nested JSON | Backend `unwrapGrpcValue()` stores exact output without protobuf wrapper artifacts |
 
+### Prompt Construction Contract Remediation
+
+Prompt construction is part of the backend/engine contract, not an implementation detail. The new runtime must not rebuild old DAG prompts verbatim, but it must preserve the semantic inputs that make the control-flow/data-flow split executable.
+
+Required prompt contract:
+
+| Prompt Input | Source | Runtime Requirement |
+|---|---|---|
+| Flow identity | Flow snapshot | Include flow id/name/description where useful for node context |
+| Node identity | `FlowNode` | Include node id, kind, label/title, and explicit node description |
+| Node description | `FlowNode.description` or normalized metadata field | Must be visible in the LLM user message for executable nodes |
+| Agent instructions | Resolved agent metadata | Must drive the system prompt, not be mixed into data inputs |
+| Resolved inputs | `dataBindings` resolver + trigger/input/state context | Must be rendered as the node's data context; control edges alone must not imply data dependencies |
+| Output contract | Node output ports + output format template | Must be rendered so the model knows expected artifacts/port semantics |
+| Iteration context | Runtime state | Must include current/previous iteration context when a node runs inside router/iterator loops |
+| HITL context | Approval config and resume payload | Must include approval prompt/decision context only for HITL nodes or resumed nodes |
+| Prompt overrides | Admin prompt templates | Must be applied consistently to system/user prompt sections when enabled |
+
+Minimum rendering rule for step-like executable nodes:
+
+```text
+Task Title:
+{node.label}
+
+Task Description:
+{node.description}
+
+Resolved Inputs:
+{resolved_inputs_json}
+
+Output Contract:
+{output_ports_json}
+
+Instructions:
+Complete this node using only the resolved input data and declared output contract.
+```
+
+Implementation requirements:
+
+1. Backend `FlowSnapshot` serialization must carry an explicit node description field or a documented normalized metadata field; it must not substitute `taskTemplateId` for description.
+2. Python `flow_engine` must read that node description and include it in the LLM user message.
+3. `run_step` must use node-entry resolved inputs from `dataBindings`; raw global `input_context` is only a fallback or trigger source.
+4. Output ports and output format templates must be included in the user prompt for any node with declared outputs.
+5. System prompt construction must remain agent/instruction focused; data inputs belong in the user prompt.
+6. Prompt rendering must be covered by tests that assert node description, resolved inputs, output ports, and iteration context appear in the final LLM messages.
+7. Boundary tests must assert the backend-sent snapshot arrives in Python with node description intact.
+
 ### Backend/Engine Remediation Sequence
 
 1. Add a proto drift CI check and regenerate Python stubs from the checked-in proto.
@@ -286,8 +333,9 @@ The new runtime depends on exact field naming and shape across NestJS, proto-loa
 6. Make `NodeFailed` recoverable when `__error__` routing exists; reserve execution failure for `ExecutionFailed`.
 7. Replace placeholder iterator behavior with real child subgraph execution and iteration-keyed events.
 8. Ensure every executable node resolves `DataBindings` at node entry and uses those resolved inputs.
-9. Bridge every persisted runtime event to the SSE gateway from Priority 1.
-10. Add end-to-end tests for linear, router loop, `__error__` recovery, iterator, HITL, cancel, trace replay, and re-execute.
+9. Implement the prompt construction contract so node descriptions, resolved inputs, output contracts, and iteration context are visible in final LLM messages.
+10. Bridge every persisted runtime event to the SSE gateway from Priority 1.
+11. Add end-to-end tests for linear, router loop, `__error__` recovery, iterator, HITL, cancel, trace replay, and re-execute.
 
 ### Backend/Engine Acceptance Criteria
 
@@ -301,8 +349,9 @@ This boundary is healthy only when all of the following are true:
 6. HITL approval pauses, persists `pendingApproval`, resumes from checkpoint, and completes the graph.
 7. A failing node can route through `__error__` without marking the whole execution failed.
 8. Iterator child nodes actually execute and emit iteration-keyed events.
-9. Trace replay emits the same logical timeline as the original persisted events.
-10. Backend DB state, SSE stream state, and Python runtime state agree for the same execution id.
+9. The LLM user message for every step-like node includes node description, resolved data inputs, output contract, and relevant iteration/trigger context.
+10. Trace replay emits the same logical timeline as the original persisted events.
+11. Backend DB state, SSE stream state, and Python runtime state agree for the same execution id.
 
 ## Suggested Remediation Sequence
 

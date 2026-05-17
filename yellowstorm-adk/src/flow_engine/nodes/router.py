@@ -22,13 +22,14 @@ from src.flow_engine.state import ExecutionState
 logger = get_logger(__name__)
 settings = get_settings()
 
-DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_MODEL = "azure/gpt-5.4-mini"
 
 
 async def run_router(
     node_id: str,
     node_config: dict[str, Any],
     state: ExecutionState,
+    node_inputs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     iteration = state["iterations"].get(node_id, 0)
     output_labels = node_config.get("router_config", {}).get("output_labels", ["continue"])
@@ -58,8 +59,9 @@ async def run_router(
             f"Choose exactly one of the following labels: [{labels_str}]. "
             f"Respond with only the label string, nothing else."
         )
+        router_context = node_inputs if node_inputs is not None else state.get("inputs", {})
         user_msg = router_prompt or (
-            f"Context: {json.dumps(state.get('inputs', {}), default=str)}\n"
+            f"Context: {json.dumps(router_context, default=str)}\n"
             f"Previous outputs: {json.dumps({str(k): v for k, v in state.get('task_outputs', {}).items()}, default=str)}\n"
             f"Iteration: {iteration}\n"
             f"Choose the best label from: {labels_str}"
@@ -90,6 +92,13 @@ async def run_router(
 
     writer({
         "type": "RouterDecision",
+        "node_id": node_id,
+        "iteration": iteration,
+        "payload": {"label": chosen_label},
+    })
+
+    writer({
+        "type": "NodeCompleted",
         "node_id": node_id,
         "iteration": iteration,
         "payload": {"label": chosen_label},

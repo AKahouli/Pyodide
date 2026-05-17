@@ -5,6 +5,8 @@ import { PermissionsGuard } from '@modules/authorization/guards/permissions.guar
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { PlaybookFlowNodeTemplateService } from '../services/playbook-flow-node-template.service';
+import { CreateFlowNodeTemplateDto } from '../dto/create-flow-node-template.dto';
+import { UpdateFlowNodeTemplateDto } from '../dto/update-flow-node-template.dto';
 
 @ApiTags('Playbook Flow Templates')
 @ApiBearerAuth()
@@ -53,14 +55,14 @@ export class PlaybookFlowTemplateController {
   @Post()
   @ApiOperation({ summary: 'Create a node template' })
   @RequirePermissions(Permissions.PLAYBOOK_CREATE)
-  async create(@CurrentUser() user: { _id: string }, @Body() body: any) {
+  async create(@CurrentUser() user: { _id: string }, @Body() body: CreateFlowNodeTemplateDto) {
     return this.nodeTemplateService.create(body, user._id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Update a node template' })
   @RequirePermissions(Permissions.PLAYBOOK_CREATE)
-  async update(@Param('id') id: string, @CurrentUser() user: { _id: string }, @Body() body: any) {
+  async update(@Param('id') id: string, @CurrentUser() user: { _id: string }, @Body() body: UpdateFlowNodeTemplateDto) {
     return this.nodeTemplateService.update(id, body, user._id);
   }
 

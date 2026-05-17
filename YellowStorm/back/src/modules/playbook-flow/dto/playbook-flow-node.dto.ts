@@ -150,6 +150,11 @@ export class FlowNodeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  description?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   taskTemplateId?: string;
 
   @ApiPropertyOptional()

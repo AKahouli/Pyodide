@@ -17,12 +17,15 @@ import { PlaybookFlowQueueService } from './playbook-flow-queue.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 import { PlaybookFlowService } from './playbook-flow.service';
 import { PlaybookFlowBuilderService } from './playbook-flow-builder.service';
+import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
+import { RESERVED_LABELS } from '../constants/reserved-labels';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  ServiceUnavailableException,
 } from '../../exceptions/exceptions/http.exceptions';
 import {
   IFlowExecutionResponse,
@@ -33,7 +36,7 @@ import {
   IResumeApprovalPayload,
 } from '../interfaces/playbook-flow-execution.interface';
 
-function toGrpcValue(value: unknown): Record<string, unknown> {
+export function toGrpcValue(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) {
     // Match the working chatbot/playbook gRPC path: proto-loader expects camelCase
     // Value selectors here, otherwise Struct map entries arrive as empty/null values.
@@ -62,12 +65,47 @@ function toGrpcValue(value: unknown): Record<string, unknown> {
   }
 }
 
-function toGrpcStruct(value?: Record<string, unknown>): Record<string, unknown> {
+export function toGrpcStruct(value?: Record<string, unknown>): Record<string, unknown> {
   const fields = Object.entries(value || {}).reduce<Record<string, unknown>>((acc, [key, entry]) => {
     acc[key] = toGrpcValue(entry);
     return acc;
   }, {});
   return { fields };
+}
+
+export function buildGrpcHumanApprovalConfig(config?: { promptTemplate?: string; timeoutSeconds?: number | null } | null) {
+  if (!config) return undefined;
+  return {
+    prompt_template: config.promptTemplate || '',
+    ...(config.timeoutSeconds == null || config.timeoutSeconds === 0 ? {} : { timeout_seconds: config.timeoutSeconds }),
+  };
+}
+
+const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
+
+export function isTerminalStatus(status: string): boolean {
+  return (TERMINAL_STATUSES as readonly string[]).includes(status);
+}
+
+export function shouldFinalizeStreamAsCompleted(
+  completionEmitted: boolean,
+  awaitingApproval: boolean,
+  status: string,
+): boolean {
+  return !completionEmitted
+    && !awaitingApproval
+    && status !== 'cancelled'
+    && status !== 'pending_approval'
+    && status !== 'failed'
+    && status !== 'completed';
+}
+
+export function shouldEmitFailureOnStreamError(completionEmitted: boolean): boolean {
+  return !completionEmitted;
+}
+
+export function shouldEmitCompletedAfterUpdate(modifiedCount?: number): boolean {
+  return Boolean(modifiedCount);
 }
 
 @Injectable()
@@ -88,12 +126,38 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly idempotencyService: PlaybookFlowIdempotencyService,
     private readonly flowService: PlaybookFlowService,
     private readonly builderService: PlaybookFlowBuilderService,
+    private readonly validatorService: PlaybookFlowValidatorService,
     private readonly agentService: AgentService,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
   ) {}
 
   onModuleInit() {
     this.initGrpcClient();
+    if (this.isGrpcAvailable) {
+      this.recoverQueuedExecutions()
+        .catch((err) => {
+          this.logger.error('Failed to recover queued executions', err instanceof Error ? err.stack : undefined);
+        });
+    }
+  }
+
+  private async reconcileOrphanedExecutions(): Promise<void> {
+    // This remains disabled until execution ownership is persisted and validated.
+  }
+
+  private async recoverQueuedExecutions(): Promise<void> {
+    const owners = await this.executionModel.distinct('ownerId', { status: 'queued' });
+    for (const ownerId of owners as string[]) {
+      while (true) {
+        const queuedCount = await this.executionModel.countDocuments({ ownerId, status: 'queued' });
+        const runningCount = await this.queueService.getRunningCount(ownerId);
+        const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
+        if (queuedCount === 0 || runningCount >= maxConcurrent) {
+          break;
+        }
+        await this.drainQueue(ownerId);
+      }
+    }
   }
 
   private initGrpcClient() {
@@ -140,13 +204,86 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     ownerId: string,
     inputContext?: Record<string, unknown>,
     idempotencyKey?: string,
+    singleStepTaskId?: string,
   ): Promise<IFlowExecutionResponse> {
     const flow = await this.flowService.findOne(flowId, ownerId);
+
+    const nodeIds = new Set(flow.nodes.map((n) => n.id));
+    const cleanedEdges = flow.controlEdges.filter((e) => {
+      const valid = nodeIds.has(e.source) && nodeIds.has(e.target);
+      if (!valid) {
+        this.logger.warn(`Cleaning orphaned edge ${e.id}: source=${e.source} target=${e.target}`);
+      }
+      return valid;
+    });
+    const cleanedBindings = flow.dataBindings.filter((b) => {
+      const valid = nodeIds.has(b.targetNode)
+        && (b.sourceNode ? nodeIds.has(b.sourceNode) : true);
+      if (!valid) {
+        this.logger.warn(`Cleaning orphaned data binding ${b.id}: targetNode=${b.targetNode} sourceNode=${b.sourceNode}`);
+      }
+      return valid;
+    });
+
+    if (cleanedEdges.length !== flow.controlEdges.length || cleanedBindings.length !== flow.dataBindings.length) {
+      this.logger.warn(
+        `Cleaned ${flow.controlEdges.length - cleanedEdges.length} orphaned edge(s) and ${flow.dataBindings.length - cleanedBindings.length} orphaned binding(s) for flow ${flowId}`,
+      );
+      const doc = await this.flowService.findById(flowId);
+      doc.controlEdges = cleanedEdges as any;
+      doc.dataBindings = cleanedBindings as any;
+      await doc.save();
+      flow.controlEdges = cleanedEdges as any;
+      flow.dataBindings = cleanedBindings as any;
+    }
+
+    if (!singleStepTaskId) {
+      this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+    }
 
     const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
     const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
     const recursionLimit = flow.settings?.recursionLimit || 25;
     const maxParallelism = flow.settings?.maxParallelism || 5;
+
+    if (idempotencyKey) {
+      const reservation = await this.idempotencyService.reserve(ownerId, idempotencyKey, {
+        flowId,
+        inputContext: inputContext ?? {},
+      });
+      if (reservation.type === 'duplicate') {
+        const existingExecution = await this.executionModel.findById(reservation.executionId);
+        if (!existingExecution) {
+          throw new ConflictException(
+            ErrorCode.CONFLICT,
+            'Idempotency record points to a missing execution. Retry with a new key.',
+          );
+        }
+        return existingExecution.toJSON() as unknown as IFlowExecutionResponse;
+      }
+    }
+
+    const fullSnapshot = this.builderService.buildSnapshot(flow as any);
+
+    let snapshot: any;
+    if (singleStepTaskId) {
+      const allNodes = (fullSnapshot as any).nodes || [];
+      const targetNode = allNodes.find((n: any) => n.id === singleStepTaskId);
+      if (!targetNode) {
+        throw new BadRequestException(
+          ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+          `Single-step target node ${singleStepTaskId} not found`,
+        );
+      }
+      snapshot = {
+        ...fullSnapshot,
+        nodes: [targetNode],
+        controlEdges: [],
+        dataBindings: [],
+      };
+    } else {
+      snapshot = fullSnapshot;
+    }
 
     const execution = new this.executionModel({
       flowId,
@@ -157,12 +294,28 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       maxParallelism,
       inputContext,
       idempotencyKey,
+      snapshot,
+      singleStepTaskId: singleStepTaskId || undefined,
     });
 
     const saved = await execution.save();
 
-    const position = await this.queueService.enqueue(ownerId, saved.id, maxConcurrent, maxDepth);
+    if (idempotencyKey) {
+      try {
+        await this.idempotencyService.confirmLink(ownerId, idempotencyKey, saved.id);
+      } catch (err) {
+        await this.executionModel.findByIdAndDelete(saved.id);
+        await this.idempotencyService.release(ownerId, idempotencyKey);
+        throw err;
+      }
+    }
+
+    const position = await this.queueService.admit(ownerId, saved.id, maxConcurrent, maxDepth);
     if (position < 0) {
+      await this.executionModel.findByIdAndDelete(saved.id);
+      if (idempotencyKey) {
+        await this.idempotencyService.release(ownerId, idempotencyKey);
+      }
       throw new BadRequestException(
         ErrorCode.PLAYBOOK_FLOW_QUEUE_FULL,
         'Execution queue is full. Please try again later.',
@@ -172,13 +325,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     saved.queuePosition = position;
     await saved.save();
 
-    if (this.isGrpcAvailable) {
-      this.callGrpcRun(saved.id, flowId, ownerId, flow as any, inputContext).catch((err) => {
-        this.logger.error(`Playbook flow execution ${saved.id} failed to start`, err instanceof Error ? err.stack : undefined);
-      });
-    } else {
-      this.logger.warn(`Playbook flow execution ${saved.id} not started because gRPC client is unavailable`);
-    }
+    await this.drainQueue(ownerId);
 
     return saved.toJSON() as unknown as IFlowExecutionResponse;
   }
@@ -187,11 +334,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     executionId: string,
     flowId: string,
     ownerId: string,
-    flow: Record<string, unknown>,
+    flow: Record<string, unknown> | null,
     inputContext?: Record<string, unknown>,
+    snapshotOverride?: Record<string, unknown>,
   ): Promise<void> {
     try {
-      const snapshot = this.builderService.buildSnapshot(flow as any);
+      const snapshot = (snapshotOverride || this.builderService.buildSnapshot((flow || {}) as any)) as any;
       const recursionLimit = snapshot.settings?.recursionLimit || 25;
       const maxParallelism = snapshot.settings?.maxParallelism || 5;
 
@@ -225,20 +373,33 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const enrichedNodes = (snapshot.nodes as any[]).map((n) => {
         const assignedAgentId = n.metadata?.assignedAgentId;
         const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
+        const description = typeof n.description === 'string' && n.description.trim()
+          ? n.description.trim()
+          : typeof n.metadata?.description === 'string' && n.metadata.description.trim()
+            ? n.metadata.description.trim()
+            : '';
         return {
           ...n,
+          modelId: n.modelId || (resolvedAgent?.agent_model as string) || '',
           metadata: {
             ...(n.metadata || {}),
+            ...(description ? { description } : {}),
             ...(resolvedAgent || {}),
           },
         };
       });
 
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        status: 'running',
-        startedAt: new Date(),
-        queuePosition: 0,
-      }).exec();
+      const startResult = await this.executionModel.updateOne(
+        { _id: executionId, status: 'running' },
+        {
+          startedAt: new Date(),
+          queuePosition: 0,
+        },
+      ).exec();
+      if (!(startResult as { modifiedCount?: number }).modifiedCount) {
+        this.logger.warn(`Skipping gRPC start for execution ${executionId} because it is no longer runnable`);
+        return;
+      }
 
       this.streamEvents.emitExecutionStart(executionId, flowId, ownerId);
 
@@ -290,10 +451,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             collection_path: n.iteratorConfig.collectionPath || '',
             max_items: n.iteratorConfig.maxItems || 0,
           } : undefined,
-          human_approval_config: n.humanApprovalConfig ? {
-            prompt_template: n.humanApprovalConfig.promptTemplate || '',
-            timeout_seconds: n.humanApprovalConfig.timeoutSeconds || 0,
-          } : undefined,
+          human_approval_config: buildGrpcHumanApprovalConfig(n.humanApprovalConfig),
           retry_policy: n.retryPolicy ? {
             max_retries: n.retryPolicy.maxRetries || 0,
             delay_ms: n.retryPolicy.delayMs || 0,
@@ -337,47 +495,85 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const call = this.playbookFlowClient.Run(request);
     let finalized = false;
     let completionEmitted = false;
+    let lastHandlePromise = Promise.resolve();
     const releaseOnce = () => {
       if (finalized) return;
       finalized = true;
-      this.queueService.release(ownerId);
+      this.drainQueue(ownerId);
     };
     call.on('data', (event: Record<string, unknown>) => {
-      this.handleRunEvent(executionId, event).catch((err) => {
-        this.logger.error(`Failed to handle run event for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
-      });
+      lastHandlePromise = lastHandlePromise
+        .then(() => this.handleRunEvent(executionId, event))
+        .catch((err) => {
+          this.logger.error(`Failed to handle run event for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
+        });
       const eventType = event.event_type as string;
       if (eventType === 'ExecutionCompleted') {
         completionEmitted = true;
-        this.streamEvents.emitExecutionComplete(executionId, 'completed');
       } else if (eventType === 'ExecutionFailed') {
         completionEmitted = true;
-        const p = (event.payload as Record<string, unknown>) || {};
-        this.streamEvents.emitExecutionComplete(executionId, 'failed', String(p.error || 'Execution failed'));
       }
     });
     call.on('error', (err: Error) => {
-      this.logger.error(`gRPC stream error for execution ${executionId}: ${err.message}`, err.stack);
-      this.executionModel
-        .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
-        .exec();
-      if (!completionEmitted) {
-        this.streamEvents.emitExecutionComplete(executionId, 'failed', err.message);
-      }
-      releaseOnce();
+      void (async () => {
+        this.logger.error(`gRPC stream error for execution ${executionId}: ${err.message}`, err.stack);
+        await this.executionModel
+          .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
+          .exec();
+        if (!completionEmitted) {
+          this.streamEvents.emitExecutionComplete(executionId, 'failed', err.message);
+          completionEmitted = true;
+        }
+        releaseOnce();
+      })().catch((updateErr) => {
+        this.logger.error(`Failed to finalize errored stream for execution ${executionId}`, updateErr instanceof Error ? updateErr.stack : undefined);
+        releaseOnce();
+      });
     });
     call.on('end', () => {
-      this.logger.log(`gRPC stream ended for execution ${executionId}`);
-      this.executionModel
-        .updateOne(
-          { _id: executionId, status: { $in: ['queued', 'running'] } },
-          { status: 'completed', endedAt: new Date() },
-        )
-        .exec();
-      if (!completionEmitted) {
-        this.streamEvents.emitExecutionComplete(executionId, 'completed');
-      }
-      releaseOnce();
+      void (async () => {
+        this.logger.log(`gRPC stream ended for execution ${executionId}`);
+        await lastHandlePromise;
+        if (!completionEmitted) {
+          const execution = await this.executionModel.findById(executionId).lean();
+          const status = String((execution as Record<string, unknown> | null)?.status || '');
+          if (shouldFinalizeStreamAsCompleted(false, false, status)) {
+            const failedTask = await this.taskResultModel
+              .findOne({ executionId, status: 'failed' })
+              .sort({ endedAt: -1 })
+              .lean();
+
+            if (failedTask) {
+              const errorMessage = String(failedTask.error || 'Execution failed');
+              const result = await this.executionModel
+                .updateOne(
+                  { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+                  { status: 'failed', error: errorMessage, endedAt: new Date() },
+                )
+                .exec();
+              if ((result as { modifiedCount?: number }).modifiedCount) {
+                completionEmitted = true;
+                this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
+              }
+            } else {
+              const result = await this.executionModel
+                .updateOne(
+                  { _id: executionId, status: { $in: ['queued', 'running'] } },
+                  { status: 'completed', endedAt: new Date() },
+                )
+                .exec();
+              if ((result as { modifiedCount?: number }).modifiedCount) {
+                completionEmitted = true;
+                this.streamEvents.emitExecutionComplete(executionId, 'completed');
+              }
+            }
+          }
+        }
+        releaseOnce();
+      })().catch((err) => {
+        this.logger.error(`Failed to finalize gRPC stream for execution ${executionId}`, err instanceof Error ? err.stack : undefined);
+        releaseOnce();
+      });
     });
     } catch (err) {
       this.logger.error(`Playbook flow execution ${executionId} failed before gRPC stream`, err instanceof Error ? err.stack : undefined);
@@ -387,7 +583,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         error: err instanceof Error ? err.message : String(err),
       }).exec();
       this.streamEvents.emitExecutionComplete(executionId, 'failed', err instanceof Error ? err.message : String(err));
-      this.queueService.release(ownerId);
+      await this.drainQueue(ownerId);
     }
   }
 
@@ -460,7 +656,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   private async handleRunEvent(executionId: string, event: Record<string, unknown>): Promise<void> {
     const eventType = event.event_type as string;
-    const payload = (event.payload as Record<string, unknown>) || {};
+    const rawPayload = (event.payload as Record<string, unknown>) || {};
+    const payload = (this.unwrapGrpcValue(rawPayload) as Record<string, unknown>) || {};
     const taskNodeId = event.node_id as string;
     const iteration = Number(event.iteration ?? payload.iteration ?? 0);
 
@@ -550,49 +747,90 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         },
         { upsert: true },
       );
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        status: 'failed',
-        error: errorMessage,
-        endedAt: new Date(),
-      }).exec();
       this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, errorMessage, iteration);
     } else if (eventType === 'RouterDecision') {
+      const label = String(payload.label || '');
       await this.routerDecisionModel.create({
         executionId,
         routerNodeId: taskNodeId,
         iteration,
-        label: String(payload.label || ''),
+        label,
         decidedAt: new Date(),
       });
-      this.streamEvents.emitRouterDecision(executionId, taskNodeId, String(payload.label || ''), iteration);
+      this.streamEvents.emitRouterDecision(executionId, taskNodeId, label, iteration);
+
+      if (RESERVED_LABELS.includes(label as any)) {
+        this.logger.warn(
+          `Execution ${executionId} reached reserved label '${label}' via router ${taskNodeId} iteration ${iteration}`,
+        );
+
+        const terminalStatus = label === '__error__' ? 'failed' : 'cancelled';
+        const errorMsg = label === '__error__' ? `Router ${taskNodeId} returned __error__` : `Router ${taskNodeId} returned __cancelled__`;
+
+        const result = await this.executionModel
+          .updateOne(
+            { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+            { status: terminalStatus, error: errorMsg, endedAt: new Date() },
+          )
+          .exec();
+
+        if ((result as { modifiedCount?: number }).modifiedCount) {
+          this.streamEvents.emitExecutionComplete(executionId, terminalStatus, errorMsg);
+
+          const execution = await this.executionModel.findById(executionId, { ownerId: 1 }).lean();
+          const owner = execution ? (execution as unknown as Record<string, unknown>).ownerId as string : undefined;
+          if (owner) {
+            this.drainQueue(owner).catch((err) => {
+              this.logger.error(`Failed to drain queue after ${label} for owner ${owner}`, err instanceof Error ? err.stack : undefined);
+            });
+          }
+        }
+      }
     } else if (eventType === 'ApprovalRequested') {
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        status: 'pending_approval',
-        pendingApproval: {
-          nodeId: String(payload.node_id || taskNodeId),
+      const result = await this.executionModel
+        .updateOne(
+          { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+          {
+            status: 'pending_approval',
+            pendingApproval: {
+              nodeId: String(payload.node_id || taskNodeId),
+              iteration,
+              prompt: String(payload.prompt || ''),
+              requestedAt: new Date(),
+            },
+          },
+        )
+        .exec();
+      if ((result as { modifiedCount?: number }).modifiedCount) {
+        this.streamEvents.emitInterrupt(
+          executionId,
+          String(payload.node_id || taskNodeId),
+          String(payload.prompt || ''),
           iteration,
-          prompt: String(payload.prompt || ''),
-          requestedAt: new Date(),
-        },
-      }).exec();
-      this.streamEvents.emitInterrupt(
-        executionId,
-        String(payload.node_id || taskNodeId),
-        String(payload.prompt || ''),
-        iteration,
-        executionId,
-      );
+          executionId,
+        );
+      }
     } else if (eventType === 'ExecutionCompleted') {
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        status: 'completed',
-        endedAt: new Date(),
-      }).exec();
+      const result = await this.executionModel
+        .updateOne(
+          { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+          { status: 'completed', endedAt: new Date() },
+        )
+        .exec();
+      if (shouldEmitCompletedAfterUpdate((result as { modifiedCount?: number }).modifiedCount)) {
+        this.streamEvents.emitExecutionComplete(executionId, 'completed');
+      }
     } else if (eventType === 'ExecutionFailed') {
-      await this.executionModel.findByIdAndUpdate(executionId, {
-        status: 'failed',
-        error: String(payload.error || 'Execution failed'),
-        endedAt: new Date(),
-      }).exec();
+      const errorMessage = String(payload.error || 'Execution failed');
+      const result = await this.executionModel
+        .updateOne(
+          { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+          { status: 'failed', error: errorMessage, endedAt: new Date() },
+        )
+        .exec();
+      if ((result as { modifiedCount?: number }).modifiedCount) {
+        this.streamEvents.emitExecutionComplete(executionId, 'failed', errorMessage);
+      }
     }
   }
 
@@ -669,6 +907,48 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     };
   }
 
+  private async drainQueue(ownerId: string): Promise<void> {
+    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
+    if (!this.isGrpcAvailable) return;
+
+    while (true) {
+      const next = await this.queueService.release(ownerId, maxConcurrent);
+      if (!next) return;
+
+      const changes = await this.queueService.refreshPositions(ownerId);
+      for (const { executionId, queuePosition } of changes) {
+        this.streamEvents.emitQueuePositionUpdate(executionId, queuePosition);
+      }
+
+      const snapshot = (next as unknown as Record<string, unknown>).snapshot as Record<string, unknown> | undefined;
+      let flow: Record<string, unknown> | null = null;
+
+      if (!snapshot) {
+        flow = await this.flowService.findOne(next.flowId, ownerId).catch((err) => {
+          this.logger.warn(`Drain: flow ${next.flowId} not found for execution ${next.id}`, String(err));
+          return null;
+        }) as unknown as Record<string, unknown> | null;
+
+        if (!flow) {
+          await this.executionModel
+            .findByIdAndUpdate(next.id, {
+              status: 'failed',
+              endedAt: new Date(),
+              error: 'Flow not found before runtime start',
+            })
+            .exec();
+          this.streamEvents.emitExecutionComplete(next.id, 'failed', 'Flow not found before runtime start');
+          continue;
+        }
+      }
+
+      this.logger.log(`Drain: starting queued execution ${next.id} for owner ${ownerId}`);
+      this.callGrpcRun(next.id, next.flowId, ownerId, flow, next.inputContext, snapshot).catch((err) => {
+        this.logger.error(`Drain: execution ${next.id} failed to start`, err instanceof Error ? err.stack : undefined);
+      });
+    }
+  }
+
   async cancel(executionId: string, ownerId: string): Promise<IFlowExecutionResponse> {
     const execution = await this.executionModel.findById(executionId);
     if (!execution) {
@@ -699,7 +979,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       });
     }
 
-    this.queueService.release(ownerId);
     return execution.toJSON() as unknown as IFlowExecutionResponse;
   }
 
@@ -764,23 +1043,58 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       );
     }
 
-    execution.pendingApproval = null;
-    await execution.save();
+    if (!this.isGrpcAvailable) {
+      throw new ServiceUnavailableException(
+        ErrorCode.PLAYBOOK_FLOW_GRPC_UNAVAILABLE,
+        'Flow runtime is currently unavailable',
+      );
+    }
 
-    if (this.isGrpcAvailable) {
+    const resumed = await new Promise<boolean>((resolve, reject) => {
       this.playbookFlowClient.ResumeApproval(
         {
           execution_id: executionId,
           decision: payload.decision,
           payload: toGrpcStruct(payload.payload || {}),
         },
-        (err: Error | null) => {
+        (err: Error | null, response?: { resumed?: boolean }) => {
           if (err) {
+            reject(err);
+            return;
           }
+          resolve(Boolean(response?.resumed));
         },
+      );
+    });
+
+    if (!resumed) {
+      throw new ConflictException(
+        ErrorCode.CONFLICT,
+        'Execution could not be resumed because the runtime no longer has the pending approval state.',
       );
     }
 
+    const resumeUpdate = await this.executionModel.updateOne(
+      { _id: executionId, status: 'pending_approval' },
+      {
+        status: 'running',
+        pendingApproval: null,
+      },
+    ).exec();
+
+    if (!(resumeUpdate as { modifiedCount?: number }).modifiedCount) {
+      const latestExecution = await this.executionModel.findById(executionId);
+      if (!latestExecution) {
+        throw new NotFoundException(
+          ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND,
+          'Execution not found',
+        );
+      }
+      return latestExecution.toJSON() as unknown as IFlowExecutionResponse;
+    }
+
+    execution.pendingApproval = null;
+    execution.status = 'running';
     return execution.toJSON() as unknown as IFlowExecutionResponse;
   }
 }

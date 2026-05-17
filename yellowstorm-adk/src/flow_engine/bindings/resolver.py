@@ -6,6 +6,7 @@ payload dict for a single node.
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Optional
 
@@ -19,6 +20,8 @@ from src.flow_engine.bindings import (
     parse_data_source,
 )
 from src.flow_engine.state import ExecutionState
+
+logger = logging.getLogger(__name__)
 
 
 def _dot_get(obj: dict[str, Any], path: str) -> Any:
@@ -36,18 +39,47 @@ def _resolve_node_output(
     source: NodeOutputSource,
     state: ExecutionState,
 ) -> Any:
+    next_iteration = state["iterations"].get(source.source_node, 0)
+
     if source.iteration == "current":
-        return state["task_outputs"].get((source.source_node, state["iterations"].get(source.source_node, 0)))
+        return _extract_port_value(
+            state["task_outputs"].get((source.source_node, max(0, next_iteration - 1))),
+            source.source_port,
+        )
     if source.iteration == "previous":
-        current_iter = state["iterations"].get(source.source_node, 0)
-        if current_iter == 0:
+        if next_iteration <= 1:
             return None
-        return state["task_outputs"].get((source.source_node, current_iter - 1))
+        return _extract_port_value(
+            state["task_outputs"].get((source.source_node, next_iteration - 2)),
+            source.source_port,
+        )
     try:
         iter_num = int(source.iteration)
-        return state["task_outputs"].get((source.source_node, iter_num))
+        return _extract_port_value(
+            state["task_outputs"].get((source.source_node, iter_num)),
+            source.source_port,
+        )
     except ValueError:
         return None
+
+
+def _extract_port_value(value: Any, source_port: str) -> Any:
+    if not source_port or value is None:
+        return value
+
+    if isinstance(value, dict):
+        direct = _dot_get(value, source_port)
+        if direct is not None:
+            return direct
+
+        output = value.get("output")
+        if isinstance(output, dict):
+            nested = _dot_get(output, source_port)
+            if nested is not None:
+                return nested
+
+    logger.warning("[bindings] Missing source_port path source_port=%s", source_port)
+    return None
 
 
 def resolve_node_inputs(
@@ -58,8 +90,21 @@ def resolve_node_inputs(
     resolved: dict[str, Any] = {}
 
     for raw in bindings:
+        if raw.get("target_node") not in (None, "", node_id):
+            continue
+
         target_port = raw.get("target_port", "default")
-        source = parse_data_source(raw)
+        try:
+            source = parse_data_source(raw)
+        except ValueError as exc:
+            logger.warning(
+                "[bindings] Invalid binding rejected node_id=%s binding_id=%s source_kind=%s error=%s",
+                node_id,
+                raw.get("id"),
+                raw.get("source_kind"),
+                str(exc),
+            )
+            raise
 
         if isinstance(source, NodeOutputSource):
             resolved[target_port] = _resolve_node_output(source, state)
@@ -107,7 +152,8 @@ def _resolve_expression(expression: str, state: ExecutionState) -> Optional[str]
     try:
         result = _TEMPLATE_VAR_RE.sub(_replacer, expression)
         return result if result else None
-    except Exception:
+    except Exception as exc:
+        logger.warning("[bindings] Expression resolution failed expression=%s error=%s", expression, str(exc))
         return None
 
 
