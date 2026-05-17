@@ -35,6 +35,7 @@ import {
   IFlowRouterDecisionResponse,
   IResumeApprovalPayload,
 } from '../interfaces/playbook-flow-execution.interface';
+import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
 
 export function toGrpcValue(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) {
@@ -82,6 +83,17 @@ export function buildGrpcHumanApprovalConfig(config?: { promptTemplate?: string;
 }
 
 const TERMINAL_STATUSES = ['completed', 'failed', 'cancelled'] as const;
+const RUNTIME_AGENT_METADATA_KEYS = [
+  'agent_name',
+  'agent_description',
+  'agent_model',
+  'agent_prompt',
+  'agent_type',
+  'agent_tools',
+  'agent_params',
+  'connector_bindings',
+  'brain_context',
+] as const;
 
 export function isTerminalStatus(status: string): boolean {
   return (TERMINAL_STATUSES as readonly string[]).includes(status);
@@ -107,6 +119,16 @@ export function shouldEmitFailureOnStreamError(completionEmitted: boolean): bool
 export function shouldEmitCompletedAfterUpdate(modifiedCount?: number): boolean {
   return Boolean(modifiedCount);
 }
+
+function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const sanitizedMetadata = { ...metadata };
+  for (const key of RUNTIME_AGENT_METADATA_KEYS) {
+    delete sanitizedMetadata[key];
+  }
+  return sanitizedMetadata;
+}
+
+const SINGLE_STEP_UNSUPPORTED_MESSAGE = 'Single-step execution only supports standalone step nodes without incoming edges or data bindings.';
 
 @Injectable()
 export class PlaybookFlowExecutionService implements OnModuleInit {
@@ -237,8 +259,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       flow.dataBindings = cleanedBindings as any;
     }
 
-    if (!singleStepTaskId) {
-      this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+    this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
+
+    if (singleStepTaskId) {
+      this.assertSingleStepSupported(flow.nodes, flow.controlEdges, flow.dataBindings, singleStepTaskId);
     }
 
     const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
@@ -330,6 +354,33 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     return saved.toJSON() as unknown as IFlowExecutionResponse;
   }
 
+  private assertSingleStepSupported(
+    nodes: FlowNode[],
+    controlEdges: ControlEdge[],
+    dataBindings: DataBinding[],
+    singleStepTaskId: string,
+  ): void {
+    const targetNode = nodes.find((node) => node.id === singleStepTaskId);
+    if (!targetNode) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        `Single-step target node ${singleStepTaskId} not found`,
+      );
+    }
+
+    const kind = targetNode.kind;
+    const containerConfig = (targetNode.metadata as { containerConfig?: { parentIteratorId?: string | null } } | undefined)?.containerConfig;
+    const hasIncomingEdge = controlEdges.some((edge) => edge.target === singleStepTaskId);
+    const hasTargetBinding = dataBindings.some((binding) => binding.targetNode === singleStepTaskId);
+
+    if (kind !== 'step' || containerConfig?.parentIteratorId || hasIncomingEdge || hasTargetBinding) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        SINGLE_STEP_UNSUPPORTED_MESSAGE,
+      );
+    }
+  }
+
   private async callGrpcRun(
     executionId: string,
     flowId: string,
@@ -366,6 +417,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             agent_prompt: agent.prompt,
             agent_type: agent.agent_type,
             agent_tools: agent.tools,
+            agent_params: agent.agent_params?.params || {},
+            connector_bindings: agent.connector_bindings || [],
+            brain_context: agent.brain_context || [],
           });
         }
       }
@@ -373,6 +427,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const enrichedNodes = (snapshot.nodes as any[]).map((n) => {
         const assignedAgentId = n.metadata?.assignedAgentId;
         const resolvedAgent = typeof assignedAgentId === 'string' ? agentMap.get(assignedAgentId) : undefined;
+        const baseMetadata = stripRuntimeAgentMetadata((n.metadata || {}) as Record<string, unknown>);
         const description = typeof n.description === 'string' && n.description.trim()
           ? n.description.trim()
           : typeof n.metadata?.description === 'string' && n.metadata.description.trim()
@@ -382,7 +437,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           ...n,
           modelId: n.modelId || (resolvedAgent?.agent_model as string) || '',
           metadata: {
-            ...(n.metadata || {}),
+            ...baseMetadata,
             ...(description ? { description } : {}),
             ...(resolvedAgent || {}),
           },
@@ -446,6 +501,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           router_config: n.routerConfig ? {
             output_labels: n.routerConfig.outputLabels || [],
             max_iterations: n.routerConfig.maxIterations || 0,
+            conditions: (n.routerConfig.conditions || []).map((condition: Record<string, unknown>) => ({
+              label: condition.label || '',
+              source_node: condition.sourceNode || '',
+              source_port: condition.sourcePort || '',
+              path: condition.path || '',
+              operator: condition.operator || '',
+              value: toGrpcValue(condition.value),
+            })),
+            default_label: n.routerConfig.defaultLabel || '',
           } : undefined,
           iterator_config: n.iteratorConfig ? {
             collection_path: n.iteratorConfig.collectionPath || '',
@@ -466,6 +530,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           target: e.target,
           router_label: e.routerLabel || '',
           priority: e.priority || 0,
+          source_output_port_id: e.sourceOutputPortId || '',
+          target_input_port_id: e.targetInputPortId || '',
         })),
         data_bindings: (snapshot.dataBindings as any[]).map((b) => ({
           id: b.id,

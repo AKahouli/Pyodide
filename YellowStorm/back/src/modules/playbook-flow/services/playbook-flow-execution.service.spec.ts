@@ -189,6 +189,215 @@ describe('gRPC Struct helpers', () => {
   });
 });
 
+describe('callGrpcRun router config serialization', () => {
+  it('serializes deterministic router conditions into the gRPC snapshot', async () => {
+    const { service, agentService } = createExecutionServiceForTests();
+    const runCall = { on: jest.fn() };
+    const run = jest.fn().mockReturnValue(runCall);
+    (service as any).playbookFlowClient = { Run: run };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([]);
+
+    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', {}, {}, {
+      nodes: [{
+        id: 'router-1',
+        kind: 'router',
+        routerConfig: {
+          outputLabels: ['valid', 'invalid'],
+          maxIterations: 3,
+          defaultLabel: 'invalid',
+          conditions: [{
+            label: 'valid',
+            sourceNode: 'step-1',
+            sourcePort: 'result',
+            path: 'verdict',
+            operator: 'equals',
+            value: 'valid',
+          }],
+        },
+      }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: {},
+    });
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      snapshot: expect.objectContaining({
+        nodes: [expect.objectContaining({
+          router_config: expect.objectContaining({
+            output_labels: ['valid', 'invalid'],
+            max_iterations: 3,
+            default_label: 'invalid',
+            conditions: [expect.objectContaining({
+              label: 'valid',
+              source_node: 'step-1',
+              source_port: 'result',
+              path: 'verdict',
+              operator: 'equals',
+              value: { kind: 'stringValue', stringValue: 'valid' },
+            })],
+          }),
+        })],
+      }),
+    }));
+  });
+
+  it('serializes enriched agent metadata into the gRPC snapshot', async () => {
+    const { service, agentService } = createExecutionServiceForTests();
+    const runCall = { on: jest.fn() };
+    const run = jest.fn().mockReturnValue(runCall);
+    (service as any).playbookFlowClient = { Run: run };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([
+      {
+        id: 'agent-1',
+        name: 'Research agent',
+        description: 'Find and summarize',
+        prompt: 'Use tools when needed.',
+        agent_type: 'specialist',
+        tools: [{ name: 'calculator', description: 'Math helper' }],
+        agent_params: {
+          params: {
+            user_id: 'owner-1',
+            connector_bindings_json: '[{"connector_id":"conn-1"}]',
+          },
+        },
+        connector_bindings: [{
+          connector_id: 'conn-1',
+          connector_name: 'Drive',
+          actions: [{ action_key: 'search', description: 'Search Drive' }],
+        }],
+        brain_context: [{ workspace_id: 'brain-1', workspace_documents: [] }],
+        chatbot: { model: 'gpt-4o-mini' },
+      },
+    ]);
+
+    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', {}, {}, {
+      nodes: [{
+        id: 'step-1',
+        kind: 'step',
+        metadata: {
+          assignedAgentId: 'agent-1',
+          agent_tools: [{ name: 'malicious_tool', description: 'Do not trust' }],
+          agent_params: { connector_bindings_json: '[{"connector_id":"evil"}]' },
+          connector_bindings: [{ connector_id: 'evil', mcp_server_url: 'http://internal' }],
+        },
+      }],
+      controlEdges: [],
+      dataBindings: [],
+      settings: {},
+    });
+
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      snapshot: expect.objectContaining({
+        nodes: [expect.objectContaining({
+          metadata: toGrpcStruct({
+            assignedAgentId: 'agent-1',
+            agent_name: 'Research agent',
+            agent_description: 'Find and summarize',
+            agent_model: 'gpt-4o-mini',
+            agent_prompt: 'Use tools when needed.',
+            agent_type: 'specialist',
+            agent_tools: [{ name: 'calculator', description: 'Math helper' }],
+            agent_params: {
+              user_id: 'owner-1',
+              connector_bindings_json: '[{"connector_id":"conn-1"}]',
+            },
+            connector_bindings: [{
+              connector_id: 'conn-1',
+              connector_name: 'Drive',
+              actions: [{ action_key: 'search', description: 'Search Drive' }],
+            }],
+            brain_context: [{ workspace_id: 'brain-1', workspace_documents: [] }],
+          }),
+        })],
+      }),
+    }));
+  });
+});
+
+describe('single-step execution safety', () => {
+  it('rejects single-step execution for flow-dependent nodes', async () => {
+    const savedExecution = {
+      id: 'exec-blocked',
+      save: jest.fn(),
+      toJSON: jest.fn(),
+    };
+    const ExecutionModel = jest.fn(() => savedExecution) as any;
+    const service = new PlaybookFlowExecutionService(
+      ExecutionModel,
+      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
+      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
+      { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
+      {
+        findOne: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [],
+          settings: {},
+        }),
+      } as any,
+      { buildSnapshot: jest.fn() } as any,
+      { validate: jest.fn() } as any,
+      { buildGrpcAgentsForPlaybook: jest.fn() } as any,
+      { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+    );
+
+    await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
+      'Single-step execution only supports standalone step nodes without incoming edges or data bindings.',
+    );
+    expect(ExecutionModel).not.toHaveBeenCalled();
+  });
+
+  it('allows single-step execution for standalone step nodes', async () => {
+    const savedExecution = {
+      id: 'exec-standalone',
+      queuePosition: 0,
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-standalone' }),
+    };
+    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
+    const ExecutionModel = jest.fn(() => savedExecution) as any;
+    ExecutionModel.findByIdAndDelete = jest.fn();
+
+    const service = new PlaybookFlowExecutionService(
+      ExecutionModel,
+      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
+      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
+      { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
+      {
+        findOne: jest.fn().mockResolvedValue({
+          nodes: [{ id: 'task-1', kind: 'step', metadata: {} }],
+          controlEdges: [],
+          dataBindings: [],
+          settings: {},
+        }),
+      } as any,
+      { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [{ id: 'task-1', kind: 'step' }], controlEdges: [], dataBindings: [] }) } as any,
+      { validate: jest.fn() } as any,
+      { buildGrpcAgentsForPlaybook: jest.fn() } as any,
+      { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+    );
+    jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
+
+    await service.start('flow-1', 'owner-1', {}, undefined, 'task-1');
+
+    expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
+      singleStepTaskId: 'task-1',
+      snapshot: expect.objectContaining({
+        nodes: [{ id: 'task-1', kind: 'step' }],
+        controlEdges: [],
+        dataBindings: [],
+      }),
+    }));
+  });
+});
+
 describe('shouldFinalizeStreamAsCompleted', () => {
   it('prevents false completion after terminal or paused states', () => {
     expect(shouldFinalizeStreamAsCompleted(true, false, 'running')).toBe(false);

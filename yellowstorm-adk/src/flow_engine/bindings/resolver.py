@@ -6,6 +6,7 @@ payload dict for a single node.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any, Optional
@@ -33,6 +34,38 @@ def _dot_get(obj: dict[str, Any], path: str) -> Any:
         else:
             return None
     return current
+
+
+def _extract_artifact_payload(output_item: dict[str, Any]) -> Any:
+    if "value" in output_item:
+        return output_item.get("value")
+    if "content" in output_item:
+        return output_item.get("content")
+    if "data" in output_item:
+        return output_item.get("data")
+    if "ref" in output_item:
+        return output_item.get("ref")
+    return output_item
+
+
+def _extract_port_payload_from_collection(outputs: Any, source_port: str) -> Any:
+    if isinstance(outputs, dict):
+        direct_output = outputs.get(source_port)
+        if isinstance(direct_output, dict):
+            return _extract_artifact_payload(direct_output)
+        return None
+
+    if isinstance(outputs, list):
+        for output_item in outputs:
+            if not isinstance(output_item, dict):
+                continue
+            output_port_id = output_item.get("output_port_id") or output_item.get(
+                "outputPortId"
+            ) or output_item.get("port_id") or output_item.get("portId") or output_item.get("id")
+            if output_port_id == source_port:
+                return _extract_artifact_payload(output_item)
+
+    return None
 
 
 def _resolve_node_output(
@@ -68,15 +101,64 @@ def _extract_port_value(value: Any, source_port: str) -> Any:
         return value
 
     if isinstance(value, dict):
+        if source_port == "results" and isinstance(value.get("iterator_iterations"), list):
+            return value.get("iterator_iterations")
+
+        outputs = value.get("outputs")
+        has_structured_outputs = outputs is not None or value.get("ports") is not None
+        structured_match = _extract_port_payload_from_collection(outputs, source_port)
+        if structured_match is not None:
+            return structured_match
+
+        structured_match = _extract_port_payload_from_collection(value.get("ports"), source_port)
+        if structured_match is not None:
+            return structured_match
+
         direct = _dot_get(value, source_port)
         if direct is not None:
             return direct
 
         output = value.get("output")
         if isinstance(output, dict):
+            has_structured_outputs = has_structured_outputs or output.get("outputs") is not None or output.get("ports") is not None
             nested = _dot_get(output, source_port)
             if nested is not None:
                 return nested
+            structured_match = _extract_port_payload_from_collection(output.get("outputs"), source_port)
+            if structured_match is not None:
+                return structured_match
+            structured_match = _extract_port_payload_from_collection(output.get("ports"), source_port)
+            if structured_match is not None:
+                return structured_match
+
+        if isinstance(output, str):
+            try:
+                parsed_output = json.loads(output)
+            except (TypeError, ValueError):
+                parsed_output = None
+
+            if isinstance(parsed_output, dict):
+                has_structured_outputs = has_structured_outputs or parsed_output.get("outputs") is not None or parsed_output.get("ports") is not None
+                structured_match = _extract_port_payload_from_collection(parsed_output.get("outputs"), source_port)
+                if structured_match is not None:
+                    return structured_match
+                structured_match = _extract_port_payload_from_collection(parsed_output.get("ports"), source_port)
+                if structured_match is not None:
+                    return structured_match
+
+        if output is not None:
+            if source_port == "output":
+                return output
+
+            if source_port == "default" and not has_structured_outputs:
+                return output
+
+            # Legacy/plain step nodes still emit a single unstructured output payload.
+            # Allow generated custom output port ids to read that payload when no
+            # structured per-port outputs exist, but keep dotted paths and arbitrary
+            # names resolving loudly to None.
+            if isinstance(output, str) and not has_structured_outputs and re.fullmatch(r"out-[A-Za-z0-9-]+", source_port):
+                return output
 
     logger.warning("[bindings] Missing source_port path source_port=%s", source_port)
     return None

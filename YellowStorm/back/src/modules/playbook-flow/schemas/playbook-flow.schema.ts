@@ -55,12 +55,39 @@ export class FlowNodeOutput {
 }
 
 @Schema({ _id: false })
+export class RouterCondition {
+  @Prop({ required: true, type: String })
+  label!: string;
+
+  @Prop({ required: false, type: String })
+  sourceNode?: string;
+
+  @Prop({ required: false, type: String })
+  sourcePort?: string;
+
+  @Prop({ required: false, type: String })
+  path?: string;
+
+  @Prop({ required: true, type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] })
+  operator!: string;
+
+  @Prop({ required: false, type: Object })
+  value?: unknown;
+}
+
+@Schema({ _id: false })
 export class RouterConfig {
   @Prop({ required: true, type: [String] })
   outputLabels!: string[];
 
   @Prop({ required: true, type: Number, min: 1 })
   maxIterations!: number;
+
+  @Prop({ required: false, type: [RouterCondition], default: [] })
+  conditions?: RouterCondition[];
+
+  @Prop({ required: false, type: String })
+  defaultLabel?: string;
 }
 
 @Schema({ _id: false })
@@ -154,6 +181,12 @@ export class ControlEdge {
 
   @Prop({ required: false, type: String })
   routerLabel?: string;
+
+  @Prop({ required: false, type: String })
+  sourceOutputPortId?: string;
+
+  @Prop({ required: false, type: String })
+  targetInputPortId?: string;
 
   @Prop({ required: false, type: Number, default: 0 })
   priority?: number;

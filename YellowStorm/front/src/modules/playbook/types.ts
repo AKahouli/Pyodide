@@ -85,6 +85,7 @@ export type FlowNodeKind = 'step' | 'router' | 'iterator' | 'human_approval';
 export type ControlEdgeKind = 'sequential' | 'conditional';
 export type DataBindingSourceKind = 'node-output' | 'trigger' | 'state' | 'constant' | 'expression';
 export type DataBindingIterationRef = 'current' | 'previous';
+export type RouterConditionOperator = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
 
 export type IteratorMode = 'item' | 'batch';
 export type IteratorErrorStrategy = 'stop' | 'continue';
@@ -1784,9 +1785,20 @@ export interface FlowNodeOutput {
   ports?: FlowNodePort[];
 }
 
+export interface RouterCondition {
+  label: string;
+  sourceNode?: string;
+  sourcePort?: string;
+  path?: string;
+  operator: RouterConditionOperator;
+  value?: unknown;
+}
+
 export interface RouterConfig {
   outputLabels: string[];
   maxIterations: number;
+  conditions?: RouterCondition[];
+  defaultLabel?: string;
 }
 
 export interface FlowIteratorConfig {
@@ -1827,6 +1839,8 @@ export interface ControlEdge {
   source: string;
   target: string;
   routerLabel?: string;
+  sourceOutputPortId?: string;
+  targetInputPortId?: string;
   priority?: number;
 }
 

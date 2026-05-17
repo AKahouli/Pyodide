@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { HydratedDocument, Types } from 'mongoose';
+import { HydratedDocument, SchemaTypes, Types } from 'mongoose';
 
 export type FlowNodeTemplateDocument = HydratedDocument<FlowNodeTemplate>;
 
@@ -114,12 +114,33 @@ export class FlowNodeTemplate {
     type: {
       outputLabels: { type: [String], default: [] },
       maxIterations: { type: Number, min: 1, default: 1 },
+      conditions: {
+        type: [{
+          label: { type: String, required: true, trim: true },
+          sourceNode: { type: String, default: null },
+          sourcePort: { type: String, default: null },
+          path: { type: String, default: null },
+          operator: { type: String, enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'], required: true },
+          value: { type: SchemaTypes.Mixed, default: null },
+        }],
+        default: [],
+      },
+      defaultLabel: { type: String, default: null },
     },
     default: null,
   })
   routerConfig!: {
     outputLabels: string[];
     maxIterations: number;
+    conditions?: Array<{
+      label: string;
+      sourceNode?: string | null;
+      sourcePort?: string | null;
+      path?: string | null;
+      operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+      value?: unknown;
+    }>;
+    defaultLabel?: string | null;
   } | null;
 
   @Prop({

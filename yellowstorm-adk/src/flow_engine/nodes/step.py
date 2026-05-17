@@ -10,7 +10,6 @@ Output is stored into task_outputs[(node_id, iteration)].
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import litellm
@@ -19,6 +18,11 @@ from langgraph.config import get_stream_writer
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
+from src.flow_engine.nodes.step_tools import (
+    build_agent_config,
+    parse_connector_bindings,
+    run_step_with_tools,
+)
 from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
@@ -62,6 +66,8 @@ async def run_step(
     agent_description = str(metadata.get("agent_description") or "")
     agent_model = metadata.get("agent_model") or node_config.get("model_id")
     agent_prompt = str(metadata.get("agent_prompt") or "")
+    agent_config = build_agent_config(metadata)
+    connector_bindings = parse_connector_bindings(metadata, agent_config["agent_params"])
     node_description = str(
         node_config.get("description")
         or metadata.get("description")
@@ -112,37 +118,71 @@ async def run_step(
         litellm.api_key = settings.LITELLM_API_SECRET_KEY
         litellm.drop_params = True
 
-        response = await litellm.acompletion(
-            model=model_id,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_msg},
-            ],
-            temperature=0.7,
-            max_tokens=4096,
-            stream=True,
+        from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
+
+        tools, _collector = create_langchain_tools(
+            agent_config=agent_config,
+            step_connector_bindings=connector_bindings,
         )
 
-        full_output = ""
-        async for chunk in response:
-            delta = chunk.choices[0].delta
-            token = delta.content or ""
-            if token:
-                full_output += token
-                writer({
+        if tools:
+            logger.info(
+                "[step] Running step node with tools",
+                node_id=node_id,
+                tool_count=len(tools),
+                tool_names=[tool.name for tool in tools],
+            )
+            full_output = await run_step_with_tools(
+                model_id=model_id,
+                system_prompt=system_prompt,
+                user_msg=user_msg,
+                tools=tools,
+                on_progress=lambda token: writer({
                     "type": "NodeToken",
                     "node_id": node_id,
                     "iteration": iteration,
                     "token": token,
-                })
-
-            if hasattr(delta, "model_extra") and delta.model_extra and "tool_calls" in (delta.model_extra or {}):
+                }),
+            )
+            if full_output:
                 writer({
                     "type": "NodeToken",
                     "node_id": node_id,
                     "iteration": iteration,
-                    "token": str(delta.model_extra.get("tool_calls", "")),
+                    "token": full_output,
                 })
+        else:
+            response = await litellm.acompletion(
+                model=model_id,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_msg},
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+                stream=True,
+            )
+
+            full_output = ""
+            async for chunk in response:
+                delta = chunk.choices[0].delta
+                token = delta.content or ""
+                if token:
+                    full_output += token
+                    writer({
+                        "type": "NodeToken",
+                        "node_id": node_id,
+                        "iteration": iteration,
+                        "token": token,
+                    })
+
+                if hasattr(delta, "model_extra") and delta.model_extra and "tool_calls" in (delta.model_extra or {}):
+                    writer({
+                        "type": "NodeToken",
+                        "node_id": node_id,
+                        "iteration": iteration,
+                        "token": str(delta.model_extra.get("tool_calls", "")),
+                    })
 
         logger.info("[step] Step completed", node_id=node_id, streamed_chars=len(full_output))
 

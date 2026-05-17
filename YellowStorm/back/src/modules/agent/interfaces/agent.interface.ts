@@ -78,5 +78,6 @@ export interface IGrpcAgent {
   agent_params?: {
     params: Record<string, string>;
   };
+  connector_bindings?: Record<string, unknown>[];
   connectorIds?: string[];
 }

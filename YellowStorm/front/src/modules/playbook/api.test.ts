@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  executePlaybook,
   getFlowNodeTemplates,
   getPlaybookTriggers,
   getPlaybookRepeatability,
@@ -10,6 +11,7 @@ import {
   upsertPlaybookTriggerSchedule,
   clearPlaybookTriggerSchedule,
   clearPlaybookTriggerMail,
+  getPlaybook,
   updatePlaybook,
 } from './api';
 import { makeTask } from './test-utils';
@@ -53,7 +55,19 @@ describe('sanitizePlaybookUpdate', () => {
         makeTask({
           id: 'router-1',
           nodeType: 'router',
-          routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+          routerConfig: {
+            outputLabels: ['retry', 'done', '__error__'],
+            maxIterations: 3,
+            defaultLabel: 'done',
+            conditions: [{
+              label: 'done',
+              sourceNode: 'task-1',
+              sourcePort: 'result',
+              path: 'verdict',
+              operator: 'equals',
+              value: 'valid',
+            }],
+          },
         }),
         makeTask({
           id: 'approval-1',
@@ -66,7 +80,19 @@ describe('sanitizePlaybookUpdate', () => {
     expect(sanitized.tasks).toEqual([
       expect.objectContaining({
         id: 'router-1',
-        routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+        routerConfig: {
+          outputLabels: ['retry', 'done', '__error__'],
+          maxIterations: 3,
+          defaultLabel: 'done',
+          conditions: [{
+            label: 'done',
+            sourceNode: 'task-1',
+            sourcePort: 'result',
+            path: 'verdict',
+            operator: 'equals',
+            value: 'valid',
+          }],
+        },
       }),
       expect.objectContaining({
         id: 'approval-1',
@@ -119,7 +145,19 @@ describe('flow node template routes', () => {
               promptTemplate: '',
               recommendedAgentTypeSlug: null,
               requiredToolNames: [],
-              routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+              routerConfig: {
+                outputLabels: ['retry', 'done', '__error__'],
+                maxIterations: 3,
+                defaultLabel: 'done',
+                conditions: [{
+                  label: 'done',
+                  sourceNode: 'task-1',
+                  sourcePort: 'result',
+                  path: 'verdict',
+                  operator: 'equals',
+                  value: 'valid',
+                }],
+              },
             },
           ],
         },
@@ -132,7 +170,19 @@ describe('flow node template routes', () => {
     expect(result.items[0]).toMatchObject({
       id: 'router-default',
       nodeType: 'router',
-      routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+      routerConfig: {
+        outputLabels: ['retry', 'done', '__error__'],
+        maxIterations: 3,
+        defaultLabel: 'done',
+        conditions: [{
+          label: 'done',
+          sourceNode: 'task-1',
+          sourcePort: 'result',
+          path: 'verdict',
+          operator: 'equals',
+          value: 'valid',
+        }],
+      },
     });
   });
 });
@@ -359,6 +409,82 @@ describe('updatePlaybook', () => {
     }));
   });
 
+  it('filters legacy trigger mirror edges out of persisted control edges', async () => {
+    apiClientMock.patch.mockReset();
+    apiClientMock.patch.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-1',
+          name: 'Playbook',
+          description: 'Description',
+          nodes: [],
+          controlEdges: [{
+            id: 'router-edge',
+            kind: 'conditional',
+            source: 'router-1',
+            target: 'task-2',
+            routerLabel: 'approved',
+            sourceOutputPortId: 'approved',
+            targetInputPortId: 'prompt',
+          }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'prompt',
+            sourceKind: 'trigger',
+            triggerPath: 'mail_data',
+          }],
+          triggers: [],
+          workspaces: [],
+        },
+      },
+    });
+
+    await updatePlaybook('playbook-1', {
+      name: 'Playbook',
+      description: 'Description',
+      tasks: [
+        makeTask({ id: 'router-1', nodeType: 'router', outputPorts: [{ id: 'approved', name: 'Approved', artifactKind: 'text' }] }),
+        makeTask({ id: 'task-2', inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: false }] }),
+      ],
+      edges: [
+        {
+          id: 'binding-edge',
+          sourceId: '__trigger__',
+          targetId: 'task-2',
+          sourceOutputPortId: 'mail_data',
+          targetInputPortId: 'prompt',
+        },
+        {
+          id: 'router-edge',
+          sourceId: 'router-1',
+          targetId: 'task-2',
+          sourceOutputPortId: 'approved',
+          targetInputPortId: 'prompt',
+        },
+      ],
+      dataBindings: [{
+        id: 'binding-1',
+        targetNode: 'task-2',
+        targetPort: 'prompt',
+        sourceKind: 'trigger',
+        triggerPath: 'mail_data',
+      }],
+    });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith('/playbooks/playbook-1', expect.objectContaining({
+      controlEdges: [{
+        id: 'router-edge',
+        kind: 'conditional',
+        source: 'router-1',
+        target: 'task-2',
+        routerLabel: 'approved',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'prompt',
+      }],
+    }));
+  });
+
   it('omits flow arrays when they were not part of the update payload', async () => {
     apiClientMock.patch.mockReset();
     apiClientMock.patch.mockResolvedValueOnce({
@@ -409,7 +535,19 @@ describe('updatePlaybook', () => {
         makeTask({
           id: 'router-1',
           nodeType: 'router',
-          routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+          routerConfig: {
+            outputLabels: ['retry', 'done', '__error__'],
+            maxIterations: 3,
+            defaultLabel: 'done',
+            conditions: [{
+              label: 'done',
+              sourceNode: 'task-1',
+              sourcePort: 'result',
+              path: 'verdict',
+              operator: 'equals',
+              value: 'valid',
+            }],
+          },
         }),
         makeTask({
           id: 'approval-1',
@@ -428,7 +566,19 @@ describe('updatePlaybook', () => {
           expect.objectContaining({
             id: 'router-1',
             kind: 'router',
-            routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+            routerConfig: {
+              outputLabels: ['retry', 'done', '__error__'],
+              maxIterations: 3,
+              defaultLabel: 'done',
+              conditions: [{
+                label: 'done',
+                sourceNode: 'task-1',
+                sourcePort: 'result',
+                path: 'verdict',
+                operator: 'equals',
+                value: 'valid',
+              }],
+            },
           }),
           expect.objectContaining({
             id: 'approval-1',
@@ -438,5 +588,164 @@ describe('updatePlaybook', () => {
         ]),
       }),
     );
+  });
+
+  it('preserves explicit source and target port ids when saving and normalizing edges', async () => {
+    apiClientMock.patch.mockReset();
+    apiClientMock.patch.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-1',
+          name: 'Playbook',
+          description: 'Description',
+          nodes: [
+            {
+              id: 'router-1',
+              kind: 'router',
+              label: 'Router',
+              metadata: {},
+              output: { ports: [{ id: 'approved', label: 'Approved', type: 'text' }] },
+            },
+            {
+              id: 'task-2',
+              kind: 'step',
+              label: 'Task 2',
+              metadata: {},
+              input: { ports: [{ id: 'input-doc', label: 'Input', type: 'text', required: false }] },
+            },
+          ],
+          controlEdges: [{
+            id: 'edge-1',
+            kind: 'conditional',
+            source: 'router-1',
+            target: 'task-2',
+            routerLabel: 'approved',
+            sourceOutputPortId: 'approved',
+            targetInputPortId: 'input-doc',
+          }],
+          dataBindings: [],
+          triggers: [],
+          workspaces: [],
+        },
+      },
+    });
+
+    const playbook = await updatePlaybook('playbook-1', {
+      name: 'Playbook',
+      description: 'Description',
+      tasks: [
+        makeTask({ id: 'router-1', nodeType: 'router', outputPorts: [{ id: 'approved', name: 'Approved', artifactKind: 'text' }] }),
+        makeTask({ id: 'task-2', inputPorts: [{ id: 'input-doc', name: 'Input', artifactKind: 'text', required: false }] }),
+      ],
+      edges: [{
+        id: 'edge-1',
+        sourceId: 'router-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'input-doc',
+      }],
+    });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith('/playbooks/playbook-1', expect.objectContaining({
+      controlEdges: [{
+        id: 'edge-1',
+        kind: 'conditional',
+        source: 'router-1',
+        target: 'task-2',
+        routerLabel: 'approved',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'input-doc',
+      }],
+    }));
+    expect(playbook.edges).toEqual([{
+      id: 'edge-1',
+      sourceId: 'router-1',
+      targetId: 'task-2',
+      sourceOutputPortId: 'approved',
+      targetInputPortId: 'input-doc',
+    }]);
+  });
+});
+
+describe('getPlaybook', () => {
+  it('restores saved control-edge port ids into legacy edge handles', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-1',
+          name: 'Playbook',
+          description: 'Description',
+          nodes: [],
+          controlEdges: [{
+            id: 'edge-1',
+            kind: 'sequential',
+            source: 'task-1',
+            target: 'task-2',
+            sourceOutputPortId: 'out-2',
+            targetInputPortId: 'in-3',
+          }],
+          dataBindings: [],
+          triggers: [],
+          workspaces: [],
+        },
+      },
+    });
+
+    const playbook = await getPlaybook('playbook-1');
+
+    expect(playbook.edges).toEqual([{
+      id: 'edge-1',
+      sourceId: 'task-1',
+      targetId: 'task-2',
+      sourceOutputPortId: 'out-2',
+      targetInputPortId: 'in-3',
+    }]);
+  });
+});
+
+describe('executePlaybook', () => {
+  it('drops unsupported full-workflow execution fields before calling the flow API', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: {
+        data: {
+          executionId: 'exec-1',
+        },
+      },
+    });
+
+    await executePlaybook('playbook-1', {
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-1': 'replay_flex' },
+      streaming: true,
+      runNodeReflection: true,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 92,
+      advisorAutopilotMaxTurns: 4,
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {});
+  });
+
+  it('keeps the single-step target when starting a standalone node execution', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: {
+        data: {
+          executionId: 'exec-2',
+        },
+      },
+    });
+
+    await executePlaybook('playbook-1', {
+      singleStepTaskId: 'task-7',
+      executionMode: 'live',
+      stepExecutionModes: { 'task-7': 'replay_strict' },
+    });
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
+      singleStepTaskId: 'task-7',
+    });
   });
 });

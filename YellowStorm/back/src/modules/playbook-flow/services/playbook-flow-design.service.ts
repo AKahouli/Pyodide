@@ -107,15 +107,19 @@ export class PlaybookFlowDesignService {
           })),
           edges: (flow.controlEdges || []).map((e: any) => ({
             source_id: e.source, target_id: e.target,
-            source_output_port_id: e.routerLabel || 'default',
-            target_input_port_id: 'default',
+            source_output_port_id: e.sourceOutputPortId || e.routerLabel || 'default',
+            target_input_port_id: e.targetInputPortId || 'default',
           })),
         },
         model: modelId, prompt_overrides: promptOverrides,
       });
 
       const { nodes, controlEdges, dataBindings } = mapGrpcResponseToFlow(response);
-      const updatedFlow = await this.playbookFlowService.updateNodesAndEdges(flowId, { nodes, controlEdges, dataBindings });
+      const updatedFlow = await this.playbookFlowService.updateNodesAndEdges(flowId, {
+        nodes,
+        controlEdges,
+        dataBindings: dataBindings.length > 0 ? dataBindings : snapshotBefore.dataBindings,
+      });
 
       const aiSummary = this.generateDesignSummary(
         snapshotBefore.nodes, snapshotBefore.controlEdges, nodes, controlEdges,

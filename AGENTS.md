@@ -41,6 +41,46 @@ Behavioral guidelines to reduce common LLM coding mistakes. Bias toward caution 
 
 Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibility, not arbitrarily — splitting a 400-line file into two 200-line halves that always change together fails SRP and is rejected.
 
+## Architecture Boundaries
+
+**Create new units to isolate responsibilities, not to look organized. Keep related code together until a real seam appears.**
+
+### When to Create a Function
+
+- Extract a function when a named step makes the caller easier to read.
+- Extract a function when the same logic appears twice or is likely to be tested independently.
+- Extract a function when the current function would exceed 50 lines, nesting depth 3, or cyclomatic complexity 10.
+- Do not extract one-line wrappers unless they encode a domain concept or hide an external API boundary.
+
+### When to Create a Class or Service
+
+- Create a service when behavior owns one domain capability with state, dependencies, persistence, IO, or orchestration.
+- Split a service when it has more than one reason to change, such as validation and persistence, mapping and transport, orchestration and formatting, or permissions and business rules.
+- Do not create generic `Manager`, `Helper`, `Util`, or `Common` classes. Name services by capability: `PlaybookFlowValidator`, `QuotaAllocator`, `WorkspaceDocumentIndexer`.
+- Keep services behind existing framework/module boundaries. Do not bypass controllers, stores, repositories, guards, or API clients to save a call.
+
+### When to Create a File
+
+- Create a file when a cohesive unit has a stable name and can be understood without reading unrelated code.
+- Split a file before adding new behavior that would push it over 300 lines unless the task is a tiny targeted fix and refactoring would be riskier.
+- Do not split a file into arbitrary halves. A split is valid only if each new file has a clear owner responsibility and imports flow in one direction.
+- Co-locate tests, DTOs, schemas, hooks, and mappers according to the package's existing conventions.
+
+### When to Add New Code to Existing Units
+
+- Add to an existing function only when the new logic is part of the same step and keeps the function within limits.
+- Add to an existing service only when it belongs to the same domain capability and uses the same dependencies for the same reason.
+- Add to an existing file only when it preserves cohesion and does not make unrelated callers import more than they need.
+- If adding a branch creates a second workflow, extract the workflow instead of growing conditionals.
+
+### Refactor Triggers
+
+- Before adding code to a file over 250 lines, check whether a cohesive extraction is safer.
+- Before adding code to a function over 35 lines, check whether named private functions or a mapper/validator would reduce complexity.
+- Before adding a third dependency to a function or a fifth dependency to a service, check whether responsibilities are mixed.
+- If a change requires editing the same concept in three places, introduce one owning abstraction or state why duplication is safer.
+- If the smallest correct fix touches an oversized unit, keep the fix surgical and note the refactor follow-up unless the refactor is necessary for correctness.
+
 ## Naming
 
 - **Verbs for functions, nouns for data, adjectives for booleans.** `buildGraph`, `taskResult`, `isStale`.
@@ -187,86 +227,172 @@ Applies to all agents (`build`, `plan`, `reviewer`, `diagnostics`, `frontend-qa`
 
 ## Agent Team
 
-```
-User task
-  │
-  ▼
-┌──────┐  multi-file or  ┌──────┐
-│build │── risky task? ─▶│ plan │── action plan ──▶ back to build
-└──┬───┘  (mandatory)    └──────┘
-   │ implements
-   ▼
-┌──────────┐               ┌─────────────┐
-│ reviewer │◀── MANDATORY ─│ task output │
-└──┬───────┘  before close └─────────────┘
-   │ pass / fail
-   ▼
-┌─────────────┐
-│ maintainer  │◀── Full/Light memory sync only
-└─────────────┘
-```
+The main agent implements. Sub-agents provide bounded specialist work. Their local agent files are authoritative for execution details; this file only routes work and defines blocking gates.
 
-`diagnostics` is on-demand from `build`. `frontend-qa` is mandatory blocking gate for frontend-visible changes. `contract` and `integration` are documented workflow roles; not yet implemented as project-local OpenCode subagents.
+- `explore`: read-only codebase discovery, dependency tracing, and file search.
+- `plan`: read-only implementation planning for ambiguous, risky, multi-file, cross-module, API/schema/architecture, or contract work.
+- `diagnostics`: reproduces failures and writes tests/diagnostic artifacts only; does not fix production code.
+- `frontend-qa`: browser QA gate for frontend-visible UI, runtime, interaction, responsive, accessibility, console, or network changes.
+- `reviewer`: final quality gate for non-trivial code changes.
+- `maintainer`: Obsidian memory updates and explicitly delegated behavior-preserving refactors.
 
-### Agent Capabilities
+Blocking gates:
+- `frontend-qa` blocks frontend-visible changes until PASS or the user accepts the risk.
+- `reviewer` blocks non-trivial code changes until PASS.
+- `maintainer` does not block functional correctness, but should run for Full/Light memory tiers after reviewer PASS.
 
-| Agent | Trigger | Output | Blocks merge? |
-|-------|---------|--------|---------------|
-| `plan` | Multi-file, multi-slug, ambiguous, or contract/schema/arch change | Scoped action plan: files to touch, risk, memory tier, specialist calls | No (advisory) |
-| `build` | Default coding agent | Code + verification | — |
-| `reviewer` | Any code change | PASS/FAIL + findings (guidelines, correctness, security, performance) | Yes — FAIL on critical |
-| `diagnostics` | Bug report (before edits), test gaps, flaky tests | Root cause + tests | No |
-| `frontend-qa` | Frontend-visible UI/layout/interaction/runtime/a11y change | PASS/FAIL + browser evidence | Yes — FAIL on broken flows, console errors, failed requests |
-| `contract` | `.proto` mod, gRPC endpoint change, REST schema change, cross-service mod | PASS/FAIL: proto consistency, stub validity, breaking changes, env/secret contract | Yes — FAIL on drift or unmitigated breaking change |
-| `integration` | gRPC/REST contract change, multi-service change, post-`contract` PASS needing E2E | PASS/FAIL: connectivity, E2E flows, env consistency | Yes — FAIL on connectivity or schema mismatch |
-| `maintainer` | Tasks passing `reviewer` with Full/Light memory tier | Vault updates via Obsidian MCP (`obsidian_vault`, `obsidian_edit`, `obsidian_view`) + behavior-preserving refactors | No |
+Read-only agents may use explicitly allowed read-only shell commands such as `git status`, `git diff`, `git log`, or Context7 lookup when their agent config permits it. They must never modify repository state.
+
+`contract` and `integration` are documented workflow roles; not yet implemented as project-local OpenCode subagents.
+
+### Workflow Tiers
+
+#### Tier 0: Trivial
+
+Use for typo, formatting, comment-only, config text, or single-line non-runtime edits.
+
+Process:
+- Inspect the target file.
+- Make the smallest safe change.
+- Skip `plan`, `diagnostics`, `frontend-qa`, `reviewer`, and `maintainer` unless risk appears.
+
+#### Tier 1: Local Code Change
+
+Use for one-file or localized changes with no contract, schema, auth, permission, quota, streaming, or cross-module impact.
+
+Process:
+- Inspect relevant code.
+- Use `explore` only if file ownership or call sites are unclear.
+- Run the narrowest useful verification.
+- Use `reviewer` if behavior changed.
+
+#### Tier 2: Standard Change
+
+Use for multi-file feature work, bugfixes, state changes, tests, backend service changes, or frontend behavior changes.
+
+Process:
+- Search relevant context.
+- Use `plan` if the task touches 3+ files, spans domains, or has unclear implementation.
+- Implement the smallest correct change.
+- Run focused tests, build, or lint.
+- Use `frontend-qa` for frontend-visible changes.
+- Use `reviewer` before final response.
+
+#### Tier 3: High-Risk Change
+
+Use for API contracts, schemas, auth, permissions, quota, streaming/SSE, gRPC/proto, database writes, agent runtime, or cross-service behavior.
+
+Process:
+- Use `plan` before implementation.
+- Use `diagnostics` first for unclear bugs.
+- Verify both sides of any boundary contract.
+- Run targeted plus integration-level verification where feasible.
+- Use `frontend-qa` if browser-visible.
+- Use `reviewer`.
+- Use `maintainer` for Full/Light memory updates.
+
+### Sub-Agent Routing
+
+#### `explore`
+
+Use when:
+- File locations, ownership, call paths, or dependencies are unclear.
+- A task needs broad search before editing.
+
+Do not use for:
+- Known file paths and simple local edits.
+
+#### `plan`
+
+Use when:
+- The task touches 3+ files.
+- The task spans frontend/backend/ADK or multiple feature slugs.
+- The task changes APIs, schemas, proto/gRPC, auth, permissions, quota, streaming, or architecture.
+- The task is ambiguous or has multiple plausible implementations.
+
+Skip when:
+- Single-file fix with no interface change.
+- Pure typo, formatting, comment, or mechanical config edit.
+
+#### `diagnostics`
+
+Use before editing when:
+- The user reports a bug and root cause is not obvious.
+- A failure must be reproduced.
+- Reviewer flags missing tests.
+
+Expected output:
+- Symptom.
+- Root cause.
+- Reproduction or test.
+- Recommended fix.
+
+#### `frontend-qa`
+
+Use after implementation when:
+- UI, layout, styling, routing, forms, browser runtime, responsive behavior, accessibility, or visible interaction changed.
+
+Skip when:
+- Frontend files changed but no visible runtime behavior changed, such as type-only edits or dead code cleanup.
+
+#### `reviewer`
+
+Use before final response for:
+- Non-trivial code changes.
+- Security, auth, permission, quota, streaming, API, schema, DB, or cross-service changes.
+
+Skip for:
+- Docs-only, typo-only, formatting-only, comment-only, or clearly mechanical config edits.
+
+#### `maintainer`
+
+Use after reviewer passes when:
+- Memory tier is Full or Light.
+- The task changed durable feature behavior, architecture, contracts, conventions, or implementation details future agents need.
+
+Skip when:
+- Memory tier is None.
 
 ### `build` — Pre-coding Protocol
 
-Mandatory steps before writing code:
+Before editing:
 
-1. Must always search the obsidian vault for module boundaries, imports, and dependencies relevant to the task, Must always use Fragment Search Strategies (  "strategy": "semantic")
-2. Read relevant guideline file per Mandatory Guideline Loading table.
-3. If `plan` criteria met (multi-file, multi-slug, contract/schema/arch change, ambiguity), delegate and wait. `plan` must also load guidelines.
-4. Read vault notes — prioritize `Agent Quick Context`, index/MOC notes, notes matching `slug`/`source_paths`/tags.
-5. Follow only directly relevant `[[Internal Links]]`. No broad recursive traversal.
-6. Inspect code state to verify current implementation.
-7. Confirm internally: decisions you're respecting, requirements addressed, new feature vs modification.
+1. Classify the task tier.
+2. Must always search the obsidian vault for module boundaries, imports, and dependencies relevant to the task, Must always use Fragment Search Strategies (  "strategy": "semantic")
+3. Read relevant guideline file per Mandatory Guideline Loading table.
+4. Inspect relevant code directly.
+5. Use `explore` if ownership, call paths, or dependencies are unclear.
+6. Use `plan` when routing rules require it.
+7. For bug reports with unclear cause, use `diagnostics` before production edits.
+8. Read vault notes — prioritize `Agent Quick Context`, index/MOC notes, notes matching `slug`/`source_paths`/tags.
+9. Follow only directly relevant `[[Internal Links]]`. No broad recursive traversal.
+10. Confirm internally: decisions you're respecting, requirements addressed, new feature vs modification, and the smallest correct implementation path.
 
 ### `build` — Post-coding Protocol
 
-1. Frontend-visible change? → `frontend-qa`. Task incomplete until PASS or user accepts risk. FAIL → fix, resubmit.
-2. → `reviewer`. Task incomplete until PASS. FAIL → fix, resubmit.
-3. Memory tier Full or Light? → `maintainer`. Skip for None tier.
+After editing:
 
-### Delegation Triggers (during implementation)
+1. Run the narrowest reliable verification command.
+2. If frontend-visible behavior changed, call `frontend-qa`.
+3. If the change is non-trivial, call `reviewer`.
+4. If reviewer fails, fix and re-run required verification/review.
+5. If memory tier is Full or Light, call `maintainer`.
+6. Final response must include changed files, verification performed, and any skipped gate with reason.
 
-- Unclear failure / vague bug → `diagnostics` before editing
-- Frontend-visible change → `frontend-qa` after editing (mandatory, blocking)
-- Proto/API/cross-service change → contract validation; if `contract` agent exists, use it
-- Cross-service E2E verification → integration validation; if `integration` agent exists, use it
-- Unclear current external library/framework/API behavior → context7 skill
+### Delegation Triggers
+
+- Unclear failure or vague bug → `diagnostics` before production edits.
+- Frontend-visible change → `frontend-qa` after editing.
+- Proto/API/cross-service change → contract validation; if `contract` agent exists, use it.
+- Cross-service E2E verification → integration validation; if `integration` agent exists, use it.
+- Unclear current external library/framework/API behavior → Context7 lookup.
 
 ### Hard Rules
 
 - Destructive shell commands require user approval.
-- Must always comment the generated code.
-- Never skip pre-coding steps, even for small fixes.
-- `reviewer` and `frontend-qa` are read-only; never modify code.
-
-### Reviewer Output Format
-
-```
-## Verdict: PASS | FAIL
-
-### Findings
-1. [critical|major|minor] file:line — description
-
-### Required actions (if FAIL)
-- ...
-```
-
-FAIL on any critical. PASS-with-findings allowed for major/minor.
+- Comments are rare. Add comments only for non-obvious intent, invariants, workarounds, external constraints, or performance/security decisions.
+- Do not skip tier-required pre-coding steps.
+- `reviewer`, `frontend-qa`, `plan`, and `explore` never modify code.
 
 ---
 
@@ -394,15 +520,15 @@ npx ctx7@latest docs <libraryId> "<question>"
 
 ## Development Workflow
 
-1. context7 only when current external library/framework docs are needed.
-2. `plan` if criteria met → action plan.
-3. `build` implements (pre-coding protocol mandatory).
-4. Run verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`; `poetry run pytest` in `yellowstorm-adk`.
-4.1 if need to run python in the terminal must always activate the python virtual env through conda activate meta 
-5. `frontend-qa` validates frontend-visible changes → must PASS.
-6. `reviewer` validates → must PASS.
-7. `diagnostics` if test gaps.
-8. `maintainer` syncs Obsidian vault memory for Full/Light tier changes.
+1. Context7 only when current external library/framework docs are needed.
+2. Follow the Workflow Tiers and Sub-Agent Routing rules above.
+3. `build` implements after completing tier-required pre-coding steps.
+4. Run the narrowest reliable verification: `npm test` / `npm run build` / `npm run lint` in `YellowStorm/back` or `YellowStorm/front`; `poetry run pytest` in `yellowstorm-adk`.
+5. Must always activate the Python virtual env through `conda activate meta` before running any python test or process.
+6. `frontend-qa` validates frontend-visible changes and must PASS unless the user accepts the risk.
+7. `reviewer` validates non-trivial code changes and must PASS before close.
+8. `diagnostics` handles unclear bugs, flaky tests, or reviewer-identified test gaps.
+9. `maintainer` syncs Obsidian vault memory for Full/Light tier changes.
 
 ---
 

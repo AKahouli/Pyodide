@@ -5,7 +5,9 @@
  * collection rendered as a data-layer overlay (toggleable via canvas toolbar).
  */
 
-import type { DataBinding } from '../../types';
+import type { DataBinding, PlaybookTask } from '../../types';
+
+const TRIGGER_NODE_ID = '__trigger__';
 
 export interface DataLayerEdge {
   id: string;
@@ -15,28 +17,79 @@ export interface DataLayerEdge {
   targetHandle: string;
   kind: string;
   iteration: string | null;
+  label: string;
+  details: string[];
+  status: 'ok' | 'warning';
 }
 
-export function dataBindingsToLayerEdges(bindings: DataBinding[]): DataLayerEdge[] {
-  return bindings.map((db) => ({
-    id: db.id,
-    source: db.sourceNode || '__none__',
-    sourceHandle: db.sourcePort || 'default',
-    target: db.targetNode,
-    targetHandle: db.targetPort,
-    kind: db.sourceKind,
-    iteration: db.iteration ?? null,
-  }));
+function getTaskPort(task: PlaybookTask | undefined, portId: string, direction: 'input' | 'output') {
+  return direction === 'input'
+    ? task?.inputPorts?.find((port) => port.id === portId)
+    : task?.outputPorts?.find((port) => port.id === portId);
 }
 
-export function layerEdgesToDataBindings(edges: DataLayerEdge[]): DataBinding[] {
-  return edges.map((e) => ({
-    id: e.id,
-    targetNode: e.target,
-    targetPort: e.targetHandle,
-    sourceKind: e.kind as DataBinding['sourceKind'],
-    sourceNode: e.source !== '__none__' ? e.source : undefined,
-    sourcePort: e.sourceHandle !== 'default' ? e.sourceHandle : undefined,
-    iteration: (e.iteration as DataBinding['iteration']) || undefined,
-  }));
+function getFallbackSourceHandle(task: PlaybookTask | undefined): string {
+  return task?.outputPorts?.[0]?.id ?? 'default';
 }
+
+export function dataBindingsToLayerEdges(bindings: DataBinding[], tasks: PlaybookTask[]): DataLayerEdge[] {
+  const tasksById = new Map(tasks.map((task) => [task.id, task]));
+
+  return bindings.map((db) => {
+    const sourceTask = db.sourceNode ? tasksById.get(db.sourceNode) : undefined;
+    const targetTask = tasksById.get(db.targetNode);
+    const sourcePort = db.sourcePort ? getTaskPort(sourceTask, db.sourcePort, 'output') : undefined;
+    const targetPort = getTaskPort(targetTask, db.targetPort, 'input');
+    const hasTypeMismatch = Boolean(
+      sourcePort?.artifactKind
+      && targetPort?.artifactKind
+      && sourcePort.artifactKind !== targetPort.artifactKind,
+    );
+    const hasMissingPort = db.sourceKind === 'node-output'
+      ? !sourceTask || !sourcePort || !targetTask || !targetPort
+      : !targetTask || !targetPort;
+    const sourceLabel = db.sourceKind === 'node-output'
+      ? `${sourceTask?.title || db.sourceNode || 'Unknown'}.${sourcePort?.name || db.sourcePort || 'default'}`
+      : db.sourceKind === 'trigger'
+        ? `trigger.${db.triggerPath || db.sourcePort || 'payload'}`
+        : db.sourceKind === 'state'
+          ? `state.${db.statePath || 'path'}`
+          : db.sourceKind === 'constant'
+            ? 'constant'
+            : 'expression';
+    const targetLabel = `${targetTask?.title || db.targetNode}.${targetPort?.name || db.targetPort}`;
+    const artifactKind = targetPort?.artifactKind || sourcePort?.artifactKind || 'unknown';
+    const details = [
+      `${sourceLabel} -> ${targetLabel}`,
+      `Kind: ${db.sourceKind}`,
+      `Artifact: ${artifactKind}`,
+      `Iteration: ${db.iteration ?? 'current'}`,
+    ];
+
+    if (hasMissingPort) {
+      details.push('Warning: missing node or port');
+    }
+    if (hasTypeMismatch) {
+      details.push('Warning: artifact type mismatch');
+    }
+
+    return {
+      id: db.id,
+      source: db.sourceKind === 'trigger'
+        ? TRIGGER_NODE_ID
+        : db.sourceNode || db.targetNode,
+      sourceHandle: db.sourceKind === 'trigger'
+        ? db.triggerPath || 'default'
+        : db.sourcePort || getFallbackSourceHandle(targetTask),
+      target: db.targetNode,
+      targetHandle: db.targetPort,
+      kind: db.sourceKind,
+      iteration: db.iteration ?? null,
+      label: `${db.sourceKind === 'trigger' ? 'trigger' : db.sourcePort || db.sourceKind} -> ${db.targetPort}`,
+      details,
+      status: hasMissingPort || hasTypeMismatch ? 'warning' : 'ok',
+    };
+  });
+}
+
+

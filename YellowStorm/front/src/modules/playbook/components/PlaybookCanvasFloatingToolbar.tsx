@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -38,6 +38,8 @@ interface Props {
   canDownloadAllResults?: boolean;
   onToggleDesigner?: () => void;
   designerOpen?: boolean;
+  onToggleDataBindings?: () => void;
+  dataBindingsVisible?: boolean;
   onRemoveAllTasks?: () => void;
   taskCount?: number;
   waitingForHumanInput?: boolean;
@@ -69,6 +71,8 @@ export function PlaybookCanvasFloatingToolbar({
   canDownloadAllResults = false,
   onToggleDesigner,
   designerOpen = false,
+  onToggleDataBindings,
+  dataBindingsVisible = true,
   onRemoveAllTasks,
   taskCount = 0,
   waitingForHumanInput = false,
@@ -222,6 +226,15 @@ export function PlaybookCanvasFloatingToolbar({
       onClick: onToggleConnectors,
       disabled,
       active: connectorsOpen,
+    },
+    {
+      key: 'bindings',
+      label: dataBindingsVisible ? t('toolbar.hideDataBindings') : t('toolbar.showDataBindings'),
+      icon: DatabaseZap,
+      onClick: onToggleDataBindings,
+      disabled,
+      active: dataBindingsVisible,
+      hidden: !onToggleDataBindings,
     },
     {
       key: 'download',

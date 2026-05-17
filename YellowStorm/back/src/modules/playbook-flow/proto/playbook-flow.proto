@@ -74,6 +74,17 @@ message FlowNodeOutput {
 message RouterConfig {
   repeated string output_labels = 1;
   int32 max_iterations = 2;
+  repeated RouterCondition conditions = 3;
+  string default_label = 4;
+}
+
+message RouterCondition {
+  string label = 1;
+  string source_node = 2;
+  string source_port = 3;
+  string path = 4;
+  string operator = 5;
+  google.protobuf.Value value = 6;
 }
 
 message IteratorConfig {
@@ -98,6 +109,8 @@ message ControlEdge {
   string target = 4;
   string router_label = 5;
   int32 priority = 6;
+  string source_output_port_id = 7;
+  string target_input_port_id = 8;
 }
 
 message DataBinding {

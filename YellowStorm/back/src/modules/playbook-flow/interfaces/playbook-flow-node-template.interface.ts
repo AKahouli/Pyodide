@@ -18,6 +18,15 @@ export interface FlowNodeTemplateIteratorConfig {
 export interface FlowNodeTemplateRouterConfig {
   outputLabels: string[];
   maxIterations: number;
+  conditions?: Array<{
+    label: string;
+    sourceNode?: string | null;
+    sourcePort?: string | null;
+    path?: string | null;
+    operator: 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+    value?: unknown;
+  }>;
+  defaultLabel?: string | null;
 }
 
 export interface FlowNodeTemplateHumanApprovalConfig {

@@ -687,63 +687,9 @@ export class AgentService {
     }
 
     const allConnectorIds = [
-      ...new Set(filteredAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean)),
+      ...new Set(filteredAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
     ];
-    const connectorsMap = new Map<string, any>();
-    if (allConnectorIds.length > 0) {
-      const fetchedConnectors = await this.connectorService.findByIds(allConnectorIds);
-      for (const connector of fetchedConnectors) {
-        connectorsMap.set(connector.id, connector);
-      }
-    }
-
-    const buildConversationConnectorBindings = async (connectorIds: string[] = [], userId?: string) => {
-      const bindings = connectorIds
-        .map((connectorId) => connectorsMap.get(connectorId))
-        .filter(Boolean)
-        .map((connector: any) => ({
-          connector_id: connector.id,
-          connector_name: connector.name,
-          actions: (connector.actions || [])
-            .filter((action: any) => action.isEnabled !== false)
-            .map((action: any) => ({
-              action_key: action.key,
-              label: action.label || action.key,
-              description: action.description || '',
-              parameter_schema: action.parameterSchema || {},
-            })),
-          mcp_transport_type: connector.mcpTransportType || '',
-          mcp_server_url: connector.mcpServerUrl || '',
-          mcp_server_config: connector.mcpServerConfig || {},
-          auth_headers: {} as Record<string, string>,
-          auth_env: {} as Record<string, string>,
-        }))
-        .filter((binding: any) => binding.actions.length > 0);
-
-      if (userId) {
-        for (const binding of bindings) {
-          const connector = connectorsMap.get(binding.connector_id);
-          if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
-            try {
-              const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
-                authSourceType: connector.authSourceType,
-                connectedAppKey: connector.connectedAppKey,
-                runtimeAuthConfig: connector.runtimeAuthConfig || {},
-              });
-              binding.auth_headers = auth.headers;
-              binding.auth_env = auth.env;
-            } catch (err) {
-              this.logger.warn('Failed to resolve connector auth for conversation', {
-                connector_id: binding.connector_id,
-                error: (err as Error).message,
-              });
-            }
-          }
-        }
-      }
-
-      return bindings;
-    };
+    const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
 
     const grpcAgents = await Promise.all(filteredAgents.map(async (agent) => {
       const agentTools = agent.toolIds
@@ -761,15 +707,8 @@ export class AgentService {
       const effectiveModelId = agent.model || fallbackModelId || '';
       const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
       const effectiveSkills = this.resolveEffectiveSkills(agent, skillsMap);
-      const connectorBindings = await buildConversationConnectorBindings(agent.connectorIds || [], userId);
-      const connectorToolDefs = connectorBindings.flatMap((binding: any) =>
-        (binding.actions || []).map((action: any) => ({
-          name: `connector_${binding.connector_id}_${action.action_key}`,
-          description: action.description || `${binding.connector_name} connector action ${action.label || action.action_key}`,
-          prompt: '',
-          top_k: 0,
-        })),
-      );
+      const connectorBindings = await this.buildConnectorBindings(connectorsMap, agent.connectorIds || [], userId);
+      const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
       // Build prompt using batch-resolved prompts
       let prompt = '';
@@ -919,11 +858,18 @@ export class AgentService {
       }
     }
 
+    const allConnectorIds = [
+      ...new Set(streamAgents.flatMap((agent) => agent.connectorIds || []).filter(Boolean) as string[]),
+    ];
+    const connectorsMap = await this.buildConnectorsMap(allConnectorIds);
+
     const grpcAgents = await Promise.all(
       streamAgents.map(async (agent) => {
         const agentTools = agent.toolIds
           .map((id) => toolsMap.get(id))
           .filter(Boolean) as IToolResponse[];
+        const connectorBindings = await this.buildConnectorBindings(connectorsMap, agent.connectorIds || [], userId);
+        const connectorToolDefs = this.buildConnectorToolDefs(connectorBindings);
 
         const effectiveModelId = agent.model || fallbackModelId || '';
         const proxyModel = modelMap.get(effectiveModelId) || effectiveModelId;
@@ -948,7 +894,7 @@ export class AgentService {
           prompt,
           agent_type: agent.agentTypeName.toLowerCase(),
           save_memory: false,
-          tools: await this.buildToolsWithTokens(agentTools, userId),
+          tools: (await this.buildToolsWithTokens(agentTools, userId)).concat(connectorToolDefs),
           skills: effectiveSkills.map((skill) => this.toGrpcSkill(skill)),
           brain_context: agent.knowledgeBases.map((wsId) => ({
             workspace_id: wsId,
@@ -960,11 +906,13 @@ export class AgentService {
           agent_params: {
             params: {
               user_id: userId,
+              connector_bindings_json: JSON.stringify(connectorBindings),
               ...(sessionId ? { session_id: sessionId } : {}),
               platform_api_url: this.configService.get<string>('PLATFORM_API_URL', 'http://localhost:3000/api'),
               platform_api_token: this.configService.get<string>('INTERNAL_SERVICE_SECRET', ''),
             },
           },
+          connector_bindings: connectorBindings,
           connectorIds: agent.connectorIds || [],
         };
 
@@ -1306,5 +1254,93 @@ export class AgentService {
         return toolObj;
       }),
     );
+  }
+
+  private async buildConnectorsMap(connectorIds: string[]): Promise<Map<string, any>> {
+    const connectorsMap = new Map<string, any>();
+    if (connectorIds.length === 0) {
+      return connectorsMap;
+    }
+
+    const fetchedConnectors = await this.connectorService.findByIds(connectorIds);
+    for (const connector of fetchedConnectors) {
+      connectorsMap.set(connector.id, connector);
+    }
+
+    return connectorsMap;
+  }
+
+  private async buildConnectorBindings(
+    connectorsMap: Map<string, any>,
+    connectorIds: string[] = [],
+    userId?: string,
+  ): Promise<Record<string, unknown>[]> {
+    const bindings = connectorIds
+      .map((connectorId) => connectorsMap.get(connectorId))
+      .filter(Boolean)
+      .map((connector: any) => ({
+        connector_id: connector.id,
+        connector_name: connector.name,
+        actions: (connector.actions || [])
+          .filter((action: any) => action.isEnabled !== false)
+          .map((action: any) => ({
+            action_key: action.key,
+            label: action.label || action.key,
+            description: action.description || '',
+            parameter_schema: action.parameterSchema || {},
+          })),
+        mcp_transport_type: connector.mcpTransportType || '',
+        mcp_server_url: connector.mcpServerUrl || '',
+        mcp_server_config: connector.mcpServerConfig || {},
+        auth_headers: {} as Record<string, string>,
+        auth_env: {} as Record<string, string>,
+      }))
+      .filter((binding: any) => binding.actions.length > 0);
+
+    if (userId) {
+      for (const binding of bindings) {
+        const connector = connectorsMap.get(binding.connector_id);
+        if (connector?.authSourceType === 'connected_app' && connector?.connectedAppKey) {
+          try {
+            const auth = await this.connectorAuthService.resolveRuntimeAuth(userId, {
+              authSourceType: connector.authSourceType,
+              connectedAppKey: connector.connectedAppKey,
+              runtimeAuthConfig: connector.runtimeAuthConfig || {},
+            });
+            binding.auth_headers = auth.headers;
+            binding.auth_env = auth.env;
+          } catch (err) {
+            this.logger.warn('Failed to resolve connector auth for agent runtime', {
+              connector_id: binding.connector_id,
+              error: (err as Error).message,
+            });
+          }
+        }
+      }
+    }
+
+    return bindings;
+  }
+
+  private buildConnectorToolDefs(bindings: Record<string, unknown>[]): Record<string, unknown>[] {
+    return bindings.flatMap((binding) => {
+      const connectorId = String(binding.connector_id || '');
+      const connectorName = String(binding.connector_name || 'connector');
+      const actions = Array.isArray(binding.actions) ? binding.actions : [];
+
+      return actions.map((action) => {
+        const normalizedAction = action as Record<string, unknown>;
+        const actionKey = String(normalizedAction.action_key || '');
+        const label = String(normalizedAction.label || actionKey);
+        const description = String(normalizedAction.description || '');
+
+        return {
+          name: `connector_${connectorId}_${actionKey}`,
+          description: description || `${connectorName} connector action ${label}`,
+          prompt: '',
+          top_k: 0,
+        };
+      });
+    });
   }
 }

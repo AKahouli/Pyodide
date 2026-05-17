@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsString, MinLength, MaxLength, IsOptional, IsArray, IsObject, IsEnum,
-  ValidateNested, IsNumber, Min, Max, IsBoolean,
+  ValidateNested, IsNumber, Min, Max, IsBoolean, IsIn,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { NODE_KINDS } from '../constants/node-kinds';
@@ -93,6 +93,48 @@ export class RouterConfigDto {
   @Min(1)
   @Max(50)
   maxIterations!: number;
+
+  @ApiPropertyOptional({ type: [Object] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RouterConditionDto)
+  conditions?: RouterConditionDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  defaultLabel?: string;
+}
+
+export class RouterConditionDto {
+  @ApiProperty()
+  @IsString()
+  label!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  sourceNode?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  sourcePort?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  path?: string;
+
+  @ApiProperty({ enum: ['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'] })
+  @IsString()
+  @IsIn(['equals', 'not_equals', 'contains', 'exists', 'gt', 'gte', 'lt', 'lte'])
+  operator!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  value?: unknown;
 }
 
 export class IteratorConfigDto {

@@ -12,7 +12,6 @@ import {
   type OnConnect,
   type Connection,
   type OnNodeDrag,
-  addEdge,
   applyNodeChanges,
   applyEdgeChanges,
 } from '@xyflow/react';
@@ -22,7 +21,6 @@ import { useModuleTranslation } from '@/modules/localization';
 import {
   tasksToNodes,
   nodesToTasks,
-  buildTriggerNode,
   TRIGGER_NODE_ID,
   repackIteratorChildrenInTasks,
   getIteratorChildAbsolutePositionForNewChild,
@@ -30,11 +28,9 @@ import {
 import {
   playbookEdgesToFlowEdges,
   flowEdgesToPlaybookEdges,
-  controlEdgesToFlowEdges,
-  flowEdgesToControlEdges,
 } from './helpers/control-edge-serializer';
 import { wouldCreateCycle } from './helpers/cycle-router-validator';
-import type { PlaybookTask, PlaybookNodeData } from '../types';
+import type { DataBinding, PlaybookTask, PlaybookNodeData } from '../types';
 import { getEffectiveNodeType } from '../utils/node-type';
 
 function deferStoreUpdate(fn: () => void) {
@@ -52,7 +48,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const { t } = useModuleTranslation('playbook');
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
-  const updateControlEdges = usePlaybookStore((s) => s.updateControlEdges);
+  const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const canvasSyncVersion = usePlaybookStore((s) => s.canvasSyncVersion);
@@ -62,8 +58,20 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
   const nodesRef = useRef<Node[]>(nodes);
   nodesRef.current = nodes;
+  const edgesRef = useRef<Edge[]>(edges);
+  edgesRef.current = edges;
+  const dataBindingsRef = useRef<DataBinding[]>(playbook?.dataBindings ?? []);
   const syncedKeyRef = useRef<string | null>(null);
   const triggerPosRef = useRef({ x: 40, y: 160 });
+
+  const syncEdges = useCallback((nextEdges: Edge[]) => {
+    updateEdges(flowEdgesToPlaybookEdges(nextEdges));
+  }, [updateEdges]);
+
+  const syncDataBindings = useCallback((nextBindings: DataBinding[]) => {
+    dataBindingsRef.current = nextBindings;
+    updateDataBindings(nextBindings);
+  }, [updateDataBindings]);
 
   function buildNodes(tasks: PlaybookTask[], includeTrigger: boolean): Node[] {
     return tasksToNodes(tasks, includeTrigger).map((n) =>
@@ -87,12 +95,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     if (syncedKeyRef.current !== key) {
       syncedKeyRef.current = key;
       const includeTrigger = playbook.automatedTriggerType === 'mail';
-      setNodes(buildNodes(playbook.tasks, includeTrigger));
-      if (playbook.controlEdges && playbook.controlEdges.length > 0) {
-        setEdges(controlEdgesToFlowEdges(playbook.controlEdges));
-      } else {
-        setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
-      }
+      const nextNodes = buildNodes(playbook.tasks, includeTrigger);
+      const nextEdges = playbookEdgesToFlowEdges(playbook.edges, playbook.tasks);
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      edgesRef.current = nextEdges;
     }
   }, [playbook]);
 
@@ -102,12 +109,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     const key = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
     syncedKeyRef.current = key;
     const includeTrigger = playbook.automatedTriggerType === 'mail';
-    setNodes(buildNodes(playbook.tasks, includeTrigger));
-    if (playbook.controlEdges && playbook.controlEdges.length > 0) {
-      setEdges(controlEdgesToFlowEdges(playbook.controlEdges));
-    } else {
-      setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
-    }
+    const nextNodes = buildNodes(playbook.tasks, includeTrigger);
+    const nextEdges = playbookEdgesToFlowEdges(playbook.edges, playbook.tasks);
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    edgesRef.current = nextEdges;
   }, [canvasSyncVersion, playbook]);
 
   // Sync node metadata when tasks change locally
@@ -121,6 +127,10 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       return JSON.stringify(rebuilt) === JSON.stringify(nds) ? nds : rebuilt;
     });
   }, [playbook?.tasks, playbook?.automatedTriggerType]);
+
+  useEffect(() => {
+    dataBindingsRef.current = playbook?.dataBindings ?? [];
+  }, [playbook?.dataBindings]);
 
   const onNodesChange: OnNodesChange = useCallback(
     (changes) => {
@@ -144,9 +154,16 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
             const updated = eds.filter(
               (e) => !removedIds.has(e.source) && !removedIds.has(e.target),
             );
-            deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges(updated)));
+            edgesRef.current = updated;
+            deferStoreUpdate(() => syncEdges(updated));
             return updated;
           });
+          const updatedBindings = dataBindingsRef.current.filter(
+            (binding) => !removedIds.has(binding.targetNode) && !removedIds.has(binding.sourceNode ?? ''),
+          );
+          if (updatedBindings.length !== dataBindingsRef.current.length) {
+            deferStoreUpdate(() => syncDataBindings(updatedBindings));
+          }
           const nonRemove = changes.filter((c) => c.type !== 'remove');
           if (nonRemove.length > 0) setNodes((nds) => applyNodeChanges(nonRemove, nds));
           return;
@@ -154,7 +171,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       }
       setNodes((nds) => applyNodeChanges(changes, nds));
     },
-    [selectStep, updateTasks, updateEdges, captureSnapshot],
+    [captureSnapshot, selectStep, syncEdges, updateTasks],
   );
 
   const onNodeDragStop: OnNodeDrag = useCallback(
@@ -173,75 +190,140 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     (changes) => {
       const removes = changes.filter((c) => c.type === 'remove');
       setEdges((eds) => {
+        if (removes.length > 0) return eds;
         const updated = applyEdgeChanges(changes, eds);
-        if (removes.length > 0) {
-          captureSnapshot();
-          deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges(updated)));
-        }
+        edgesRef.current = updated;
         return updated;
       });
     },
-    [updateEdges, captureSnapshot],
+    [],
   );
 
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
-      setEdges((eds) => {
-        const currentTasks = nodesToTasks(nodesRef.current);
-        const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
-        const sourceData = sourceNode?.data as PlaybookNodeData | undefined;
-        const sourceType = sourceData ? getEffectiveNodeType(sourceData) : null;
-        const isRouterSource = sourceType === 'router';
-        const routerLabel = isRouterSource ? (connection.sourceHandle ?? null) : null;
+      const currentEdges = edgesRef.current;
+      const currentTasks = nodesToTasks(nodesRef.current);
+      const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
+      const sourceData = sourceNode?.data as PlaybookNodeData | undefined;
+      const sourceType = sourceData ? getEffectiveNodeType(sourceData) : null;
+      const isRouterSource = sourceType === 'router';
+      const routerLabel = isRouterSource ? (connection.sourceHandle ?? null) : null;
+      const sourceHandleId = connection.sourceHandle ?? 'default';
+      const targetHandleId = connection.targetHandle ?? 'default';
+      const edgeId = `e-${connection.source}-${sourceHandleId}-${connection.target}-${targetHandleId}`;
 
-        const cycleNodes = currentTasks.map((t) => ({
-          id: t.id,
-          data: { ...t, nodeType: t.nodeType ?? undefined },
-        }));
-        if (wouldCreateCycle(eds, connection.source, connection.target, cycleNodes)) {
-          showWarning(t('canvas.cycleRejected'));
-          return eds;
-        }
+      const targetNode = nodesRef.current.find((n) => n.id === connection.target);
+      const targetData = targetNode?.data as PlaybookNodeData | undefined;
+      const sourcePort = sourceData?.outputPorts?.find((p) => p.id === sourceHandleId);
+      const targetPort = targetData?.inputPorts?.find((p) => p.id === targetHandleId);
+      const typeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
+      const isErrorEdge = routerLabel === '__error__';
+      const createsTriggerBinding = connection.source === TRIGGER_NODE_ID && Boolean(targetPort);
+      const createsNodeOutputBinding = !isRouterSource && Boolean(sourcePort) && Boolean(targetPort);
 
-        const sourceHandleId = connection.sourceHandle ?? 'default';
-        const targetHandleId = connection.targetHandle ?? 'default';
-        const edgeId = `e-${connection.source}-${sourceHandleId}-${connection.target}-${targetHandleId}`;
-        if (eds.some((e) => e.id === edgeId)) return eds;
-
-        const targetNode = nodesRef.current.find((n) => n.id === connection.target);
-        const targetData = targetNode?.data as PlaybookNodeData | undefined;
-        const sourcePort = sourceData?.outputPorts?.find((p) => p.id === sourceHandleId);
-        const targetPort = targetData?.inputPorts?.find((p) => p.id === targetHandleId);
-        const typeMatch = sourcePort?.artifactKind === targetPort?.artifactKind;
-        const isErrorEdge = routerLabel === '__error__';
-
-        const newEdge: Edge = {
-          id: edgeId,
-          source: connection.source,
-          target: connection.target,
-          sourceHandle: connection.sourceHandle,
-          targetHandle: connection.targetHandle,
-          type: isRouterSource ? 'conditional' : (typeMatch !== false ? 'animated' : 'animated-warning'),
-          animated: !isRouterSource,
-          data: {
-            sourceOutputPortId: sourceHandleId,
-            targetInputPortId: targetHandleId,
-            isTypeMatch: isRouterSource ? undefined : typeMatch,
-            routerLabel,
-          },
-          style: isRouterSource
-            ? {
-                strokeDasharray: '6 4',
-                ...(isErrorEdge ? { stroke: 'var(--destructive)' } : {}),
-              }
-            : undefined,
-        };
+      if (createsTriggerBinding) {
+        const nextBinding: DataBinding = createsTriggerBinding
+          ? {
+              id: `db-trigger-${sourceHandleId}-${connection.target}-${targetHandleId}`,
+              targetNode: connection.target,
+              targetPort: targetHandleId,
+              sourceKind: 'trigger',
+              triggerPath: sourceHandleId,
+            }
+          : {
+              id: `db-${connection.source}-${sourceHandleId}-${connection.target}-${targetHandleId}`,
+              targetNode: connection.target,
+              targetPort: targetHandleId,
+              sourceKind: 'node-output',
+              sourceNode: connection.source,
+              sourcePort: sourceHandleId,
+              iteration: 'current',
+            };
+        const nextBindings = [
+          ...dataBindingsRef.current.filter(
+            (binding) => !(binding.targetNode === nextBinding.targetNode && binding.targetPort === nextBinding.targetPort),
+          ),
+          nextBinding,
+        ];
         captureSnapshot();
-        deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges([...eds, newEdge])));
-        return [...eds, newEdge];
-      });
+        dataBindingsRef.current = nextBindings;
+        deferStoreUpdate(() => syncDataBindings(nextBindings));
+        return;
+      }
+
+      const nextEdgeBase = createsNodeOutputBinding
+        ? currentEdges.filter((edge) => {
+            const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
+            const edgeTargetPortId = edgeData.targetInputPortId || edge.targetHandle || 'default';
+            const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+            if (isConditionalEdge) {
+              return true;
+            }
+            return !(edge.target === connection.target && edgeTargetPortId === targetHandleId);
+          })
+        : currentEdges;
+
+      const cycleNodes = currentTasks.map((t) => ({
+        id: t.id,
+        data: { ...t, nodeType: t.nodeType ?? undefined },
+      }));
+      if (wouldCreateCycle(nextEdgeBase, connection.source, connection.target, cycleNodes)) {
+        showWarning(t('canvas.cycleRejected'));
+        return;
+      }
+
+      if (nextEdgeBase.some((edge) => edge.id === edgeId)) return;
+
+      if (createsNodeOutputBinding) {
+        const nextBinding: DataBinding = {
+          id: `db-${connection.source}-${sourceHandleId}-${connection.target}-${targetHandleId}`,
+          targetNode: connection.target,
+          targetPort: targetHandleId,
+          sourceKind: 'node-output',
+          sourceNode: connection.source,
+          sourcePort: sourceHandleId,
+          iteration: 'current',
+        };
+        dataBindingsRef.current = [
+          ...dataBindingsRef.current.filter(
+            (binding) => !(binding.targetNode === nextBinding.targetNode && binding.targetPort === nextBinding.targetPort),
+          ),
+          nextBinding,
+        ];
+      }
+
+      const newEdge: Edge = {
+        id: edgeId,
+        source: connection.source,
+        target: connection.target,
+        sourceHandle: connection.sourceHandle,
+        targetHandle: connection.targetHandle,
+        type: isRouterSource ? 'conditional' : (typeMatch !== false ? 'animated' : 'animated-warning'),
+        animated: !isRouterSource,
+        data: {
+          sourceOutputPortId: sourceHandleId,
+          targetInputPortId: targetHandleId,
+          isTypeMatch: isRouterSource ? undefined : typeMatch,
+          routerLabel,
+        },
+        style: isRouterSource
+          ? {
+              strokeDasharray: '6 4',
+              ...(isErrorEdge ? { stroke: 'var(--destructive)' } : {}),
+            }
+          : undefined,
+      };
+
+      const nextEdges = [...nextEdgeBase, newEdge];
+      edgesRef.current = nextEdges;
+      captureSnapshot();
+      setEdges(nextEdges);
+      if (createsNodeOutputBinding) {
+        deferStoreUpdate(() => syncDataBindings(dataBindingsRef.current));
+      }
+      deferStoreUpdate(() => syncEdges(nextEdges));
     },
-    [updateEdges, captureSnapshot],
+    [captureSnapshot, syncDataBindings, syncEdges, t],
   );
 
   const addNode = useCallback(
@@ -274,11 +356,18 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       });
       setEdges((eds) => {
         const updated = eds.filter((e) => e.source !== nodeId && e.target !== nodeId);
-        deferStoreUpdate(() => updateControlEdges(flowEdgesToControlEdges(updated)));
+        edgesRef.current = updated;
+        deferStoreUpdate(() => syncEdges(updated));
         return updated;
       });
+      const updatedBindings = dataBindingsRef.current.filter(
+        (binding) => binding.targetNode !== nodeId && binding.sourceNode !== nodeId,
+      );
+      if (updatedBindings.length !== dataBindingsRef.current.length) {
+        deferStoreUpdate(() => syncDataBindings(updatedBindings));
+      }
     },
-    [updateTasks, updateEdges, captureSnapshot, playbook?.id, triggerActions],
+    [captureSnapshot, playbook?.id, syncDataBindings, syncEdges, triggerActions, updateTasks],
   );
 
   const updateNodeData = useCallback(

@@ -142,8 +142,17 @@ describe('usePlaybookCanvas', () => {
     });
   });
 
-  it('persists edges from the synthetic trigger source', () => {
-    currentPlaybookState.value = makePlaybook({ edges: [] });
+  it('stores trigger connections as data bindings without persisting control edges', () => {
+    currentPlaybookState.value = makePlaybook({
+      edges: [],
+      dataBindings: [],
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          inputPorts: [{ id: 'default', name: 'Input', artifactKind: 'data', required: false }],
+        }),
+      ],
+    });
     const { result } = renderHook(() => usePlaybookCanvas());
 
     act(() => {
@@ -157,17 +166,20 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateControlEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
       {
-        id: 'e-__trigger__-mail_data-task-1-default',
-        kind: 'sequential',
-        source: '__trigger__',
-        target: 'task-1',
+        id: 'db-trigger-mail_data-task-1-default',
+        targetNode: 'task-1',
+        targetPort: 'default',
+        sourceKind: 'trigger',
+        triggerPath: 'mail_data',
       },
     ]);
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
-  it('adds edge on connect and updates store asynchronously', () => {
+  it('ignores generic edge remove events so double-click stays the only edge delete path', () => {
     const { result } = renderHook(() => usePlaybookCanvas());
 
     act(() => {
@@ -175,7 +187,8 @@ describe('usePlaybookCanvas', () => {
     });
 
     act(() => vi.runAllTimers());
-    expect(storeFns.updateControlEdges).toHaveBeenCalledTimes(1);
+    expect(storeFns.updateEdges).not.toHaveBeenCalled();
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
   it('syncs node positions to store on node drag stop', () => {
@@ -253,7 +266,7 @@ describe('usePlaybookCanvas', () => {
     expect(storeFns.selectStep).toHaveBeenCalledWith('task-1');
   });
 
-  it('allows multiple port-to-port edges between the same two nodes', () => {
+  it('stores multiple port-to-port bindings and matching control edges', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [
         makeTask({
@@ -274,6 +287,7 @@ describe('usePlaybookCanvas', () => {
         }),
       ],
       edges: [],
+      dataBindings: [],
     });
 
     const { result } = renderHook(() => usePlaybookCanvas());
@@ -295,23 +309,46 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateControlEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
       {
         id: 'e-task-1-out-1-task-2-in-1',
-        kind: 'sequential',
-        source: 'task-1',
-        target: 'task-2',
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'out-1',
+        targetInputPortId: 'in-1',
       },
       {
         id: 'e-task-1-out-2-task-2-in-2',
-        kind: 'sequential',
-        source: 'task-1',
-        target: 'task-2',
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'out-2',
+        targetInputPortId: 'in-2',
       },
     ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-task-1-out-1-task-2-in-1',
+        targetNode: 'task-2',
+        targetPort: 'in-1',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'out-1',
+        iteration: 'current',
+      },
+      {
+        id: 'db-task-1-out-2-task-2-in-2',
+        targetNode: 'task-2',
+        targetPort: 'in-2',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'out-2',
+        iteration: 'current',
+      },
+    ]);
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
-  it('persists iterator results port connections for downstream data inputs', () => {
+  it('stores iterator result bindings and matching control edges', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [
         makeTask({
@@ -330,6 +367,7 @@ describe('usePlaybookCanvas', () => {
         }),
       ],
       edges: [],
+      dataBindings: [],
     });
 
     const { result } = renderHook(() => usePlaybookCanvas());
@@ -345,12 +383,168 @@ describe('usePlaybookCanvas', () => {
 
     act(() => vi.runAllTimers());
 
-    expect(storeFns.updateControlEdges).toHaveBeenLastCalledWith([
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
       {
         id: 'e-iterator-1-results-task-2-metrics',
-        kind: 'sequential',
-        source: 'iterator-1',
-        target: 'task-2',
+        sourceId: 'iterator-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'results',
+        targetInputPortId: 'metrics',
+      },
+    ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-iterator-1-results-task-2-metrics',
+        targetNode: 'task-2',
+        targetPort: 'metrics',
+        sourceKind: 'node-output',
+        sourceNode: 'iterator-1',
+        sourcePort: 'results',
+        iteration: 'current',
+      },
+    ]);
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
+  });
+
+  it('replaces the existing binding when reconnecting the same target port', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          outputPorts: [{ id: 'final', name: 'Final', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-3',
+          executionOrder: 2,
+          inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: false }],
+        }),
+      ],
+      edges: [{
+        id: 'e-task-1-draft-task-3-prompt',
+        sourceId: 'task-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'draft',
+        targetInputPortId: 'prompt',
+      }],
+      dataBindings: [{
+        id: 'db-task-1-draft-task-3-prompt',
+        targetNode: 'task-3',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'draft',
+        iteration: 'current',
+      }],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: 'task-2',
+        target: 'task-3',
+        sourceHandle: 'final',
+        targetHandle: 'prompt',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-task-2-final-task-3-prompt',
+        sourceId: 'task-2',
+        targetId: 'task-3',
+        sourceOutputPortId: 'final',
+        targetInputPortId: 'prompt',
+      },
+    ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-task-2-final-task-3-prompt',
+        targetNode: 'task-3',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'task-2',
+        sourcePort: 'final',
+        iteration: 'current',
+      },
+    ]);
+  });
+
+  it('preserves conditional control edges while adding a sequential edge for a new data binding source', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'router-1',
+          nodeType: 'router',
+          outputPorts: [{ id: 'approved', name: 'Approved', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-3',
+          executionOrder: 2,
+          inputPorts: [{ id: 'prompt', name: 'Prompt', artifactKind: 'text', required: false }],
+        }),
+      ],
+      edges: [{
+        id: 'e-router-1-approved-task-3-prompt',
+        sourceId: 'router-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'prompt',
+      }],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    act(() => {
+      result.current.onConnect({
+        source: 'task-1',
+        target: 'task-3',
+        sourceHandle: 'draft',
+        targetHandle: 'prompt',
+      } as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: 'e-router-1-approved-task-3-prompt',
+        sourceId: 'router-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'approved',
+        targetInputPortId: 'prompt',
+      },
+      {
+        id: 'e-task-1-draft-task-3-prompt',
+        sourceId: 'task-1',
+        targetId: 'task-3',
+        sourceOutputPortId: 'draft',
+        targetInputPortId: 'prompt',
+      },
+    ]);
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: 'db-task-1-draft-task-3-prompt',
+        targetNode: 'task-3',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'draft',
+        iteration: 'current',
       },
     ]);
   });
@@ -364,7 +558,8 @@ describe('usePlaybookCanvas', () => {
     act(() => vi.runAllTimers());
 
     expect(storeFns.updateTasks).toHaveBeenCalled();
-    expect(storeFns.updateControlEdges).toHaveBeenCalled();
+    expect(storeFns.updateEdges).toHaveBeenCalled();
+    expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
   it('delegates trigger node deletion to triggerActions.onDelete', () => {

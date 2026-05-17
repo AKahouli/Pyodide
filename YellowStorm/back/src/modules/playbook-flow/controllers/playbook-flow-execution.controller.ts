@@ -8,6 +8,7 @@ import { CurrentUser } from '@modules/auth/decorators/current-user.decorator';
 import { RequirePermissions } from '@modules/authorization/decorators/require-permissions.decorator';
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { Permissions } from '@modules/authorization/constants/permissions';
+import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
 
 @ApiTags('Playbook Flow Executions')
 @ApiBearerAuth()
@@ -26,7 +27,7 @@ export class PlaybookFlowExecutionController {
   async start(
     @CurrentUser('_id') userId: string,
     @Param('flowId') flowId: string,
-    @Body() body: any,
+    @Body() body: StartPlaybookFlowExecutionDto,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const singleStepTaskId: string | undefined = body.singleStepTaskId;

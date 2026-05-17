@@ -835,6 +835,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 ...playbook,
                 tasks: state.currentPlaybook.tasks,
                 edges: state.currentPlaybook.edges,
+                dataBindings: state.currentPlaybook.dataBindings,
               },
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,

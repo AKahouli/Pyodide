@@ -27,7 +27,17 @@ export function mapGrpcResponseToFlow(response: any): {
       type: p.artifact_kind || 'text',
     })) },
     routerConfig: node.output_labels ? {
-      outputLabels: node.output_labels, maxIterations: node.max_iterations || 5,
+      outputLabels: node.output_labels,
+      maxIterations: node.max_iterations || 5,
+      conditions: (node.router_conditions || []).map((condition: any) => ({
+        label: condition.label,
+        sourceNode: condition.source_node || undefined,
+        sourcePort: condition.source_port || undefined,
+        path: condition.path || undefined,
+        operator: condition.operator,
+        value: condition.value,
+      })),
+      defaultLabel: node.default_label || undefined,
     } : undefined,
     metadata: node.assigned_agent_id ? { assignedAgentId: node.assigned_agent_id } : {},
   }));
@@ -38,6 +48,8 @@ export function mapGrpcResponseToFlow(response: any): {
     source: edge.source_id || edge.source,
     target: edge.target_id || edge.target,
     routerLabel: edge.router_label || undefined,
+    sourceOutputPortId: edge.source_output_port_id || edge.router_label || undefined,
+    targetInputPortId: edge.target_input_port_id || undefined,
   }));
 
   const dataBindings: any[] = [];

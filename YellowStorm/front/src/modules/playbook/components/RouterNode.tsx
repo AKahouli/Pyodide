@@ -56,6 +56,7 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
   const routerConfig = data.routerConfig ?? DEFAULT_ROUTER_CONFIG;
   const outputLabels = routerConfig.outputLabels ?? DEFAULT_ROUTER_CONFIG.outputLabels;
   const maxIterations = routerConfig.maxIterations ?? 0;
+  const deterministicConditions = routerConfig.conditions?.length ?? 0;
   const status = data.stepStatus as StepStatus | undefined;
   const ringClass = status ? STATUS_RING[status] : '';
   const selectedClass = selected
@@ -100,6 +101,11 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
             {maxIterations > 0 && (
               <p className="text-[10px] text-muted-foreground">
                 {t('routerNode.maxIterations', { count: maxIterations })}
+              </p>
+            )}
+            {deterministicConditions > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                {t('routerNode.conditionsConfigured', { count: deterministicConditions })}
               </p>
             )}
 

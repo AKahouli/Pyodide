@@ -111,15 +111,21 @@ export function controlEdgesToFlowEdges(controlEdges: ControlEdge[]): Edge[] {
     .filter((ce) => ce.source !== ce.target)
     .map((ce) => {
       const isConditional = ce.kind === 'conditional';
+      const sourceOutputPortId = ce.sourceOutputPortId ?? ce.routerLabel ?? 'default';
+      const targetInputPortId = ce.targetInputPortId ?? 'default';
       return {
         id: ce.id || buildControlEdgeId(ce.source, ce.target, ce.routerLabel),
         source: ce.source,
         target: ce.target,
+        sourceHandle: sourceOutputPortId,
+        targetHandle: targetInputPortId,
         type: isConditional ? 'conditional' : 'sequential',
         animated: !isConditional,
         data: {
           kind: ce.kind,
           routerLabel: ce.routerLabel ?? null,
+          sourceOutputPortId,
+          targetInputPortId,
           priority: ce.priority ?? null,
         },
         style: isConditional
@@ -136,13 +142,17 @@ export function flowEdgesToControlEdges(edges: Edge[]): ControlEdge[] {
   return edges.map((edge) => {
     const data = (edge.data || {}) as Record<string, unknown>;
     const isConditional = edge.type === 'conditional' || data.kind === 'conditional';
+    const sourceOutputPortId = (data.sourceOutputPortId as string) || edge.sourceHandle || 'default';
+    const targetInputPortId = (data.targetInputPortId as string) || edge.targetHandle || 'default';
 
     return {
       id: edge.id,
       kind: isConditional ? 'conditional' : 'sequential',
       source: edge.source,
       target: edge.target,
-      routerLabel: (data.routerLabel as string) || undefined,
+      routerLabel: isConditional ? ((data.routerLabel as string) || sourceOutputPortId) : undefined,
+      sourceOutputPortId,
+      targetInputPortId,
       priority: (data.priority as number) || undefined,
     };
   });

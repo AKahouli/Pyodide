@@ -58,7 +58,10 @@ import { WorkspaceExplorerSidebar } from './WorkspaceExplorerSidebar';
 import { useAgentStore, useDefaultAgents } from '@/modules/agent/store';
 import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
+import { flowEdgesToPlaybookEdges } from '../hooks/helpers/control-edge-serializer';
+import { dataBindingsToLayerEdges } from '../hooks/helpers/data-binding-serializer';
 import { tasksToNodes } from '../hooks/helpers/node-serializer';
+import { cloneRouterConfig } from '../hooks/helpers/router-template';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
@@ -66,6 +69,7 @@ import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
 import { RouterNode } from './RouterNode';
 import { HumanApprovalNode } from './HumanApprovalNode';
 import { ConditionalEdge } from './ConditionalEdge';
+import { DataBindingEdge } from './DataBindingEdge';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
@@ -82,7 +86,7 @@ import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookEdge, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -184,6 +188,23 @@ function isIteratorChildTask(task: Pick<PlaybookTask, 'containerConfig'> | null 
   return Boolean(task?.containerConfig?.parentIteratorId);
 }
 
+function canExecuteSingleStep(
+  playbook: Pick<import('../types').Playbook, 'edges' | 'dataBindings'> | null | undefined,
+  task: PlaybookTask | null | undefined,
+): boolean {
+  if (!task) return false;
+
+  const nodeType = task.nodeType;
+  const isStandaloneStep = !nodeType || nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation';
+  if (!isStandaloneStep || task.containerConfig?.parentIteratorId) {
+    return false;
+  }
+
+  const hasIncomingEdge = (playbook?.edges ?? []).some((edge) => edge.targetId === task.id);
+  const hasDataBinding = (playbook?.dataBindings ?? []).some((binding) => binding.targetNode === task.id);
+  return !hasIncomingEdge && !hasDataBinding;
+}
+
 const STEP_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
   interrupted: 4,
@@ -266,6 +287,7 @@ function PlaybookCanvasInner() {
   const clonePlaybook = usePlaybookStore((s) => s.clonePlaybook);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
+  const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
   const captureSnapshot = usePlaybookStore((s) => s.captureSnapshot);
   const undo = usePlaybookStore((s) => s.undo);
   const redo = usePlaybookStore((s) => s.redo);
@@ -354,6 +376,7 @@ function PlaybookCanvasInner() {
   const { saveNow } = useAutosave();
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
+  const [dataBindingsVisible, setDataBindingsVisible] = useState(true);
   const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
   const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
   const [editingName, setEditingName] = useState(false);
@@ -551,6 +574,7 @@ function PlaybookCanvasInner() {
     animated: AiEdge.Animated,
     'animated-warning': AiEdge.AnimatedWarning,
     conditional: ConditionalEdge,
+    dataBinding: DataBindingEdge,
   }), []);
   const executionForCanvas =
     currentExecution?.playbookId === id
@@ -663,7 +687,7 @@ function PlaybookCanvasInner() {
   }, [nodes, selectedStepId, stepStatusMap, stepSemanticMatchMap, stepJudgeStatusMap, stepJudgeResultMap, activeRouterLabelMap, triggerNodeActions, playbook?.id, mailTrigger?.enabled]);
 
   // Style edges based on source node status
-  const liveEdges = useMemo(() => {
+  const styledControlEdges = useMemo(() => {
     if (stepStatusMap.size === 0 && recentlyChangedEdgeIds.length === 0) return edges;
     return edges.map((edge): Edge => {
       const sourceStatus = stepStatusMap.get(edge.source) ?? 'pending';
@@ -689,6 +713,35 @@ function PlaybookCanvasInner() {
       };
     });
   }, [edges, recentlyChangedEdgeIds, stepStatusMap]);
+
+  const liveEdges = useMemo(() => {
+    if (!playbook || !dataBindingsVisible) {
+      return styledControlEdges;
+    }
+
+    const dataLayerEdges: Edge[] = dataBindingsToLayerEdges(playbook.dataBindings ?? [], playbook.tasks ?? []).map((edge) => ({
+        id: `binding:${edge.id}`,
+        source: edge.source,
+        target: edge.target,
+        sourceHandle: edge.sourceHandle,
+        targetHandle: edge.targetHandle,
+        type: 'dataBinding',
+        selectable: false,
+        focusable: false,
+        deletable: false,
+        animated: false,
+        zIndex: 0,
+        data: {
+          layer: 'binding',
+          label: edge.label,
+          details: edge.details,
+          status: edge.status,
+          sourceKind: edge.kind,
+        },
+      }));
+
+    return [...styledControlEdges, ...dataLayerEdges];
+  }, [dataBindingsVisible, playbook, styledControlEdges]);
 
   const handleAddStep = useCallback(() => {
     const taskId = crypto.randomUUID();
@@ -822,10 +875,7 @@ function PlaybookCanvasInner() {
 
       const isRouterTemplate = template.nodeType === 'router';
       const routerConfig = isRouterTemplate
-        ? {
-            outputLabels: [...(template.routerConfig?.outputLabels ?? ['retry', 'done', '__error__'])],
-            maxIterations: template.routerConfig?.maxIterations ?? 3,
-          }
+        ? cloneRouterConfig(template.routerConfig)
         : null;
       const outputPorts = isRouterTemplate
         ? routerConfig!.outputLabels.map((label) => ({ id: label, name: label, artifactKind: 'text' as const }))
@@ -1031,6 +1081,11 @@ function PlaybookCanvasInner() {
           return;
         }
 
+        if (!canExecuteSingleStep(playbook, task ?? null)) {
+          showError(t('errors.executionActionUnavailable'));
+          return;
+        }
+
         await executePlaybook(id, {
           singleStepTaskId: nodeId,
           executionMode: 'live',
@@ -1043,7 +1098,7 @@ function PlaybookCanvasInner() {
         // handled in store
       }
     },
-    [id, isDirty, saveNow, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled, t],
+    [id, isDirty, saveNow, executePlaybook, nodes, advisorAutopilotEnabled, nodeReflectionEnabled, playbook, t],
   );
 
   const handleRerunAfterOptimization = useCallback(async () => {
@@ -1405,17 +1460,6 @@ function PlaybookCanvasInner() {
   const handleApplyIntentSuggestion = useCallback((suggestion: PlaybookIntentSuggestion, options?: { replaceAll?: boolean }) => {
     if (!playbook) return;
 
-    const toPlaybookEdges = (nextEdges: Edge[]): PlaybookEdge[] => nextEdges.map((edge) => {
-      const data = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
-      return {
-        id: edge.id,
-        sourceId: edge.source,
-        targetId: edge.target,
-        sourceOutputPortId: data.sourceOutputPortId || edge.sourceHandle || 'default',
-        targetInputPortId: data.targetInputPortId || edge.targetHandle || 'default',
-      };
-    });
-
     const resolveAssignedAgentId = (agentSlug?: string | null): string | null => {
       if (!agentSlug) {
         return null;
@@ -1555,12 +1599,12 @@ function PlaybookCanvasInner() {
     };
 
     const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[]) => {
-      const layoutedTasks = autoLayoutTasks(nextTasks, toPlaybookEdges(nextEdges));
+      const layoutedTasks = autoLayoutTasks(nextTasks, flowEdgesToPlaybookEdges(nextEdges));
       captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
       updateTasks(layoutedTasks);
-      updateEdges(toPlaybookEdges(nextEdges));
+      updateEdges(flowEdgesToPlaybookEdges(nextEdges));
       setIntentSuggestions([]);
       const changedIds = layoutedTasks.filter((task) => changedNodeIds.has(task.id)).map((task) => task.id);
       setRecentlyChangedNodeIds(changedIds);
@@ -2135,7 +2179,8 @@ function PlaybookCanvasInner() {
     setEdges([]);
     updateTasks([]);
     updateEdges([]);
-  }, [playbook, updateTasks, updateEdges, setNodes, setEdges, captureSnapshot]);
+    updateDataBindings([]);
+  }, [playbook, updateTasks, updateEdges, updateDataBindings, setNodes, setEdges, captureSnapshot]);
 
   const handleRemoveAllTasks = useCallback(() => {
     if (!playbook || playbook.tasks.length === 0) return;
@@ -2216,22 +2261,35 @@ function PlaybookCanvasInner() {
 
   const handleEdgeDoubleClick = useCallback(
     (_event: React.MouseEvent, edge: Edge) => {
+      if ((edge.data as { layer?: string } | undefined)?.layer === 'binding') {
+        return;
+      }
+      const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+      const sourceOutputPortId = edgeData.sourceOutputPortId || edge.sourceHandle || 'default';
+      const targetInputPortId = edgeData.targetInputPortId || edge.targetHandle || 'default';
       captureSnapshot();
       setEdges((currentEdges: Edge[]) => {
         const updated = currentEdges.filter((candidate) => candidate.id !== edge.id);
-        updateEdges(
-          updated.map((candidate) => ({
-            id: candidate.id,
-            sourceId: candidate.source,
-            targetId: candidate.target,
-            sourceOutputPortId: candidate.sourceHandle || ((candidate.data as any)?.sourceOutputPortId) || 'default',
-            targetInputPortId: candidate.targetHandle || ((candidate.data as any)?.targetInputPortId) || 'default',
-          })),
-        );
+        updateEdges(flowEdgesToPlaybookEdges(updated));
         return updated;
       });
+      const currentBindings = playbook?.dataBindings ?? [];
+      const updatedBindings = currentBindings.filter((binding) => {
+        if (binding.targetNode !== edge.target || binding.targetPort !== targetInputPortId) {
+          return true;
+        }
+
+        if (binding.sourceKind === 'trigger') {
+          return binding.triggerPath !== sourceOutputPortId;
+        }
+
+        return !(binding.sourceNode === edge.source && binding.sourcePort === sourceOutputPortId);
+      });
+      if (updatedBindings.length !== currentBindings.length) {
+        updateDataBindings(updatedBindings);
+      }
     },
-    [captureSnapshot, setEdges, updateEdges],
+    [captureSnapshot, playbook?.dataBindings, setEdges, updateDataBindings, updateEdges],
   );
 
   const handleViewExecutions = useCallback(() => {
@@ -2543,6 +2601,8 @@ function PlaybookCanvasInner() {
                   canRedo={canRedo}
                   disabled={isSaving}
                   onDownloadAllResults={handleDownloadAllResults}
+                  onToggleDataBindings={() => setDataBindingsVisible((current) => !current)}
+                  dataBindingsVisible={dataBindingsVisible}
                   canDownloadAllResults={Boolean(activeDownloadExecution?.taskResults?.length)}
                   onToggleDesigner={handleToggleCopilot}
                   designerOpen={designerOpen}

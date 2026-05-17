@@ -27,9 +27,11 @@ export class PlaybookFlowService {
   ) {}
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {
-    if (dto.nodes && dto.controlEdges && dto.dataBindings) {
-      this.validatorService.validate(dto.nodes, dto.controlEdges, dto.dataBindings);
-    }
+    const nodes = dto.nodes || [];
+    const controlEdges = dto.controlEdges || [];
+    const dataBindings = dto.dataBindings || [];
+
+    this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
     const flow = new this.flowModel({
       ownerId,
@@ -38,9 +40,9 @@ export class PlaybookFlowService {
       description: dto.description,
       triggerConfig: dto.triggerConfig,
       settings: dto.settings || { recursionLimit: 25, maxParallelism: 5 },
-      nodes: dto.nodes || [],
-      controlEdges: dto.controlEdges || [],
-      dataBindings: dto.dataBindings || [],
+      nodes,
+      controlEdges,
+      dataBindings,
       workspaces: dto.workspaces || [],
     });
 
@@ -150,6 +152,13 @@ export class PlaybookFlowService {
       this.logger.warn(`Removed ${bindingCountBefore - existing.dataBindings.length} orphaned data binding(s)`);
     }
 
+    this.validatorService.validate(
+      existing.nodes as any,
+      existing.controlEdges as any,
+      existing.dataBindings as any,
+      { allowDraftRouters: true },
+    );
+
     const saved = await existing.save();
     return saved.toJSON() as unknown as IFlowResponse;
   }
@@ -165,6 +174,8 @@ export class PlaybookFlowService {
     nodes: any[], controlEdges: any[], dataBindings: any[],
     workspaces: string[] = [],
   ): Promise<IFlowResponse> {
+    this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
+
     const flow = new this.flowModel({
       ownerId, schemaVersion: 1, name, description,
       nodes, controlEdges, dataBindings, workspaces,
@@ -193,6 +204,12 @@ export class PlaybookFlowService {
       if (update.nodes) existing.nodes = update.nodes;
       if (update.controlEdges) existing.controlEdges = update.controlEdges;
       if (update.dataBindings) existing.dataBindings = update.dataBindings;
+      this.validatorService.validate(
+        existing.nodes as any,
+        existing.controlEdges as any,
+        existing.dataBindings as any,
+        { allowDraftRouters: true },
+      );
       const saved = await existing.save();
       return saved.toJSON() as unknown as IFlowResponse;
     }

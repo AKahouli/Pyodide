@@ -140,7 +140,11 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
       ? { ...task.iteratorConfig }
       : { ...DEFAULT_ITERATOR_CONFIG },
     routerConfig: task.routerConfig
-      ? { ...task.routerConfig, outputLabels: [...task.routerConfig.outputLabels] }
+      ? {
+          ...task.routerConfig,
+          outputLabels: [...task.routerConfig.outputLabels],
+          conditions: task.routerConfig.conditions?.map((condition) => ({ ...condition })),
+        }
       : null,
     humanApprovalConfig: task.humanApprovalConfig
       ? { ...task.humanApprovalConfig }
@@ -738,6 +742,8 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                     })),
                   })
                 }
+                tasks={allTasks}
+                targetTaskId={task?.id}
               />
             </div>
           )}
@@ -751,7 +757,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
             </div>
           )}
 
-          <PlaybookDataBindingSection />
+          <PlaybookDataBindingSection targetNodeId={task?.id} />
 
           <div className="space-y-2">
             <Label>{t('nodeEditor.description')}</Label>

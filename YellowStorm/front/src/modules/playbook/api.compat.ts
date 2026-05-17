@@ -66,7 +66,7 @@ export function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): Playbo
     expectedResult: (meta.expectedResult as any) ?? undefined,
     disableAdvisorEvaluation: (meta.disableAdvisorEvaluation as boolean) ?? false,
     stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
-    nodeType: kindToNodeType(node.kind),
+    nodeType: (meta.nodeType as import('./types').PlaybookNodeType) ?? kindToNodeType(node.kind),
     iteratorConfig: node.iteratorConfig
       ? { source: node.iteratorConfig.collectionPath, batchSize: node.iteratorConfig.maxItems ?? undefined } as any
       : (meta.iteratorConfig as any) ?? null,
@@ -82,8 +82,9 @@ export function mapControlEdgeToPlaybookEdge(ce: ControlEdge): PlaybookEdge {
     id: ce.id,
     sourceId: ce.source,
     targetId: ce.target,
-    sourceOutputPortId: undefined,
-    targetInputPortId: undefined,
+    // Old flows may only have routerLabel, so preserve it as the source port fallback.
+    sourceOutputPortId: ce.sourceOutputPortId ?? ce.routerLabel ?? 'default',
+    targetInputPortId: ce.targetInputPortId ?? 'default',
   };
 }
 
@@ -241,6 +242,7 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
 
   const meta: Record<string, unknown> = {};
   if (task.description) meta.description = task.description;
+  if (task.nodeType) meta.nodeType = task.nodeType;
   if (task.assignedAgentId) meta.assignedAgentId = task.assignedAgentId;
   if (task.executionOrder !== undefined) meta.executionOrder = task.executionOrder;
   if (task.positionX !== undefined) meta.positionX = task.positionX;
@@ -272,13 +274,17 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
   return node;
 }
 
-export function edgeToControlEdge(edge: PlaybookEdge): ControlEdge {
-  const hasRouterLabel = edge.sourceOutputPortId && edge.sourceOutputPortId !== 'default';
+export function edgeToControlEdge(
+  edge: PlaybookEdge,
+  sourceNodeType?: PlaybookNodeType | null,
+): ControlEdge {
   return {
     id: edge.id,
-    kind: hasRouterLabel ? 'conditional' : 'sequential',
+    kind: sourceNodeType === 'router' ? 'conditional' : 'sequential',
     source: edge.sourceId,
     target: edge.targetId,
-    ...(hasRouterLabel ? { routerLabel: edge.sourceOutputPortId } : {}),
+    sourceOutputPortId: edge.sourceOutputPortId || 'default',
+    targetInputPortId: edge.targetInputPortId || 'default',
+    ...(sourceNodeType === 'router' ? { routerLabel: edge.sourceOutputPortId || 'default' } : {}),
   };
 }

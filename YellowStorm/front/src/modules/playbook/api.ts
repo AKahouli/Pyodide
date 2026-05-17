@@ -58,7 +58,6 @@ import type {
 import {
   normalizePlaybook,
   taskToFlowNode,
-  edgeToControlEdge,
 } from './api.compat';
 
 interface PaginatedResponse<T> {
@@ -150,6 +149,15 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
         ? {
             outputLabels: [...task.routerConfig.outputLabels],
             maxIterations: task.routerConfig.maxIterations,
+            defaultLabel: task.routerConfig.defaultLabel,
+            conditions: task.routerConfig.conditions?.map((condition) => ({
+              label: condition.label,
+              sourceNode: condition.sourceNode,
+              sourcePort: condition.sourcePort,
+              path: condition.path,
+              operator: condition.operator,
+              value: condition.value,
+            })),
           }
         : null,
       humanApprovalConfig: task.humanApprovalConfig
@@ -290,7 +298,7 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     expectedResult: (meta.expectedResult as any) ?? undefined,
     disableAdvisorEvaluation: (meta.disableAdvisorEvaluation as boolean) ?? false,
     stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
-    nodeType: kindToNodeType(node.kind),
+    nodeType: (meta.nodeType as import('./types').PlaybookNodeType) ?? kindToNodeType(node.kind),
     iteratorConfig: node.iteratorConfig
       ? { source: node.iteratorConfig.collectionPath, batchSize: node.iteratorConfig.maxItems ?? undefined } as any
       : (meta.iteratorConfig as any) ?? null,
@@ -306,9 +314,43 @@ function mapControlEdgeToPlaybookEdge(ce: ControlEdge): PlaybookEdge {
     id: ce.id,
     sourceId: ce.source,
     targetId: ce.target,
-    sourceOutputPortId: undefined,
-    targetInputPortId: undefined,
+    // Old flows may only have routerLabel, so preserve it as the source port fallback.
+    sourceOutputPortId: ce.sourceOutputPortId ?? ce.routerLabel ?? 'default',
+    targetInputPortId: ce.targetInputPortId ?? 'default',
   };
+}
+
+function toControlEdgePayload(edge: PlaybookEdge, tasks: PlaybookTask[] | undefined): ControlEdge {
+  const sourceTask = tasks?.find((task) => task.id === edge.sourceId);
+  const sourceOutputPortId = edge.sourceOutputPortId || 'default';
+  return {
+    id: edge.id,
+    kind: sourceTask?.nodeType === 'router' ? 'conditional' : 'sequential',
+    source: edge.sourceId,
+    target: edge.targetId,
+    sourceOutputPortId,
+    targetInputPortId: edge.targetInputPortId || 'default',
+    ...(sourceTask?.nodeType === 'router' ? { routerLabel: sourceOutputPortId } : {}),
+  };
+}
+
+function isLegacyMirroredBindingEdge(edge: PlaybookEdge, dataBindings: DataBinding[] | undefined): boolean {
+  if (!dataBindings || dataBindings.length === 0) {
+    return false;
+  }
+
+  const sourceOutputPortId = edge.sourceOutputPortId || 'default';
+  const targetInputPortId = edge.targetInputPortId || 'default';
+
+  return dataBindings.some((binding) => {
+    if (binding.targetNode !== edge.targetId || binding.targetPort !== targetInputPortId) {
+      return false;
+    }
+
+    return binding.sourceKind === 'trigger'
+      && edge.sourceId === '__trigger__'
+      && (binding.triggerPath || 'default') === sourceOutputPortId;
+  });
 }
 
 function toNullableString(value: unknown): string | null {
@@ -508,7 +550,9 @@ export async function updatePlaybook(
     body.nodes = sanitized.tasks.map(taskToFlowNode);
   }
   if (sanitized.edges !== undefined) {
-    body.controlEdges = sanitized.edges.map(edgeToControlEdge);
+    body.controlEdges = sanitized.edges
+      .filter((edge) => !isLegacyMirroredBindingEdge(edge, data.dataBindings))
+      .map((edge) => toControlEdgePayload(edge, sanitized.tasks));
   }
   if (data.dataBindings !== undefined) {
     body.dataBindings = data.dataBindings;
@@ -615,9 +659,10 @@ export async function executePlaybook(
   id: string,
   data?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
+  const payload = data?.singleStepTaskId ? { singleStepTaskId: data.singleStepTaskId } : {};
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(id),
-    data || {},
+    payload,
   );
   return response.data.data;
 }

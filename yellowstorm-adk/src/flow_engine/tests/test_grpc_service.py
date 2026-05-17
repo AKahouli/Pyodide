@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from google.protobuf.json_format import ParseDict
 
 from src.flow_engine.grpc_contract import (
     snapshot_to_dict,
@@ -145,6 +146,43 @@ class TestSnapshotConversion:
 
         assert converted["nodes"][0]["metadata"]["description"] == "Summarize the source material."
         assert converted["nodes"][0]["output"]["ports"][0]["id"] == "summary"
+
+    def test_snapshot_to_dict_preserves_agent_tool_metadata(self):
+        pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+        snapshot = pb.FlowSnapshot()
+        node = snapshot.nodes.add()
+        node.id = "node-1"
+        node.kind = "step"
+        ParseDict(
+            {
+                "agent_tools": [{"name": "calculator", "description": "Math helper"}],
+                "agent_params": {"user_id": "user-1"},
+                "connector_bindings": [{"connector_id": "conn-1", "actions": [{"action_key": "search"}]}],
+            },
+            node.metadata,
+        )
+
+        converted = snapshot_to_dict(snapshot)
+
+        assert converted["nodes"][0]["metadata"]["agent_tools"] == [{"name": "calculator", "description": "Math helper"}]
+        assert converted["nodes"][0]["metadata"]["agent_params"] == {"user_id": "user-1"}
+        assert converted["nodes"][0]["metadata"]["connector_bindings"] == [{"connector_id": "conn-1", "actions": [{"action_key": "search"}]}]
+
+    def test_snapshot_to_dict_preserves_control_edge_handle_fields(self):
+        pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+        snapshot = pb.FlowSnapshot()
+        edge = snapshot.control_edges.add()
+        edge.id = "edge-1"
+        edge.kind = "sequential"
+        edge.source = "step-1"
+        edge.target = "step-2"
+        edge.source_output_port_id = "summary"
+        edge.target_input_port_id = "prompt"
+
+        converted = snapshot_to_dict(snapshot)
+
+        assert converted["control_edges"][0]["source_output_port_id"] == "summary"
+        assert converted["control_edges"][0]["target_input_port_id"] == "prompt"
 
 
 def test_should_emit_fallback_completion_only_without_terminal_event():

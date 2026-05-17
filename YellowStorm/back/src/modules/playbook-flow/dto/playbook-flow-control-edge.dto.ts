@@ -24,6 +24,16 @@ export class ControlEdgeDto {
   @IsString()
   routerLabel?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  sourceOutputPortId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  targetInputPortId?: string;
+
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsNumber()

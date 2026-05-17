@@ -19,3 +19,7 @@ def test_playbook_flow_proto_matches_backend_copy():
     adk_proto = repo_root / "yellowstorm-adk" / "grpc" / "proto" / "playbook-flow.proto"
 
     assert _normalized_text(adk_proto) == _normalized_text(backend_proto)
+
+
+def test_generated_playbook_grpc_module_imports():
+    from src.grpc_generated import playbook_flow_pb2_grpc  # noqa: F401

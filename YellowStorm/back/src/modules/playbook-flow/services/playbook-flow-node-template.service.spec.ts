@@ -21,7 +21,19 @@ function makeDoc(overrides: Record<string, unknown> = {}) {
     assignedAgentId: null,
     selectedAction: null,
     iteratorConfig: null,
-    routerConfig: { outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 },
+    routerConfig: {
+      outputLabels: ['retry', 'done', '__error__'],
+      maxIterations: 3,
+      defaultLabel: 'done',
+      conditions: [{
+        label: 'done',
+        sourceNode: 'task-1',
+        sourcePort: 'result',
+        path: 'verdict',
+        operator: 'equals',
+        value: 'valid',
+      }],
+    },
     humanApprovalConfig: null,
     enabled: true,
     version: 1,
@@ -62,7 +74,19 @@ describe('PlaybookFlowNodeTemplateService', () => {
     const service = new PlaybookFlowNodeTemplateService(model);
     const result = await service.findAll();
 
-    expect(result.items[0].routerConfig).toEqual({ outputLabels: ['retry', 'done', '__error__'], maxIterations: 3 });
+    expect(result.items[0].routerConfig).toEqual({
+      outputLabels: ['retry', 'done', '__error__'],
+      maxIterations: 3,
+      defaultLabel: 'done',
+      conditions: [{
+        label: 'done',
+        sourceNode: 'task-1',
+        sourcePort: 'result',
+        path: 'verdict',
+        operator: 'equals',
+        value: 'valid',
+      }],
+    });
     expect(result.items[1].humanApprovalConfig).toEqual({ promptTemplate: 'Review this output', timeoutSeconds: 900 });
   });
 
