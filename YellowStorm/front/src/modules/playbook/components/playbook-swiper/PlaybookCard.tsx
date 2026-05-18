@@ -30,7 +30,7 @@ export function PlaybookCard({ playbook, accentClass, isVisible, onClick }: Play
         {playbook.isFavorite && <Star className='h-4 w-4 text-yellow-500' />}
       </div>
 
-      <p className='line-clamp-2 text-sm text-muted-foreground'>{playbook.description}</p>
+      <p className='line-clamp-2 min-h-10 text-sm text-muted-foreground'>{playbook.description}</p>
 
       <div className='mt-1 flex gap-3 text-xs text-muted-foreground'>
         <div className='flex w-[110px] shrink-0 items-center gap-2 rounded-xl border bg-muted/40 px-3 py-2'>
