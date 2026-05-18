@@ -222,7 +222,7 @@ Before writing or reviewing any code, agents **must** read the relevant guidelin
 | Both `front/` and `back/` | **Both** files, plus §5 Cross-Boundary Contracts |
 | `*.proto`, gRPC stubs, or NestJS↔ADK paths | §5 Cross-Boundary Contracts (mandatory) |
 
-Applies to all agents (`build`, `plan`, `reviewer`, `diagnostics`, `frontend-qa`). Skipping is a hard rule violation regardless of task size.
+Applies to all agents (`build`, `plan`, `reviewer`, `frontend-qa`). Skipping is a hard rule violation regardless of task size.
 
 
 ## Agent Team
@@ -231,7 +231,6 @@ The main agent implements. Sub-agents provide bounded specialist work. Their loc
 
 - `explore`: read-only codebase discovery, dependency tracing, and file search.
 - `plan`: read-only implementation planning for ambiguous, risky, multi-file, cross-module, API/schema/architecture, or contract work.
-- `diagnostics`: reproduces failures and writes tests/diagnostic artifacts only; does not fix production code.
 - `frontend-qa`: browser QA gate for frontend-visible UI, runtime, interaction, responsive, accessibility, console, or network changes.
 - `reviewer`: final quality gate for non-trivial code changes.
 - `maintainer`: Obsidian memory updates and explicitly delegated behavior-preserving refactors.
@@ -254,7 +253,7 @@ Use for typo, formatting, comment-only, config text, or single-line non-runtime 
 Process:
 - Inspect the target file.
 - Make the smallest safe change.
-- Skip `plan`, `diagnostics`, `frontend-qa`, `reviewer`, and `maintainer` unless risk appears.
+- Skip `plan`, `frontend-qa`, `reviewer`, and `maintainer` unless risk appears.
 
 #### Tier 1: Local Code Change
 
@@ -284,7 +283,7 @@ Use for API contracts, schemas, auth, permissions, quota, streaming/SSE, gRPC/pr
 
 Process:
 - Use `plan` before implementation.
-- Use `diagnostics` first for unclear bugs.
+- Investigate unclear bugs directly before editing.
 - Verify both sides of any boundary contract.
 - Run targeted plus integration-level verification where feasible.
 - Use `frontend-qa` if browser-visible.
@@ -313,19 +312,6 @@ Use when:
 Skip when:
 - Single-file fix with no interface change.
 - Pure typo, formatting, comment, or mechanical config edit.
-
-#### `diagnostics`
-
-Use before editing when:
-- The user reports a bug and root cause is not obvious.
-- A failure must be reproduced.
-- Reviewer flags missing tests.
-
-Expected output:
-- Symptom.
-- Root cause.
-- Reproduction or test.
-- Recommended fix.
 
 #### `frontend-qa`
 
@@ -363,7 +349,7 @@ Before editing:
 4. Inspect relevant code directly.
 5. Use `explore` if ownership, call paths, or dependencies are unclear.
 6. Use `plan` when routing rules require it.
-7. For bug reports with unclear cause, use `diagnostics` before production edits.
+7. For bug reports with unclear cause, investigate and reproduce before production edits.
 8. Read vault notes — prioritize `Agent Quick Context`, index/MOC notes, notes matching `slug`/`source_paths`/tags.
 9. Follow only directly relevant `[[Internal Links]]`. No broad recursive traversal.
 10. Confirm internally: decisions you're respecting, requirements addressed, new feature vs modification, and the smallest correct implementation path.
@@ -381,7 +367,7 @@ After editing:
 
 ### Delegation Triggers
 
-- Unclear failure or vague bug → `diagnostics` before production edits.
+- Unclear failure or vague bug → investigate and reproduce before production edits.
 - Frontend-visible change → `frontend-qa` after editing.
 - Proto/API/cross-service change → contract validation; if `contract` agent exists, use it.
 - Cross-service E2E verification → integration validation; if `integration` agent exists, use it.
@@ -501,7 +487,7 @@ tags:
 
 ## Library Documentation Lookup (context7)
 
-Available to `build`, `plan`, `diagnostics`, `reviewer`. Use only when the task depends on current external library/framework/SDK/API behavior.
+Available to `build`, `plan`, `reviewer`. Use only when the task depends on current external library/framework/SDK/API behavior.
 
 ```bash
 npx ctx7@latest library <name> "<question>"
@@ -527,8 +513,7 @@ npx ctx7@latest docs <libraryId> "<question>"
 5. Must always activate the Python virtual env through `conda activate meta` before running any python test or process.
 6. `frontend-qa` validates frontend-visible changes and must PASS unless the user accepts the risk.
 7. `reviewer` validates non-trivial code changes and must PASS before close.
-8. `diagnostics` handles unclear bugs, flaky tests, or reviewer-identified test gaps.
-9. `maintainer` syncs Obsidian vault memory for Full/Light tier changes.
+8. `maintainer` syncs Obsidian vault memory for Full/Light tier changes.
 
 ---
 

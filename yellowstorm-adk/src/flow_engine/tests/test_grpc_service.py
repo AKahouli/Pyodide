@@ -266,6 +266,62 @@ def test_run_does_not_emit_duplicate_completion(monkeypatch):
     asyncio.run(_run_test())
 
 
+def test_run_seeds_task_outputs_from_request(monkeypatch):
+    pytest.importorskip("langgraph", reason="langgraph not installed")
+    pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")
+    from src.flow_engine.grpc_service import PlaybookFlowRuntimeServicer
+
+    async def _run_test():
+        servicer = PlaybookFlowRuntimeServicer()
+        request = pb.RunRequest(execution_id="exec-seeded", flow_id="flow-seeded")
+        seeded = request.seeded_task_outputs.add()
+        seeded.node_id = "source-1"
+        seeded.iteration = 2
+        ParseDict(
+            {
+                "output": "seeded summary",
+                "outputs": {
+                    "summary": {"content": "seeded summary"},
+                },
+                "artifacts": [{"port_id": "summary", "artifact_kind": "text", "content": "seeded summary"}],
+            },
+            seeded.payload,
+        )
+
+        captured: dict[str, object] = {}
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.get_checkpointer", lambda: None)
+        monkeypatch.setattr("src.flow_engine.grpc_service.compose", lambda snapshot, checkpointer: object())
+
+        async def fake_stream_graph(graph, graph_input, recursion_limit=25, max_parallelism=None, config=None):
+            captured["graph_input"] = graph_input
+            if False:
+                yield {}
+
+        async def fake_emit_events(execution_id, event_stream):
+            async for _ in event_stream:
+                pass
+            if False:
+                yield None
+
+        monkeypatch.setattr("src.flow_engine.grpc_service.stream_graph", fake_stream_graph)
+        monkeypatch.setattr("src.flow_engine.grpc_service.emit_events", fake_emit_events)
+
+        events = [event async for event in servicer.Run(request, None)]
+
+        assert captured["graph_input"]["task_outputs"] == {
+            ("source-1", 2): {
+                "output": "seeded summary",
+                "outputs": {"summary": {"content": "seeded summary"}},
+                "artifacts": [{"port_id": "summary", "artifact_kind": "text", "content": "seeded summary"}],
+            },
+        }
+        assert captured["graph_input"]["iterations"] == {"source-1": 3}
+        assert events[-1].event_type == "ExecutionCompleted"
+
+    asyncio.run(_run_test())
+
+
 def test_resume_approval_unblocks_run(monkeypatch):
     pytest.importorskip("langgraph", reason="langgraph not installed")
     pb = pytest.importorskip("src.grpc_generated.playbook_flow_pb2", reason="playbook proto not available")

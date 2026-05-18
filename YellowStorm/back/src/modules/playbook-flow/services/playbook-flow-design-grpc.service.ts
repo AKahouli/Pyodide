@@ -74,6 +74,25 @@ export class PlaybookFlowDesignGrpcService implements OnModuleInit, OnModuleDest
     });
   }
 
+  evaluateTask(request: any): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const deadline = new Date(Date.now() + this.grpcTimeoutMs);
+
+      this.chatbotClient.EvaluateTask(request, { deadline }, (err: Error | null, response: any) => {
+        if (err) {
+          this.logger.error('gRPC EvaluateTask call error', {
+            executionId: request.execution_id,
+            taskId: request.task_id,
+            error: err.message,
+          });
+          reject(err);
+          return;
+        }
+        resolve(response);
+      });
+    });
+  }
+
   private initGrpcClient() {
     try {
       const protoPath = this.resolveChatbotProtoPath();

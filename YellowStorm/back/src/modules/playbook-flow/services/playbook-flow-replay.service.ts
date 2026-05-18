@@ -11,6 +11,7 @@ import {
   FlowValidatedReplayDocument,
   FlowReplayValidationStatus,
 } from '../schemas/playbook-flow-validated-replay.schema';
+import { flattenUsage } from './observability/playbook-flow-observability.mapper';
 
 export interface TraceReplayEvent {
   type: 'NodeStarted' | 'NodeCompleted' | 'NodeFailed' | 'RouterDecision' | 'ApprovalRequested' | 'ExecutionCompleted' | 'ExecutionFailed';
@@ -60,10 +61,22 @@ export class PlaybookFlowReplayService {
       });
 
       if (tr.status === 'completed') {
+        const usage = tr.usage ?? null;
         events.push({
           type: 'NodeCompleted',
           timestamp: te,
-          data: { taskId: tr.taskId, iteration: tr.iteration, output: tr.output },
+          data: {
+            taskId: tr.taskId,
+            iteration: tr.iteration,
+            output: tr.output,
+            displayText: tr.displayText,
+            toolTrace: tr.toolTrace ?? [],
+            llmPromptTrace: tr.llmPromptTrace ?? [],
+            usage,
+            ...flattenUsage({ usage }),
+            semanticMatch: tr.semanticMatch ?? null,
+            traceMetadata: tr.traceMetadata ?? {},
+          },
         });
       } else if (tr.status === 'failed') {
         events.push({
@@ -139,6 +152,15 @@ export class PlaybookFlowReplayService {
       validationVersion: newVersion,
       status: FlowReplayValidationStatus.ACTIVE,
       referenceOutput: typeof taskResult.output === 'string' ? taskResult.output : JSON.stringify(taskResult.output ?? ''),
+      toolCalls: taskResult.toolTrace ?? [],
+      llmPromptTrace: taskResult.llmPromptTrace ?? [],
+      referenceUsage: taskResult.usage ?? null,
+      referenceSemanticMatch: taskResult.semanticMatch ?? null,
+      traceMetadata: taskResult.traceMetadata ?? {},
+      referenceFlowRevision: execution.schemaVersion,
+      referenceNodeSnapshot: this.findReferenceNodeSnapshot(execution.snapshot, taskId),
+      isStale: false,
+      staleReasons: [],
       preserveOutputFormat: dto?.preserveOutputFormat ?? false,
     }]);
 
@@ -216,5 +238,19 @@ export class PlaybookFlowReplayService {
       taskId: { $in: taskIds },
       status: FlowReplayValidationStatus.ACTIVE,
     }).exec();
+  }
+
+  private findReferenceNodeSnapshot(snapshot: unknown, taskId: string): Record<string, unknown> | null {
+    if (!snapshot || typeof snapshot !== 'object') {
+      return null;
+    }
+
+    const nodes = (snapshot as { nodes?: unknown }).nodes;
+    if (!Array.isArray(nodes)) {
+      return null;
+    }
+
+    const matched = nodes.find((node) => node && typeof node === 'object' && (node as { id?: unknown }).id === taskId);
+    return matched && typeof matched === 'object' ? matched as Record<string, unknown> : null;
   }
 }

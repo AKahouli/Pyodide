@@ -341,6 +341,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
+  const openPortInspection = usePlaybookStore((s) => s.openPortInspection);
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [dragOverPortId, setDragOverPortId] = useState<string | null>(null);
@@ -615,6 +616,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   kind={port.artifactKind}
                   position="left"
                   selected={isSelected}
+                  onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: true })}
                 />
                 {port.required && hasMultiplePorts && (
                   <span className="absolute -top-1 -left-1 z-50 flex h-2 w-2 items-center justify-center rounded-full bg-red-500 ring-1 ring-background text-[7px] leading-none text-white">*</span>
@@ -639,7 +641,9 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 className="!w-3 !h-3"
                 style={{ ...getOutputPortStyle(port), top: 0 }}
               />
-              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected} />
+              <PortLabel name={port.name} kind={port.artifactKind} position="right" selected={isSelected}
+                onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: false })}
+              />
             </div>
           ))}
           </div>

@@ -18,6 +18,13 @@ message RunRequest {
   FlowSnapshot snapshot = 4;
   google.protobuf.Struct input_context = 5;
   RunSettings settings = 6;
+  repeated SeededTaskOutput seeded_task_outputs = 7;
+}
+
+message SeededTaskOutput {
+  string node_id = 1;
+  int32 iteration = 2;
+  google.protobuf.Struct payload = 3;
 }
 
 message RunSettings {

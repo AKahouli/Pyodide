@@ -86,6 +86,11 @@ class ChatbotServiceStub(object):
                 request_serializer=chatbot__pb2.StopPlaybookWorkflowRequest.SerializeToString,
                 response_deserializer=chatbot__pb2.StopPlaybookWorkflowResponse.FromString,
                 _registered_method=True)
+        self.EvaluateTask = channel.unary_unary(
+                '/chatbot.ChatbotService/EvaluateTask',
+                request_serializer=chatbot__pb2.TaskAdvisorRequest.SerializeToString,
+                response_deserializer=chatbot__pb2.TaskAdvisorResult.FromString,
+                _registered_method=True)
         self.AdvisePlaybookNode = channel.unary_unary(
                 '/chatbot.ChatbotService/AdvisePlaybookNode',
                 request_serializer=chatbot__pb2.AdvisePlaybookNodeRequest.SerializeToString,
@@ -158,6 +163,12 @@ class ChatbotServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EvaluateTask(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
     def AdvisePlaybookNode(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -216,6 +227,11 @@ def add_ChatbotServiceServicer_to_server(servicer, server):
                     servicer.StopPlaybookWorkflow,
                     request_deserializer=chatbot__pb2.StopPlaybookWorkflowRequest.FromString,
                     response_serializer=chatbot__pb2.StopPlaybookWorkflowResponse.SerializeToString,
+            ),
+            'EvaluateTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.EvaluateTask,
+                    request_deserializer=chatbot__pb2.TaskAdvisorRequest.FromString,
+                    response_serializer=chatbot__pb2.TaskAdvisorResult.SerializeToString,
             ),
             'AdvisePlaybookNode': grpc.unary_unary_rpc_method_handler(
                     servicer.AdvisePlaybookNode,
@@ -495,6 +511,33 @@ class ChatbotService(object):
             '/chatbot.ChatbotService/StopPlaybookWorkflow',
             chatbot__pb2.StopPlaybookWorkflowRequest.SerializeToString,
             chatbot__pb2.StopPlaybookWorkflowResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EvaluateTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chatbot.ChatbotService/EvaluateTask',
+            chatbot__pb2.TaskAdvisorRequest.SerializeToString,
+            chatbot__pb2.TaskAdvisorResult.FromString,
             options,
             channel_credentials,
             insecure,

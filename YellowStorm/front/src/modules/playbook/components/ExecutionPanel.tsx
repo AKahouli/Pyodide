@@ -222,7 +222,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   const playbook = useCurrentPlaybook();
   const selectedStepId = useSelectedStep();
   const selectedIterationIndex = usePlaybookStore((s) => s.selectedIterationIndex);
-  const history = playbookId ? useExecutionHistoryForPlaybook(playbookId) : useExecutionHistory();
+  const history = useExecutionHistoryForPlaybook(playbookId);
   const isStopping = useIsStopping();
   const isExecuting = useIsExecuting(execution?.playbookId);
   const selectStep = usePlaybookStore((s) => s.selectStep);
@@ -235,6 +235,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
+  const runAdvisorEvaluation = usePlaybookStore((s) => s.runAdvisorEvaluation);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
   const executionDetailTab = usePlaybookStore((s) => s.executionDetailTab);
@@ -567,6 +568,9 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           pageMode={pageMode}
           iterationIndex={selectedIterationIndex}
           onSelectIteration={handleSelectStep}
+          onRequestRunAdvisorEvaluation={(taskId, iteration) => {
+            void runAdvisorEvaluation(execution.id, taskId, iteration);
+          }}
           onRequestValidateReplay={(taskId) => {
             void handleValidateStep(taskId, { preserveOutputFormat: false });
           }}

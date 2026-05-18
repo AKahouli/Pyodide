@@ -6,6 +6,7 @@ import { FlowExecution, FlowExecutionDocument } from '../schemas/playbook-flow-e
 import { CreatePlaybookFlowDto } from '../dto/create-playbook-flow.dto';
 import { UpdatePlaybookFlowDto } from '../dto/update-playbook-flow.dto';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
+import { PlaybookFlowReplayService } from './playbook-flow-replay.service';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
   NotFoundException,
@@ -41,6 +42,7 @@ export class PlaybookFlowService {
     @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
     private readonly validatorService: PlaybookFlowValidatorService,
+    private readonly replayService: PlaybookFlowReplayService,
   ) {}
 
   async create(ownerId: string, dto: CreatePlaybookFlowDto): Promise<IFlowResponse> {
@@ -68,7 +70,9 @@ export class PlaybookFlowService {
 
     try {
       const saved = await flow.save();
-      return saved.toJSON() as unknown as IFlowResponse;
+        const raw = saved.toJSON() as unknown as IFlowResponse;
+        raw.activeReplays = {};
+        return raw;
     } catch (err: any) {
       if (err.code === 11000) {
         throw new ConflictException(
@@ -101,6 +105,7 @@ export class PlaybookFlowService {
       items: items.map((item) => ({
         ...item,
         id: (item as unknown as Record<string, unknown>)._id as string,
+        activeReplays: {},
       })) as unknown as IFlowResponse[],
       pagination: {
         page,
@@ -122,7 +127,27 @@ export class PlaybookFlowService {
     if (String(flow.ownerId) !== String(ownerId)) {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
     }
-    return flow.toJSON() as unknown as IFlowResponse;
+
+    const raw = flow.toJSON() as unknown as IFlowResponse;
+
+    const taskIds = (raw.nodes ?? []).map((node) => node.id);
+    const activeReplays = await this.replayService.getActiveReplays(flowId, taskIds);
+
+    raw.activeReplays = {};
+    for (const replay of activeReplays) {
+      raw.activeReplays[replay.taskId] = {
+        id: String(replay._id),
+        validationVersion: replay.validationVersion,
+        isStale: replay.isStale ?? false,
+        staleReasons: replay.staleReasons ?? [],
+        preserveOutputFormat: replay.preserveOutputFormat ?? false,
+        outputFormatGuide: replay.outputFormatGuide ?? null,
+        formatGuideStatus: replay.formatGuideStatus ?? null,
+        label: replay.label ?? null,
+      };
+    }
+
+    return raw;
   }
 
   async update(flowId: string, ownerId: string, dto: UpdatePlaybookFlowDto): Promise<IFlowResponse> {
@@ -144,6 +169,10 @@ export class PlaybookFlowService {
     if (dto.nodes !== undefined) existing.nodes = dto.nodes as any[];
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
+    if (dto.reflectionEnabled !== undefined) existing.reflectionEnabled = dto.reflectionEnabled;
+    if (dto.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
+    if (dto.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
+    if (dto.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
     const normalizedWorkspaces = this.normalizeWorkspaces(dto.workspaces ?? existing.workspaces);
     if (dto.workspaces !== undefined || existing.workspaces.length > 1) {
       this.ensureWorkspaceSelection(normalizedWorkspaces);
@@ -185,7 +214,9 @@ export class PlaybookFlowService {
     );
 
     const saved = await existing.save();
-    return saved.toJSON() as unknown as IFlowResponse;
+    const raw = saved.toJSON() as unknown as IFlowResponse;
+    raw.activeReplays = {};
+    return raw;
   }
 
   async findById(flowId: string): Promise<FlowDocument> {
@@ -212,7 +243,9 @@ export class PlaybookFlowService {
     });
     try {
       const saved = await flow.save();
-      return saved.toJSON() as unknown as IFlowResponse;
+        const raw = saved.toJSON() as unknown as IFlowResponse;
+        raw.activeReplays = {};
+        return raw;
     } catch (err: any) {
       if (err.code === 11000) {
         throw new ConflictException(
@@ -242,7 +275,9 @@ export class PlaybookFlowService {
         { allowDraftRouters: true },
       );
       const saved = await existing.save();
-      return saved.toJSON() as unknown as IFlowResponse;
+        const raw = saved.toJSON() as unknown as IFlowResponse;
+        raw.activeReplays = {};
+        return raw;
     }
     return this.findOne(flowId, '');
   }
@@ -276,8 +311,6 @@ export class PlaybookFlowService {
     const cloneName = nameSuffix ? `${existing.name} ${nameSuffix}` : `${existing.name} (copy)`;
     const normalizedWorkspaces = this.normalizeWorkspaces(existing.workspaces);
 
-    this.ensureWorkspaceSelection(normalizedWorkspaces);
-
     const flow = new this.flowModel({
       ownerId,
       schemaVersion: existing.schemaVersion,
@@ -289,11 +322,19 @@ export class PlaybookFlowService {
       controlEdges: existing.controlEdges,
       dataBindings: existing.dataBindings,
       workspaces: normalizedWorkspaces,
+      designSettings: existing.designSettings,
+      isFavorite: existing.isFavorite,
+      reflectionEnabled: existing.reflectionEnabled,
+      advisorAutopilotEnabled: existing.advisorAutopilotEnabled,
+      advisorAutopilotTargetScore: existing.advisorAutopilotTargetScore,
+      advisorAutopilotMaxTurns: existing.advisorAutopilotMaxTurns,
     });
 
     try {
       const saved = await flow.save();
-      return saved.toJSON() as unknown as IFlowResponse;
+        const raw = saved.toJSON() as unknown as IFlowResponse;
+        raw.activeReplays = {};
+        return raw;
     } catch (err: any) {
       if (err.code === 11000) {
         throw new ConflictException(

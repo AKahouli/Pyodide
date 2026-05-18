@@ -4,6 +4,18 @@ import { HydratedDocument } from 'mongoose';
 export type FlowExecutionDocument = HydratedDocument<FlowExecution>;
 
 @Schema({ _id: false })
+export class SeededTaskOutput {
+  @Prop({ required: true, type: String })
+  nodeId!: string;
+
+  @Prop({ required: true, type: Number, default: 0 })
+  iteration!: number;
+
+  @Prop({ required: true, type: Object })
+  payload!: Record<string, unknown>;
+}
+
+@Schema({ _id: false })
 export class PendingApproval {
   @Prop({ required: true, type: String })
   nodeId!: string;
@@ -67,6 +79,18 @@ export class FlowExecution {
 
   @Prop({ required: false, type: String })
   singleStepTaskId?: string;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  advisorAutopilotEnabled?: boolean;
+
+  @Prop({ required: false, type: Number })
+  advisorAutopilotTargetScore?: number;
+
+  @Prop({ required: false, type: Number })
+  advisorAutopilotMaxTurns?: number;
+
+  @Prop({ required: false, type: [SeededTaskOutput], default: [] })
+  seededTaskOutputs?: SeededTaskOutput[];
 }
 
 export const FlowExecutionSchema = SchemaFactory.createForClass(FlowExecution);

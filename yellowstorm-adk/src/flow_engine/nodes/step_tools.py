@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import litellm
@@ -57,6 +58,7 @@ async def run_step_with_tools(
     user_msg: str,
     tools: list[Any],
     on_progress: Any = None,
+    trace_collector: Any = None,
 ) -> str:
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
@@ -66,6 +68,12 @@ async def run_step_with_tools(
     tool_definitions = [_tool_to_openai_definition(tool) for tool in tools]
 
     for _ in range(MAX_TOOL_ITERATIONS):
+        if trace_collector is not None:
+            trace_collector.record_prompt(
+                stage=f"tool_iteration_{len(messages)}",
+                model=model_id,
+                prompt=_messages_to_trace_prompt(messages),
+            )
         response = await litellm.acompletion(
             model=model_id,
             messages=messages,
@@ -74,6 +82,10 @@ async def run_step_with_tools(
             tools=tool_definitions,
             tool_choice="auto",
         )
+        if trace_collector is not None:
+            from src.flow_engine.observability.usage_extractor import extract_usage
+
+            trace_collector.record_usage(extract_usage(response, model_id))
         message = _message_to_dict(response.choices[0].message)
         tool_calls = message.get("tool_calls") or []
         messages.append({
@@ -91,13 +103,34 @@ async def run_step_with_tools(
             tool = tool_map.get(tool_name)
             if tool is None:
                 raise ValueError(f"Unknown tool requested by model: {tool_name}")
-            if on_progress is not None:
-                on_progress(f"[tool] {tool_name}\n")
 
             raw_arguments = function_payload.get("arguments") or "{}"
             tool_arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
-            tool_result = await tool.ainvoke(tool_arguments)
-            tool_content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result, default=str)
+            started_at = time.perf_counter()
+            try:
+                tool_result = await tool.ainvoke(tool_arguments)
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                tool_content = tool_result if isinstance(tool_result, str) else json.dumps(tool_result, default=str)
+                if trace_collector is not None:
+                    trace_collector.record_tool_call(
+                        tool_name=tool_name,
+                        args=tool_arguments if isinstance(tool_arguments, dict) else {},
+                        output_summary=tool_content,
+                        status="completed",
+                        duration_ms=duration_ms,
+                    )
+            except Exception as exc:
+                duration_ms = int((time.perf_counter() - started_at) * 1000)
+                if trace_collector is not None:
+                    trace_collector.record_tool_call(
+                        tool_name=tool_name,
+                        args=tool_arguments if isinstance(tool_arguments, dict) else {},
+                        output_summary=None,
+                        status="failed",
+                        duration_ms=duration_ms,
+                        error=str(exc),
+                    )
+                raise
             if on_progress is not None:
                 on_progress(f"[tool-result] {tool_name}\n")
             messages.append({
@@ -211,3 +244,16 @@ def _tool_to_openai_definition(tool: Any) -> dict[str, Any]:
             "parameters": parameters,
         },
     }
+
+
+def _messages_to_trace_prompt(messages: list[dict[str, Any]]) -> str:
+    parts: list[str] = []
+    for message in messages:
+        role = str(message.get("role") or "unknown")
+        content = _content_to_text(message.get("content"))
+        if content:
+            parts.append(f"[{role}] {content}")
+        tool_calls = message.get("tool_calls") or []
+        if tool_calls:
+            parts.append(f"[{role}.tool_calls] {json.dumps(tool_calls, default=str)}")
+    return "\n\n".join(parts)

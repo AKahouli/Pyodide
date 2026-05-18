@@ -41,6 +41,7 @@ import { PlaybookFlowTriggerController } from './controllers/playbook-flow-trigg
 import { PlaybookFlowReplayController } from './controllers/playbook-flow-replay.controller';
 import { PlaybookFlowOutputFormatController } from './controllers/playbook-flow-output-format.controller';
 import { PlaybookFlowAdvisorController } from './controllers/playbook-flow-advisor.controller';
+import { PlaybookFlowExecutionAdvisorController } from './controllers/playbook-flow-execution-advisor.controller';
 import { PlaybookFlowStreamController } from './controllers/playbook-flow-stream.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
@@ -62,6 +63,8 @@ import { PlaybookFlowContextService } from './services/playbook-flow-context.ser
 import { PlaybookFlowOutputFormatService } from './services/playbook-flow-output-format.service';
 import { PlaybookFlowDesignService } from './services/playbook-flow-design.service';
 import { PlaybookFlowAdvisorService } from './services/playbook-flow-advisor.service';
+import { PlaybookFlowExecutionAdvisorService } from './services/advisor/playbook-flow-execution-advisor.service';
+import { PlaybookFlowExecutionAdvisorMapper } from './services/advisor/playbook-flow-execution-advisor.mapper';
 import { PlaybookFlowDesignGrpcService } from './services/playbook-flow-design-grpc.service';
 import { PlaybookFlowMailWebhookService } from './services/playbook-flow-mail-webhook.service';
 import { PlaybookFlowMailGraphClientService } from './services/playbook-flow-mail-graph-client.service';
@@ -75,6 +78,8 @@ import { PlaybookFlowStreamGatewayService } from './services/playbook-flow-strea
 import { PlaybookFlowStreamEventsService } from './services/playbook-flow-stream-events.service';
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
+import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
+import { PlaybookFlowTraceRedactionService } from './services/observability/playbook-flow-trace-redaction.service';
 
 @Module({
   imports: [
@@ -116,6 +121,7 @@ import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.
     PlaybookFlowReplayController,
     PlaybookFlowOutputFormatController,
     PlaybookFlowAdvisorController,
+    PlaybookFlowExecutionAdvisorController,
     PlaybookFlowStreamController,
   ],
   providers: [
@@ -134,6 +140,8 @@ import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.
     PlaybookFlowOutputFormatService,
     PlaybookFlowDesignService,
     PlaybookFlowAdvisorService,
+    PlaybookFlowExecutionAdvisorService,
+    PlaybookFlowExecutionAdvisorMapper,
     PlaybookFlowDesignGrpcService,
     PlaybookFlowReplayService,
     PlaybookFlowEvaluationService,
@@ -151,6 +159,8 @@ import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.
     PlaybookFlowStreamEventsService,
     PlaybookFlowIntentService,
     PlaybookFlowStreamAuthGuard,
+    PlaybookFlowObservabilityService,
+    PlaybookFlowTraceRedactionService,
   ],
   exports: [
     PlaybookFlowService,
@@ -167,6 +177,7 @@ import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.
     PlaybookFlowReplayService,
     PlaybookFlowEvaluationService,
     PlaybookFlowRepeatabilityService,
+    PlaybookFlowObservabilityService,
   ],
 })
 export class PlaybookFlowModule {}

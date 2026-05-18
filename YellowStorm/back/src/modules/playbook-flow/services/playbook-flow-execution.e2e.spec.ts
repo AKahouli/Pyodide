@@ -1,4 +1,6 @@
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
+import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
+import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 
 function mockExecutionModel(overrides?: Record<string, any>) {
   const base = {
@@ -152,6 +154,7 @@ async function createE2EService(
     validatorService as any,
     agentService as any,
     streamEvents as any,
+    new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
   );
 
   (service as any).isGrpcAvailable = true;
@@ -265,7 +268,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
 
     expect(ctx.streamEvents.emitStepStart).toHaveBeenCalledWith('exec-e2e', 'step-1');
     expect(ctx.streamEvents.emitStepUpdate).toHaveBeenCalledTimes(2);
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello', undefined, 0, undefined, undefined);
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello', undefined, 0, undefined, undefined, expect.any(Object));
   });
 
   it('handles NodeToken when token is empty string without emitting', async () => {
@@ -281,7 +284,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     await flushPromises();
 
     expect(ctx.streamEvents.emitStepUpdate).not.toHaveBeenCalled();
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'done', undefined, 0, undefined, undefined);
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'done', undefined, 0, undefined, undefined, expect.any(Object));
   });
 });
 
@@ -721,6 +724,7 @@ describe('E2E: Edge cases', () => {
       0,
       undefined,
       undefined,
+      expect.any(Object),
     );
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');
   });

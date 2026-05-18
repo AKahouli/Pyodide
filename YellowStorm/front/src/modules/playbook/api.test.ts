@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  clonePlaybook,
   executePlaybook,
   getFlowNodeTemplates,
   getPlaybookTriggers,
   getExecution,
+  runAdvisorEvaluation,
   getPlaybookRepeatability,
   getTaskRepeatability,
   sanitizePlaybookUpdate,
@@ -726,7 +728,11 @@ describe('executePlaybook', () => {
       advisorAutopilotMaxTurns: 4,
     });
 
-    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {});
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 92,
+      advisorAutopilotMaxTurns: 4,
+    });
   });
 
   it('keeps the single-step target when starting a standalone node execution', async () => {
@@ -748,6 +754,49 @@ describe('executePlaybook', () => {
     expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
       singleStepTaskId: 'task-7',
     });
+  });
+});
+
+describe('clonePlaybook', () => {
+  it('normalizes flow-shaped clone responses into playbooks', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-2',
+          name: 'Playbook (copy)',
+          description: 'Cloned',
+          nodes: [
+            {
+              id: 'task-1',
+              label: 'Task 1',
+              kind: 'step',
+              metadata: {},
+            },
+          ],
+          controlEdges: [
+            {
+              id: 'edge-1',
+              kind: 'sequential',
+              source: 'task-1',
+              target: 'task-2',
+            },
+          ],
+          workspaces: [],
+          reflectionEnabled: true,
+          advisorAutopilotEnabled: true,
+        },
+      },
+    });
+
+    const cloned = await clonePlaybook('playbook-1');
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/clone');
+    expect(cloned.tasks).toHaveLength(1);
+    expect(cloned.edges).toHaveLength(1);
+    expect(cloned.reflectionEnabled).toBe(true);
+    expect(cloned.advisorAutopilotEnabled).toBe(true);
+    expect(cloned.isFavorite).toBe(false);
   });
 });
 
@@ -795,6 +844,119 @@ describe('getExecution', () => {
         url: 'https://example.com/report.pdf',
         mimeType: 'application/pdf',
       }],
+    });
+  });
+
+  it('preserves advisor task and execution fields when loading historical execution data', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-2',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          advisorAutopilotEnabled: true,
+          advisorAutopilotStatus: 'completed',
+          judgeSummaryStatus: 'evaluated',
+          judgeSummary: {
+            overallScore: 88,
+            confidence: 0.8,
+            structuralIssues: [],
+            promptIssues: [],
+            contractIssues: [],
+            handoffIssues: [],
+            toolUsageIssues: [],
+            crossStepToolPatterns: [],
+            rootCauseTaskIds: [],
+            highImpactRecommendations: [],
+            recommendation: 'update_current_playbook',
+            reason: 'Looks good.',
+          },
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: 'advisor output',
+            judgeStatus: 'evaluated',
+            judgeError: null,
+            judgeResult: { overallScore: 91, confidence: 0.87 },
+            judgeHistory: [{
+              id: 'judge-1',
+              createdAt: '2025-01-01T00:00:01.000Z',
+              attemptNumber: 1,
+              model: 'advisor-v1',
+              judgeResult: { overallScore: 91, confidence: 0.87 },
+            }],
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:02.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-2');
+
+    expect(execution).toMatchObject({
+      advisorAutopilotEnabled: true,
+      advisorAutopilotStatus: 'completed',
+      judgeSummaryStatus: 'evaluated',
+      judgeSummary: expect.objectContaining({ overallScore: 88 }),
+    });
+    expect(execution.taskResults[0]).toMatchObject({
+      judgeStatus: 'evaluated',
+      judgeError: null,
+      judgeResult: expect.objectContaining({ overallScore: 91, confidence: 0.87 }),
+      judgeHistory: [expect.objectContaining({ id: 'judge-1' })],
+    });
+  });
+
+  it('uses the execution advisor endpoint and normalizes the returned task result', async () => {
+    apiClientMock.post.mockReset();
+    apiClientMock.post.mockResolvedValueOnce({
+      data: {
+        data: {
+          executionId: 'exec-3',
+          taskId: 'task-9',
+          taskResult: {
+            taskId: 'task-9',
+            iteration: 2,
+            status: 'completed',
+            output: 'advisor output',
+            judgeStatus: 'evaluated',
+            judgeResult: { overallScore: 77, confidence: 0.65 },
+            judgeHistory: [{
+              id: 'judge-2',
+              createdAt: '2025-01-01T00:00:01.000Z',
+              attemptNumber: 2,
+              model: 'advisor-v2',
+              judgeResult: { overallScore: 77, confidence: 0.65 },
+            }],
+          },
+          judgeSummaryStatus: 'evaluated',
+          judgeSummary: { overallScore: 77, confidence: 0.65 },
+        },
+      },
+    });
+
+    const result = await runAdvisorEvaluation('exec-3', 'task-9', 2);
+
+    expect(apiClientMock.post).toHaveBeenCalledWith('/executions/exec-3/tasks/task-9/advisor-evaluation', { iteration: 2 });
+    expect(result).toMatchObject({
+      executionId: 'exec-3',
+      taskId: 'task-9',
+      judgeSummaryStatus: 'evaluated',
+      judgeSummary: expect.objectContaining({ overallScore: 77 }),
+      taskResult: expect.objectContaining({
+        taskId: 'task-9',
+        iteration: 2,
+        judgeStatus: 'evaluated',
+        judgeResult: expect.objectContaining({ overallScore: 77 }),
+        judgeHistory: [expect.objectContaining({ id: 'judge-2' })],
+      }),
     });
   });
 });

@@ -20,7 +20,7 @@ import grpc
 import pytest
 import pytest_asyncio
 from google.protobuf.struct_pb2 import Struct
-from google.protobuf.json_format import ParseDict
+from google.protobuf.json_format import MessageToDict, ParseDict
 
 pytest.importorskip("src.grpc_generated.playbook_flow_pb2")
 pytest.importorskip("src.grpc_generated.playbook_flow_pb2_grpc")
@@ -141,6 +141,10 @@ async def test_grpc_boundary_run_linear_flow(stub):
 
     step1_completed = [e for e in events if e.node_id == "step-1" and e.event_type == "NodeCompleted"]
     assert len(step1_completed) == 1
+    payload = MessageToDict(step1_completed[0].payload)
+    assert payload["tool_trace"] == []
+    assert payload["llm_prompt_trace"][0]["stage"] == "initial_request"
+    assert payload["trace_metadata"]["llm_prompt_trace_count"] == 1
 
     exec_completed = [e for e in events if e.event_type == "ExecutionCompleted"]
     assert len(exec_completed) == 1

@@ -107,15 +107,15 @@ async function bootstrap() {
   // Cookie Parser - Required for refresh token cookies
   app.use(cookieParser());
 
-  // API Versioning
-  app.enableVersioning({
-    type: VersioningType.URI,
-    defaultVersion: '1',
-  });
-
   // Global prefix
   const apiPrefix = configService.get<string>('API_PREFIX', 'api');
   app.setGlobalPrefix(apiPrefix);
+
+  // API Versioning - disabled until URI versioning route-matching issues are resolved
+  // app.enableVersioning({
+  //   type: VersioningType.URI,
+  //   defaultVersion: '1',
+  // });
 
   // Validation
   app.useGlobalPipes(

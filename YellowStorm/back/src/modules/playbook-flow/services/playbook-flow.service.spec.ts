@@ -35,6 +35,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.create('owner-1', {
@@ -103,6 +104,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.create('owner-1', {
@@ -126,6 +128,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     await expect(service.create('owner-1', {
@@ -146,6 +149,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     await expect(service.create('owner-1', {
@@ -202,6 +206,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -275,6 +280,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -323,6 +329,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -354,6 +361,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -399,6 +407,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -436,6 +445,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
@@ -469,6 +479,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     await service.updateNodesAndEdges('flow-1', {
@@ -513,6 +524,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.updateNodesAndEdges('flow-1', {
@@ -550,6 +562,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.createWithNodesAndEdges(
@@ -575,6 +588,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     await expect(service.createWithNodesAndEdges(
@@ -629,6 +643,7 @@ describe('PlaybookFlowService', () => {
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
     const result = await service.clone('507f1f77bcf86cd799439011', 'owner-1');
@@ -639,8 +654,17 @@ describe('PlaybookFlowService', () => {
     expect(result.workspaces).toEqual(['workspace-1']);
   });
 
-  it('rejects clone when the source playbook has no workspace', async () => {
-    const flowModel: any = jest.fn();
+  it('clones legacy playbooks without a workspace selection', async () => {
+    const savedFlow = {
+      toJSON: jest.fn().mockReturnValue({
+        id: 'clone-1',
+        workspaces: [],
+      }),
+    };
+    const flowModel: any = jest.fn().mockImplementation((doc) => ({
+      ...doc,
+      save: jest.fn().mockResolvedValue(savedFlow),
+    }));
     flowModel.findById = jest.fn().mockResolvedValue({
       ownerId: 'owner-1',
       schemaVersion: 1,
@@ -652,16 +676,31 @@ describe('PlaybookFlowService', () => {
       controlEdges: [],
       dataBindings: [],
       workspaces: [],
+      designSettings: { inferenceModelId: 'model-1' },
+      reflectionEnabled: true,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 91,
+      advisorAutopilotMaxTurns: 5,
     });
     const validatorService = { validate: jest.fn() };
     const service = new PlaybookFlowService(
       flowModel as any,
       {} as any,
       validatorService as any,
+      {} as any,
     );
 
-    await expect(service.clone('507f1f77bcf86cd799439011', 'owner-1')).rejects.toBeInstanceOf(BadRequestException);
+    const result = await service.clone('507f1f77bcf86cd799439011', 'owner-1');
 
-    expect(flowModel).not.toHaveBeenCalledWith(expect.objectContaining({ name: 'Flow (copy)' }));
+    expect(flowModel).toHaveBeenCalledWith(expect.objectContaining({
+      name: 'Flow (copy)',
+      workspaces: [],
+      designSettings: { inferenceModelId: 'model-1' },
+      reflectionEnabled: true,
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 91,
+      advisorAutopilotMaxTurns: 5,
+    }));
+    expect(result.workspaces).toEqual([]);
   });
 });

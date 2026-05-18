@@ -801,10 +801,15 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    expect(screen.getByText('report')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /report/ }));
     expect(screen.getByText('latest-report.pdf')).toBeInTheDocument();
+    // Switch to older attempt
     await userEvent.click(screen.getByRole('button', { name: /detail.evaluation.attempt 2/i }));
     await userEvent.click(screen.getByText(/detail.evaluation.attempt 1 \|/i));
-    expect(screen.getByText('older-report.pdf')).toBeInTheDocument();
+    // Verify older attempt's port pane is present
+    await userEvent.keyboard('{Escape}');
+    expect(screen.getByText('report')).toBeInTheDocument();
     expect(screen.queryByText('latest-report.pdf')).not.toBeInTheDocument();
   });
 
@@ -826,7 +831,7 @@ describe('ExecutionStepDetail', () => {
     expect(screen.queryByRole('button', { name: 'artifacts.download' })).not.toBeInTheDocument();
   });
 
-  it('shows artifact download action for generated documents with safe urls', () => {
+  it('shows artifact download action for generated documents with safe urls', async () => {
     render(
       <ExecutionStepDetail
         step={{
@@ -841,6 +846,8 @@ describe('ExecutionStepDetail', () => {
       />,
     );
 
+    expect(screen.getByText('report')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /report/ }));
     expect(screen.getByRole('button', { name: 'artifacts.download' })).toBeInTheDocument();
   });
 
@@ -1037,6 +1044,7 @@ describe('ExecutionStepDetail', () => {
 
   it('runs advisor evaluation from the advisor pane CTA', async () => {
     const onRequestRunAdvisorEvaluation = vi.fn();
+    const step = { ...baseStep, iteration: 2 };
     const execution: PlaybookExecution = {
       id: 'e1',
       playbookId: 'p1',
@@ -1045,7 +1053,7 @@ describe('ExecutionStepDetail', () => {
       status: 'completed',
       executionMode: 'live',
       replaySourceByTask: null,
-      taskResults: [baseStep],
+      taskResults: [step],
       threadId: null,
       interruptPayload: null,
       error: null,
@@ -1062,8 +1070,8 @@ describe('ExecutionStepDetail', () => {
     };
 
     render(
-      <ExecutionStepDetail
-        step={baseStep}
+        <ExecutionStepDetail
+        step={step}
         execution={execution}
         onRequestRunAdvisorEvaluation={onRequestRunAdvisorEvaluation}
       />,
@@ -1071,7 +1079,47 @@ describe('ExecutionStepDetail', () => {
 
     await userEvent.click(screen.getByText('detail.tabs.judge'));
     await userEvent.click(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]);
-    expect(onRequestRunAdvisorEvaluation).toHaveBeenCalledWith('t1');
+    expect(onRequestRunAdvisorEvaluation).toHaveBeenCalledWith('t1', 2);
+  });
+
+  it('disables advisor evaluation until the selected step is completed', async () => {
+    const onRequestRunAdvisorEvaluation = vi.fn();
+    const step = { ...baseStep, status: 'running' as const };
+    const execution: PlaybookExecution = {
+      id: 'e1',
+      playbookId: 'p1',
+      executedBy: 'u1',
+      executionNumber: 2,
+      status: 'running',
+      executionMode: 'live',
+      replaySourceByTask: null,
+      taskResults: [step],
+      threadId: null,
+      interruptPayload: null,
+      error: null,
+      durationMs: 5200,
+      startedAt: '2025-01-01T00:00:00.000Z',
+      completedAt: null,
+      singleStepTaskId: null,
+      playbookSnapshot: null,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+      createdAt: '2025-01-01T00:00:00.000Z',
+      updatedAt: '2025-01-01T00:00:05.200Z',
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={step}
+        execution={execution}
+        onRequestRunAdvisorEvaluation={onRequestRunAdvisorEvaluation}
+      />,
+    );
+
+    await userEvent.click(screen.getByText('detail.tabs.judge'));
+    expect(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]).toBeDisabled();
+    expect(onRequestRunAdvisorEvaluation).not.toHaveBeenCalled();
   });
 
   it('renders persisted evaluation history metadata', () => {

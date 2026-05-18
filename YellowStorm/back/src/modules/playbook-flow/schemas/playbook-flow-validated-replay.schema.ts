@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import { FlowTaskSemanticMatch, FlowTaskUsage } from './playbook-flow-task-result.schema';
 
 export type FlowValidatedReplayDocument = HydratedDocument<FlowValidatedReplay>;
 
@@ -33,6 +34,15 @@ export class FlowReplayToolCall {
 
   @Prop({ required: false, type: String })
   outputSummary?: string;
+
+  @Prop({ required: false, type: String, enum: ['completed', 'failed', 'skipped'], default: null })
+  status?: string | null;
+
+  @Prop({ required: false, type: Number, default: null })
+  durationMs?: number | null;
+
+  @Prop({ required: false, type: String, default: null })
+  error?: string | null;
 }
 
 @Schema({ _id: false })
@@ -45,6 +55,15 @@ export class FlowReplayLLMPromptTraceItem {
 
   @Prop({ required: true, type: String })
   prompt!: string;
+}
+
+@Schema({ _id: false })
+export class FlowReplayStaleness {
+  @Prop({ required: false, type: Boolean, default: false })
+  isStale!: boolean;
+
+  @Prop({ required: false, type: [String], default: [] })
+  reasons!: string[];
 }
 
 @Schema({ timestamps: true, collection: 'playbook_flow_validated_replays' })
@@ -111,6 +130,27 @@ export class FlowValidatedReplay {
 
   @Prop({ required: false, type: [SchemaFactory.createForClass(FlowReplayLLMPromptTraceItem)], default: [] })
   llmPromptTrace!: FlowReplayLLMPromptTraceItem[];
+
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowTaskUsage), default: null })
+  referenceUsage?: FlowTaskUsage | null;
+
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowTaskSemanticMatch), default: null })
+  referenceSemanticMatch?: FlowTaskSemanticMatch | null;
+
+  @Prop({ required: false, type: Object, default: {} })
+  traceMetadata?: Record<string, unknown>;
+
+  @Prop({ required: false, type: Number })
+  referenceFlowRevision?: number;
+
+  @Prop({ required: false, type: Object, default: null })
+  referenceNodeSnapshot?: Record<string, unknown> | null;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  isStale!: boolean;
+
+  @Prop({ required: false, type: [String], default: [] })
+  staleReasons!: string[];
 
   @Prop({ required: false, type: String })
   label?: string;

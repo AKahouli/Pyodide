@@ -9,6 +9,9 @@ import {
   toGrpcValue,
 } from './playbook-flow-execution.service';
 
+import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
+import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
+
 function createExecutionServiceForTests(overrides?: {
   executionModel?: Record<string, any>;
   queueService?: Record<string, any>;
@@ -20,7 +23,7 @@ function createExecutionServiceForTests(overrides?: {
 }) {
   const executionModel = {
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+    findById: jest.fn(() => ({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }) })),
     findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     ...overrides?.executionModel,
   };
@@ -73,6 +76,7 @@ function createExecutionServiceForTests(overrides?: {
     emitInterrupt: jest.fn(),
     ...overrides?.streamEvents,
   };
+  const observabilityService = new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService());
 
   const service = new PlaybookFlowExecutionService(
     executionModel as any,
@@ -86,6 +90,8 @@ function createExecutionServiceForTests(overrides?: {
     validatorService as any,
     agentService as any,
     streamEvents as any,
+    observabilityService as any,
+    {} as any,
   );
 
   return {
@@ -325,19 +331,49 @@ describe('callGrpcRun router config serialization', () => {
 });
 
 describe('single-step execution safety', () => {
-  it('rejects single-step execution for flow-dependent nodes', async () => {
+  it('allows single-step execution for flow-dependent nodes when upstream results exist', async () => {
     const savedExecution = {
-      id: 'exec-blocked',
-      save: jest.fn(),
-      toJSON: jest.fn(),
+      id: 'exec-dependent',
+      queuePosition: 0,
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-dependent' }),
     };
+    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
     const ExecutionModel = jest.fn(() => savedExecution) as any;
+    ExecutionModel.findByIdAndDelete = jest.fn();
     const service = new PlaybookFlowExecutionService(
       ExecutionModel,
-      { updateOne: jest.fn(), deleteMany: jest.fn() } as any,
+      {
+        updateOne: jest.fn(),
+        deleteMany: jest.fn(),
+        find: jest.fn(() => ({
+          sort: jest.fn().mockReturnValue({
+            lean: jest.fn().mockReturnValue({
+              exec: jest.fn().mockResolvedValue([
+                {
+                  taskId: 'task-1',
+                  iteration: 0,
+                  output: {
+                    outputs: {
+                      summary: { content: 'seeded summary' },
+                    },
+                  },
+                  displayText: 'seeded summary',
+                  outputs: {
+                    summary: { content: 'seeded summary' },
+                  },
+                  artifacts: [{ port_id: 'summary', artifact_kind: 'text', content: 'seeded summary' }],
+                  components: [],
+                  traceMetadata: {},
+                },
+              ]),
+            }),
+          }),
+        })),
+      } as any,
       { create: jest.fn(), deleteMany: jest.fn() } as any,
       { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
-      { admit: jest.fn(), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
+      { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
       { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
       {
         findOne: jest.fn().mockResolvedValue({
@@ -346,20 +382,96 @@ describe('single-step execution safety', () => {
             { id: 'task-2', kind: 'step', metadata: {} },
           ],
           controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
-          dataBindings: [],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
           settings: {},
         }),
+        findById: jest.fn(),
       } as any,
-      { buildSnapshot: jest.fn() } as any,
+      {
+        buildSnapshot: jest.fn().mockReturnValue({
+          settings: {},
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
+        }),
+      } as any,
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      {} as any,
     );
 
-    await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
-      'Single-step execution only supports standalone step nodes without incoming edges or data bindings.',
-    );
-    expect(ExecutionModel).not.toHaveBeenCalled();
+    (service as any).executionModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            lean: jest.fn().mockReturnValue({
+              exec: jest.fn().mockResolvedValue([{
+                _id: 'prev-exec-1',
+                snapshot: {
+                  nodes: [
+                    { id: 'task-1', kind: 'step', metadata: {} },
+                    { id: 'task-2', kind: 'step', metadata: {} },
+                  ],
+                },
+              }]),
+            }),
+          }),
+        }),
+      }),
+    });
+    jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
+
+    await service.start('flow-1', 'owner-1', {}, undefined, 'task-2');
+
+    expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
+      singleStepTaskId: 'task-2',
+      snapshot: expect.objectContaining({
+        nodes: [{ id: 'task-2', kind: 'step', metadata: {} }],
+        controlEdges: [],
+        dataBindings: [{
+          id: 'binding-1',
+          targetNode: 'task-2',
+          targetPort: 'summary',
+          sourceKind: 'node-output',
+          sourceNode: 'task-1',
+          sourcePort: 'summary',
+          iteration: 'current',
+        }],
+      }),
+      seededTaskOutputs: [{
+        nodeId: 'task-1',
+        iteration: 0,
+        payload: expect.objectContaining({
+          output: expect.any(String),
+          displayText: 'seeded summary',
+          outputs: {
+            summary: { content: 'seeded summary' },
+          },
+          artifacts: [{ port_id: 'summary', artifact_kind: 'text', content: 'seeded summary' }],
+        }),
+      }],
+    }));
   });
 
   it('allows single-step execution for standalone step nodes', async () => {
@@ -392,6 +504,8 @@ describe('single-step execution safety', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      {} as any,
     );
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
 
@@ -404,6 +518,315 @@ describe('single-step execution safety', () => {
         controlEdges: [],
         dataBindings: [],
       }),
+    }));
+  });
+
+  it('rejects dependent single-step execution when upstream results are missing', async () => {
+    const savedExecution = {
+      id: 'exec-missing-upstream',
+      save: jest.fn(),
+      toJSON: jest.fn(),
+    };
+    const ExecutionModel = jest.fn(() => savedExecution) as any;
+    const service = createExecutionServiceForTests({
+      executionModel: {
+        find: jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnValue({
+            sort: jest.fn().mockReturnValue({
+              limit: jest.fn().mockReturnValue({
+                lean: jest.fn().mockReturnValue({
+                  exec: jest.fn().mockResolvedValue([]),
+                }),
+              }),
+            }),
+          }),
+        }),
+      },
+      flowService: {
+        findOne: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
+          settings: {},
+        }),
+      },
+      builderService: {
+        buildSnapshot: jest.fn().mockReturnValue({
+          settings: {},
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
+        }),
+      },
+    }).service;
+
+    await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
+      'Single-step execution for node task-2 requires a previous completed execution with matching upstream node snapshots.',
+    );
+    expect(ExecutionModel).not.toHaveBeenCalled();
+  });
+
+  it('rejects single-step execution for router-controlled nodes', async () => {
+    const { service } = createExecutionServiceForTests({
+      flowService: {
+        findOne: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'router-1', kind: 'router', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'conditional', source: 'router-1', target: 'task-2', routerLabel: 'valid' }],
+          dataBindings: [],
+          settings: {},
+        }),
+      },
+      builderService: {
+        buildSnapshot: jest.fn().mockReturnValue({
+          settings: {},
+          nodes: [
+            { id: 'router-1', kind: 'router', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'conditional', source: 'router-1', target: 'task-2', routerLabel: 'valid' }],
+          dataBindings: [],
+        }),
+      },
+    });
+
+    await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
+      'Single-step execution only supports nodes reached by sequential step dependencies.',
+    );
+  });
+
+  it('rejects dependent single-step execution when the upstream snapshot no longer matches', async () => {
+    const savedExecution = {
+      id: 'exec-mismatch',
+      queuePosition: 0,
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-mismatch' }),
+    };
+    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
+    const ExecutionModel = jest.fn(() => savedExecution) as any;
+    const service = new PlaybookFlowExecutionService(
+      ExecutionModel,
+      {
+        updateOne: jest.fn(),
+        deleteMany: jest.fn(),
+        find: jest.fn(() => ({
+          sort: jest.fn().mockReturnValue({
+            lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue([]) }),
+          }),
+        })),
+      } as any,
+      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
+      { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
+      {
+        findOne: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: { version: 2 } },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
+          settings: {},
+        }),
+      } as any,
+      {
+        buildSnapshot: jest.fn().mockReturnValue({
+          settings: {},
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: { version: 2 } },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'current',
+          }],
+        }),
+      } as any,
+      { validate: jest.fn() } as any,
+      { buildGrpcAgentsForPlaybook: jest.fn() } as any,
+      { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      {} as any,
+    );
+
+    (service as any).executionModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            lean: jest.fn().mockReturnValue({
+              exec: jest.fn().mockResolvedValue([{
+                _id: 'prev-exec-1',
+                snapshot: {
+                  nodes: [
+                    { id: 'task-1', kind: 'step', metadata: { version: 1 } },
+                    { id: 'task-2', kind: 'step', metadata: {} },
+                  ],
+                },
+              }]),
+            }),
+          }),
+        }),
+      }),
+    });
+
+    await expect(service.start('flow-1', 'owner-1', {}, undefined, 'task-2')).rejects.toThrow(
+      'Single-step execution for node task-2 requires a previous completed execution with matching upstream node snapshots.',
+    );
+  });
+
+  it('seeds both current and previous upstream iterations when needed', async () => {
+    const savedExecution = {
+      id: 'exec-previous',
+      queuePosition: 0,
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({ id: 'exec-previous' }),
+    };
+    savedExecution.save = jest.fn().mockResolvedValue(savedExecution);
+    const ExecutionModel = jest.fn(() => savedExecution) as any;
+    const service = new PlaybookFlowExecutionService(
+      ExecutionModel,
+      {
+        updateOne: jest.fn(),
+        deleteMany: jest.fn(),
+        find: jest.fn(() => ({
+          sort: jest.fn().mockReturnValue({
+            lean: jest.fn().mockReturnValue({
+              exec: jest.fn().mockResolvedValue([
+                {
+                  taskId: 'task-1',
+                  iteration: 2,
+                  output: 'latest',
+                  displayText: 'latest',
+                  outputs: { summary: { content: 'latest' } },
+                },
+                {
+                  taskId: 'task-1',
+                  iteration: 1,
+                  output: 'previous',
+                  displayText: 'previous',
+                  outputs: { summary: { content: 'previous' } },
+                },
+              ]),
+            }),
+          }),
+        })),
+      } as any,
+      { create: jest.fn(), deleteMany: jest.fn() } as any,
+      { get: jest.fn((key: string, fallback: unknown) => fallback) } as any,
+      { admit: jest.fn().mockResolvedValue(1), release: jest.fn(), refreshPositions: jest.fn().mockResolvedValue([]) } as any,
+      { reserve: jest.fn(), confirmLink: jest.fn(), release: jest.fn() } as any,
+      {
+        findOne: jest.fn().mockResolvedValue({
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'previous',
+          }],
+          settings: {},
+        }),
+      } as any,
+      {
+        buildSnapshot: jest.fn().mockReturnValue({
+          settings: {},
+          nodes: [
+            { id: 'task-1', kind: 'step', metadata: {} },
+            { id: 'task-2', kind: 'step', metadata: {} },
+          ],
+          controlEdges: [{ id: 'edge-1', kind: 'sequential', source: 'task-1', target: 'task-2' }],
+          dataBindings: [{
+            id: 'binding-1',
+            targetNode: 'task-2',
+            targetPort: 'summary',
+            sourceKind: 'node-output',
+            sourceNode: 'task-1',
+            sourcePort: 'summary',
+            iteration: 'previous',
+          }],
+        }),
+      } as any,
+      { validate: jest.fn() } as any,
+      { buildGrpcAgentsForPlaybook: jest.fn() } as any,
+      { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      {} as any,
+    );
+
+    (service as any).executionModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnValue({
+          limit: jest.fn().mockReturnValue({
+            lean: jest.fn().mockReturnValue({
+              exec: jest.fn().mockResolvedValue([{
+                _id: 'prev-exec-1',
+                snapshot: {
+                  nodes: [
+                    { id: 'task-1', kind: 'step', metadata: {} },
+                    { id: 'task-2', kind: 'step', metadata: {} },
+                  ],
+                },
+              }]),
+            }),
+          }),
+        }),
+      }),
+    });
+    jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
+
+    await service.start('flow-1', 'owner-1', {}, undefined, 'task-2');
+
+    expect(ExecutionModel).toHaveBeenCalledWith(expect.objectContaining({
+      seededTaskOutputs: [
+        expect.objectContaining({ nodeId: 'task-1', iteration: 2 }),
+        expect.objectContaining({ nodeId: 'task-1', iteration: 1 }),
+      ],
     }));
   });
 });
@@ -477,6 +900,7 @@ describe('service terminal handling', () => {
       0,
       [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
       [{ type: 'text', data: { content: 'Executive summary' } }],
+      expect.any(Object),
     );
   });
 
@@ -615,6 +1039,8 @@ describe('service terminal handling', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      {} as any,
     );
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1')).rejects.toThrow('link failed');
@@ -667,6 +1093,8 @@ describe('service terminal handling', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
+      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      {} as any,
     );
     idempotencyService.reserve.mockResolvedValue({ type: 'reserved' });
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);

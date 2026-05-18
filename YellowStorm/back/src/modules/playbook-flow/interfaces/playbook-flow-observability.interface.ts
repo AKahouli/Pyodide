@@ -1,0 +1,47 @@
+export interface FlowToolTraceItem {
+  callIndex: number;
+  toolName: string;
+  args: Record<string, unknown>;
+  outputSummary?: string | null;
+  status?: 'completed' | 'failed' | 'skipped' | null;
+  durationMs?: number | null;
+  error?: string | null;
+}
+
+export interface FlowLlmPromptTraceItem {
+  stage: string;
+  model: string;
+  prompt: string;
+}
+
+export interface FlowUsageSummary {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  model?: string | null;
+}
+
+export interface FlowSemanticMatchSummary {
+  matchScore?: number;
+  semanticSimilarityScore?: number;
+  evidenceConsistencyScore?: number;
+  judgeScore?: number;
+  reason?: string;
+  missingPoints?: string[];
+  changedPoints?: string[];
+  model?: string;
+  judgeUsed?: boolean;
+}
+
+export interface FlowCompletedResultPayload {
+  output: string;
+  displayText?: string;
+  outputs?: Record<string, unknown>;
+  artifacts?: Array<Record<string, unknown>>;
+  components?: Array<Record<string, unknown>>;
+  toolTrace?: FlowToolTraceItem[];
+  llmPromptTrace?: FlowLlmPromptTraceItem[];
+  usage?: FlowUsageSummary | null;
+  semanticMatch?: FlowSemanticMatchSummary | null;
+  traceMetadata?: Record<string, unknown>;
+}

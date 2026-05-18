@@ -6,6 +6,8 @@ import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
 import { AdvisorResultPanel } from './AdvisorResultPanel';
 import { IteratorResultPanel } from './IteratorResultPanel';
 import { StepComponents } from './StepComponents';
+import { PortArtifactPane } from './PortArtifactPane';
+import { PortContentViewer } from './PortContentViewer';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -160,7 +162,7 @@ interface Props {
   onBackToRunMode?: () => void;
   onRequestValidateReplay?: (taskId: string) => void;
   onRequestRunEvaluation?: (taskId: string) => void;
-  onRequestRunAdvisorEvaluation?: (taskId: string) => void;
+  onRequestRunAdvisorEvaluation?: (taskId: string, iteration?: number) => void;
   onRequestGrabOutputFormat?: (taskId: string) => void;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onStepReplayModeChange?: (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => void;
@@ -376,6 +378,12 @@ export function ExecutionStepDetail({
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const traceReplayExecution = usePlaybookStore((s) => s.traceReplayExecution);
   const reExecuteExecution = usePlaybookStore((s) => s.reExecuteExecution);
+  const portInspection = usePlaybookStore((s) => s.portInspection);
+  const closePortInspection = usePlaybookStore((s) => s.closePortInspection);
+  const [detailInspectTaskId, setDetailInspectTaskId] = useState<string | null>(null);
+  const [detailInspectArtifacts, setDetailInspectArtifacts] = useState<TaskArtifact[]>([]);
+  const [detailInspectPortName, setDetailInspectPortName] = useState('');
+  const [detailInspectPortKind, setDetailInspectPortKind] = useState<import('../types').ArtifactKind>('text');
   const [baselineReplay, setBaselineReplay] = useState<ValidatedTaskReplay | null>(null);
   const [evaluationBaseline, setEvaluationBaseline] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<PlaybookEvaluationExecution[]>([]);
@@ -414,6 +422,7 @@ export function ExecutionStepDetail({
   const advisorOptimizationHistory = step?.advisorOptimizationHistory || [];
   const stepJudgeStatus = step?.judgeStatus || 'idle';
   const stepJudgeError = step?.judgeError || null;
+  const canRunAdvisorEvaluation = step?.status === 'completed';
   const judgeSummary = execution?.judgeSummary || null;
   const advisorAutopilotActive = execution?.advisorAutopilotEnabled === true;
   const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
@@ -896,6 +905,110 @@ export function ExecutionStepDetail({
     }
   }, [createEvaluationBaselineFromExecution, execution, step]);
 
+  const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
+  const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
+
+  const groupedArtifacts = useMemo(() => {
+    const artifacts = selectedStepExecution?.artifacts || [];
+    const groups: Record<string, { portId: string; portName: string; portKind: import('../types').ArtifactKind; artifacts: TaskArtifact[] }> = {};
+    const outputPorts = (currentTask as { outputPorts?: Array<{ id: string; name: string; artifactKind: import('../types').ArtifactKind }> } | null)?.outputPorts ?? [];
+    const portNameMap = new Map(outputPorts.map((p) => [p.id, p.name || p.id]));
+
+    for (const artifact of artifacts) {
+      const pid = artifact.portId || 'default';
+      if (!groups[pid]) {
+        groups[pid] = { portId: pid, portName: portNameMap.get(pid) || pid, portKind: artifact.artifactKind, artifacts: [] };
+      }
+      groups[pid].artifacts.push(artifact);
+    }
+    return Object.values(groups);
+  }, [selectedStepExecution?.artifacts, currentTask]);
+
+  const inputPortEntries = useMemo(() => {
+    if (!currentTask || !execution) return [];
+    const dataBindings = (currentPlaybook as { dataBindings?: import('../types').DataBinding[] } | null)?.dataBindings ?? [];
+    const inputPorts = (currentTask as { inputPorts?: Array<{ id: string; name: string; artifactKind: import('../types').ArtifactKind }> })?.inputPorts ?? [];
+    if (inputPorts.length === 0) return [];
+
+    const upstreamBindings = dataBindings.filter((b) => b.targetNode === step?.taskId);
+
+    return inputPorts.map((port) => {
+      const binding = upstreamBindings.find((b) => b.targetPort === port.id);
+      let artifacts: TaskArtifact[] = [];
+      let sourceLabel = '';
+
+      if (binding?.sourceNode) {
+        const sourceResults = execution.taskResults.filter((result) => result.taskId === binding.sourceNode);
+        const srcResult = sourceResults.find((result) => result.iteration === step?.iteration)
+          ?? sourceResults[sourceResults.length - 1]
+          ?? null;
+
+        if (!srcResult) {
+          return { portId: port.id, portName: port.name || port.id, portKind: port.artifactKind, artifacts, sourceLabel };
+        }
+
+        sourceLabel = srcResult.nodeTitle || binding.sourceNode;
+        artifacts = (srcResult.artifacts || []).filter((a) => !binding.sourcePort || a.portId === binding.sourcePort);
+        if (artifacts.length === 0 && srcResult.output) {
+          artifacts = [{
+            portId: binding.sourcePort || port.id,
+            artifactKind: port.artifactKind,
+            content: srcResult.output,
+          }];
+        }
+      } else if (binding?.sourceKind === 'constant' && binding.constantValue !== undefined) {
+        artifacts = [{
+          portId: port.id,
+          artifactKind: port.artifactKind,
+          content: typeof binding.constantValue === 'string' ? binding.constantValue : JSON.stringify(binding.constantValue),
+        }];
+        sourceLabel = '(constant)';
+      }
+
+      return { portId: port.id, portName: port.name || port.id, portKind: port.artifactKind, artifacts, sourceLabel };
+    });
+  }, [currentTask, execution, currentPlaybook, step?.taskId]);
+
+  const handlePortInspection = useCallback((artifacts: TaskArtifact[], portName: string, portKind: import('../types').ArtifactKind, taskId: string) => {
+    setDetailInspectTaskId(taskId);
+    setDetailInspectArtifacts(artifacts);
+    setDetailInspectPortName(portName);
+    setDetailInspectPortKind(portKind);
+  }, []);
+
+  const handleCloseDetailInspect = useCallback(() => {
+    setDetailInspectTaskId(null);
+    setDetailInspectArtifacts([]);
+    setDetailInspectPortName('');
+    setDetailInspectPortKind('text');
+  }, []);
+
+  useEffect(() => {
+    if (!portInspection || !execution) return;
+    const taskResult = execution.taskResults.find((r) => r.taskId === portInspection.nodeId);
+    let artifacts: TaskArtifact[] = [];
+    if (portInspection.isInput) {
+      const entry = inputPortEntries.find((e) => e.portId === portInspection.portId);
+      artifacts = entry?.artifacts || [];
+    } else {
+      artifacts = (taskResult?.artifacts || []).filter((a) => a.portId === portInspection.portId);
+    }
+    setDetailInspectTaskId(portInspection.nodeId);
+    setDetailInspectArtifacts(artifacts);
+    setDetailInspectPortName(portInspection.portName);
+    setDetailInspectPortKind(portInspection.portKind);
+  }, [portInspection, execution, inputPortEntries]);
+
+  const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
+  const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
+  const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
+  const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step?.semanticMatch || null;
+  const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
+  const evaluationArtifact = getEvaluationArtifactPayload(step);
+  const isEvaluationPending = isRunningEvaluation || step?.status === 'running';
+  const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
+  const latestDedicatedEvaluation = evaluationExecutions[0] || null;
+
   if (!step) {
     return (
       <div className="flex-1 flex items-center justify-center text-muted-foreground">
@@ -904,17 +1017,6 @@ export function ExecutionStepDetail({
     );
   }
 
-  const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
-  const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
-  const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
-  const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
-  const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
-  const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step.semanticMatch || null;
-  const comparisonSemanticMatch = comparisonEvaluation?.semanticMatch || null;
-  const evaluationArtifact = getEvaluationArtifactPayload(step);
-  const isEvaluationPending = isRunningEvaluation || step.status === 'running';
-  const hasStepComparison = Boolean(selectedEvaluation && comparisonSemanticMatch);
-  const latestDedicatedEvaluation = evaluationExecutions[0] || null;
   return (
     <div className="relative flex-1 overflow-hidden">
       <div
@@ -1195,15 +1297,46 @@ export function ExecutionStepDetail({
               <div className="space-y-3">
                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.title' as any)}</div>
                 <div className="space-y-2">
-                  {selectedStepExecution.artifacts.map((artifact, index) => (
-                    <ArtifactListItem
-                      key={`${artifact.portId}:${artifact.filename || artifact.url || artifact.content || index}`}
-                      artifact={artifact}
+                  {groupedArtifacts.map((group) => (
+                    <PortArtifactPane
+                      key={group.portId}
+                      portId={group.portId}
+                      portName={group.portName}
+                      portKind={group.portKind}
+                      artifacts={group.artifacts}
+                      onInspectArtifact={(artifact) => handlePortInspection([artifact], artifact.filename || group.portName, artifact.artifactKind, step.taskId)}
                     />
                   ))}
                 </div>
               </div>
             )}
+
+            {inputPortEntries.length > 0 && (
+              <div className="space-y-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.inputPortsTitle' as any)}</div>
+                <div className="space-y-2">
+                  {inputPortEntries.map((entry) => (
+                    <PortArtifactPane
+                      key={entry.portId}
+                      portId={entry.portId}
+                      portName={entry.sourceLabel ? `${entry.portName} ← ${entry.sourceLabel}` : entry.portName}
+                      portKind={entry.portKind}
+                      artifacts={entry.artifacts}
+                      defaultOpen={false}
+                      onInspectArtifact={entry.artifacts.length > 0 ? (artifact) => handlePortInspection([artifact], entry.portName, entry.portKind, step.taskId) : undefined}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <PortContentViewer
+              open={detailInspectTaskId !== null}
+              onOpenChange={(open) => { if (!open) { handleCloseDetailInspect(); closePortInspection(); } }}
+              portName={detailInspectPortName}
+              portKind={detailInspectPortKind}
+              artifacts={detailInspectArtifacts}
+            />
 
             {selectedStepExecution?.status === 'running' && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -1568,8 +1701,8 @@ export function ExecutionStepDetail({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId)}
-                  disabled={isRunningEvaluation || stepJudgeStatus === 'evaluating'}
+                  onClick={() => onRequestRunAdvisorEvaluation?.(step.taskId, step.iteration)}
+                  disabled={!canRunAdvisorEvaluation || stepJudgeStatus === 'evaluating'}
                 >
                   {stepJudgeStatus === 'evaluating' && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
                   {stepJudgeStatus === 'evaluating' ? t('execution.running') : t('detail.actions.runAdvisorEvaluation')}

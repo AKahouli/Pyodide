@@ -36,6 +36,25 @@ from src.flow_engine.state import ExecutionState
 
 logger = get_logger(__name__)
 
+
+def _seed_task_outputs(request: Any) -> tuple[dict[tuple[str, int], Any], dict[str, int]]:
+    task_outputs: dict[tuple[str, int], Any] = {}
+    iterations: dict[str, int] = {}
+
+    for item in getattr(request, "seeded_task_outputs", []) or []:
+        node_id = str(getattr(item, "node_id", "") or "").strip()
+        if not node_id:
+            continue
+        try:
+            iteration = max(0, int(getattr(item, "iteration", 0) or 0))
+        except (TypeError, ValueError):
+            iteration = 0
+        payload = struct_to_dict(getattr(item, "payload", None))
+        task_outputs[(node_id, iteration)] = payload
+        iterations[node_id] = max(iterations.get(node_id, 0), iteration + 1)
+
+    return task_outputs, iterations
+
 try:
     from src.grpc_generated import playbook_flow_pb2 as pb
     from src.grpc_generated import playbook_flow_pb2_grpc as pb_grpc
@@ -77,13 +96,14 @@ class PlaybookFlowRuntimeServicer:
                 snapshot.get("settings", {}).get("max_parallelism", 0),
                 5,
             )
+            seeded_task_outputs, seeded_iterations = _seed_task_outputs(request)
 
             initial_state: ExecutionState = {
                 "execution_id": execution_id,
                 "flow_id": flow_id,
                 "inputs": input_context,
-                "task_outputs": {},
-                "iterations": {},
+                "task_outputs": seeded_task_outputs,
+                "iterations": seeded_iterations,
                 "router_decisions": {},
                 "errors": [],
                 "pending_approval": None,
@@ -159,9 +179,13 @@ class PlaybookFlowRuntimeServicer:
         logger.info("[grpc] ResumeApproval request received", execution_id=execution_id, decision=decision)
         active = self._active_executions.get(execution_id)
         if active is None:
+            if pb is None:
+                return {"resumed": False}
             return pb.ResumeApprovalResponse(resumed=False)
 
         resumed = active.set_resume_input(Command(resume={"decision": decision, "payload": payload}))
+        if pb is None:
+            return {"resumed": resumed}
         return pb.ResumeApprovalResponse(resumed=resumed)
 
 

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -16,9 +16,11 @@ import { FlowRouterDecision, FlowRouterDecisionDocument } from '../schemas/playb
 import { PlaybookFlowQueueService } from './playbook-flow-queue.service';
 import { PlaybookFlowIdempotencyService } from './playbook-flow-idempotency.service';
 import { PlaybookFlowService } from './playbook-flow.service';
+import { FlowSnapshot } from '../mappers/flow-to-snapshot.mapper';
 import { PlaybookFlowBuilderService } from './playbook-flow-builder.service';
 import { PlaybookFlowValidatorService } from './playbook-flow-validator.service';
 import { PlaybookFlowStreamEventsService } from './playbook-flow-stream-events.service';
+import { PlaybookFlowExecutionAdvisorService } from './advisor/playbook-flow-execution-advisor.service';
 import { RESERVED_LABELS } from '../constants/reserved-labels';
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import {
@@ -36,6 +38,17 @@ import {
   IResumeApprovalPayload,
 } from '../interfaces/playbook-flow-execution.interface';
 import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
+import {
+  flattenUsage,
+} from './observability/playbook-flow-observability.mapper';
+import {
+  FlowToolTraceItem,
+  FlowLlmPromptTraceItem,
+  FlowUsageSummary,
+  FlowSemanticMatchSummary,
+  FlowCompletedResultPayload,
+} from '../interfaces/playbook-flow-observability.interface';
 
 export function toGrpcValue(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) {
@@ -128,7 +141,13 @@ function stripRuntimeAgentMetadata(metadata: Record<string, unknown>): Record<st
   return sanitizedMetadata;
 }
 
-const SINGLE_STEP_UNSUPPORTED_MESSAGE = 'Single-step execution only supports standalone step nodes without incoming edges or data bindings.';
+const SINGLE_STEP_UNSUPPORTED_MESSAGE = 'Single-step execution only supports step nodes outside iterators. Dependent nodes require completed upstream results.';
+
+interface SeededTaskOutput {
+  nodeId: string;
+  iteration: number;
+  payload: FlowCompletedResultPayload;
+}
 
 @Injectable()
 export class PlaybookFlowExecutionService implements OnModuleInit {
@@ -146,11 +165,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly configService: ConfigService,
     private readonly queueService: PlaybookFlowQueueService,
     private readonly idempotencyService: PlaybookFlowIdempotencyService,
+    @Inject(forwardRef(() => PlaybookFlowService))
     private readonly flowService: PlaybookFlowService,
     private readonly builderService: PlaybookFlowBuilderService,
     private readonly validatorService: PlaybookFlowValidatorService,
     private readonly agentService: AgentService,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
+    private readonly observabilityService: PlaybookFlowObservabilityService,
+    @Inject(forwardRef(() => PlaybookFlowExecutionAdvisorService))
+    private readonly advisorService: PlaybookFlowExecutionAdvisorService,
   ) {}
 
   onModuleInit() {
@@ -227,6 +250,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     inputContext?: Record<string, unknown>,
     idempotencyKey?: string,
     singleStepTaskId?: string,
+    advisorAutopilotEnabled?: boolean,
+    advisorAutopilotTargetScore?: number,
+    advisorAutopilotMaxTurns?: number,
   ): Promise<IFlowExecutionResponse> {
     const flow = await this.flowService.findOne(flowId, ownerId);
 
@@ -262,7 +288,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
 
     if (singleStepTaskId) {
-      this.assertSingleStepSupported(flow.nodes, flow.controlEdges, flow.dataBindings, singleStepTaskId);
+      this.assertSingleStepSupported(flow.nodes, singleStepTaskId);
+      this.assertSingleStepControlDependenciesSupported(flow.nodes, flow.controlEdges, singleStepTaskId);
     }
 
     const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
@@ -290,6 +317,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const fullSnapshot = this.builderService.buildSnapshot(flow as any);
 
     let snapshot: any;
+    let seededTaskOutputs: SeededTaskOutput[] = [];
     if (singleStepTaskId) {
       const allNodes = (fullSnapshot as any).nodes || [];
       const targetNode = allNodes.find((n: any) => n.id === singleStepTaskId);
@@ -299,16 +327,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           `Single-step target node ${singleStepTaskId} not found`,
         );
       }
+      const targetBindings = ((fullSnapshot as any).dataBindings || [])
+        .filter((binding: DataBinding) => binding.targetNode === singleStepTaskId);
       snapshot = {
         ...fullSnapshot,
         nodes: [targetNode],
         controlEdges: [],
-        dataBindings: [],
+        dataBindings: targetBindings,
       };
+      seededTaskOutputs = await this.buildSeededTaskOutputsForSingleStep(
+        flowId,
+        ownerId,
+        singleStepTaskId,
+        fullSnapshot,
+        targetBindings,
+      );
     } else {
       snapshot = fullSnapshot;
     }
 
+    const enabledAutopilot = advisorAutopilotEnabled ?? (flow as any).advisorAutopilotEnabled ?? false;
     const execution = new this.executionModel({
       flowId,
       ownerId,
@@ -320,6 +358,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       idempotencyKey,
       snapshot,
       singleStepTaskId: singleStepTaskId || undefined,
+      advisorAutopilotEnabled: enabledAutopilot,
+      advisorAutopilotTargetScore: advisorAutopilotTargetScore ?? (flow as any).advisorAutopilotTargetScore ?? undefined,
+      advisorAutopilotMaxTurns: advisorAutopilotMaxTurns ?? (flow as any).advisorAutopilotMaxTurns ?? undefined,
+      seededTaskOutputs,
     });
 
     const saved = await execution.save();
@@ -356,8 +398,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   private assertSingleStepSupported(
     nodes: FlowNode[],
-    controlEdges: ControlEdge[],
-    dataBindings: DataBinding[],
     singleStepTaskId: string,
   ): void {
     const targetNode = nodes.find((node) => node.id === singleStepTaskId);
@@ -370,15 +410,170 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     const kind = targetNode.kind;
     const containerConfig = (targetNode.metadata as { containerConfig?: { parentIteratorId?: string | null } } | undefined)?.containerConfig;
-    const hasIncomingEdge = controlEdges.some((edge) => edge.target === singleStepTaskId);
-    const hasTargetBinding = dataBindings.some((binding) => binding.targetNode === singleStepTaskId);
 
-    if (kind !== 'step' || containerConfig?.parentIteratorId || hasIncomingEdge || hasTargetBinding) {
+    if (kind !== 'step' || containerConfig?.parentIteratorId) {
       throw new BadRequestException(
         ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
         SINGLE_STEP_UNSUPPORTED_MESSAGE,
       );
     }
+  }
+
+  private assertSingleStepControlDependenciesSupported(
+    nodes: FlowNode[],
+    controlEdges: ControlEdge[],
+    singleStepTaskId: string,
+  ): void {
+    const incomingEdges = controlEdges.filter((edge) => edge.target === singleStepTaskId);
+    const unsupportedEdge = incomingEdges.find((edge) => {
+      if (edge.kind !== 'sequential') {
+        return true;
+      }
+
+      const sourceNode = nodes.find((node) => node.id === edge.source);
+      return !sourceNode || sourceNode.kind !== 'step';
+    });
+
+    if (unsupportedEdge) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        'Single-step execution only supports nodes reached by sequential step dependencies.',
+      );
+    }
+  }
+
+  private async buildSeededTaskOutputsForSingleStep(
+    flowId: string,
+    ownerId: string,
+    singleStepTaskId: string,
+    currentSnapshot: FlowSnapshot,
+    bindings: DataBinding[],
+  ): Promise<SeededTaskOutput[]> {
+    const requiredBindingHistory = new Map<string, number>();
+    for (const binding of bindings) {
+      if (binding.sourceKind !== 'node-output' || typeof binding.sourceNode !== 'string' || !binding.sourceNode.trim()) {
+        continue;
+      }
+
+      const sourceNodeId = binding.sourceNode.trim();
+      const requiredCount = binding.iteration === 'previous' ? 2 : 1;
+      requiredBindingHistory.set(sourceNodeId, Math.max(requiredBindingHistory.get(sourceNodeId) ?? 0, requiredCount));
+    }
+
+    const requiredSourceNodeIds = [...requiredBindingHistory.keys()];
+
+    if (requiredSourceNodeIds.length === 0) {
+      return [];
+    }
+
+    const currentSnapshotNodes = Array.isArray(currentSnapshot.nodes)
+      ? currentSnapshot.nodes as unknown as Array<Record<string, unknown>>
+      : [];
+
+    const completedExecutions = await this.executionModel.find({
+      flowId,
+      ownerId,
+      status: 'completed',
+    }).select('+snapshot').sort({ createdAt: -1 }).limit(20).lean().exec();
+
+    let matchingExecution: Record<string, unknown> | null = null;
+    for (const exec of completedExecutions) {
+      const execSnapshot = (exec as Record<string, unknown>).snapshot;
+      const execSnapshotNodes = Array.isArray(execSnapshot && (execSnapshot as Record<string, unknown>).nodes)
+        ? ((execSnapshot as Record<string, unknown>).nodes as Array<Record<string, unknown>>)
+        : [];
+      const allUpstreamMatch = requiredSourceNodeIds.every((sourceNodeId) => {
+        const priorNode = execSnapshotNodes.find((node) => node.id === sourceNodeId);
+        const currentNode = currentSnapshotNodes.find((node) => node.id === sourceNodeId);
+        return priorNode && currentNode && JSON.stringify(priorNode) === JSON.stringify(currentNode);
+      });
+      if (allUpstreamMatch) {
+        matchingExecution = exec as unknown as Record<string, unknown>;
+        break;
+      }
+    }
+
+    if (!matchingExecution) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        `Single-step execution for node ${singleStepTaskId} requires a previous completed execution with matching upstream node snapshots.`,
+      );
+    }
+
+    const taskResults = await this.taskResultModel.find({
+      executionId: matchingExecution._id?.toString() ?? matchingExecution.id,
+      taskId: { $in: requiredSourceNodeIds },
+      status: 'completed',
+    }).sort({ iteration: -1, endedAt: -1 }).lean().exec();
+
+    const resultsByTaskId = new Map<string, Array<Record<string, unknown>>>();
+    for (const result of taskResults) {
+      const existing = resultsByTaskId.get(result.taskId) ?? [];
+      existing.push(result as unknown as Record<string, unknown>);
+      resultsByTaskId.set(result.taskId, existing);
+    }
+
+    const missingSourceNodeIds = requiredSourceNodeIds.filter((taskId) => {
+      const requiredCount = requiredBindingHistory.get(taskId) ?? 1;
+      return (resultsByTaskId.get(taskId)?.length ?? 0) < requiredCount;
+    });
+    if (missingSourceNodeIds.length > 0) {
+      throw new BadRequestException(
+        ErrorCode.PLAYBOOK_FLOW_VALIDATION_FAILED,
+        `Single-step execution for node ${singleStepTaskId} requires completed upstream results for: ${missingSourceNodeIds.join(', ')}`,
+      );
+    }
+
+    return requiredSourceNodeIds.flatMap((taskId) => {
+      const requiredCount = requiredBindingHistory.get(taskId) ?? 1;
+      const results = (resultsByTaskId.get(taskId) ?? []).slice(0, requiredCount);
+      return results.map((result) => ({
+        nodeId: taskId,
+        iteration: Number(result.iteration ?? 0),
+        payload: this.mapTaskResultToSeedPayload(result),
+      }));
+    });
+  }
+
+  private mapTaskResultToSeedPayload(result: Record<string, unknown>): FlowCompletedResultPayload {
+      const displayText = typeof result.displayText === 'string' ? result.displayText : undefined;
+    const rawOutput = result.output;
+    const output = typeof rawOutput === 'string'
+      ? rawOutput
+      : displayText && displayText.length > 0
+        ? displayText
+        : JSON.stringify(rawOutput ?? '');
+
+    const outputRecord = rawOutput && typeof rawOutput === 'object'
+      ? rawOutput as Record<string, unknown>
+      : null;
+
+    let outputs: Record<string, unknown> | undefined;
+    if (result.outputs && typeof result.outputs === 'object') {
+      outputs = result.outputs as Record<string, unknown>;
+    } else if (outputRecord && typeof outputRecord.outputs === 'object' && outputRecord.outputs !== null) {
+      outputs = outputRecord.outputs as Record<string, unknown>;
+    } else if (typeof result.output === 'string') {
+      try {
+        const parsed = JSON.parse(result.output);
+        if (parsed && typeof parsed === 'object' && parsed.outputs && typeof parsed.outputs === 'object') {
+          outputs = parsed.outputs as Record<string, unknown>;
+        }
+      } catch { /* not JSON or no outputs field */ }
+    }
+
+    return {
+      output,
+      ...(displayText ? { displayText } : {}),
+      ...(outputs ? { outputs } : {}),
+      ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Array<Record<string, unknown>> } : {}),
+      ...(Array.isArray(result.components) ? { components: result.components as Array<Record<string, unknown>> } : {}),
+      ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace as unknown as FlowToolTraceItem[] } : {}),
+      ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] } : {}),
+      ...(result.usage ? { usage: result.usage as FlowUsageSummary } : {}),
+      ...(result.semanticMatch ? { semanticMatch: result.semanticMatch as FlowSemanticMatchSummary } : {}),
+      ...(result.traceMetadata ? { traceMetadata: result.traceMetadata as Record<string, unknown> } : {}),
+    };
   }
 
   private async callGrpcRun(
@@ -470,10 +665,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       }
     }
 
-    const request = {
-      execution_id: executionId,
-      flow_id: flowId,
-      owner_id: normalizedOwnerId,
+      const executionRecord = await this.executionModel.findById(executionId, 'seededTaskOutputs').lean().exec();
+      const seededTaskOutputs = Array.isArray((executionRecord as Record<string, unknown> | null)?.seededTaskOutputs)
+        ? ((executionRecord as Record<string, unknown>).seededTaskOutputs as Array<SeededTaskOutput>)
+        : [];
+
+      const request = {
+        execution_id: executionId,
+        flow_id: flowId,
+        owner_id: normalizedOwnerId,
       snapshot: {
         nodes: (enrichedNodes as any[]).map((n) => ({
           id: n.id,
@@ -557,11 +757,29 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         ...(inputContext || {}),
         __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
       }),
-      settings: {
-        recursion_limit: recursionLimit,
-        max_parallelism: maxParallelism,
-      },
-    };
+        settings: {
+          recursion_limit: recursionLimit,
+          max_parallelism: maxParallelism,
+        },
+        seeded_task_outputs: seededTaskOutputs.map((entry) => ({
+          node_id: entry.nodeId,
+          iteration: entry.iteration,
+          payload: toGrpcStruct({
+            output: entry.payload.output,
+            ...(entry.payload.displayText ? { display_text: entry.payload.displayText } : {}),
+            ...(entry.payload.artifacts ? { artifacts: entry.payload.artifacts } : {}),
+            ...(entry.payload.components ? { components: entry.payload.components } : {}),
+            ...(entry.payload.toolTrace ? { tool_trace: entry.payload.toolTrace } : {}),
+            ...(entry.payload.llmPromptTrace ? { llm_prompt_trace: entry.payload.llmPromptTrace } : {}),
+            ...(entry.payload.usage ? { usage: entry.payload.usage } : {}),
+            ...(entry.payload.semanticMatch ? { semantic_match: entry.payload.semanticMatch } : {}),
+            ...(entry.payload.traceMetadata ? { trace_metadata: entry.payload.traceMetadata } : {}),
+            ...(('outputs' in entry.payload && (entry.payload as unknown as Record<string, unknown>).outputs)
+              ? { outputs: (entry.payload as unknown as Record<string, unknown>).outputs }
+              : {}),
+          }),
+        })),
+      };
 
     const call = this.playbookFlowClient.Run(request);
     let finalized = false;
@@ -771,7 +989,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
       }
     } else if (eventType === 'NodeCompleted') {
-      const resultPayload = this.extractCompletedResultPayload(payload);
+      const resultPayload = this.observabilityService.extractCompletedResultPayload(payload, {
+        executionId,
+        taskId: taskNodeId,
+      });
 
       await this.taskResultModel.updateOne(
         { executionId, taskId: taskNodeId, iteration },
@@ -780,8 +1001,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             status: 'completed',
             output: resultPayload.output,
             displayText: resultPayload.displayText,
+            outputs: resultPayload.outputs,
             artifacts: resultPayload.artifacts,
             components: resultPayload.components,
+            toolTrace: resultPayload.toolTrace,
+            llmPromptTrace: resultPayload.llmPromptTrace,
+            usage: resultPayload.usage,
+            semanticMatch: resultPayload.semanticMatch,
+            traceMetadata: resultPayload.traceMetadata,
             error: null,
             endedAt: new Date(),
           },
@@ -802,7 +1029,15 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         iteration,
         resultPayload.artifacts,
         resultPayload.components,
+        this.observabilityService.toStreamPayload(resultPayload),
       );
+
+      const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled').lean().exec();
+      if (execDoc?.advisorAutopilotEnabled && execDoc.ownerId) {
+        this.advisorService.runTaskEvaluation(executionId, taskNodeId, String(execDoc.ownerId), { iteration }).catch((err) => {
+          this.logger.warn(`Auto-advisor evaluation failed for ${executionId}:${taskNodeId}: ${err instanceof Error ? err.message : String(err)}`);
+        });
+      }
     } else if (eventType === 'NodeFailed') {
       const errorMessage = String(payload.error || 'Node execution failed');
       await this.taskResultModel.updateOne(
@@ -960,20 +1195,34 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     return {
       ...(execution.toJSON() as unknown as IFlowExecutionResponse),
-      taskResults: taskResults.map((r) => ({
-        id: (r as unknown as Record<string, unknown>)._id as string,
-        executionId: r.executionId,
-        taskId: r.taskId,
-        iteration: r.iteration,
-        status: r.status,
-        output: r.output,
-        displayText: r.displayText,
-        artifacts: r.artifacts,
-        components: r.components,
-        error: r.error,
-        startedAt: r.startedAt,
-        endedAt: r.endedAt,
-      })),
+      taskResults: taskResults.map((r): IFlowTaskResultResponse => {
+        const doc = r as unknown as Record<string, unknown>;
+        return {
+          id: doc._id as string,
+          executionId: r.executionId,
+          taskId: r.taskId,
+          iteration: r.iteration,
+          status: r.status,
+          output: r.output,
+          displayText: r.displayText,
+          outputs: (r as any).outputs,
+          artifacts: r.artifacts,
+          components: r.components,
+          error: r.error,
+          startedAt: r.startedAt,
+          endedAt: r.endedAt,
+          toolTrace: r.toolTrace as unknown as FlowToolTraceItem[] | undefined,
+          llmPromptTrace: r.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] | undefined,
+          usage: r.usage as unknown as FlowUsageSummary | null | undefined,
+          ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),
+          semanticMatch: r.semanticMatch as unknown as FlowSemanticMatchSummary | null | undefined,
+          traceMetadata: r.traceMetadata as Record<string, unknown> ?? {},
+          judgeStatus: (r as any).judgeStatus ?? 'idle',
+          judgeResult: (r as any).judgeResult ?? null,
+          judgeError: (r as any).judgeError ?? null,
+          judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
+        };
+      }),
       routerDecisions: routerDecisions.map((r) => ({
         id: (r as unknown as Record<string, unknown>)._id as string,
         executionId: r.executionId,
@@ -1058,43 +1307,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     return execution.toJSON() as unknown as IFlowExecutionResponse;
-  }
-
-  private extractCompletedResultPayload(payload: Record<string, unknown>): {
-    output: string;
-    displayText?: string;
-    artifacts?: Array<Record<string, unknown>>;
-    components?: Array<Record<string, unknown>>;
-  } {
-    const cleanPayload = this.unwrapGrpcValue(payload) as Record<string, unknown>;
-    const cleanOutput = this.unwrapGrpcValue(cleanPayload.output ?? cleanPayload);
-    const displayText = typeof cleanPayload.display_text === 'string'
-      ? cleanPayload.display_text
-      : typeof cleanPayload.displayText === 'string'
-        ? cleanPayload.displayText
-        : typeof cleanOutput === 'string'
-          ? cleanOutput
-          : undefined;
-    const output = typeof cleanOutput === 'string'
-      ? cleanOutput
-      : typeof displayText === 'string' && displayText
-        ? displayText
-        : cleanOutput && typeof cleanOutput === 'object'
-          ? JSON.stringify(cleanOutput)
-          : String(cleanOutput ?? '');
-    const artifacts = Array.isArray(cleanPayload.artifacts)
-      ? cleanPayload.artifacts as Array<Record<string, unknown>>
-      : undefined;
-    const components = Array.isArray(cleanPayload.components)
-      ? cleanPayload.components as Array<Record<string, unknown>>
-      : undefined;
-
-    return {
-      output,
-      displayText,
-      artifacts,
-      components,
-    };
   }
 
   async delete(executionId: string, ownerId: string): Promise<void> {

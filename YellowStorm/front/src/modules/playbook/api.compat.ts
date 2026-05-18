@@ -23,7 +23,20 @@ export function kindToNodeType(kind: string): PlaybookNodeType | undefined {
   }
 }
 
-export function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask {
+export function mapFlowNodeToPlaybookTask(
+  node: FlowNode,
+  index: number,
+  activeReplays?: Record<string, {
+    id: string;
+    validationVersion: number;
+    isStale: boolean;
+    staleReasons: string[];
+    preserveOutputFormat: boolean;
+    outputFormatGuide: string | null;
+    formatGuideStatus: string | null;
+    label: string | null;
+  }>,
+): PlaybookTask {
   const meta = (node.metadata ?? {}) as Record<string, unknown>;
   const inputPorts = node.input?.ports?.map((p) => ({
     id: p.id,
@@ -65,6 +78,14 @@ export function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): Playbo
     containerConfig: (meta.containerConfig as any) ?? null,
     expectedResult: (meta.expectedResult as any) ?? undefined,
     disableAdvisorEvaluation: (meta.disableAdvisorEvaluation as boolean) ?? false,
+    hasValidatedReplay: activeReplays ? node.id in activeReplays : (meta.hasValidatedReplay as boolean) ?? false,
+    activeReplayId: activeReplays?.[node.id]?.id ?? (meta.activeReplayId as string | null) ?? null,
+    activeReplayVersion: activeReplays?.[node.id]?.validationVersion ?? (meta.activeReplayVersion as number | null) ?? null,
+    activeReplayIsStale: activeReplays?.[node.id]?.isStale ?? (meta.activeReplayIsStale as boolean | undefined) ?? undefined,
+    activeReplayStaleReasons: activeReplays?.[node.id]?.staleReasons ?? (meta.activeReplayStaleReasons as string[] | undefined) ?? undefined,
+    activeReplayPreserveOutputFormat: activeReplays?.[node.id]?.preserveOutputFormat ?? (meta.activeReplayPreserveOutputFormat as boolean | undefined) ?? undefined,
+    activeReplayFormatGuideStatus: activeReplays?.[node.id]?.formatGuideStatus as PlaybookTask['activeReplayFormatGuideStatus'] ?? (meta.activeReplayFormatGuideStatus as any) ?? undefined,
+    activeReplayLabel: activeReplays?.[node.id]?.label ?? (meta.activeReplayLabel as string | null | undefined) ?? undefined,
     stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
     nodeType: (meta.nodeType as import('./types').PlaybookNodeType) ?? kindToNodeType(node.kind),
     iteratorConfig: node.iteratorConfig
@@ -163,10 +184,11 @@ export function normalizeTriggerFields(raw: any): Pick<Playbook, 'triggers' | 'e
 
 export function normalizePlaybook(raw: any): Playbook {
   const triggerFields = normalizeTriggerFields(raw);
+  const activeReplays: Record<string, any> = raw.activeReplays ?? {};
 
   return {
     ...raw,
-    tasks: raw.tasks ?? raw.nodes?.map(mapFlowNodeToPlaybookTask) ?? [],
+    tasks: raw.tasks ?? raw.nodes?.map((node: FlowNode, index: number) => mapFlowNodeToPlaybookTask(node, index, activeReplays)) ?? [],
     edges: raw.edges ?? raw.controlEdges?.map(mapControlEdgeToPlaybookEdge) ?? [],
     triggers: triggerFields.triggers,
     executionSchedule: triggerFields.executionSchedule,

@@ -809,6 +809,7 @@ export interface TaskResult {
   totalTokens?: number | null;
   modelName?: string | null;
   semanticMatch?: SemanticMatchResult | null;
+  traceMetadata?: Record<string, unknown> | null;
   judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   judgeResult?: {
     accuracyScore: number;
@@ -1014,6 +1015,16 @@ export interface ValidatedTaskReplay {
   formatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   formatGuideError?: string | null;
   llmPromptTrace?: LLMPromptTraceItem[];
+  referenceUsage?: {
+    inputTokens?: number | null;
+    outputTokens?: number | null;
+    totalTokens?: number | null;
+    model?: string | null;
+  } | null;
+  referenceSemanticMatch?: SemanticMatchResult | null;
+  traceMetadata?: Record<string, unknown>;
+  referenceFlowRevision?: number;
+  referenceNodeSnapshot?: Record<string, unknown> | null;
   isStale?: boolean;
   staleReasons?: string[];
   label?: string | null;
@@ -1170,6 +1181,7 @@ export interface PlaybookStepUpdateEvent {
 export interface PlaybookStepCompleteEvent {
   executionId: string;
   taskId: string;
+  iteration?: number;
   status: string;
   output?: string;
   error?: string;
@@ -1182,6 +1194,7 @@ export interface PlaybookStepCompleteEvent {
   totalTokens?: number;
   modelName?: string;
   semanticMatch?: SemanticMatchResult | null;
+  traceMetadata?: Record<string, unknown>;
   iteratorIterations?: IteratorIterationResult[];
   artifacts?: TaskArtifact[];
 }
@@ -1235,12 +1248,14 @@ export interface PlaybookStepEvaluationUpdatedEvent {
 export interface PlaybookStepJudgeStartedEvent {
   executionId: string;
   taskId: string;
+  iteration?: number;
   judgeStatus: 'evaluating';
 }
 
 export interface PlaybookStepJudgeUpdatedEvent {
   executionId: string;
   taskId: string;
+  iteration?: number;
   judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   judgeResult?: TaskResult['judgeResult'];
   judgeError?: string | null;
@@ -1449,6 +1464,14 @@ export interface PaginationMeta {
   totalPages: number;
 }
 
+export interface PortInspection {
+  nodeId: string;
+  portId: string;
+  portName: string;
+  portKind: ArtifactKind;
+  isInput: boolean;
+}
+
 export interface PlaybookState {
   playbooks: PlaybookSummary[];
   playbooksLoading: boolean;
@@ -1509,6 +1532,7 @@ export interface PlaybookState {
   flowNodeKinds: Array<{ kind: string; label: string }>;
   flowNodeKindsLoading: boolean;
   idempotencyKeyCounters: Record<string, number>;
+  portInspection: PortInspection | null;
 }
 
 export interface PlaybookActions {
@@ -1601,6 +1625,7 @@ export interface PlaybookActions {
   updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
   optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
+  runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
   applyAdvisorRemediations: (playbookId: string, executionId: string, data: ApplyRemediationsData) => Promise<Playbook>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
@@ -1719,6 +1744,10 @@ export interface PlaybookActions {
   deleteFlowOutputFormatTemplate: (flowId: string, taskId: string) => Promise<void>;
   generateFlow: (data: { name: string; prompt: string; workspaceIds?: string[] }) => Promise<any>;
   designFlow: (id: string, data: { query: string }) => Promise<any>;
+
+  // Port inspection
+  openPortInspection: (inspection: PortInspection) => void;
+  closePortInspection: () => void;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;

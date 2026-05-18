@@ -6,6 +6,10 @@ import {
   FlowExecution,
   FlowExecutionDocument,
 } from '../schemas/playbook-flow-execution.schema';
+import type {
+  FlowExecutionJudgeHistoryEntry,
+  FlowExecutionJudgeResult,
+} from '../interfaces/playbook-flow-execution-advisor.interface';
 
 @Injectable()
 export class PlaybookFlowStreamEventsService {
@@ -108,6 +112,16 @@ export class PlaybookFlowStreamEventsService {
     iteration?: number,
     artifacts?: Array<Record<string, unknown>>,
     components?: Array<Record<string, unknown>>,
+    observability?: {
+      toolTrace?: unknown[];
+      llmPromptTrace?: unknown[];
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      totalTokens?: number | null;
+      modelName?: string | null;
+      semanticMatch?: unknown;
+      traceMetadata?: Record<string, unknown>;
+    },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
     if (!ownerId) return;
@@ -123,10 +137,56 @@ export class PlaybookFlowStreamEventsService {
     if (iteration !== undefined) data.iteration = iteration;
     if (artifacts !== undefined) data.artifacts = artifacts;
     if (components !== undefined) data.components = components;
+    if (observability?.toolTrace !== undefined) data.toolTrace = observability.toolTrace;
+    if (observability?.llmPromptTrace !== undefined) data.llmPromptTrace = observability.llmPromptTrace;
+    if (observability?.inputTokens !== undefined) data.inputTokens = observability.inputTokens;
+    if (observability?.outputTokens !== undefined) data.outputTokens = observability.outputTokens;
+    if (observability?.totalTokens !== undefined) data.totalTokens = observability.totalTokens;
+    if (observability?.modelName !== undefined) data.modelName = observability.modelName;
+    if (observability?.semanticMatch !== undefined) data.semanticMatch = observability.semanticMatch;
+    if (observability?.traceMetadata !== undefined) data.traceMetadata = observability.traceMetadata;
 
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_step_complete',
       data,
+    });
+  }
+
+  emitStepJudgeStarted(ownerId: string, executionId: string, taskId: string, iteration?: number): void {
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_step_judge_started',
+      data: {
+        executionId,
+        taskId,
+        ...(iteration !== undefined ? { iteration } : {}),
+        judgeStatus: 'evaluating',
+      },
+    });
+  }
+
+  emitStepJudgeUpdated(
+    ownerId: string,
+    executionId: string,
+    taskId: string,
+    payload: {
+      judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+      judgeResult?: FlowExecutionJudgeResult | null;
+      judgeError?: string | null;
+      judgeHistoryEntry?: FlowExecutionJudgeHistoryEntry;
+    },
+    iteration?: number,
+  ): void {
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_step_judge_updated',
+      data: {
+        executionId,
+        taskId,
+        ...(iteration !== undefined ? { iteration } : {}),
+        judgeStatus: payload.judgeStatus,
+        ...(payload.judgeResult !== undefined ? { judgeResult: payload.judgeResult } : {}),
+        ...(payload.judgeError !== undefined ? { judgeError: payload.judgeError } : {}),
+        ...(payload.judgeHistoryEntry !== undefined ? { judgeHistoryEntry: payload.judgeHistoryEntry } : {}),
+      },
     });
   }
 

@@ -91,7 +91,12 @@ describe('PlaybookFlowReplayService', () => {
       }));
 
       taskResultModel.find.mockReturnValue(makeFindChain([
-        { taskId: 'step-1', iteration: 0, status: 'completed', startedAt: t1, endedAt: t2, output: 'hello' },
+        {
+          taskId: 'step-1', iteration: 0, status: 'completed', startedAt: t1, endedAt: t2, output: 'hello',
+          displayText: 'hello', toolTrace: [{ toolName: 'search' }], llmPromptTrace: [{ stage: 'initial_request' }],
+          usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
+          semanticMatch: { matchScore: 0.9 }, traceMetadata: { collected: true },
+        },
         { taskId: 'step-2', iteration: 0, status: 'completed', startedAt: t3, endedAt: t4, output: 'world' },
         { taskId: 'step-3', iteration: 0, status: 'completed', startedAt: t5, endedAt: t6, output: 'done' },
       ]));
@@ -104,7 +109,19 @@ describe('PlaybookFlowReplayService', () => {
       expect(events[0].type).toBe('NodeStarted');
       expect(events[0].data).toMatchObject({ taskId: 'step-1', iteration: 0 });
       expect(events[1].type).toBe('NodeCompleted');
-      expect(events[1].data).toMatchObject({ taskId: 'step-1', output: 'hello' });
+      expect(events[1].data).toMatchObject({
+        taskId: 'step-1',
+        output: 'hello',
+        displayText: 'hello',
+        toolTrace: [{ toolName: 'search' }],
+        llmPromptTrace: [{ stage: 'initial_request' }],
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        modelName: 'gpt-4o-mini',
+        semanticMatch: { matchScore: 0.9 },
+        traceMetadata: { collected: true },
+      });
       expect(events[6].type).toBe('ExecutionCompleted');
     });
 
@@ -204,6 +221,11 @@ describe('PlaybookFlowReplayService', () => {
       taskResultModel.findOne.mockReturnValue(makeFindOneChain({
         executionId: 'exec-1', taskId: 'step-1', iteration: 0,
         output: 'original output',
+        toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: 'ok' }],
+        llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Hello' }],
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
+        semanticMatch: { matchScore: 0.9 },
+        traceMetadata: { collected: true },
       }));
 
       replayModel.findOne.mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }) });
@@ -217,6 +239,15 @@ describe('PlaybookFlowReplayService', () => {
 
       expect(result.validationVersion).toBe(1);
       expect(result.status).toBe(FlowReplayValidationStatus.ACTIVE);
+      expect(replayModel.create).toHaveBeenCalledWith([expect.objectContaining({
+        toolCalls: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: 'ok' }],
+        llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Hello' }],
+        referenceUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
+        referenceSemanticMatch: { matchScore: 0.9 },
+        traceMetadata: { collected: true },
+        isStale: false,
+        staleReasons: [],
+      })]);
     });
 
     it('throws NotFoundException when execution not found', async () => {

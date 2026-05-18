@@ -25,6 +25,7 @@ const apiMock = vi.hoisted(() => ({
   upsertPlaybookTriggerSchedule: vi.fn(),
   clearPlaybookTriggerSchedule: vi.fn(),
   getPlaybookRepeatability: vi.fn(),
+  runAdvisorEvaluation: vi.fn(),
 }));
 
 const toastMock = vi.hoisted(() => ({
@@ -628,6 +629,47 @@ describe('playbook store', () => {
 
     const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
     expect(updated.artifacts).toEqual([expect.objectContaining({ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf', mimeType: 'application/pdf' })]);
+  });
+
+  it('applies completion and judge SSE updates only to the matching iteration', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', output: 'old-0', judgeStatus: 'idle' } as any,
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'running', output: null, judgeStatus: 'idle' } as any,
+      ],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepComplete({
+      executionId: 'e1',
+      taskId: 'task-1',
+      iteration: 1,
+      status: 'completed',
+      output: 'done-1',
+    });
+    usePlaybookStore.getState().onStepJudgeStarted({
+      executionId: 'e1',
+      taskId: 'task-1',
+      iteration: 1,
+      judgeStatus: 'evaluating',
+    });
+    usePlaybookStore.getState().onStepJudgeUpdated({
+      executionId: 'e1',
+      taskId: 'task-1',
+      iteration: 1,
+      judgeStatus: 'evaluated',
+      judgeError: null,
+      judgeResult: { overallScore: 0.9 } as any,
+    });
+
+    const [firstIteration, secondIteration] = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(firstIteration.output).toBe('old-0');
+    expect(firstIteration.judgeStatus).toBe('idle');
+    expect(secondIteration.output).toBe('done-1');
+    expect(secondIteration.judgeStatus).toBe('evaluated');
   });
 
   it('does not restore running playbook status after execution already completed', () => {
@@ -1518,6 +1560,80 @@ describe('playbook store', () => {
       expect(usePlaybookStore.getState().repeatabilityLoading).toBe(false);
       expect(handleApiErrorMock).toHaveBeenCalled();
     });
+  });
+
+  it('updates only the targeted iteration during advisor evaluation', async () => {
+    apiMock.runAdvisorEvaluation.mockResolvedValueOnce({
+      executionId: 'exec-1',
+      taskId: 'task-1',
+      taskResult: {
+        taskId: 'task-1',
+        iteration: 1,
+        status: 'completed',
+        judgeStatus: 'evaluated',
+        judgeResult: { overallScore: 92 },
+        judgeError: null,
+        judgeHistory: [{ id: 'judge-1' }],
+      },
+    });
+
+    usePlaybookStore.setState({
+      currentExecution: makeExecution({
+        id: 'exec-1',
+        status: 'completed',
+        taskResults: [
+          { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+          { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+        ] as any,
+      }),
+      executionCache: {
+        'exec-1': makeExecution({
+          id: 'exec-1',
+          status: 'completed',
+          taskResults: [
+            { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+            { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+          ] as any,
+        }),
+      },
+    });
+
+    await usePlaybookStore.getState().runAdvisorEvaluation('exec-1', 'task-1', 1);
+
+    const taskResults = usePlaybookStore.getState().currentExecution?.taskResults || [];
+    expect(taskResults[0]).toMatchObject({ iteration: 0, judgeStatus: 'idle', judgeResult: null });
+    expect(taskResults[1]).toMatchObject({ iteration: 1, judgeStatus: 'evaluated', judgeResult: { overallScore: 92 } });
+  });
+
+  it('marks only the targeted iteration as failed when advisor evaluation errors', async () => {
+    apiMock.runAdvisorEvaluation.mockRejectedValueOnce(new Error('advisor failed'));
+
+    usePlaybookStore.setState({
+      currentExecution: makeExecution({
+        id: 'exec-2',
+        status: 'completed',
+        taskResults: [
+          { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+          { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+        ] as any,
+      }),
+      executionCache: {
+        'exec-2': makeExecution({
+          id: 'exec-2',
+          status: 'completed',
+          taskResults: [
+            { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+            { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'idle', judgeResult: null, judgeError: null },
+          ] as any,
+        }),
+      },
+    });
+
+    await expect(usePlaybookStore.getState().runAdvisorEvaluation('exec-2', 'task-1', 1)).rejects.toThrow('advisor failed');
+
+    const taskResults = usePlaybookStore.getState().currentExecution?.taskResults || [];
+    expect(taskResults[0]).toMatchObject({ iteration: 0, judgeStatus: 'idle', judgeError: null });
+    expect(taskResults[1]).toMatchObject({ iteration: 1, judgeStatus: 'failed', judgeError: 'parseApiError message' });
   });
 
   describe('clearRepeatability', () => {

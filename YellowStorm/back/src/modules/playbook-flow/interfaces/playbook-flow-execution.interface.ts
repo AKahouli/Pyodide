@@ -1,5 +1,11 @@
 import { PendingApproval } from '../schemas/playbook-flow-execution.schema';
-import { FlowTaskResult } from '../schemas/playbook-flow-task-result.schema';
+import {
+  FlowLlmPromptTraceItem,
+  FlowSemanticMatchSummary,
+  FlowToolTraceItem,
+  FlowUsageSummary,
+} from './playbook-flow-observability.interface';
+import type { FlowExecutionJudgeHistoryEntry, FlowExecutionJudgeResult } from './playbook-flow-execution-advisor.interface';
 
 export interface IFlowExecutionResponse {
   id: string;
@@ -39,11 +45,25 @@ export interface IFlowTaskResultResponse {
   status: string;
   output?: unknown;
   displayText?: string;
+  outputs?: Record<string, unknown>;
   artifacts?: Array<Record<string, unknown>>;
   components?: Array<Record<string, unknown>>;
   error?: string;
   startedAt?: Date;
   endedAt?: Date;
+  toolTrace?: FlowToolTraceItem[];
+  llmPromptTrace?: FlowLlmPromptTraceItem[];
+  usage?: FlowUsageSummary | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  modelName?: string | null;
+  semanticMatch?: FlowSemanticMatchSummary | null;
+  traceMetadata?: Record<string, unknown>;
+  judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeResult?: FlowExecutionJudgeResult | null;
+  judgeError?: string | null;
+  judgeHistory?: FlowExecutionJudgeHistoryEntry[];
 }
 
 export interface IFlowExecutionDetailResponse extends IFlowExecutionResponse {

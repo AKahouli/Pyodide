@@ -322,6 +322,7 @@ export const API_ENDPOINTS = {
     execute: (id: string) => `/playbooks/${id}/executions`,
     executions: (id: string) => `/playbooks/${id}/executions`,
     executionDetail: (executionId: string) => `/executions/${executionId}`,
+    runAdvisorEvaluation: (executionId: string, taskId: string) => `/executions/${executionId}/tasks/${taskId}/advisor-evaluation`,
     cancelExecution: (executionId: string) => `/executions/${executionId}/cancel`,
     resumeApproval: (executionId: string) => `/executions/${executionId}/resume-approval`,
     deleteExecution: (executionId: string) => `/executions/${executionId}`,

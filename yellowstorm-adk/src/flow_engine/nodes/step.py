@@ -18,6 +18,7 @@ from langgraph.config import get_stream_writer
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
+from src.flow_engine.observability import TraceCollector, extract_usage
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
 from src.flow_engine.nodes.step_tools import (
     build_agent_config,
@@ -147,6 +148,8 @@ async def run_step(
         iteration=iteration,
         trigger_context=trigger_context if isinstance(trigger_context, dict) else None,
     )
+    trace_collector = TraceCollector()
+    trace_collector.record_prompt("initial_request", model_id, f"[system] {system_prompt}\n\n[user] {user_msg}")
 
     try:
         litellm.api_base = settings.LITELLM_API_BASE_URL
@@ -186,6 +189,7 @@ async def run_step(
                     "iteration": iteration,
                     "token": token,
                 }),
+                trace_collector=trace_collector,
             )
             if full_output and not structured_output:
                 writer({
@@ -235,6 +239,8 @@ async def run_step(
                         "token": str(delta.model_extra.get("tool_calls", "")),
                     })
 
+            trace_collector.record_usage(extract_usage(response, model_id))
+
         logger.info("[step] Step completed", node_id=node_id, streamed_chars=len(full_output))
 
         result_payload = finalize_step_result(
@@ -246,6 +252,7 @@ async def run_step(
             "node_id": node_id,
             "iteration": iteration,
         })
+        result_payload.update(trace_collector.build_payload())
         writer({
             "type": "NodeCompleted",
             "node_id": node_id,

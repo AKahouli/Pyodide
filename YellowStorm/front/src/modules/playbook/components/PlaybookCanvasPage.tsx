@@ -189,7 +189,7 @@ function isIteratorChildTask(task: Pick<PlaybookTask, 'containerConfig'> | null 
 }
 
 function canExecuteSingleStep(
-  playbook: Pick<import('../types').Playbook, 'edges' | 'dataBindings'> | null | undefined,
+  playbook: Pick<import('../types').Playbook, 'edges' | 'dataBindings' | 'tasks'> | null | undefined,
   task: PlaybookTask | null | undefined,
 ): boolean {
   if (!task) return false;
@@ -200,9 +200,15 @@ function canExecuteSingleStep(
     return false;
   }
 
-  const hasIncomingEdge = (playbook?.edges ?? []).some((edge) => edge.targetId === task.id);
-  const hasDataBinding = (playbook?.dataBindings ?? []).some((binding) => binding.targetNode === task.id);
-  return !hasIncomingEdge && !hasDataBinding;
+  const incomingEdges = (playbook?.edges ?? []).filter((edge) => edge.targetId === task.id);
+  const tasks = playbook?.tasks ?? [];
+  const hasUnsupportedIncomingEdge = incomingEdges.some((edge) => {
+    const sourceTask = tasks.find((t) => t.id === edge.sourceId);
+    if (!sourceTask) return true;
+    const sourceKind = sourceTask.nodeType || 'agent';
+    return !['agent', 'action', 'evaluation'].includes(sourceKind);
+  });
+  return !hasUnsupportedIncomingEdge;
 }
 
 const STEP_STATUS_PRIORITY: Record<StepStatus, number> = {
@@ -2048,8 +2054,11 @@ function PlaybookCanvasInner() {
       stepExecutionModes,
       streaming: true,
       runNodeReflection: nodeReflectionEnabled,
+      advisorAutopilotEnabled: playbook.advisorAutopilotEnabled === true,
+      advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+      advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
     });
-  }, [id, playbook, isDirty, saveNow, executePlaybook, nodeReflectionEnabled, setPageMode]);
+  }, [id, playbook, isDirty, saveNow, executePlaybook, nodeReflectionEnabled, setPageMode, t]);
 
   const handleStop = useCallback(async () => {
     const activeExec = currentExecution?.playbookId === id ? currentExecution : execution;
@@ -2135,14 +2144,14 @@ function PlaybookCanvasInner() {
       try {
         await updatePlaybook(id, {
           reflectionEnabled: enabled,
-          advisorAutopilotEnabled: playbook.advisorAutopilotEnabled,
+          advisorAutopilotEnabled,
           advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
           advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
         });
       } catch {
       }
     },
-    [id, playbook, updatePlaybook],
+    [advisorAutopilotEnabled, id, playbook, updatePlaybook],
   );
 
   const handleAdvisorAutopilotChange = useCallback(

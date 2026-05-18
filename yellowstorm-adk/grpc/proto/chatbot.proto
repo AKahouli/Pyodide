@@ -369,6 +369,7 @@ service ChatbotService {
     rpc EvaluateSemanticMatch(EvaluateSemanticMatchRequest) returns (EvaluateSemanticMatchResponse);
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
     rpc StopPlaybookWorkflow(StopPlaybookWorkflowRequest) returns (StopPlaybookWorkflowResponse);
+    rpc EvaluateTask(TaskAdvisorRequest) returns (TaskAdvisorResult);
     rpc AdvisePlaybookNode(AdvisePlaybookNodeRequest) returns (AdvisePlaybookNodeResponse);
 }
 
@@ -742,6 +743,60 @@ message EvaluateSemanticMatchRequest {
 message EvaluateSemanticMatchResponse {
     bool has_match = 1;
     SemanticMatch semantic_match = 2;
+}
+
+message TaskAdvisorToolTraceItem {
+    int32 call_index = 1;
+    string tool_name = 2;
+    google.protobuf.Struct args = 3;
+    string output_summary = 4;
+}
+
+message TaskAdvisorRequest {
+    string execution_id = 1;
+    string owner_id = 2;
+    string playbook_id = 3;
+    string task_id = 4;
+    string task_title = 5;
+    string task_description = 6;
+    string expected_result = 7;
+    string output_format_guide = 8;
+    string baseline_output = 9;
+    string task_output = 10;
+    string task_error = 11;
+    string task_status = 12;
+    repeated TaskAdvisorToolTraceItem tool_trace = 13;
+    string artifacts_json = 14;
+    google.protobuf.Struct task_metadata = 15;
+}
+
+message TaskAdvisorResult {
+    int32 accuracy_score = 1;
+    int32 completeness_score = 2;
+    int32 result_matching_score = 3;
+    int32 overall_score = 4;
+    double confidence = 5;
+    int32 tool_usage_score = 6;
+    string expected_result_source = 7;
+    string expected_result_type = 8;
+    bool expected_result_matched = 9;
+    string expected_result_reason = 10;
+    repeated string missing_facts = 11;
+    repeated string incoherences = 12;
+    repeated string unsupported_claims = 13;
+    repeated string handoff_risks = 14;
+    repeated string rewrite_hints = 15;
+    repeated string tool_selection_issues = 16;
+    repeated string missing_tool_calls = 17;
+    repeated string redundant_tool_calls = 18;
+    repeated string tool_output_use_issues = 19;
+    repeated string tool_sequencing_issues = 20;
+    repeated string tool_usage_strengths = 21;
+    string tool_usage_recommendation = 22;
+    string safe_auto_fix_type = 23;
+    string recommendation = 24;
+    string reason = 25;
+    string model = 26;
 }
 
 enum NodeAdvisorSuggestionType {

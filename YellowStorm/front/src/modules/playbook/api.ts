@@ -54,7 +54,8 @@ import type {
   PlaybookEdge,
   PlaybookNodeType,
   RouterDecision,
-} from './types';
+  TaskResult,
+ } from './types';
 import {
   normalizePlaybook,
   taskToFlowNode,
@@ -379,10 +380,10 @@ function normalizeTaskArtifact(raw: unknown): import('./types').TaskArtifact | n
   return {
     portId: toNullableString(record.portId ?? record.port_id) ?? 'default',
     artifactKind: (toNullableString(record.artifactKind ?? record.artifact_kind) ?? 'text') as import('./types').ArtifactKind,
-    content: toNullableString(record.content),
-    url: toNullableString(record.url ?? record.ref ?? record.filePath ?? record.file_path),
-    filename: toNullableString(record.filename),
-    mimeType: toNullableString(record.mimeType ?? record.mime_type),
+    content: toNullableString(record.content) ?? undefined,
+    url: toNullableString(record.url ?? record.ref ?? record.filePath ?? record.file_path) ?? undefined,
+    filename: toNullableString(record.filename) ?? undefined,
+    mimeType: toNullableString(record.mimeType ?? record.mime_type) ?? undefined,
     size: toNullableNumber(record.size) ?? undefined,
     metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
   };
@@ -420,6 +421,7 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     nodeTitle: toNullableString(raw.nodeTitle) ?? toNullableString(raw.taskTitle) ?? toNullableString(raw.taskId) ?? '',
     agentName: toNullableString(raw.agentName) ?? '',
     order: typeof raw.order === 'number' ? raw.order : index + 1,
+    iteration: toNullableNumber(raw.iteration) ?? undefined,
     status: raw.status ?? 'pending',
     output: toNullableString(raw.output),
     displayText: toNullableString(raw.displayText ?? raw.display_text),
@@ -434,6 +436,22 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     outputTokens: toNullableNumber(raw.outputTokens),
     totalTokens: toNullableNumber(raw.totalTokens),
     modelName: toNullableString(raw.modelName),
+    semanticMatch: raw.semanticMatch ?? null,
+    traceMetadata: raw.traceMetadata ?? null,
+    judgeStatus: raw.judgeStatus ?? 'idle',
+    judgeResult: raw.judgeResult ?? null,
+    judgeError: toNullableString(raw.judgeError),
+    judgeHistory: Array.isArray(raw.judgeHistory) ? raw.judgeHistory : [],
+    advisorTurnCount: toNullableNumber(raw.advisorTurnCount) ?? undefined,
+    advisorTurnHistory: Array.isArray(raw.advisorTurnHistory) ? raw.advisorTurnHistory : [],
+    advisorOptimizationHistory: Array.isArray(raw.advisorOptimizationHistory) ? raw.advisorOptimizationHistory : [],
+    lastAdvisorAction: toNullableString(raw.lastAdvisorAction),
+    lastAdvisorScoreDelta: toNullableNumber(raw.lastAdvisorScoreDelta) ?? undefined,
+    advisorStopReason: toNullableString(raw.advisorStopReason),
+    attemptNumber: toNullableNumber(raw.attemptNumber) ?? undefined,
+    isStale: Boolean(raw.isStale),
+    staleReason: toNullableString(raw.staleReason),
+    invalidatedByTaskId: toNullableString(raw.invalidatedByTaskId),
     artifacts: normalizeTaskArtifacts(raw.artifacts),
     iteratorIterations: Array.isArray(raw.iteratorIterations) ? raw.iteratorIterations : [],
   };
@@ -485,9 +503,27 @@ function normalizeExecution(raw: any): PlaybookExecution {
     totalQueueSize: toNullableNumber(raw.totalQueueSize),
     recursionBudgetUsed: toNullableNumber(raw.recursionBudgetUsed),
     recursionBudgetMax: toNullableNumber(raw.recursionBudgetMax) ?? toNullableNumber(raw.recursionLimit),
+    advisorAutopilotEnabled: Boolean(raw.advisorAutopilotEnabled),
+    advisorAutopilotTargetScore: toNullableNumber(raw.advisorAutopilotTargetScore) ?? undefined,
+    advisorAutopilotMaxTurns: toNullableNumber(raw.advisorAutopilotMaxTurns) ?? undefined,
+    advisorAutopilotStatus: raw.advisorAutopilotStatus ?? undefined,
+    advisorAutopilotTaskId: toNullableString(raw.advisorAutopilotTaskId),
+    advisorAutopilotAttemptCount: toNullableNumber(raw.advisorAutopilotAttemptCount) ?? undefined,
+    advisorAutopilotLastError: toNullableString(raw.advisorAutopilotLastError),
+    judgeSummaryStatus: raw.judgeSummaryStatus ?? 'idle',
+    judgeSummary: raw.judgeSummary ?? null,
+    replaySourceByTask: raw.replaySourceByTask ?? null,
     error: summary.error,
   };
 }
+
+type RunAdvisorEvaluationResponse = {
+  executionId: string;
+  taskId: string;
+  taskResult: TaskResult;
+  judgeSummaryStatus?: PlaybookExecution['judgeSummaryStatus'];
+  judgeSummary?: PlaybookExecution['judgeSummary'];
+};
 
 export async function getPlaybook(id: string): Promise<Playbook> {
   const response = await apiClient.get<ApiResponse<Playbook>>(
@@ -572,6 +608,11 @@ export async function updatePlaybook(
     description: sanitized.description,
     workspaces: sanitized.workspaces,
   };
+
+  if (sanitized.reflectionEnabled !== undefined) body.reflectionEnabled = sanitized.reflectionEnabled;
+  if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
+  if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
+  if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
 
   if (data.settings) body.settings = data.settings;
 
@@ -688,7 +729,11 @@ export async function executePlaybook(
   id: string,
   data?: ExecutePlaybookData,
 ): Promise<{ executionId: string }> {
-  const payload = data?.singleStepTaskId ? { singleStepTaskId: data.singleStepTaskId } : {};
+  const payload: Record<string, unknown> = {};
+  if (data?.singleStepTaskId) payload.singleStepTaskId = data.singleStepTaskId;
+  if (data?.advisorAutopilotEnabled !== undefined) payload.advisorAutopilotEnabled = data.advisorAutopilotEnabled;
+  if (data?.advisorAutopilotTargetScore !== undefined) payload.advisorAutopilotTargetScore = data.advisorAutopilotTargetScore;
+  if (data?.advisorAutopilotMaxTurns !== undefined) payload.advisorAutopilotMaxTurns = data.advisorAutopilotMaxTurns;
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(id),
     payload,
@@ -963,6 +1008,27 @@ export async function getExecution(
   return normalizeExecution(response.data.data);
 }
 
+export async function runAdvisorEvaluation(
+  executionId: string,
+  taskId: string,
+  iteration?: number,
+): Promise<RunAdvisorEvaluationResponse> {
+  const response = await apiClient.post<ApiResponse<any>>(
+    API_ENDPOINTS.playbookFlows.runAdvisorEvaluation(executionId, taskId),
+    iteration === undefined ? undefined : { iteration },
+  );
+  const data = response.data.data;
+  const hasJudgeSummaryStatus = Object.prototype.hasOwnProperty.call(data, 'judgeSummaryStatus');
+  const hasJudgeSummary = Object.prototype.hasOwnProperty.call(data, 'judgeSummary');
+  return {
+    executionId: toNullableString(data.executionId) ?? executionId,
+    taskId: toNullableString(data.taskId) ?? taskId,
+    taskResult: normalizeTaskResult(data.taskResult ?? {}, 0),
+    ...(hasJudgeSummaryStatus ? { judgeSummaryStatus: data.judgeSummaryStatus ?? 'idle' } : {}),
+    ...(hasJudgeSummary ? { judgeSummary: data.judgeSummary ?? null } : {}),
+  };
+}
+
 export async function deleteExecution(
   playbookId: string,
   executionId: string,
@@ -1081,7 +1147,7 @@ export async function clonePlaybook(id: string): Promise<Playbook> {
   const response = await apiClient.post<ApiResponse<Playbook>>(
     API_ENDPOINTS.playbooks.clone(id),
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function getPlaybookNodeTemplates(): Promise<{ items: Array<{
@@ -1170,11 +1236,11 @@ export async function getFlows(
   return { flows: items, pagination };
 }
 
-export async function getFlow(id: string): Promise<Flow> {
-  const response = await apiClient.get<ApiResponse<Flow>>(
+export async function getFlow(id: string): Promise<Playbook> {
+  const response = await apiClient.get<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.byId(id),
   );
-  return response.data.data;
+  return normalizePlaybook(response.data.data);
 }
 
 export async function createFlow(data: CreateFlowData): Promise<Flow> {

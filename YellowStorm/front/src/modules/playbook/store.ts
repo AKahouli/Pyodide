@@ -72,15 +72,6 @@ function tPlaybook(key: string, fallback: string, options?: Record<string, unkno
   return fallback;
 }
 
-function warnUnsupportedExecutionAction() {
-  toast.warning(
-    tPlaybook(
-      'store.toasts.executionActionUnavailable',
-      'This execution action is not available in the new flow runtime yet.',
-    ),
-  );
-}
-
 const EXEC_PANEL_KEY = 'ys_playbook_exec_panel';
 const WORKSPACE_EXPLORER_KEY = 'ys_workspace_explorer_open';
 const INTENT_HISTORY_KEY = 'ys_playbook_intent_history';
@@ -194,6 +185,7 @@ const initialState: PlaybookState = {
   flowNodeKinds: [],
   flowNodeKindsLoading: false,
   idempotencyKeyCounters: {},
+  portInspection: null,
 };
 
 // ===== Stable empty references =====
@@ -1258,8 +1250,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      skipExecutionStep: async (_playbookId, _executionId, _taskId) => {
-        warnUnsupportedExecutionAction();
+      skipExecutionStep: async (playbookId, executionId, taskId) => {
+        try {
+          await api.skipPlaybookStep(playbookId, { executionId, taskId });
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
       },
 
       deleteExecution: async (playbookId, executionId) => {
@@ -1288,8 +1285,13 @@ export const usePlaybookStore = create<PlaybookStore>()(
         });
       },
 
-      deleteStepExecution: async (_playbookId, _executionId, _taskId, _stepExecutionId) => {
-        warnUnsupportedExecutionAction();
+      deleteStepExecution: async (playbookId, executionId, taskId, stepExecutionId) => {
+        try {
+          await api.deleteStepExecution(playbookId, executionId, taskId, stepExecutionId);
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
       },
 
       deleteAllExecutions: async (playbookId) => {
@@ -1910,6 +1912,83 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
+      runAdvisorEvaluation: async (executionId, taskId, iteration) => {
+        const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
+          taskResult.taskId === taskId
+          && (iteration === undefined || taskResult.iteration === iteration)
+        );
+
+        set((state) => {
+          const cached = state.executionCache[executionId];
+          if (!cached) return state;
+
+          const taskResults = cached.taskResults.map((taskResult) => (
+            matchesTargetIteration(taskResult)
+              ? { ...taskResult, judgeStatus: 'evaluating' as const, judgeError: null }
+              : taskResult
+          ));
+          const updatedExecution = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+
+          return {
+            executionCache: { ...state.executionCache, [executionId]: updatedExecution },
+            currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
+          };
+        });
+
+        try {
+          const result = await api.runAdvisorEvaluation(executionId, taskId, iteration);
+          set((state) => {
+            const cached = state.executionCache[result.executionId];
+            if (!cached) return state;
+
+            const taskResults = cached.taskResults.map((taskResult) => (
+              taskResult.taskId === result.taskId
+                && taskResult.iteration === result.taskResult.iteration
+                ? {
+                    ...taskResult,
+                    judgeStatus: result.taskResult.judgeStatus,
+                    judgeResult: result.taskResult.judgeResult,
+                    judgeError: result.taskResult.judgeError,
+                    judgeHistory: result.taskResult.judgeHistory,
+                  }
+                : taskResult
+            ));
+            const updatedExecution: PlaybookExecution = {
+              ...cached,
+              taskResults,
+              ...(result.judgeSummaryStatus !== undefined ? { judgeSummaryStatus: result.judgeSummaryStatus } : {}),
+              ...(result.judgeSummary !== undefined ? { judgeSummary: result.judgeSummary } : {}),
+              updatedAt: new Date().toISOString(),
+            };
+
+            return {
+              executionCache: { ...state.executionCache, [result.executionId]: updatedExecution },
+              currentExecution: state.currentExecution?.id === result.executionId ? updatedExecution : state.currentExecution,
+            };
+          });
+        } catch (err) {
+          const message = parseApiError(err).message;
+          set((state) => {
+            const cached = state.executionCache[executionId];
+            if (!cached) return state;
+
+            const taskResults = cached.taskResults.map((taskResult) => (
+              matchesTargetIteration(taskResult)
+                ? { ...taskResult, judgeStatus: 'failed' as const, judgeError: message }
+                : taskResult
+            ));
+            const updatedExecution = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+
+            return {
+              executionCache: { ...state.executionCache, [executionId]: updatedExecution },
+              currentExecution: state.currentExecution?.id === executionId ? updatedExecution : state.currentExecution,
+            };
+          });
+          handleApiError(err);
+          throw err;
+        }
+      },
+
       fetchAdvisorRemediations: async (playbookId, executionId, taskId) => {
         return api.fetchAdvisorRemediations(playbookId, executionId, taskId);
       },
@@ -2062,12 +2141,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      rerunStepInExecution: async (_playbookId, _executionId, _taskId, _runEvaluation = false, _executionMode = 'live', _streaming = false, _runNodeReflection = true, _advisorAutopilotEnabled = false, _advisorAutopilotTargetScore, _advisorAutopilotMaxTurns, _skipStepExecution = false) => {
-        warnUnsupportedExecutionAction();
+      rerunStepInExecution: async (playbookId, executionId, taskId, runEvaluation = false, executionMode = 'live', streaming = false, runNodeReflection = true, advisorAutopilotEnabled = false, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, skipStepExecution = false) => {
+        try {
+          await api.rerunPlaybookStep(playbookId, executionId, {
+            taskId,
+            runEvaluation,
+            executionMode,
+            streaming,
+            runNodeReflection,
+            advisorAutopilotEnabled,
+            advisorAutopilotTargetScore,
+            advisorAutopilotMaxTurns,
+            skipStepExecution,
+          });
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
       },
 
-      resumeFromStep: async (_playbookId, _executionId, _taskId, _streaming = false) => {
-        warnUnsupportedExecutionAction();
+      resumeFromStep: async (playbookId, executionId, taskId, streaming = false) => {
+        try {
+          await api.resumePlaybookFromStep(playbookId, executionId, {
+            taskId,
+            streaming,
+          });
+        } catch (err) {
+          handleApiError(err);
+          throw err;
+        }
       },
 
       // ===== SSE Handlers =====
@@ -2289,10 +2391,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
           if (!cached) return state;
 
           const existing = cached.taskResults;
-          const found = existing.some((tr) => tr.taskId === data.taskId);
+          const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
+            taskResult.taskId === data.taskId
+            && (data.iteration === undefined || taskResult.iteration === data.iteration)
+          );
+          const found = existing.some(matchesTargetIteration);
           const taskResults = found
             ? existing.map((tr) => {
-              if (tr.taskId !== data.taskId) return tr;
+              if (!matchesTargetIteration(tr)) return tr;
               const merged = mergeComponents(tr.components, data.components || []);
               const update = {
                 status: data.status as any,
@@ -2308,6 +2414,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 totalTokens: data.totalTokens ?? null,
                 modelName: data.modelName ?? null,
                 semanticMatch: data.semanticMatch ?? null,
+                traceMetadata: data.traceMetadata ?? null,
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
@@ -2332,6 +2439,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 nodeTitle: '',
                 agentName: '',
                 order: existing.length,
+                iteration: data.iteration,
                 status: data.status as any,
                 output: data.output || null,
                 error: data.error || null,
@@ -2346,6 +2454,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 totalTokens: data.totalTokens ?? null,
                 modelName: data.modelName ?? null,
                 semanticMatch: data.semanticMatch ?? null,
+                traceMetadata: data.traceMetadata ?? null,
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
@@ -2487,6 +2596,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const taskResults = cached.taskResults.map((tr) =>
             tr.taskId === data.taskId
+              && (data.iteration === undefined || tr.iteration === data.iteration)
               ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
               : tr,
           );
@@ -2506,9 +2616,10 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const taskResults = cached.taskResults.map((tr) =>
             tr.taskId === data.taskId
+              && (data.iteration === undefined || tr.iteration === data.iteration)
               ? {
-                ...tr,
-                judgeStatus: data.judgeStatus,
+                  ...tr,
+                  judgeStatus: data.judgeStatus,
                 judgeResult: data.judgeResult ?? null,
                 judgeError: data.judgeError ?? null,
                 judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
@@ -3893,6 +4004,11 @@ export const usePlaybookStore = create<PlaybookStore>()(
           throw err;
         }
       },
+
+      // ===== Port Inspection =====
+
+      openPortInspection: (inspection) => set({ portInspection: inspection }),
+      closePortInspection: () => set({ portInspection: null }),
 
       // ===== Cleanup =====
 

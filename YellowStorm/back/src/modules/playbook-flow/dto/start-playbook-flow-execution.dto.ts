@@ -1,8 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsObject, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
 
 export class StartPlaybookFlowExecutionDto {
-  @ApiPropertyOptional({ description: 'Optional single node id for standalone step execution' })
+  @ApiPropertyOptional({ description: 'Optional single node id for targeted step execution' })
   @IsOptional()
   @IsString()
   singleStepTaskId?: string;
@@ -11,4 +11,19 @@ export class StartPlaybookFlowExecutionDto {
   @IsOptional()
   @IsObject()
   inputContext?: Record<string, unknown>;
+
+  @ApiPropertyOptional({ description: 'Enable advisor autopilot mode for automatic advisor evaluation on task completion' })
+  @IsOptional()
+  @IsBoolean()
+  advisorAutopilotEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Target score for autopilot advisor' })
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotTargetScore?: number;
+
+  @ApiPropertyOptional({ description: 'Max autopilot turns' })
+  @IsOptional()
+  @IsNumber()
+  advisorAutopilotMaxTurns?: number;
 }

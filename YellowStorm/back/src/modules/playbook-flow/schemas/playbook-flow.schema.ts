@@ -273,6 +273,18 @@ export class Flow {
 
   @Prop({ required: false, type: Boolean, default: false })
   isFavorite?: boolean;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  reflectionEnabled?: boolean;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  advisorAutopilotEnabled?: boolean;
+
+  @Prop({ required: false, type: Number })
+  advisorAutopilotTargetScore?: number;
+
+  @Prop({ required: false, type: Number })
+  advisorAutopilotMaxTurns?: number;
 }
 
 export const FlowSchema = SchemaFactory.createForClass(Flow);

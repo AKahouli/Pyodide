@@ -64,4 +64,20 @@ export class CreatePlaybookFlowDto {
   @IsArray()
   @IsString({ each: true })
   workspaces?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  reflectionEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  advisorAutopilotEnabled?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  advisorAutopilotTargetScore?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  advisorAutopilotMaxTurns?: number;
 }

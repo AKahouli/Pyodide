@@ -140,6 +140,53 @@ describe('ExecutionPanel', () => {
     expect(screen.queryByText('detail.actions.runReplayEvaluation')).not.toBeInTheDocument();
   });
 
+  it('wires advisor evaluation CTA through the execution panel store action', async () => {
+    const execution = makeExecution({
+      id: 'exec-advisor',
+      status: 'completed',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed', judgeStatus: 'idle' }],
+    });
+    const runAdvisorEvaluation = vi.fn().mockResolvedValue(undefined);
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+      selectedStepId: 't1',
+      runAdvisorEvaluation,
+    });
+
+    render(<ExecutionPanel />);
+
+    await userEvent.click(screen.getByRole('tab', { name: 'detail.tabs.judge' }));
+    await userEvent.click(screen.getAllByText('detail.actions.runAdvisorEvaluation')[0]);
+
+    expect(runAdvisorEvaluation).toHaveBeenCalledWith('exec-advisor', 't1', undefined);
+  });
+
+  it('keeps the advisor evaluation CTA enabled while the execution is still running', async () => {
+    const execution = makeExecution({
+      id: 'exec-running-advisor',
+      status: 'running',
+      taskResults: [{ ...makeExecution().taskResults[0], taskId: 't1', status: 'completed', judgeStatus: 'idle' }],
+    });
+    const runAdvisorEvaluation = vi.fn().mockResolvedValue(undefined);
+    usePlaybookStore.setState({
+      executionPanelOpen: true,
+      currentExecution: execution,
+      selectedStepId: 't1',
+      runAdvisorEvaluation,
+      executingPlaybookIds: ['p1'],
+    });
+
+    render(<ExecutionPanel />);
+
+    await userEvent.click(screen.getByRole('tab', { name: 'detail.tabs.judge' }));
+    const button = screen.getAllByText('detail.actions.runAdvisorEvaluation')[0];
+    expect(button).not.toBeDisabled();
+
+    await userEvent.click(button);
+    expect(runAdvisorEvaluation).toHaveBeenCalledWith('exec-running-advisor', 't1', undefined);
+  });
+
   it('closes panel via setExecutionPanelOpen(false)', () => {
     usePlaybookStore.setState({ executionPanelOpen: true });
     usePlaybookStore.getState().setExecutionPanelOpen(false);
