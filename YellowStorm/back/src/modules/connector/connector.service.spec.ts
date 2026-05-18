@@ -43,6 +43,7 @@ describe('ConnectorService importFromMcp', () => {
         findOne,
       } as any,
       logger as any,
+      null as any,
     );
 
     await service.create(new Types.ObjectId().toString(), {
@@ -134,6 +135,7 @@ describe('ConnectorService importFromMcp', () => {
         findOne: jest.fn(),
       } as any,
       logger as any,
+      null as any,
     );
 
     await service.update(connectorId, {
@@ -215,6 +217,7 @@ describe('ConnectorService importFromMcp', () => {
         findOne,
       } as any,
       logger as any,
+      null as any,
     );
 
     await service.create(new Types.ObjectId().toString(), {
@@ -268,6 +271,7 @@ describe('ConnectorService importFromMcp', () => {
         find,
       } as any,
       logger as any,
+      null as any,
     );
 
     jest.spyOn(service, 'inspectMcp').mockResolvedValue({
@@ -318,6 +322,7 @@ describe('ConnectorService importFromMcp', () => {
         find,
       } as any,
       logger as any,
+      null as any,
     );
 
     jest.spyOn(service, 'inspectMcp').mockResolvedValue({
@@ -348,6 +353,7 @@ describe('ConnectorService importFromMcp', () => {
         find: jest.fn(),
       } as any,
       logger as any,
+      null as any,
     );
 
     const requestInit = (service as any).buildMcpRequestInit({

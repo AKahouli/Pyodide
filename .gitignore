@@ -46,3 +46,4 @@ YellowStorm/skills-lock.json
 .claude/settings.local.json
 .opencode
 tmp_pymongo
+.claude/settings.local.json

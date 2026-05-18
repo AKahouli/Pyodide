@@ -174,6 +174,8 @@ export class ConnectedAppOAuthService {
       error: error || undefined,
     });
 
+    this.logger.log('Building callback HTML', { appKey, success, frontendUrl: this.frontendUrl });
+
     const statusMsg = success
       ? '<p style="color:green">Connected successfully. You can close this window.</p>'
       : `<p style="color:red">Connection failed: ${error || 'unknown error'}</p>`;
@@ -184,8 +186,14 @@ export class ConnectedAppOAuthService {
 <body>
 ${statusMsg}
 <script>
+  console.log('OAuth callback page loaded, posting message to:', '${this.frontendUrl}');
+  console.log('Message payload:', ${payload});
   if (window.opener) {
+    console.log('Sending postMessage to opener...');
     window.opener.postMessage(${payload}, '${this.frontendUrl}');
+    console.log('PostMessage sent');
+  } else {
+    console.error('No window.opener found');
   }
   ${success ? 'setTimeout(function() { window.close(); }, 500);' : ''}
 </script>

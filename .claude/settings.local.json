@@ -28,7 +28,8 @@
       "Bash(python3 -m py_compile utilities/render_chart.py)",
       "Bash(git restore *)",
       "Bash(grep -E \"^\\\\+\\\\+\\\\+.*\\\\.\\(ts|tsx\\)$|^\\\\+.*console\\\\.\\(log|warn|error|debug|info\\)\")",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(npx ts-node *)"
     ]
   }
 }

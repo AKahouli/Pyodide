@@ -27,10 +27,15 @@ import {
   UpdateConnectorCredentialDto,
 } from './dto';
 import { ImportConnectorItemDto, ExportToConnectorDto } from './dto/connector-transfer.dto';
+import { InspectConnectorDto } from './dto/inspect-connector.dto';
 import { IConnectorResponse, IConnectorCredentialResponse } from './interfaces/connector.interface';
 import { ConnectorService } from './connector.service';
 import { ConnectorCredentialService } from './connector-credential.service';
 import { ConnectorTransferService } from './connector-transfer.service';
+import { ConnectedAppOAuthService } from '../connected-app/services/connected-app-oauth.service';
+import { RateLimit } from '@modules/rate-limiter';
+import { BadRequestException } from '@modules/exceptions';
+import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 
 @ApiTags('Connectors')
 @ApiBearerAuth()
@@ -41,6 +46,7 @@ export class ConnectorController {
     private readonly connectorService: ConnectorService,
     private readonly credentialService: ConnectorCredentialService,
     private readonly transferService: ConnectorTransferService,
+    private readonly oauthService: ConnectedAppOAuthService,
   ) {}
 
   @Get()
@@ -121,6 +127,60 @@ export class ConnectorController {
     @CurrentUser() user: UserDocument,
   ): Promise<IConnectorCredentialResponse> {
     return this.credentialService.validateCredential(id, user._id.toString());
+  }
+
+  // --- OAuth ---
+
+  @Get(':id/authorize')
+  @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'connector:authorize' })
+  @ApiOperation({ summary: 'Get OAuth authorization URL for a connector' })
+  @ApiParam({ name: 'id', description: 'Connector ID' })
+  async authorizeConnector(
+    @Param('id') id: string,
+    @CurrentUser() user: UserDocument,
+  ) {
+    const connector = await this.connectorService.findById(id);
+
+    if (!connector.connectedAppKey) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Connector does not support OAuth authentication',
+      );
+    }
+
+    const authorizationUrl = await this.oauthService.buildAuthorizationUrl(
+      user._id.toString(),
+      connector.connectedAppKey,
+    );
+
+    return { authorizationUrl };
+  }
+
+  @Post(':id/inspect')
+  @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'connector:inspect' })
+  @ApiOperation({ summary: 'Inspect MCP server using connector configuration' })
+  @ApiParam({ name: 'id', description: 'Connector ID' })
+  async inspectConnector(
+    @Param('id') id: string,
+    @CurrentUser() user: UserDocument,
+    @Body() dto: InspectConnectorDto,
+  ) {
+    const connector = await this.connectorService.findById(id);
+
+    if (dto.useOAuth && !connector.connectedAppKey) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Connector does not support OAuth authentication',
+      );
+    }
+
+    return this.connectorService.inspectMcp(
+      connector.mcpTransportType,
+      connector.mcpServerUrl,
+      connector.mcpServerConfig,
+      dto.useOAuth ? user._id.toString() : undefined,
+      dto.useOAuth ? connector.connectedAppKey : undefined,
+    );
   }
 
   // --- Transfer ---

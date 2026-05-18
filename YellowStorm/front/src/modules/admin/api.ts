@@ -747,10 +747,16 @@ export async function deleteConnector(id: string): Promise<void> {
   await apiClient.delete(API_ENDPOINTS.adminConnectors.byId(id));
 }
 
-export async function inspectMcp(transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<McpInspectResult> {
+export async function inspectMcp(
+  transportType: string,
+  serverUrl: string,
+  serverConfig?: Record<string, unknown>,
+  connectedAppKey?: string,
+  runtimeAuthConfig?: Record<string, unknown>,
+): Promise<McpInspectResult> {
   const response = await apiClient.post<ApiResponse<McpInspectResult>>(
     API_ENDPOINTS.adminConnectors.inspect,
-    { transportType, serverUrl, serverConfig },
+    { transportType, serverUrl, serverConfig, connectedAppKey, runtimeAuthConfig },
   );
   return response.data.data;
 }
@@ -759,6 +765,21 @@ export async function importFromMcp(transportType: string, serverUrl: string, se
   const response = await apiClient.post<ApiResponse<McpInspectResult>>(
     API_ENDPOINTS.adminConnectors.importMcp,
     { transportType, serverUrl, serverConfig },
+  );
+  return response.data.data;
+}
+
+export async function authorizeConnectorOAuth(connectorId: string): Promise<{ authorizationUrl: string }> {
+  const response = await apiClient.get<ApiResponse<{ authorizationUrl: string }>>(
+    API_ENDPOINTS.adminConnectors.authorize(connectorId),
+  );
+  return response.data.data;
+}
+
+export async function inspectConnectorWithOAuth(connectorId: string, useOAuth: boolean): Promise<McpInspectResult> {
+  const response = await apiClient.post<ApiResponse<McpInspectResult>>(
+    API_ENDPOINTS.adminConnectors.inspectConnector(connectorId),
+    { useOAuth },
   );
   return response.data.data;
 }

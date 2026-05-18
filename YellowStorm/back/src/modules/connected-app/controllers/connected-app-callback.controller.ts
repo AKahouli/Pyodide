@@ -33,6 +33,8 @@ export class ConnectedAppCallbackController {
     @Query('error') error: string,
     @Res() res: Response,
   ) {
+    this.logger.log('OAuth callback received', { appKey, hasCode: !!code, hasState: !!state, error });
+
     if (error) {
       const html = this.oauthService.buildCallbackHtml(appKey, false, error);
       return res.send(html);
@@ -45,6 +47,7 @@ export class ConnectedAppCallbackController {
 
     try {
       await this.oauthService.handleCallback(appKey, code, state);
+      this.logger.log('OAuth callback handled successfully', { appKey });
       const html = this.oauthService.buildCallbackHtml(appKey, true);
       return res.send(html);
     } catch (err) {

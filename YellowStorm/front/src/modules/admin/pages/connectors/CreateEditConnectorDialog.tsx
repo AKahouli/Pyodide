@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -23,12 +23,14 @@ import type { ConnectorResponse, ConnectorActionResponse, SkillResponse, McpTool
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
 import { parseMcpServerConfig } from './mcp-server-config';
-import { Loader2, Plus, TestTube2, Trash2 } from 'lucide-react';
+import { Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { getSkills, inspectMcp } from '../../api';
+import { disconnectApp, getAvailableApps } from '@/modules/connected-app/api';
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminConnectedApps } from '@/modules/connected-app/api';
 import type { ConnectedAppAdminResponse } from '@/modules/connected-app/types';
+import { ensureAppConnected } from '@/modules/connected-app/store';
 
 const AUTH_SOURCE_TYPES = [
   { value: 'credential', label: 'Credential' },
@@ -152,6 +154,18 @@ export function CreateEditConnectorDialog({
   const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppAdminResponse[]>([]);
+  const [githubConnected, setGithubConnected] = useState(false);
+  const [oauthConnecting, setOauthConnecting] = useState(false);
+
+  const refreshGithubConnectionStatus = useCallback(async () => {
+    try {
+      const apps = await getAvailableApps();
+      const githubApp = apps.find((app) => app.appKey === 'github');
+      setGithubConnected(Boolean(githubApp?.connected));
+    } catch {
+      setGithubConnected(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (open) {
@@ -163,6 +177,9 @@ export function CreateEditConnectorDialog({
       getAdminConnectedApps()
         .then((apps) => setConnectedApps(apps.filter((app) => app.enabled)))
         .catch(() => setConnectedApps([]));
+
+      void refreshGithubConnectionStatus();
+
       if (connector) {
         const parsedRuntime = parseRuntimeAuthConfig(connector.runtimeAuthConfig);
         const parsedServerConfig = parseMcpServerConfig(connector.mcpServerConfig);
@@ -193,7 +210,20 @@ export function CreateEditConnectorDialog({
         setForm({ ...defaultConnectorFormValues });
       }
     }
-  }, [open, connector]);
+  }, [open, connector, refreshGithubConnectionStatus]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (form.authSourceType === 'connected_app' && form.connectedAppKey === 'github') {
+      void refreshGithubConnectionStatus();
+      return;
+    }
+
+    setGithubConnected(false);
+  }, [form.authSourceType, form.connectedAppKey, open, refreshGithubConnectionStatus]);
 
   const handleSubmit = () => {
     if (!form.slug.trim() || !form.name.trim()) {
@@ -255,7 +285,14 @@ export function CreateEditConnectorDialog({
     setInspectError(null);
     setInspectTools([]);
     try {
-      const result = await inspectMcp(form.mcpTransportType, form.mcpServerUrl, mcpServerConfig);
+      const runtimeAuthConfig = buildRuntimeAuthConfig(form);
+      const result = await inspectMcp(
+        form.mcpTransportType,
+        form.mcpServerUrl,
+        mcpServerConfig,
+        form.authSourceType === 'connected_app' ? form.connectedAppKey || undefined : undefined,
+        runtimeAuthConfig,
+      );
       if (result.error) {
         setInspectError(result.error);
         return;
@@ -274,6 +311,36 @@ export function CreateEditConnectorDialog({
       setInspectError(err instanceof Error ? err.message : 'Inspection failed');
     } finally {
       setInspecting(false);
+    }
+  };
+
+  const handleGithubOAuth = async () => {
+    setOauthConnecting(true);
+
+    try {
+      const connected = await ensureAppConnected('github');
+      await refreshGithubConnectionStatus();
+      if (!connected) {
+        toast.error(t('connectors.form.auth.githubConnectFailed'));
+      }
+    } catch (err) {
+      toast.error(t('connectors.form.auth.githubConnectFailed'), {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setOauthConnecting(false);
+    }
+  };
+
+  const handleGithubDisconnect = async () => {
+    try {
+      await disconnectApp('github');
+      await refreshGithubConnectionStatus();
+      toast.success(t('connectors.form.auth.githubDisconnected'));
+    } catch (err) {
+      toast.error(t('connectors.form.auth.githubDisconnectFailed'), {
+        description: err instanceof Error ? err.message : undefined,
+      });
     }
   };
 
@@ -484,11 +551,56 @@ export function CreateEditConnectorDialog({
           </div>
 
           <div className='flex items-center justify-between gap-3'>
-            <div className='text-sm text-muted-foreground'>{t('connectors.form.inspect.helper')}</div>
-            <Button type='button' variant='outline' onClick={handleInspect} disabled={inspecting}>
-              {inspecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <TestTube2 className='mr-2 h-4 w-4' />}
-              {t('connectors.form.inspect.action')}
-            </Button>
+            <div className='text-sm text-muted-foreground'>
+              {t('connectors.form.inspect.helper')}
+              {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && !githubConnected && (
+                <span className='ml-2 text-amber-600 font-medium'>{t('connectors.form.auth.githubInspectRequired')}</span>
+              )}
+              {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && githubConnected && (
+                <span className='ml-2 text-green-600 font-medium'>{t('connectors.form.auth.githubConnectedBadge')}</span>
+              )}
+            </div>
+            <div className='flex gap-2'>
+              {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && (
+                <>
+                  {!githubConnected ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={handleGithubOAuth}
+                      disabled={oauthConnecting}
+                    >
+                      {oauthConnecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <Github className='mr-2 h-4 w-4' />}
+                      {t('connectors.form.auth.githubConnectAction')}
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        type='button'
+                        variant='default'
+                        disabled
+                      >
+                        <Github className='mr-2 h-4 w-4' />
+                        {t('connectors.form.auth.githubConnectedAction')}
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        onClick={handleGithubDisconnect}
+                        disabled={oauthConnecting}
+                      >
+                        {oauthConnecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <X className='mr-2 h-4 w-4' />}
+                        {t('connectors.form.auth.githubDisconnectAction')}
+                      </Button>
+                    </>
+                  )}
+                </>
+              )}
+              <Button type='button' variant='outline' onClick={handleInspect} disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && !githubConnected)}>
+                {inspecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <TestTube2 className='mr-2 h-4 w-4' />}
+                {t('connectors.form.inspect.action')}
+              </Button>
+            </div>
           </div>
 
           {(inspectError || inspectTools.length > 0) && (

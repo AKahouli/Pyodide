@@ -183,6 +183,8 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/connectors/${id}`,
     inspect: '/admin/connectors/inspect',
     importMcp: '/admin/connectors/import-mcp',
+    authorize: (id: string) => `/admin/connectors/${id}/authorize`,
+    inspectConnector: (id: string) => `/admin/connectors/${id}/inspect`,
   },
   connectors: {
     list: '/connectors',
