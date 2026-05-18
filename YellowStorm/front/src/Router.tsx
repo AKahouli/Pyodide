@@ -29,6 +29,9 @@ const PlaybookExecutionListPage = React.lazy(() =>
 const PlaybookExecutionComparePage = React.lazy(() =>
   import("./modules/playbook/components/PlaybookExecutionComparePage").then((m) => ({ default: m.PlaybookExecutionComparePage }))
 );
+const AgentHubPage = React.lazy(() =>
+  import("./modules/agent/components/AgentHubPage").then((m) => ({ default: m.AgentHubPage }))
+);
 import {
   AdminGuard,
   AdminLayout,
@@ -129,6 +132,14 @@ export const router = createHashRouter([
         element: (
           <Suspense fallback={null}>
             <PlaybookExecutionPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'agents',
+        element: (
+          <Suspense fallback={null}>
+            <AgentHubPage />
           </Suspense>
         ),
       },

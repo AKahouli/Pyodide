@@ -7,7 +7,14 @@ import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
-import type { AgentStore, AgentState, Agent, RunEvaluationParams } from './types';
+import type {
+  AgentStore,
+  AgentState,
+  Agent,
+  RunEvaluationParams,
+  BulkDeleteError,
+  BulkDeleteResult,
+} from './types';
 import * as api from './api';
 import * as evalApi from './evaluation-api';
 import { i18nInstance } from '@/modules/localization/i18nInstance';
@@ -119,6 +126,57 @@ export const useAgentStore = create<AgentStore>()(
         toast.success(tAgent('store.toasts.agentDeleted', 'Agent deleted'), {
           description: tAgent('store.toasts.agentDeletedDescription', '{{name}} has been deleted.', { name: agent?.name || tAgent('store.defaults.agentName', 'Agent') }),
         });
+      },
+
+      bulkDeleteAgents: async (ids, onProgress): Promise<BulkDeleteResult> => {
+        const errors: BulkDeleteError[] = [];
+        const deletedIds: string[] = [];
+        const total = ids.length;
+
+        for (let i = 0; i < ids.length; i++) {
+          const id = ids[i];
+          const agent = get().agents.find((a) => a.id === id);
+          try {
+            await api.deleteAgent(id);
+            deletedIds.push(id);
+          } catch (err) {
+            errors.push({
+              id,
+              name: agent?.name,
+              error: err instanceof Error ? err : new Error(String(err)),
+            });
+          }
+          onProgress?.(i + 1, total);
+        }
+
+        if (deletedIds.length > 0) {
+          set((state) => ({
+            agents: state.agents.filter((a) => !deletedIds.includes(a.id)),
+          }));
+        }
+
+        if (errors.length === 0) {
+          toast.success(
+            tAgent('store.toasts.bulkDeleted', '{{count}} agents deleted', {
+              count: deletedIds.length,
+            }),
+          );
+        } else if (deletedIds.length === 0) {
+          toast.error(tAgent('store.errors.bulkDeleteFailed', 'Failed to delete agents'), {
+            description: errors.map((e) => e.name ?? e.id).join(', '),
+          });
+        } else {
+          toast.warning(
+            tAgent(
+              'store.toasts.bulkDeletedPartial',
+              'Deleted {{deleted}} of {{total}} agents',
+              { deleted: deletedIds.length, total },
+            ),
+            { description: errors.map((e) => e.name ?? e.id).join(', ') },
+          );
+        }
+
+        return { deletedIds, errors };
       },
 
       getPersonalAgents: () => get().agents.filter((a) => !a.isDefault),

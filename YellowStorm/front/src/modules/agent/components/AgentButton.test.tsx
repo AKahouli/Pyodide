@@ -3,13 +3,10 @@ import type { ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentButton } from './AgentButton';
 
-const dialogSpy = vi.fn();
+const navigateSpy = vi.fn();
 
-vi.mock('./AgentDialog', () => ({
-  AgentDialog: (props: { open: boolean }) => {
-    dialogSpy(props.open);
-    return props.open ? <div>dialog-open</div> : null;
-  },
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigateSpy,
 }));
 
 vi.mock('@/modules/localization', () => ({
@@ -38,12 +35,11 @@ vi.mock('@/components/ui/dropdown-menu', () => ({
 }));
 
 describe('AgentButton', () => {
-  it('opens dialog when clicking manage agents button', () => {
+  it('navigates to /agents when clicking the button', () => {
     render(<AgentButton />);
 
     fireEvent.click(screen.getByText('button.agents'));
 
-    expect(screen.getByText('dialog-open')).toBeInTheDocument();
-    expect(dialogSpy).toHaveBeenLastCalledWith(true);
+    expect(navigateSpy).toHaveBeenCalledWith('/agents');
   });
 });
