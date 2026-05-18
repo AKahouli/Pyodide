@@ -127,12 +127,27 @@ export interface RunEvaluationParams {
   threshold?: number;
 }
 
+export interface BulkDeleteError {
+  id: string;
+  name?: string;
+  error: Error;
+}
+
+export interface BulkDeleteResult {
+  deletedIds: string[];
+  errors: BulkDeleteError[];
+}
+
 export interface AgentActions {
   fetchAgents: () => Promise<void>;
   fetchAgentTypes: () => Promise<void>;
   createAgent: (data: CreateAgentData) => Promise<Agent>;
   updateAgent: (id: string, data: UpdateAgentData) => Promise<Agent>;
   deleteAgent: (id: string) => Promise<void>;
+  bulkDeleteAgents: (
+    ids: string[],
+    onProgress?: (done: number, total: number) => void,
+  ) => Promise<BulkDeleteResult>;
   getPersonalAgents: () => Agent[];
   getDefaultAgents: () => Agent[];
   getAgentById: (id: string) => Agent | undefined;
