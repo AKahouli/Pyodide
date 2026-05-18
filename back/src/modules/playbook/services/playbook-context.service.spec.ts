@@ -218,12 +218,13 @@ describe('PlaybookContextService', () => {
       await service.buildWorkspaceContexts(['ws-1', 'ws-2']);
 
       expect(loggerService.log).toHaveBeenCalledWith('Workspace contexts built for playbook', {
+        requestedWorkspaceCount: 2,
         workspaceCount: 2,
         totalDocuments: 2,
       });
     });
 
-    it('should return empty array and log warning when workspace service throws', async () => {
+    it('should skip a workspace and log warning when workspace service throws', async () => {
       workspaceDocumentService.findAllByWorkspace.mockRejectedValue(
         new Error('Database connection failed'),
       );
@@ -232,22 +233,23 @@ describe('PlaybookContextService', () => {
 
       expect(result).toEqual([]);
       expect(loggerService.warn).toHaveBeenCalledWith(
-        'Failed to build workspace contexts for playbook',
-        { error: 'Database connection failed' },
+        'Failed to build workspace context for playbook workspace',
+        { workspaceId: 'ws-1', error: 'Database connection failed' },
       );
     });
 
-    it('should return empty array when error occurs mid-iteration across workspaces', async () => {
+    it('should keep earlier workspace contexts when a later workspace fails', async () => {
       workspaceDocumentService.findAllByWorkspace
         .mockResolvedValueOnce(mockPaginatedResult() as any)
         .mockRejectedValueOnce(new Error('Timeout on second workspace'));
 
       const result = await service.buildWorkspaceContexts(['ws-1', 'ws-2']);
 
-      expect(result).toEqual([]);
+      expect(result).toHaveLength(1);
+      expect(result[0].workspace_id).toBe('ws-1');
       expect(loggerService.warn).toHaveBeenCalledWith(
-        'Failed to build workspace contexts for playbook',
-        { error: 'Timeout on second workspace' },
+        'Failed to build workspace context for playbook workspace',
+        { workspaceId: 'ws-2', error: 'Timeout on second workspace' },
       );
     });
   });

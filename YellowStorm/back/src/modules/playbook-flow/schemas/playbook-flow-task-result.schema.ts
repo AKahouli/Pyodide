@@ -21,6 +21,15 @@ export class FlowTaskResult {
   output?: unknown;
 
   @Prop({ required: false, type: String })
+  displayText?: string;
+
+  @Prop({ required: false, type: [Object], default: undefined })
+  artifacts?: Array<Record<string, unknown>>;
+
+  @Prop({ required: false, type: [Object], default: undefined })
+  components?: Array<Record<string, unknown>>;
+
+  @Prop({ required: false, type: String })
   error?: string;
 
   @Prop({ required: false, type: Date })

@@ -18,6 +18,7 @@ from langgraph.config import get_stream_writer
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
+from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
 from src.flow_engine.nodes.step_tools import (
     build_agent_config,
     parse_connector_bindings,
@@ -29,6 +30,36 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 DEFAULT_MODEL = "gpt-4o-mini"
+
+
+def _first_workspace_id(value: Any) -> str:
+    if isinstance(value, list) and value:
+        return str(value[0] or "")
+    return ""
+
+
+def _resolve_output_workspace_id(
+    metadata: dict[str, Any],
+    input_context: dict[str, Any],
+    state: ExecutionState,
+) -> str:
+    brain_context = metadata.get("brain_context", [])
+    if isinstance(brain_context, list) and brain_context:
+        first_ctx = brain_context[0]
+        if isinstance(first_ctx, dict):
+            workspace_id = str(first_ctx.get("workspace_id") or "")
+            if workspace_id:
+                return workspace_id
+
+    workspace_id = _first_workspace_id(input_context.get("__playbook_workspace_ids"))
+    if workspace_id:
+        return workspace_id
+
+    state_inputs = state.get("inputs", {})
+    if isinstance(state_inputs, dict):
+        return _first_workspace_id(state_inputs.get("__playbook_workspace_ids"))
+    return ""
+
 
 def _build_prompt(
     label: str,
@@ -47,6 +78,7 @@ def _build_prompt(
         output_contract=output_contract,
         iteration=iteration,
         trigger_context=trigger_context,
+        require_structured_output=requires_structured_response(output_contract),
     )
 
 
@@ -74,6 +106,9 @@ async def run_step(
         or ""
     )
     output_contract = node_config.get("output") or None
+    structured_output = requires_structured_response(
+        output_contract if isinstance(output_contract, dict) else None
+    )
 
     model_id = str(agent_model or DEFAULT_MODEL)
     fallback_system_prompt = f"You are executing the step: {label}. Respond concisely."
@@ -120,10 +155,18 @@ async def run_step(
 
         from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
 
-        tools, _collector = create_langchain_tools(
+        output_workspace_id = _resolve_output_workspace_id(
+            metadata,
+            input_context if isinstance(input_context, dict) else {},
+            state,
+        )
+
+        tools, collector = create_langchain_tools(
             agent_config=agent_config,
             step_connector_bindings=connector_bindings,
+            output_workspace_id=output_workspace_id,
         )
+        components: list[dict[str, Any]] = []
 
         if tools:
             logger.info(
@@ -144,13 +187,15 @@ async def run_step(
                     "token": token,
                 }),
             )
-            if full_output:
+            if full_output and not structured_output:
                 writer({
                     "type": "NodeToken",
                     "node_id": node_id,
                     "iteration": iteration,
                     "token": full_output,
                 })
+            if collector is not None:
+                components = collector.get_and_clear()
         else:
             response = await litellm.acompletion(
                 model=model_id,
@@ -169,14 +214,20 @@ async def run_step(
                 token = delta.content or ""
                 if token:
                     full_output += token
-                    writer({
-                        "type": "NodeToken",
-                        "node_id": node_id,
-                        "iteration": iteration,
-                        "token": token,
-                    })
+                    if not structured_output:
+                        writer({
+                            "type": "NodeToken",
+                            "node_id": node_id,
+                            "iteration": iteration,
+                            "token": token,
+                        })
 
-                if hasattr(delta, "model_extra") and delta.model_extra and "tool_calls" in (delta.model_extra or {}):
+                if (
+                    not structured_output
+                    and hasattr(delta, "model_extra")
+                    and delta.model_extra
+                    and "tool_calls" in (delta.model_extra or {})
+                ):
                     writer({
                         "type": "NodeToken",
                         "node_id": node_id,
@@ -186,11 +237,15 @@ async def run_step(
 
         logger.info("[step] Step completed", node_id=node_id, streamed_chars=len(full_output))
 
-        result_payload = {
+        result_payload = finalize_step_result(
+            output_contract if isinstance(output_contract, dict) else None,
+            full_output,
+            components,
+        )
+        result_payload.update({
             "node_id": node_id,
             "iteration": iteration,
-            "output": full_output,
-        }
+        })
         writer({
             "type": "NodeCompleted",
             "node_id": node_id,

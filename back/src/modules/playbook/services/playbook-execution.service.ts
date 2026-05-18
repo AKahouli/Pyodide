@@ -1214,6 +1214,21 @@ export class PlaybookExecutionService {
     const reflectionEnabled =
       dto.runNodeReflection ?? (playbook as any).reflectionEnabled !== false;
 
+    // Resolve the default playbook workspace before creating execution state so
+    // workspace lookup failures do not strand a RUNNING execution record.
+    const workspaceIds = (playbook.workspaces || []).map((w: any) => w.toString());
+    const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
+    if (workspaceIds.length > 0 && workspaceContexts.length === 0) {
+      this.logger.warn('Playbook execution aborted because workspace contexts could not be resolved', {
+        playbookId,
+        workspaceIds,
+      });
+      throw new ServiceUnavailableException(
+        ErrorCode.PLAYBOOK_GRPC_UNAVAILABLE,
+        'Failed to resolve the default playbook workspace for execution',
+      );
+    }
+
     const execution = await this.executionModel.create({
       playbookId: new Types.ObjectId(playbookId),
       executedBy: new Types.ObjectId(userId),
@@ -1308,10 +1323,6 @@ export class PlaybookExecutionService {
       },
     });
     this.logger.debug('SSE playbook_execution_start sent', { executionId, userId });
-
-    // Build workspace contexts from playbook-linked workspaces
-    const workspaceIds = (playbook.workspaces || []).map((w: any) => w.toString());
-    const workspaceContexts = await this.contextService.buildWorkspaceContexts(workspaceIds);
 
     if (dto.singleStepTaskId) {
       // Single-step mode: use RunStep gRPC for just the one task

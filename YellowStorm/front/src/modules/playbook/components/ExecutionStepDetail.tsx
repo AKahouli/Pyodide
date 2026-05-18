@@ -67,7 +67,8 @@ function ArtifactListItem({
   const Icon = colors?.icon || FileText;
 
   const handleDownload = () => {
-    if (!artifact.url && !artifact.content) return;
+    const safeUrl = getSafeArtifactUrl(artifact.url);
+    if (!safeUrl && !artifact.content) return;
     if (artifact.content) {
       const blob = new Blob([artifact.content], { type: artifact.mimeType || 'text/plain' });
       const url = URL.createObjectURL(blob);
@@ -76,9 +77,9 @@ function ArtifactListItem({
       a.download = artifact.filename || `artifact-${artifact.portId}`;
       a.click();
       URL.revokeObjectURL(url);
-    } else if (artifact.url) {
+    } else if (safeUrl) {
       const a = document.createElement('a');
-      a.href = artifact.url;
+      a.href = safeUrl;
       a.download = artifact.filename || `artifact-${artifact.portId}`;
       a.target = '_blank';
       a.rel = 'noopener noreferrer';
@@ -86,7 +87,7 @@ function ArtifactListItem({
     }
   };
 
-  const hasDownload = !!(artifact.url || artifact.content);
+  const hasDownload = !!(getSafeArtifactUrl(artifact.url) || artifact.content);
   const kindLabel = t(`artifactKind.${artifact.artifactKind}`);
 
   return (
@@ -127,6 +128,8 @@ function ArtifactListItem({
 import { useModuleTranslation } from '@/modules/localization';
 import { usePlaybookStore } from '../store';
 import { downloadStepResultHtml, downloadStepResultPdf, renderStepResultHtml } from '../utils/renderStepResultHtml';
+import { getSafeArtifactUrl } from '../utils/safe-artifact-url';
+import { getPreferredStepResultText } from '../utils/step-result-display';
 
 interface EvaluationArtifactPayload {
   type: 'playbook_evaluation_result';
@@ -323,6 +326,7 @@ function buildCurrentStepExecution(step: TaskResult) {
     attemptNumber: step.attemptNumber ?? null,
     status: step.status,
     output: step.output,
+    displayText: step.displayText ?? null,
     error: step.error,
     durationMs: step.durationMs,
     startedAt: step.startedAt,
@@ -902,6 +906,7 @@ export function ExecutionStepDetail({
 
   const selectedEvaluation = evaluationHistory.find((entry) => entry.id === selectedEvaluationId) || evaluationHistory[0] || null;
   const selectedStepExecution = stepExecutions.find((entry) => entry.id === selectedStepExecutionId) || stepExecutions[0] || null;
+  const selectedStepExecutionText = getPreferredStepResultText(selectedStepExecution);
   const comparisonCandidates = evaluationHistory.filter((entry) => entry.id !== selectedEvaluation?.id);
   const comparisonEvaluation = comparisonCandidates.find((entry) => entry.id === comparisonEvaluationId) || comparisonCandidates[0] || null;
   const semanticMatchToDisplay = selectedEvaluation?.semanticMatch || step.semanticMatch || null;
@@ -1151,11 +1156,22 @@ export function ExecutionStepDetail({
 
             {step.iteratorIterations && step.iteratorIterations.length > 0 ? (
               <IteratorResultPanel step={step} />
-            ) : selectedStepExecution?.components && selectedStepExecution.components.length > 0 ? (
-              <div className="prose prose-sm max-w-none dark:prose-invert">
-                <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
-              </div>
-            ) : ((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) ? (
+            ) : (
+              <>
+                {selectedStepExecutionText && (
+                  <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
+                    {selectedStepExecutionText}
+                  </div>
+                )}
+                {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (
+                  <div className="prose prose-sm max-w-none dark:prose-invert">
+                    <StepComponents components={selectedStepExecution.components} taskId={step.taskId} />
+                  </div>
+                )}
+              </>
+            )}
+
+            {((execution?.executionMode === 'replay_strict' || execution?.executionMode === 'replay_flex' || execution?.executionMode === 'replay_adaptive') || replaySource) && (
               <div className="rounded-lg border bg-muted/30 p-4 text-sm">
                 <div className="font-medium">{t('detail.provenance.title')}</div>
                 <div className="mt-2 space-y-1 text-muted-foreground">
@@ -1173,11 +1189,21 @@ export function ExecutionStepDetail({
                   )}
                 </div>
               </div>
-            ) : selectedStepExecution?.output && (!selectedStepExecution.components || selectedStepExecution.components.length === 0) ? (
-              <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
-                {selectedStepExecution.output}
+            )}
+
+            {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
+              <div className="space-y-3">
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.title' as any)}</div>
+                <div className="space-y-2">
+                  {selectedStepExecution.artifacts.map((artifact, index) => (
+                    <ArtifactListItem
+                      key={`${artifact.portId}:${artifact.filename || artifact.url || artifact.content || index}`}
+                      artifact={artifact}
+                    />
+                  ))}
+                </div>
               </div>
-            ) : null}
+            )}
 
             {selectedStepExecution?.status === 'running' && (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">

@@ -37,7 +37,10 @@ const autoLayoutMock = vi.hoisted(() => vi.fn((tasks) => tasks));
 const handleApiErrorMock = vi.hoisted(() => vi.fn());
 const parseApiErrorMock = vi.hoisted(() => vi.fn(() => ({ message: 'parseApiError message' })));
 
-vi.mock('./api', () => apiMock);
+vi.mock('./api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api')>();
+  return { ...actual, ...apiMock };
+});
 vi.mock('sonner', () => ({ toast: toastMock }));
 vi.mock('./utils/auto-layout', () => ({ autoLayoutTasks: autoLayoutMock }));
 vi.mock('@/lib/api-error', () => ({ handleApiError: handleApiErrorMock, parseApiError: parseApiErrorMock }));
@@ -545,6 +548,169 @@ describe('playbook store', () => {
     expect(state.executionCache.e1.currentInterruptId).toBeNull();
     expect(state.executionCache.e1.currentInterruptTaskId).toBe('task-1');
     expect(state.executionCache.e1.hitlHistory?.[0]).toMatchObject({ taskId: 'task-1', status: 'pending' });
+  });
+
+  it('does not downgrade a completed step back to running on late step updates', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'completed',
+        output: 'Final output',
+        completedAt: '2025-01-01T00:00:05.000Z',
+        artifacts: [{ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+      } as any],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepUpdate({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'running',
+      output: 'Late token',
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
+    expect(updated.status).toBe('completed');
+    expect(updated.output).toBe('Late token');
+    expect(updated.artifacts).toEqual([{ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }]);
+  });
+
+  it('keeps completed step artifacts when completion SSE omits them', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'running',
+        artifacts: [{ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+      } as any],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepComplete({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'completed',
+      output: 'Done',
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
+    expect(updated.status).toBe('completed');
+    expect(updated.artifacts).toEqual([{ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }]);
+  });
+
+  it('normalizes snake_case artifacts from step completion SSE payloads', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'running',
+      } as any],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepComplete({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'completed',
+      output: 'Done',
+      artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf', mime_type: 'application/pdf' }] as any,
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
+    expect(updated.artifacts).toEqual([expect.objectContaining({ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf', mimeType: 'application/pdf' })]);
+  });
+
+  it('does not restore running playbook status after execution already completed', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      completedAt: '2025-01-01T00:00:05.000Z',
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'completed',
+        completedAt: '2025-01-01T00:00:05.000Z',
+      } as any],
+    });
+
+    usePlaybookStore.setState({
+      currentExecution: execution,
+      executionCache: { e1: execution },
+      playbooks: [{ id: 'p1', name: 'Playbook', description: '', taskCount: 1, isFavorite: false, scheduleEnabled: false, executionStatus: 'completed', lastExecutionAt: null, createdAt: '', updatedAt: '' } as any],
+    });
+
+    usePlaybookStore.getState().onStepUpdate({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'running',
+      output: 'late token',
+    });
+
+    const state = usePlaybookStore.getState();
+    expect(state.currentExecution?.status).toBe('completed');
+    expect(state.playbooks[0].executionStatus).toBe('completed');
+  });
+
+  it('normalizes snake_case artifacts when step completion is the first event seen for a task', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepComplete({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'completed',
+      output: 'Done',
+      artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }] as any,
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
+    expect(updated.artifacts).toEqual([expect.objectContaining({ portId: 'report', artifactKind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' })]);
+  });
+
+  it('preserves terminal metadata on late step updates', () => {
+    const execution = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      taskResults: [{
+        ...makeExecution().taskResults[0],
+        taskId: 'task-1',
+        status: 'completed',
+        error: 'final error',
+        durationMs: 500,
+        completedAt: '2025-01-01T00:00:05.000Z',
+      } as any],
+    });
+
+    usePlaybookStore.setState({ currentExecution: execution, executionCache: { e1: execution } });
+
+    usePlaybookStore.getState().onStepUpdate({
+      executionId: 'e1',
+      taskId: 'task-1',
+      status: 'running',
+      output: 'late token',
+    });
+
+    const updated = usePlaybookStore.getState().executionCache.e1.taskResults[0];
+    expect(updated.status).toBe('completed');
+    expect(updated.completedAt).toBe('2025-01-01T00:00:05.000Z');
+    expect(updated.durationMs).toBe(500);
+    expect(updated.error).toBe('final error');
   });
 
   it('resumes execution with interrupt id and clears waiting state optimistically', async () => {

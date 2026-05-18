@@ -226,6 +226,43 @@ class TestBindings:
         result = resolve_node_inputs("n1", bindings, state)
         assert result == {"value": "hello"}
 
+    def test_resolve_node_output_prefers_structured_outputs_when_display_text_is_present(self):
+        state: ExecutionState = {
+            "execution_id": "e1",
+            "flow_id": "f1",
+            "inputs": {},
+            "task_outputs": {
+                ("source", 0): {
+                    "output": "Executive summary",
+                    "display_text": "Executive summary",
+                    "artifacts": [{
+                        "port_id": "summary",
+                        "artifact_kind": "text",
+                        "content": "Executive summary",
+                    }],
+                    "outputs": {
+                        "summary": {"content": "Executive summary"},
+                    },
+                },
+            },
+            "iterations": {"source": 1},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        }
+        bindings = [{
+            "target_node": "n1",
+            "target_port": "value",
+            "source_kind": "node-output",
+            "source_node": "source",
+            "source_port": "summary",
+            "iteration": "current",
+        }]
+
+        result = resolve_node_inputs("n1", bindings, state)
+        assert result == {"value": "Executive summary"}
+
     def test_resolve_node_output_reads_list_shaped_structured_outputs(self):
         state: ExecutionState = {
             "execution_id": "e1",

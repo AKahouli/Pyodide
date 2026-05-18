@@ -393,6 +393,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const snapshot = (snapshotOverride || this.builderService.buildSnapshot((flow || {}) as any)) as any;
       const recursionLimit = snapshot.settings?.recursionLimit || 25;
       const maxParallelism = snapshot.settings?.maxParallelism || 5;
+      const normalizedOwnerId = typeof ownerId === 'string' ? ownerId : String(ownerId);
 
       // Resolve agents referenced by nodes and enrich metadata
       const agentIds = new Set<string>();
@@ -405,9 +406,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const agentMap = new Map<string, Record<string, unknown>>();
       if (agentIds.size > 0) {
         const resolved = await this.agentService.buildGrpcAgentsForPlaybook(
-          ownerId,
+          normalizedOwnerId,
           [...agentIds],
           undefined,
+          executionId,
         );
         for (const agent of resolved) {
           agentMap.set(agent.id, {
@@ -456,7 +458,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         return;
       }
 
-      this.streamEvents.emitExecutionStart(executionId, flowId, ownerId);
+      this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId);
 
     this.logger.log(`Starting playbook flow execution ${executionId} with ${snapshot.nodes.length} nodes, ${agentIds.size} agent IDs found, ${agentMap.size} agents resolved`);
 
@@ -471,7 +473,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const request = {
       execution_id: executionId,
       flow_id: flowId,
-      owner_id: ownerId,
+      owner_id: normalizedOwnerId,
       snapshot: {
         nodes: (enrichedNodes as any[]).map((n) => ({
           id: n.id,
@@ -551,7 +553,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           max_parallelism: maxParallelism,
         },
       },
-      input_context: toGrpcStruct(inputContext),
+      input_context: toGrpcStruct({
+        ...(inputContext || {}),
+        __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
+      }),
       settings: {
         recursion_limit: recursionLimit,
         max_parallelism: maxParallelism,
@@ -766,17 +771,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.streamEvents.emitStepUpdate(executionId, taskNodeId, token);
       }
     } else if (eventType === 'NodeCompleted') {
-      const rawOutput = payload.output ?? payload;
-      const cleanOutput = this.unwrapGrpcValue(rawOutput);
+      const resultPayload = this.extractCompletedResultPayload(payload);
 
       await this.taskResultModel.updateOne(
         { executionId, taskId: taskNodeId, iteration },
         {
           $set: {
             status: 'completed',
-            output: typeof cleanOutput === 'object' && cleanOutput !== null
-              ? JSON.stringify(cleanOutput)
-              : String(cleanOutput ?? ''),
+            output: resultPayload.output,
+            displayText: resultPayload.displayText,
+            artifacts: resultPayload.artifacts,
+            components: resultPayload.components,
             error: null,
             endedAt: new Date(),
           },
@@ -792,7 +797,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.streamEvents.emitStepComplete(
         executionId,
         taskNodeId,
-        typeof cleanOutput === 'string' ? cleanOutput : JSON.stringify(cleanOutput),
+        resultPayload.displayText ?? resultPayload.output,
+        undefined,
+        iteration,
+        resultPayload.artifacts,
+        resultPayload.components,
       );
     } else if (eventType === 'NodeFailed') {
       const errorMessage = String(payload.error || 'Node execution failed');
@@ -958,6 +967,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         iteration: r.iteration,
         status: r.status,
         output: r.output,
+        displayText: r.displayText,
+        artifacts: r.artifacts,
+        components: r.components,
         error: r.error,
         startedAt: r.startedAt,
         endedAt: r.endedAt,
@@ -1046,6 +1058,43 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     return execution.toJSON() as unknown as IFlowExecutionResponse;
+  }
+
+  private extractCompletedResultPayload(payload: Record<string, unknown>): {
+    output: string;
+    displayText?: string;
+    artifacts?: Array<Record<string, unknown>>;
+    components?: Array<Record<string, unknown>>;
+  } {
+    const cleanPayload = this.unwrapGrpcValue(payload) as Record<string, unknown>;
+    const cleanOutput = this.unwrapGrpcValue(cleanPayload.output ?? cleanPayload);
+    const displayText = typeof cleanPayload.display_text === 'string'
+      ? cleanPayload.display_text
+      : typeof cleanPayload.displayText === 'string'
+        ? cleanPayload.displayText
+        : typeof cleanOutput === 'string'
+          ? cleanOutput
+          : undefined;
+    const output = typeof cleanOutput === 'string'
+      ? cleanOutput
+      : typeof displayText === 'string' && displayText
+        ? displayText
+        : cleanOutput && typeof cleanOutput === 'object'
+          ? JSON.stringify(cleanOutput)
+          : String(cleanOutput ?? '');
+    const artifacts = Array.isArray(cleanPayload.artifacts)
+      ? cleanPayload.artifacts as Array<Record<string, unknown>>
+      : undefined;
+    const components = Array.isArray(cleanPayload.components)
+      ? cleanPayload.components as Array<Record<string, unknown>>
+      : undefined;
+
+    return {
+      output,
+      displayText,
+      artifacts,
+      components,
+    };
   }
 
   async delete(executionId: string, ownerId: string): Promise<void> {

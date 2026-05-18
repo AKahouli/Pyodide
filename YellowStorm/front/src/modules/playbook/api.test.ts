@@ -3,6 +3,7 @@ import {
   executePlaybook,
   getFlowNodeTemplates,
   getPlaybookTriggers,
+  getExecution,
   getPlaybookRepeatability,
   getTaskRepeatability,
   sanitizePlaybookUpdate,
@@ -746,6 +747,54 @@ describe('executePlaybook', () => {
 
     expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
       singleStepTaskId: 'task-7',
+    });
+  });
+});
+
+describe('getExecution', () => {
+  it('normalizes displayText and snake_case artifacts from flow execution details', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-1',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'task-1',
+            status: 'completed',
+            output: '{"display_text":"raw"}',
+            displayText: 'Readable answer',
+            artifacts: [{
+              port_id: 'report',
+              artifact_kind: 'document',
+              filename: 'report.pdf',
+              url: 'https://example.com/report.pdf',
+              mime_type: 'application/pdf',
+            }],
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-1');
+
+    expect(execution.taskResults[0]).toMatchObject({
+      displayText: 'Readable answer',
+      artifacts: [{
+        portId: 'report',
+        artifactKind: 'document',
+        filename: 'report.pdf',
+        url: 'https://example.com/report.pdf',
+        mimeType: 'application/pdf',
+      }],
     });
   });
 });

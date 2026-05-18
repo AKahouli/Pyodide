@@ -214,6 +214,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     const ctx = await createE2EService([
       { event_type: 'ExecutionCompleted', node_id: '', iteration: 0, payload: {} },
     ]);
+    ctx.buildSnapshot.workspaces = ['workspace-1'];
 
     await ctx.service.start('flow-1', 'owner-1', { items: [1, 2, 3], nested: { key: 'val' } });
     await ctx.triggerStreamEvents();
@@ -222,6 +223,10 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     const inputContext = ctx.mockRun.mock.calls[0][0].input_context;
     expect(inputContext).toHaveProperty('fields');
     expect(typeof inputContext.fields).toBe('object');
+    expect(inputContext.fields.__playbook_workspace_ids).toEqual({
+      kind: 'listValue',
+      listValue: { values: [{ kind: 'stringValue', stringValue: 'workspace-1' }] },
+    });
   });
 
   it('preserves node description in runtime metadata for Python prompt construction', async () => {
@@ -260,7 +265,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
 
     expect(ctx.streamEvents.emitStepStart).toHaveBeenCalledWith('exec-e2e', 'step-1');
     expect(ctx.streamEvents.emitStepUpdate).toHaveBeenCalledTimes(2);
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello');
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'Hello', undefined, 0, undefined, undefined);
   });
 
   it('handles NodeToken when token is empty string without emitting', async () => {
@@ -276,7 +281,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     await flushPromises();
 
     expect(ctx.streamEvents.emitStepUpdate).not.toHaveBeenCalled();
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'done');
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', 'done', undefined, 0, undefined, undefined);
   });
 });
 
@@ -708,7 +713,15 @@ describe('E2E: Edge cases', () => {
     await ctx.triggerStreamEvents();
     await flushPromises();
 
-    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith('exec-e2e', 'step-1', expect.any(String));
+    expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledWith(
+      'exec-e2e',
+      'step-1',
+      expect.any(String),
+      undefined,
+      0,
+      undefined,
+      undefined,
+    );
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');
   });
 

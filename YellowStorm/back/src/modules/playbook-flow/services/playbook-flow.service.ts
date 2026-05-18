@@ -20,6 +20,23 @@ import { IFlowResponse, IFlowListResponse } from '../interfaces/playbook-flow.in
 export class PlaybookFlowService {
   private readonly logger = new Logger(PlaybookFlowService.name);
 
+  private normalizeWorkspaces(workspaces?: string[]): string[] {
+    return workspaces
+      ?.map((workspaceId) => workspaceId.trim())
+      .filter((workspaceId) => workspaceId.length > 0)
+      .slice(0, 1)
+      ?? [];
+  }
+
+  private ensureWorkspaceSelection(workspaces: string[]): void {
+    if (workspaces.length === 0) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        'Select a default playbook workspace before saving this playbook.',
+      );
+    }
+  }
+
   constructor(
     @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
@@ -30,6 +47,9 @@ export class PlaybookFlowService {
     const nodes = dto.nodes || [];
     const controlEdges = dto.controlEdges || [];
     const dataBindings = dto.dataBindings || [];
+    const workspaces = this.normalizeWorkspaces(dto.workspaces);
+
+    this.ensureWorkspaceSelection(workspaces);
 
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
@@ -43,7 +63,7 @@ export class PlaybookFlowService {
       nodes,
       controlEdges,
       dataBindings,
-      workspaces: dto.workspaces || [],
+      workspaces,
     });
 
     try {
@@ -124,6 +144,11 @@ export class PlaybookFlowService {
     if (dto.nodes !== undefined) existing.nodes = dto.nodes as any[];
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
+    const normalizedWorkspaces = this.normalizeWorkspaces(dto.workspaces ?? existing.workspaces);
+    if (dto.workspaces !== undefined || existing.workspaces.length > 1) {
+      this.ensureWorkspaceSelection(normalizedWorkspaces);
+    }
+    existing.workspaces = normalizedWorkspaces;
 
     const effectiveNodeIds = new Set(existing.nodes.map((n: any) => n.id));
 
@@ -174,11 +199,15 @@ export class PlaybookFlowService {
     nodes: any[], controlEdges: any[], dataBindings: any[],
     workspaces: string[] = [],
   ): Promise<IFlowResponse> {
+    const normalizedWorkspaces = this.normalizeWorkspaces(workspaces);
+
+    this.ensureWorkspaceSelection(normalizedWorkspaces);
+
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
     const flow = new this.flowModel({
       ownerId, schemaVersion: 1, name, description,
-      nodes, controlEdges, dataBindings, workspaces,
+      nodes, controlEdges, dataBindings, workspaces: normalizedWorkspaces,
       settings: { recursionLimit: 25, maxParallelism: 5 },
     });
     try {
@@ -204,6 +233,8 @@ export class PlaybookFlowService {
       if (update.nodes) existing.nodes = update.nodes;
       if (update.controlEdges) existing.controlEdges = update.controlEdges;
       if (update.dataBindings) existing.dataBindings = update.dataBindings;
+      existing.workspaces = this.normalizeWorkspaces(existing.workspaces);
+      this.ensureWorkspaceSelection(existing.workspaces);
       this.validatorService.validate(
         existing.nodes as any,
         existing.controlEdges as any,
@@ -243,6 +274,9 @@ export class PlaybookFlowService {
     }
 
     const cloneName = nameSuffix ? `${existing.name} ${nameSuffix}` : `${existing.name} (copy)`;
+    const normalizedWorkspaces = this.normalizeWorkspaces(existing.workspaces);
+
+    this.ensureWorkspaceSelection(normalizedWorkspaces);
 
     const flow = new this.flowModel({
       ownerId,
@@ -254,6 +288,7 @@ export class PlaybookFlowService {
       nodes: existing.nodes,
       controlEdges: existing.controlEdges,
       dataBindings: existing.dataBindings,
+      workspaces: normalizedWorkspaces,
     });
 
     try {

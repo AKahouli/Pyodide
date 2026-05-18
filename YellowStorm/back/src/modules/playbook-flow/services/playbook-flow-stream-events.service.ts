@@ -106,6 +106,8 @@ export class PlaybookFlowStreamEventsService {
     output?: string,
     error?: string,
     iteration?: number,
+    artifacts?: Array<Record<string, unknown>>,
+    components?: Array<Record<string, unknown>>,
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
     if (!ownerId) return;
@@ -119,6 +121,8 @@ export class PlaybookFlowStreamEventsService {
     if (output !== undefined) data.output = output;
     if (error !== undefined) data.error = error;
     if (iteration !== undefined) data.iteration = iteration;
+    if (artifacts !== undefined) data.artifacts = artifacts;
+    if (components !== undefined) data.components = components;
 
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_step_complete',

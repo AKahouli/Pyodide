@@ -366,6 +366,34 @@ function toNullableNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function normalizeTaskArtifact(raw: unknown): import('./types').TaskArtifact | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const record = raw as Record<string, unknown>;
+  const metadata = record.metadata && typeof record.metadata === 'object'
+    ? { ...(record.metadata as Record<string, unknown>) }
+    : {};
+  if (record.data !== undefined) {
+    metadata.data = record.data;
+  }
+
+  return {
+    portId: toNullableString(record.portId ?? record.port_id) ?? 'default',
+    artifactKind: (toNullableString(record.artifactKind ?? record.artifact_kind) ?? 'text') as import('./types').ArtifactKind,
+    content: toNullableString(record.content),
+    url: toNullableString(record.url ?? record.ref ?? record.filePath ?? record.file_path),
+    filename: toNullableString(record.filename),
+    mimeType: toNullableString(record.mimeType ?? record.mime_type),
+    size: toNullableNumber(record.size) ?? undefined,
+    metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+  };
+}
+
+export function normalizeTaskArtifacts(raw: unknown): import('./types').TaskArtifact[] {
+  return Array.isArray(raw)
+    ? raw.map(normalizeTaskArtifact).filter((item): item is import('./types').TaskArtifact => item !== null)
+    : [];
+}
+
 function computeDurationMs(startedAt: string | null, completedAt: string | null): number | null {
   if (!startedAt || !completedAt) return null;
   const start = Date.parse(startedAt);
@@ -394,6 +422,7 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     order: typeof raw.order === 'number' ? raw.order : index + 1,
     status: raw.status ?? 'pending',
     output: toNullableString(raw.output),
+    displayText: toNullableString(raw.displayText ?? raw.display_text),
     error: toNullableString(raw.error),
     durationMs: toNullableNumber(raw.durationMs) ?? computeDurationMs(startedAt, completedAt),
     startedAt,
@@ -405,7 +434,7 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     outputTokens: toNullableNumber(raw.outputTokens),
     totalTokens: toNullableNumber(raw.totalTokens),
     modelName: toNullableString(raw.modelName),
-    artifacts: Array.isArray(raw.artifacts) ? raw.artifacts : [],
+    artifacts: normalizeTaskArtifacts(raw.artifacts),
     iteratorIterations: Array.isArray(raw.iteratorIterations) ? raw.iteratorIterations : [],
   };
 }

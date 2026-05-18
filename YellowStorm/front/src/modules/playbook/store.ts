@@ -2228,16 +2228,18 @@ export const usePlaybookStore = create<PlaybookStore>()(
               const merged = mergeComponents(tr.components, data.components || []);
               return {
                 ...tr,
-                status: 'running' as const,
+                status: tr.status === 'pending' || tr.status === 'running'
+                  ? 'running' as const
+                  : tr.status,
                 output: data.output ?? tr.output ?? null,
                 components: merged,
                 toolTrace: data.toolTrace ?? tr.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? tr.llmPromptTrace ?? [],
-                artifacts: data.artifacts ?? tr.artifacts,
+                artifacts: data.artifacts ? api.normalizeTaskArtifacts(data.artifacts) : tr.artifacts,
                 startedAt: tr.startedAt || new Date().toISOString(),
-                completedAt: null,
-                durationMs: null,
-                error: null,
+                completedAt: tr.status === 'pending' || tr.status === 'running' ? null : tr.completedAt,
+                durationMs: tr.status === 'pending' || tr.status === 'running' ? null : tr.durationMs,
+                error: tr.status === 'pending' || tr.status === 'running' ? null : tr.error,
                 isStale: false,
                 staleReason: null,
                 invalidatedByTaskId: null,
@@ -2259,7 +2261,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 components: data.components || [],
                 toolTrace: data.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
-                artifacts: data.artifacts,
+                artifacts: api.normalizeTaskArtifacts(data.artifacts),
                 judgeStatus: 'idle' as const,
                 judgeResult: null,
                 judgeError: null,
@@ -2298,6 +2300,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 error: data.error || null,
                 durationMs: data.durationMs || null,
                 completedAt: new Date().toISOString(),
+                artifacts: data.artifacts ? api.normalizeTaskArtifacts(data.artifacts) : tr.artifacts,
                 toolTrace: data.toolTrace ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
                 inputTokens: data.inputTokens ?? null,
@@ -2309,7 +2312,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeResult: null,
                 judgeError: null,
                 iteratorIterations: data.iteratorIterations ?? tr.iteratorIterations ?? [],
-                artifacts: data.artifacts ?? undefined,
                 isStale: false,
                 staleReason: null,
                 invalidatedByTaskId: null,
@@ -2351,14 +2353,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 judgeHistory: [],
                 evaluationHistory: [],
                 stepExecutions: [],
-                artifacts: data.artifacts ?? undefined,
+                artifacts: api.normalizeTaskArtifacts(data.artifacts),
                 isStale: false,
                 staleReason: null,
                 invalidatedByTaskId: null,
               } as PlaybookExecution['taskResults'][number],
             ];
 
-          const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
+          const updatedExec = {
+            ...cached,
+            status: isActiveExecutionStatus(cached.status) ? cached.status : cached.status,
+            taskResults,
+            updatedAt: new Date().toISOString(),
+          };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
           const currentExecution =
             state.currentExecution?.id === data.executionId ? updatedExec : state.currentExecution;
@@ -2366,6 +2373,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
           return {
             executionCache,
             currentExecution,
+            playbooks: isActiveExecutionStatus(cached.status)
+              ? updatePlaybookExecutionStatus(state.playbooks, cached.playbookId, cached.status)
+              : state.playbooks,
           };
         });
 

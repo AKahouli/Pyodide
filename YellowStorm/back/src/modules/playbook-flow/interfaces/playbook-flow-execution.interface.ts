@@ -38,6 +38,9 @@ export interface IFlowTaskResultResponse {
   iteration: number;
   status: string;
   output?: unknown;
+  displayText?: string;
+  artifacts?: Array<Record<string, unknown>>;
+  components?: Array<Record<string, unknown>>;
   error?: string;
   startedAt?: Date;
   endedAt?: Date;

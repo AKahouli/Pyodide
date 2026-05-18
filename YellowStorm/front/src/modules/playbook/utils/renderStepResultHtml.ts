@@ -1,5 +1,7 @@
 import type { TaskResult, PlaybookComponent, SemanticMatchResult, ToolTraceItem, PlaybookExecution } from '../types';
 import type { MessageComponent } from '@/modules/conversation/types';
+import { getSafeArtifactUrl } from './safe-artifact-url';
+import { getPreferredStepResultText } from './step-result-display';
 
 function escapeHtml(text: string): string {
   return text
@@ -329,8 +331,32 @@ function renderStepResultBody(step: TaskResult, options?: { includeToolTrace?: b
 
   if (step.components && step.components.length > 0) {
     mainContent += renderComponentsToHtml(step.components);
-  } else if (step.output) {
-    mainContent += `<div style="white-space:pre-wrap;font-size:14px;line-height:1.6;margin:8px 0;">${escapeHtml(step.output)}</div>`;
+  } else {
+    const resultText = getPreferredStepResultText(step);
+    if (resultText) {
+      mainContent += `<div style="white-space:pre-wrap;font-size:14px;line-height:1.6;margin:8px 0;">${escapeHtml(resultText)}</div>`;
+    }
+  }
+
+  if (step.artifacts && step.artifacts.length > 0) {
+    const artifactItems = step.artifacts.map((artifact) => {
+      const title = artifact.filename || artifact.portId;
+      const meta = [artifact.artifactKind, artifact.mimeType].filter(Boolean).join(' · ');
+      const safeUrl = getSafeArtifactUrl(artifact.url);
+      const link = safeUrl
+        ? `<div style="margin-top:4px;"><a href="${escapeHtml(safeUrl)}" target="_blank" style="color:#2563eb;">${escapeHtml(safeUrl)}</a></div>`
+        : '';
+      const preview = artifact.content
+        ? `<pre style="margin-top:6px;background:#f5f5f5;border:1px solid #e5e5e5;border-radius:4px;padding:8px;font-size:11px;white-space:pre-wrap;">${escapeHtml(artifact.content)}</pre>`
+        : '';
+      return `<div style="background:#f9fafb;border:1px solid #e5e5e5;border-radius:6px;padding:10px 12px;margin:6px 0;">
+        <div style="font-weight:600;font-size:13px;">${escapeHtml(title)}</div>
+        ${meta ? `<div style="font-size:11px;color:#6b7280;margin-top:2px;">${escapeHtml(meta)}</div>` : ''}
+        ${link}
+        ${preview}
+      </div>`;
+    }).join('');
+    mainContent += `<div style="margin:16px 0;"><h3 style="font-size:14px;font-weight:600;margin-bottom:8px;color:#374151;">Artifacts</h3>${artifactItems}</div>`;
   }
 
   if (includeEvaluation && step.semanticMatch) {

@@ -206,10 +206,10 @@ export class PlaybookContextService {
       return [];
     }
 
-    try {
-      const contexts: Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }> = [];
+    const contexts: Array<{ workspace_id: string; chunks?: number; hybrid_search?: boolean; instruction?: string; tag?: string; workspace_documents: any[] }> = [];
 
-      for (const workspaceId of workspaceIds) {
+    for (const workspaceId of workspaceIds) {
+      try {
         const workspace = await this.workspaceModel.findById(workspaceId).lean().exec();
         let settings: WorkspaceSettingDocument | null = null;
         if (workspace?.settings) {
@@ -229,20 +229,21 @@ export class PlaybookContextService {
           tag: settings?.tag,
           workspace_documents: result.documents.map((doc: any) => this.mapWorkspaceDocument(doc, workspaceId)),
         });
+      } catch (error) {
+        this.logger.warn('Failed to build workspace context for playbook workspace', {
+          workspaceId,
+          error: (error as Error).message,
+        });
       }
-
-      this.logger.log('Workspace contexts built for playbook', {
-        workspaceCount: contexts.length,
-        totalDocuments: contexts.reduce((sum, ctx) => sum + ctx.workspace_documents.length, 0),
-      });
-
-      return contexts;
-    } catch (error) {
-      this.logger.warn('Failed to build workspace contexts for playbook', {
-        error: (error as Error).message,
-      });
-      return [];
     }
+
+    this.logger.log('Workspace contexts built for playbook', {
+      requestedWorkspaceCount: workspaceIds.length,
+      workspaceCount: contexts.length,
+      totalDocuments: contexts.reduce((sum, ctx) => sum + ctx.workspace_documents.length, 0),
+    });
+
+    return contexts;
   }
 
   /**

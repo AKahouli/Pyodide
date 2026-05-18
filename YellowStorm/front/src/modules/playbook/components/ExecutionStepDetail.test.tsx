@@ -744,6 +744,106 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('Result text here')).toBeInTheDocument();
   });
 
+  it('prefers displayText over raw output json', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          output: '{"display_text":"Raw json fallback"}',
+          displayText: 'Readable answer',
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Readable answer')).toBeInTheDocument();
+    expect(screen.queryByText('{"display_text":"Raw json fallback"}')).not.toBeInTheDocument();
+  });
+
+  it('renders selected execution artifacts from history', async () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          attemptNumber: 2,
+          artifacts: [{
+            portId: 'report',
+            artifactKind: 'document',
+            filename: 'latest-report.pdf',
+            url: 'https://example.com/latest-report.pdf',
+          }],
+          stepExecutions: [
+            {
+              id: 'older-exec',
+              attemptNumber: 1,
+              status: 'completed',
+              output: 'Older result',
+              displayText: 'Older result',
+              error: null,
+              durationMs: 4100,
+              startedAt: '2025-01-01T00:00:00.000Z',
+              completedAt: '2025-01-01T00:00:04.100Z',
+              components: [],
+              toolTrace: [],
+              llmPromptTrace: [],
+              inputTokens: 12,
+              outputTokens: 24,
+              totalTokens: 36,
+              modelName: 'model-a',
+              artifacts: [{
+                portId: 'report',
+                artifactKind: 'document',
+                filename: 'older-report.pdf',
+                url: 'https://example.com/older-report.pdf',
+              }],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('latest-report.pdf')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /detail.evaluation.attempt 2/i }));
+    await userEvent.click(screen.getByText(/detail.evaluation.attempt 1 \|/i));
+    expect(screen.getByText('older-report.pdf')).toBeInTheDocument();
+    expect(screen.queryByText('latest-report.pdf')).not.toBeInTheDocument();
+  });
+
+  it('hides artifact download actions for unsafe urls', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          artifacts: [{
+            portId: 'report',
+            artifactKind: 'document',
+            filename: 'report.pdf',
+            url: 'javascript:alert(1)',
+          }],
+        }}
+      />,
+    );
+
+    expect(screen.queryByRole('button', { name: 'artifacts.download' })).not.toBeInTheDocument();
+  });
+
+  it('shows artifact download action for generated documents with safe urls', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          artifacts: [{
+            portId: 'report',
+            artifactKind: 'document',
+            filename: 'report.pdf',
+            url: 'https://example.com/report.pdf',
+          }],
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'artifacts.download' })).toBeInTheDocument();
+  });
+
   it('renders error section for failed steps', () => {
     const failed: TaskResult = { ...baseStep, status: 'failed', error: 'OOM killed', output: null };
     render(<ExecutionStepDetail step={failed} />);

@@ -11,6 +11,7 @@ export interface IFlowResponse {
   nodes: FlowNode[];
   controlEdges: ControlEdge[];
   dataBindings: DataBinding[];
+  workspaces: string[];
   createdAt: Date;
   updatedAt: Date;
 }

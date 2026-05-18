@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { renderWorkflowExecutionResultsHtml } from './renderStepResultHtml';
+import { renderStepResultHtml, renderWorkflowExecutionResultsHtml } from './renderStepResultHtml';
 import type { PlaybookExecution } from '../types';
 
 describe('renderWorkflowExecutionResultsHtml', () => {
@@ -47,5 +47,57 @@ describe('renderWorkflowExecutionResultsHtml', () => {
     expect(html).toContain('First result');
     expect(html).toContain('Boom');
     expect(html).toContain('exec-1');
+  });
+
+  it('prefers displayText and renders artifacts in step html', () => {
+    const html = renderStepResultHtml({
+      taskId: 'task-1',
+      nodeTitle: 'Write Summary',
+      agentName: 'Writer Agent',
+      order: 1,
+      status: 'completed',
+      output: '{"display_text":"json blob"}',
+      displayText: 'Readable answer',
+      error: null,
+      durationMs: 2200,
+      startedAt: '2025-01-01T00:00:02.000Z',
+      completedAt: '2025-01-01T00:00:04.200Z',
+      artifacts: [{
+        portId: 'report',
+        artifactKind: 'document',
+        filename: 'report.pdf',
+        url: 'https://example.com/report.pdf',
+        mimeType: 'application/pdf',
+      }],
+    } as PlaybookExecution['taskResults'][number]);
+
+    expect(html).toContain('Readable answer');
+    expect(html).toContain('Artifacts');
+    expect(html).toContain('report.pdf');
+    expect(html).not.toContain('json blob');
+  });
+
+  it('omits unsafe artifact urls from exported html', () => {
+    const html = renderStepResultHtml({
+      taskId: 'task-1',
+      nodeTitle: 'Write Summary',
+      agentName: 'Writer Agent',
+      order: 1,
+      status: 'completed',
+      output: 'Readable answer',
+      error: null,
+      durationMs: 2200,
+      startedAt: '2025-01-01T00:00:02.000Z',
+      completedAt: '2025-01-01T00:00:04.200Z',
+      artifacts: [{
+        portId: 'report',
+        artifactKind: 'document',
+        filename: 'report.pdf',
+        url: 'javascript:alert(1)',
+      }],
+    } as PlaybookExecution['taskResults'][number]);
+
+    expect(html).toContain('report.pdf');
+    expect(html).not.toContain('javascript:alert(1)');
   });
 });

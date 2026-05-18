@@ -283,7 +283,9 @@ describe('PlaybookExecutionService', () => {
     };
 
     mockContextService = {
-      buildWorkspaceContexts: jest.fn().mockResolvedValue([]),
+      buildWorkspaceContexts: jest.fn().mockResolvedValue([
+        { workspace_id: objectId('ws1').toString(), workspace_documents: [] },
+      ]),
       resolveAgentBrainContexts: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -774,6 +776,31 @@ describe('PlaybookExecutionService', () => {
         objectId('ws1').toString(),
         objectId('ws2').toString(),
       ]);
+    });
+
+    it('should fail when playbook workspaces cannot be resolved to workspace contexts', async () => {
+      const playbook = createMockPlaybook();
+      mockPlaybookService.findRawById.mockResolvedValue(playbook);
+      mockExecutionModel.findOne.mockReturnValue(createChainMock(null));
+      mockContextService.buildWorkspaceContexts.mockResolvedValueOnce([]);
+
+      await expect(service.executePlaybook(userId, playbookId, dto, userEmail)).rejects.toThrow(
+        'Failed to resolve the default playbook workspace for execution',
+      );
+
+      expect(mockExecutionModel.create).not.toHaveBeenCalled();
+      expect(mockStreamGateway.sendToUser).not.toHaveBeenCalledWith(userId, {
+        type: 'playbook_execution_start',
+        data: expect.anything(),
+      });
+
+      expect(mockLoggerService.warn).toHaveBeenCalledWith(
+        'Playbook execution aborted because workspace contexts could not be resolved',
+        {
+          playbookId,
+          workspaceIds: [objectId('ws1').toString()],
+        },
+      );
     });
 
     it('should store singleStepTaskId on execution record', async () => {

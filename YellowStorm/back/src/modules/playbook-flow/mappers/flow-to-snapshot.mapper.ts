@@ -8,6 +8,7 @@ export interface FlowSnapshot {
     recursionLimit: number;
     maxParallelism: number;
   };
+  workspaces: string[];
 }
 
 export function flowToSnapshot(flow: Flow): FlowSnapshot {
@@ -19,5 +20,8 @@ export function flowToSnapshot(flow: Flow): FlowSnapshot {
       recursionLimit: flow.settings.recursionLimit,
       maxParallelism: flow.settings.maxParallelism,
     },
+    workspaces: (flow.workspaces || []).map((w: any) =>
+      typeof w === 'object' && w.toString ? w.toString() : String(w),
+    ),
   };
 }

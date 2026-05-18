@@ -246,6 +246,7 @@ describe('callGrpcRun router config serialization', () => {
     const runCall = { on: jest.fn() };
     const run = jest.fn().mockReturnValue(runCall);
     (service as any).playbookFlowClient = { Run: run };
+    const ownerId = { toString: () => 'owner-1' } as any;
     agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([
       {
         id: 'agent-1',
@@ -257,6 +258,7 @@ describe('callGrpcRun router config serialization', () => {
         agent_params: {
           params: {
             user_id: 'owner-1',
+            session_id: 'exec-1',
             connector_bindings_json: '[{"connector_id":"conn-1"}]',
           },
         },
@@ -270,7 +272,7 @@ describe('callGrpcRun router config serialization', () => {
       },
     ]);
 
-    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', {}, {}, {
+    await (service as any).callGrpcRun('exec-1', 'flow-1', ownerId, {}, {}, {
       nodes: [{
         id: 'step-1',
         kind: 'step',
@@ -287,6 +289,7 @@ describe('callGrpcRun router config serialization', () => {
     });
 
     expect(run).toHaveBeenCalledWith(expect.objectContaining({
+      owner_id: 'owner-1',
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: toGrpcStruct({
@@ -297,10 +300,11 @@ describe('callGrpcRun router config serialization', () => {
             agent_prompt: 'Use tools when needed.',
             agent_type: 'specialist',
             agent_tools: [{ name: 'calculator', description: 'Math helper' }],
-            agent_params: {
-              user_id: 'owner-1',
-              connector_bindings_json: '[{"connector_id":"conn-1"}]',
-            },
+              agent_params: {
+                user_id: 'owner-1',
+                session_id: 'exec-1',
+                connector_bindings_json: '[{"connector_id":"conn-1"}]',
+              },
             connector_bindings: [{
               connector_id: 'conn-1',
               connector_name: 'Drive',
@@ -311,6 +315,12 @@ describe('callGrpcRun router config serialization', () => {
         })],
       }),
     }));
+    expect(agentService.buildGrpcAgentsForPlaybook).toHaveBeenCalledWith(
+      'owner-1',
+      ['agent-1'],
+      undefined,
+      'exec-1',
+    );
   });
 });
 
@@ -430,6 +440,46 @@ describe('shouldEmitCompletedAfterUpdate', () => {
 });
 
 describe('service terminal handling', () => {
+  it('persists enriched node results without collapsing metadata into output', async () => {
+    const { service, taskResultModel, streamEvents } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: {
+        output: 'Executive summary',
+        display_text: 'Executive summary',
+        artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+        components: [{ type: 'text', data: { content: 'Executive summary' } }],
+      },
+    });
+
+    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'completed',
+          output: 'Executive summary',
+          displayText: 'Executive summary',
+          artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+          components: [{ type: 'text', data: { content: 'Executive summary' } }],
+        }),
+      }),
+      { upsert: true },
+    );
+    expect(streamEvents.emitStepComplete).toHaveBeenCalledWith(
+      'exec-1',
+      'step-1',
+      'Executive summary',
+      undefined,
+      0,
+      [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+      [{ type: 'text', data: { content: 'Executive summary' } }],
+    );
+  });
+
   it('does not emit completed after a reserved router cancellation already won', async () => {
     const executionModel = {
       updateOne: jest

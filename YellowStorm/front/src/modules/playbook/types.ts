@@ -751,6 +751,7 @@ export interface StepExecutionHistoryEntry {
   attemptNumber: number | null;
   status: StepStatus;
   output: string | null;
+  displayText?: string | null;
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
@@ -795,6 +796,7 @@ export interface TaskResult {
   iteration?: number;
   status: StepStatus;
   output: string | null;
+  displayText?: string | null;
   error: string | null;
   durationMs: number | null;
   startedAt: string | null;
