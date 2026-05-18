@@ -185,6 +185,9 @@ export const API_ENDPOINTS = {
     importMcp: '/admin/connectors/import-mcp',
     authorize: (id: string) => `/admin/connectors/${id}/authorize`,
     inspectConnector: (id: string) => `/admin/connectors/${id}/inspect`,
+    oauthAuthorize: (appKey: string) => `/admin/connectors/oauth/${appKey}/authorize`,
+    oauthStatus: (appKey: string) => `/admin/connectors/oauth/${appKey}/status`,
+    oauthDisconnect: (appKey: string) => `/admin/connectors/oauth/${appKey}/connection`,
   },
   connectors: {
     list: '/connectors',

@@ -1408,3 +1408,12 @@ export interface McpInspectResult {
   tools: McpToolDefinition[];
   error?: string;
 }
+
+export interface ConnectorOAuthStatusResponse {
+  appKey: string;
+  connected: boolean;
+  status?: string;
+  connectedAt?: string;
+  disconnectedAt?: string;
+  providerEmail?: string;
+}

@@ -35,10 +35,10 @@ import {
 import { InspectConnectorDto } from './dto/inspect-connector.dto';
 import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
 import { ConnectorService } from './connector.service';
-import { ConnectedAppOAuthService } from '../connected-app/services/connected-app-oauth.service';
 import { RateLimit } from '@modules/rate-limiter';
 import { BadRequestException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
 
 @ApiTags('Admin Connectors')
 @ApiBearerAuth()
@@ -48,7 +48,7 @@ export class AdminConnectorController {
   constructor(
     private readonly connectorService: ConnectorService,
     private readonly auditLogService: AuditLogService,
-    private readonly oauthService: ConnectedAppOAuthService,
+    private readonly connectorAdminAuthService: ConnectorAdminAuthService,
   ) {}
 
   @Get()
@@ -96,13 +96,18 @@ export class AdminConnectorController {
     @Body() body: InspectMcpDto,
     @CurrentUser() user: UserDocument,
   ): Promise<IMcpInspectResult> {
+    const resolvedToken = body.connectedAppKey
+      ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), body.connectedAppKey)
+      : undefined;
+
     return this.connectorService.inspectMcp(
       body.transportType,
       body.serverUrl,
       body.serverConfig,
-      body.connectedAppKey ? user._id.toString() : undefined,
-      body.connectedAppKey,
+      undefined,
+      undefined,
       body.runtimeAuthConfig,
+      resolvedToken,
     );
   }
 
@@ -180,8 +185,49 @@ export class AdminConnectorController {
     });
   }
 
+  @Get('oauth/:appKey/authorize')
+  @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'admin:connector:oauth-authorize' })
+  @RequirePermissions(Permissions.CONNECTORS_UPDATE)
+  @ApiOperation({ summary: 'Get OAuth authorization URL for an admin connector app key' })
+  @ApiParam({ name: 'appKey', description: 'Connected app key' })
+  async authorizeConnectorApp(
+    @Param('appKey') appKey: string,
+    @CurrentUser() user: UserDocument,
+  ) {
+    const authorizationUrl = await this.connectorAdminAuthService.buildAuthorizationUrl(
+      user._id.toString(),
+      appKey,
+    );
+
+    return { authorizationUrl };
+  }
+
+  @Get('oauth/:appKey/status')
+  @RequirePermissions(Permissions.CONNECTORS_READ)
+  @ApiOperation({ summary: 'Get admin connector OAuth status for an app key' })
+  @ApiParam({ name: 'appKey', description: 'Connected app key' })
+  async getConnectorAppStatus(
+    @Param('appKey') appKey: string,
+    @CurrentUser() user: UserDocument,
+  ) {
+    return this.connectorAdminAuthService.getStatus(user._id.toString(), appKey);
+  }
+
+  @Delete('oauth/:appKey/connection')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @RequirePermissions(Permissions.CONNECTORS_UPDATE)
+  @ApiOperation({ summary: 'Disconnect admin connector OAuth app key' })
+  @ApiParam({ name: 'appKey', description: 'Connected app key' })
+  async disconnectConnectorApp(
+    @Param('appKey') appKey: string,
+    @CurrentUser() user: UserDocument,
+  ): Promise<void> {
+    await this.connectorAdminAuthService.disconnect(user._id.toString(), appKey);
+  }
+
   @Get(':id/authorize')
   @RateLimit({ limit: 10, windowMs: 60000, keyPrefix: 'admin:connector:authorize' })
+  @RequirePermissions(Permissions.CONNECTORS_UPDATE)
   @ApiOperation({ summary: 'Get OAuth authorization URL for a connector' })
   @ApiParam({ name: 'id', description: 'Connector ID' })
   async authorizeConnector(
@@ -197,7 +243,7 @@ export class AdminConnectorController {
       );
     }
 
-    const authorizationUrl = await this.oauthService.buildAuthorizationUrl(
+    const authorizationUrl = await this.connectorAdminAuthService.buildAuthorizationUrl(
       user._id.toString(),
       connector.connectedAppKey,
     );
@@ -207,6 +253,7 @@ export class AdminConnectorController {
 
   @Post(':id/inspect')
   @RateLimit({ limit: 5, windowMs: 60000, keyPrefix: 'admin:connector:inspect' })
+  @RequirePermissions(Permissions.CONNECTORS_READ)
   @ApiOperation({ summary: 'Inspect MCP server using connector configuration' })
   @ApiParam({ name: 'id', description: 'Connector ID' })
   async inspectConnector(
@@ -223,12 +270,18 @@ export class AdminConnectorController {
       );
     }
 
+    const resolvedToken = dto.useOAuth
+      ? await this.connectorAdminAuthService.getValidToken(user._id.toString(), connector.connectedAppKey)
+      : undefined;
+
     return this.connectorService.inspectMcp(
       connector.mcpTransportType,
       connector.mcpServerUrl,
       connector.mcpServerConfig,
-      dto.useOAuth ? user._id.toString() : undefined,
-      dto.useOAuth ? connector.connectedAppKey : undefined,
+      undefined,
+      undefined,
+      connector.runtimeAuthConfig,
+      resolvedToken,
     );
   }
 }

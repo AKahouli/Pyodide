@@ -77,6 +77,7 @@ import type {
   UpdateConnectorRequest,
   ConnectorQueryParams,
   McpInspectResult,
+  ConnectorOAuthStatusResponse,
 } from './types';
 
 // Helper to build query string
@@ -782,6 +783,24 @@ export async function inspectConnectorWithOAuth(connectorId: string, useOAuth: b
     { useOAuth },
   );
   return response.data.data;
+}
+
+export async function authorizeConnectorAppOAuth(appKey: string): Promise<{ authorizationUrl: string }> {
+  const response = await apiClient.get<ApiResponse<{ authorizationUrl: string }>>(
+    API_ENDPOINTS.adminConnectors.oauthAuthorize(appKey),
+  );
+  return response.data.data;
+}
+
+export async function getConnectorAppOAuthStatus(appKey: string): Promise<ConnectorOAuthStatusResponse> {
+  const response = await apiClient.get<ApiResponse<ConnectorOAuthStatusResponse>>(
+    API_ENDPOINTS.adminConnectors.oauthStatus(appKey),
+  );
+  return response.data.data;
+}
+
+export async function disconnectConnectorAppOAuth(appKey: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.adminConnectors.oauthDisconnect(appKey));
 }
 
 // Agent Types API

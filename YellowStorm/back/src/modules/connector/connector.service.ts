@@ -253,6 +253,7 @@ export class ConnectorService {
     userId?: string,
     connectedAppKey?: string,
     runtimeAuthConfig?: Record<string, unknown>,
+    resolvedToken?: string,
   ): Promise<IMcpInspectResult> {
     try {
       this.logger.log('Inspecting MCP server', { transportType, serverUrl, userId, connectedAppKey });
@@ -261,8 +262,14 @@ export class ConnectorService {
       let transport: any;
       let finalServerConfig = this.sanitizeMcpServerConfig(serverConfig);
 
-      // If using connected app auth, fetch the token and inject it per runtime strategy.
-      if (userId && connectedAppKey) {
+      if (resolvedToken) {
+        finalServerConfig = this.applyRuntimeAuthToServerConfig(
+          finalServerConfig,
+          runtimeAuthConfig,
+          resolvedToken,
+        );
+      } else if (userId && connectedAppKey) {
+        // If using connected app auth, fetch the token and inject it per runtime strategy.
         try {
           const token = await this.connectedAppTokenService.getValidToken(userId, connectedAppKey);
           finalServerConfig = this.applyRuntimeAuthToServerConfig(

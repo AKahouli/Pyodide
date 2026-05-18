@@ -25,12 +25,16 @@ import { defaultConnectorFormValues } from './connector-form-schema';
 import { parseMcpServerConfig } from './mcp-server-config';
 import { Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { getSkills, inspectMcp } from '../../api';
-import { disconnectApp, getAvailableApps } from '@/modules/connected-app/api';
+import {
+  authorizeConnectorAppOAuth,
+  disconnectConnectorAppOAuth,
+  getConnectorAppOAuthStatus,
+  getSkills,
+  inspectMcp,
+} from '../../api';
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminConnectedApps } from '@/modules/connected-app/api';
 import type { ConnectedAppAdminResponse } from '@/modules/connected-app/types';
-import { ensureAppConnected } from '@/modules/connected-app/store';
 
 const AUTH_SOURCE_TYPES = [
   { value: 'credential', label: 'Credential' },
@@ -159,9 +163,8 @@ export function CreateEditConnectorDialog({
 
   const refreshGithubConnectionStatus = useCallback(async () => {
     try {
-      const apps = await getAvailableApps();
-      const githubApp = apps.find((app) => app.appKey === 'github');
-      setGithubConnected(Boolean(githubApp?.connected));
+      const status = await getConnectorAppOAuthStatus('github');
+      setGithubConnected(status.connected);
     } catch {
       setGithubConnected(false);
     }
@@ -318,8 +321,74 @@ export function CreateEditConnectorDialog({
     setOauthConnecting(true);
 
     try {
-      const connected = await ensureAppConnected('github');
-      await refreshGithubConnectionStatus();
+      const result = await authorizeConnectorAppOAuth('github');
+      const popup = window.open(result.authorizationUrl, 'connector-admin-github-oauth', 'width=600,height=700');
+
+      if (!popup) {
+        toast.error(t('connectors.form.auth.githubConnectFailed'));
+        return;
+      }
+
+      const connected = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        let pollTimer: ReturnType<typeof setInterval>;
+
+        const cleanup = () => {
+          clearInterval(pollTimer);
+          window.removeEventListener('message', handleMessage);
+        };
+
+        const finish = async (success: boolean) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          await refreshGithubConnectionStatus();
+          resolve(success);
+        };
+
+        const finishFromStatus = async () => {
+          if (settled) {
+            return;
+          }
+          try {
+            const status = await getConnectorAppOAuthStatus('github');
+            await finish(status.connected);
+          } catch {
+            await finish(false);
+          }
+        };
+
+        const handleMessage = (event: MessageEvent) => {
+          const message = event.data as
+            | { type?: string; appKey?: string; success?: boolean; error?: string }
+            | undefined;
+
+          if (message?.type !== 'connector-admin-oauth-result' || message.appKey !== 'github') {
+            return;
+          }
+
+          if (message.success) {
+            void finish(true);
+            return;
+          }
+
+          toast.error(t('connectors.form.auth.githubConnectFailed'), {
+            description: message.error,
+          });
+          void finish(false);
+        };
+
+        window.addEventListener('message', handleMessage);
+
+        pollTimer = setInterval(() => {
+          if (popup.closed && !settled) {
+            void finishFromStatus();
+          }
+        }, 500);
+      });
+
       if (!connected) {
         toast.error(t('connectors.form.auth.githubConnectFailed'));
       }
@@ -334,7 +403,7 @@ export function CreateEditConnectorDialog({
 
   const handleGithubDisconnect = async () => {
     try {
-      await disconnectApp('github');
+      await disconnectConnectorAppOAuth('github');
       await refreshGithubConnectionStatus();
       toast.success(t('connectors.form.auth.githubDisconnected'));
     } catch (err) {
