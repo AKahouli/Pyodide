@@ -29,7 +29,9 @@
       "Bash(git restore *)",
       "Bash(grep -E \"^\\\\+\\\\+\\\\+.*\\\\.\\(ts|tsx\\)$|^\\\\+.*console\\\\.\\(log|warn|error|debug|info\\)\")",
       "mcp__ide__getDiagnostics",
-      "Bash(npx ts-node *)"
+      "Bash(npx ts-node *)",
+      "Bash(dir /s /b \"YellowStorm\\\\*.py\")",
+      "Bash(findstr /v node_modules)"
     ]
   }
 }
