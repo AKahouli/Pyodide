@@ -734,6 +734,7 @@ export async function executePlaybook(
   if (data?.advisorAutopilotEnabled !== undefined) payload.advisorAutopilotEnabled = data.advisorAutopilotEnabled;
   if (data?.advisorAutopilotTargetScore !== undefined) payload.advisorAutopilotTargetScore = data.advisorAutopilotTargetScore;
   if (data?.advisorAutopilotMaxTurns !== undefined) payload.advisorAutopilotMaxTurns = data.advisorAutopilotMaxTurns;
+  if (data?.runNodeReflection !== undefined) payload.reflectionEnabled = data.runNodeReflection;
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(id),
     payload,

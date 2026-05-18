@@ -1924,7 +1924,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const taskResults = cached.taskResults.map((taskResult) => (
             matchesTargetIteration(taskResult)
-              ? { ...taskResult, judgeStatus: 'evaluating' as const, judgeError: null }
+              ? { ...taskResult, judgeStatus: 'evaluating' as const, judgeError: null, judgeResult: null }
               : taskResult
           ));
           const updatedExecution = { ...cached, taskResults, updatedAt: new Date().toISOString() };

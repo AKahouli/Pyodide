@@ -26,4 +26,9 @@ export class StartPlaybookFlowExecutionDto {
   @IsOptional()
   @IsNumber()
   advisorAutopilotMaxTurns?: number;
+
+  @ApiPropertyOptional({ description: 'Enable advisor reflection mode (auto-evaluate on step completion)' })
+  @IsOptional()
+  @IsBoolean()
+  reflectionEnabled?: boolean;
 }

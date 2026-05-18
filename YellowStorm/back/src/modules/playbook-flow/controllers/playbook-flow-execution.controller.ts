@@ -34,9 +34,10 @@ export class PlaybookFlowExecutionController {
     const advisorAutopilotEnabled: boolean | undefined = body.advisorAutopilotEnabled;
     const advisorAutopilotTargetScore: number | undefined = body.advisorAutopilotTargetScore;
     const advisorAutopilotMaxTurns: number | undefined = body.advisorAutopilotMaxTurns;
+    const reflectionEnabled: boolean | undefined = body.reflectionEnabled;
     const execution = await this.executionService.start(
       flowId, userId, body.inputContext, idempotencyKey, singleStepTaskId,
-      advisorAutopilotEnabled, advisorAutopilotTargetScore, advisorAutopilotMaxTurns,
+      advisorAutopilotEnabled, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, reflectionEnabled,
     );
     return { executionId: (execution as any).id ?? (execution as any)._id?.toString() };
   }

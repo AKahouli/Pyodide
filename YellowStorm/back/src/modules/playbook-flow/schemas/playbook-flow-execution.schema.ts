@@ -89,6 +89,9 @@ export class FlowExecution {
   @Prop({ required: false, type: Number })
   advisorAutopilotMaxTurns?: number;
 
+  @Prop({ required: false, type: Boolean, default: false })
+  reflectionEnabled?: boolean;
+
   @Prop({ required: false, type: [SeededTaskOutput], default: [] })
   seededTaskOutputs?: SeededTaskOutput[];
 }

@@ -253,6 +253,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     advisorAutopilotEnabled?: boolean,
     advisorAutopilotTargetScore?: number,
     advisorAutopilotMaxTurns?: number,
+    reflectionEnabled?: boolean,
   ): Promise<IFlowExecutionResponse> {
     const flow = await this.flowService.findOne(flowId, ownerId);
 
@@ -347,6 +348,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
 
     const enabledAutopilot = advisorAutopilotEnabled ?? (flow as any).advisorAutopilotEnabled ?? false;
+    const enabledReflection = reflectionEnabled ?? (flow as any).reflectionEnabled ?? false;
     const execution = new this.executionModel({
       flowId,
       ownerId,
@@ -361,6 +363,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       advisorAutopilotEnabled: enabledAutopilot,
       advisorAutopilotTargetScore: advisorAutopilotTargetScore ?? (flow as any).advisorAutopilotTargetScore ?? undefined,
       advisorAutopilotMaxTurns: advisorAutopilotMaxTurns ?? (flow as any).advisorAutopilotMaxTurns ?? undefined,
+      reflectionEnabled: enabledReflection,
       seededTaskOutputs,
     });
 
@@ -1032,8 +1035,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.observabilityService.toStreamPayload(resultPayload),
       );
 
-      const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled').lean().exec();
-      if (execDoc?.advisorAutopilotEnabled && execDoc.ownerId) {
+      const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled').lean().exec();
+      if (execDoc?.ownerId && (execDoc.advisorAutopilotEnabled || execDoc.reflectionEnabled)) {
         this.advisorService.runTaskEvaluation(executionId, taskNodeId, String(execDoc.ownerId), { iteration }).catch((err) => {
           this.logger.warn(`Auto-advisor evaluation failed for ${executionId}:${taskNodeId}: ${err instanceof Error ? err.message : String(err)}`);
         });
