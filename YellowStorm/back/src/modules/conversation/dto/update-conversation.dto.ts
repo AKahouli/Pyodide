@@ -1,4 +1,4 @@
-import { IsOptional, IsString, MaxLength, IsBoolean, IsArray, IsMongoId, IsEmail, ValidateNested } from 'class-validator';
+import { IsOptional, IsString, MaxLength, IsBoolean, IsArray, IsMongoId, IsEmail, ValidateNested, ValidateIf } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 
@@ -47,4 +47,10 @@ export class UpdateConversationDto {
   @IsArray()
   @IsMongoId({ each: true })
   taggedAgents?: string[];
+
+  @ApiPropertyOptional({ description: 'Project ID to move this conversation into (or null to remove from any project)', nullable: true })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsMongoId()
+  projectId?: string | null;
 }

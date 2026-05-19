@@ -38,4 +38,14 @@ export class ConversationQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   isArchived?: boolean;
+
+  @ApiPropertyOptional({ description: 'Filter by project ID, or "none" for conversations not in any project' })
+  @IsOptional()
+  @IsString()
+  projectId?: string;
+
+  @ApiPropertyOptional({ enum: ['title', 'fulltext'], description: 'Where to look when search is provided' })
+  @IsOptional()
+  @IsIn(['title', 'fulltext'])
+  searchScope?: 'title' | 'fulltext';
 }
