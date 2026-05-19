@@ -306,6 +306,11 @@ export const API_ENDPOINTS = {
     sync: '/admin/models/sync',
     default: '/admin/models/default',
   },
+  projects: {
+    list: '/projects',
+    create: '/projects',
+    byId: (id: string) => `/projects/${id}`,
+  },
   evaluation: {
     datasets: '/evaluation/datasets',
     datasetById: (id: string) => `/evaluation/datasets/${id}`,

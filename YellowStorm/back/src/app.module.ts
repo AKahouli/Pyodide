@@ -46,6 +46,7 @@ import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
 import { ConnectorModule } from './modules/connector/connector.module';
+import { ProjectModule } from './modules/project';
 
 @Module({
   imports: [
@@ -93,6 +94,7 @@ import { ConnectorModule } from './modules/connector/connector.module';
     AnalyticsModule,
     ConnectedAppModule,
     ConnectorModule,
+    ProjectModule,
     HealthModule,
     EvaluationModule,
   ],

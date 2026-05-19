@@ -191,6 +191,11 @@ export enum ErrorCode {
   PLAYBOOK_NO_TASKS = 'ERR_2508',
   PLAYBOOK_GENERATE_FAILED = 'ERR_2509',
 
+  // Project errors (2700-2799)
+  PROJECT_NOT_FOUND = 'ERR_2700',
+  PROJECT_ALREADY_EXISTS = 'ERR_2701',
+  PROJECT_FORBIDDEN = 'ERR_2702',
+
   // Auth Provider errors (2600-2699)
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
   AUTH_PROVIDER_ALREADY_EXISTS = 'ERR_2601',
@@ -376,6 +381,10 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PLAYBOOK_EXECUTION_TIMEOUT]: 'Playbook execution timed out due to inactivity.',
   [ErrorCode.PLAYBOOK_NO_TASKS]: 'Playbook has no tasks to execute.',
   [ErrorCode.PLAYBOOK_GENERATE_FAILED]: 'Failed to generate playbook.',
+
+  [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
+  [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
+  [ErrorCode.PROJECT_FORBIDDEN]: 'You do not have access to this project.',
 
   [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',

@@ -369,10 +369,17 @@ interface ConversationState {
   unreadMentions: number;
   mentionNavigationLock: boolean;
 
+  // Project-scoped conversation lists (separate from the main history list)
+  projectConversations: Record<string, Conversation[]>;
+  projectConversationsLoading: Record<string, boolean>;
+
   // Actions - Conversations
-  fetchConversations: (params?: { reset?: boolean; limit?: number; search?: string }) => Promise<void>;
-  createConversation: (data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string }) => Promise<Conversation>;
-  updateConversation: (id: string, data: { title?: string; isArchived?: boolean; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }> }) => Promise<void>;
+  fetchConversations: (params?: { reset?: boolean; limit?: number; search?: string; projectId?: string | 'none'; searchScope?: 'title' | 'fulltext' }) => Promise<void>;
+  fetchProjectConversations: (projectId: string, options?: { limit?: number }) => Promise<void>;
+  createConversation: (data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string; projectId?: string }) => Promise<Conversation>;
+  updateConversation: (id: string, data: { title?: string; isArchived?: boolean; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; projectId?: string | null }) => Promise<void>;
+  moveConversationToProject: (id: string, projectId: string | null) => Promise<void>;
+  detachConversationsFromProject: (projectId: string) => void;
   deleteConversation: (id: string) => Promise<void>;
   setCurrentConversation: (id: string) => Promise<void>;
 
@@ -441,6 +448,8 @@ export const useConversationStore = create<ConversationState>()(
       conversationsTotal: 0,
       conversationsHasMore: false,
       conversationsLoading: false,
+      projectConversations: {},
+      projectConversationsLoading: {},
       historyPanelOpen: typeof window !== 'undefined' ? localStorage.getItem('historyPanelOpen') === 'true' : false,
 
       currentConversationId: null,
@@ -484,7 +493,7 @@ export const useConversationStore = create<ConversationState>()(
 
       // ===== Conversation Actions =====
 
-      fetchConversations: async (params?: { reset?: boolean; limit?: number; search?: string }) => {
+      fetchConversations: async (params?: { reset?: boolean; limit?: number; search?: string; projectId?: string | 'none'; searchScope?: 'title' | 'fulltext' }) => {
         const reset = params?.reset ?? false;
         const limit = params?.limit || DEFAULT_CONVERSATIONS_LIMIT;
 
@@ -503,6 +512,8 @@ export const useConversationStore = create<ConversationState>()(
             page,
             limit,
             search: params?.search,
+            projectId: params?.projectId,
+            searchScope: params?.searchScope,
           });
 
           set((s) => {
@@ -530,15 +541,43 @@ export const useConversationStore = create<ConversationState>()(
         }
       },
 
+      fetchProjectConversations: async (projectId, options) => {
+        const limit = options?.limit ?? 50;
+        set((s) => ({
+          projectConversationsLoading: { ...s.projectConversationsLoading, [projectId]: true },
+        }));
+        try {
+          const result = await api.fetchConversations({ page: 1, limit, projectId });
+          set((s) => ({
+            projectConversations: { ...s.projectConversations, [projectId]: result.items },
+            projectConversationsLoading: { ...s.projectConversationsLoading, [projectId]: false },
+          }));
+        } catch (err) {
+          set((s) => ({
+            projectConversationsLoading: { ...s.projectConversationsLoading, [projectId]: false },
+          }));
+          toast.error(translateConversation('toasts.conversation.loadListError'));
+          console.error('[ConversationStore] fetchProjectConversations error:', err);
+        }
+      },
+
       createConversation: async (data) => {
         try {
           const conversation = await api.createConversation(data);
 
-          // Immediately prepend to list - appears at top
-          set((s) => ({
-            conversations: [conversation, ...s.conversations],
-            conversationsTotal: s.conversationsTotal + 1,
-          }));
+          set((s) => {
+            const next: Partial<ConversationState> = {
+              conversations: [conversation, ...s.conversations],
+              conversationsTotal: s.conversationsTotal + 1,
+            };
+            if (conversation.projectId && s.projectConversations[conversation.projectId]) {
+              next.projectConversations = {
+                ...s.projectConversations,
+                [conversation.projectId]: [conversation, ...s.projectConversations[conversation.projectId]],
+              };
+            }
+            return next;
+          });
 
           return conversation;
         } catch (err) {
@@ -549,10 +588,14 @@ export const useConversationStore = create<ConversationState>()(
 
       updateConversation: async (id, data) => {
         const previousConversations = get().conversations;
+        const previousProjectConversations = get().projectConversations;
 
-        // Optimistic update
+        // Optimistic update — also reflect in any project list that contains it
         set((s) => ({
           conversations: s.conversations.map((c) => (c.id === id ? { ...c, ...data } : c)),
+          projectConversations: mapProjectLists(s.projectConversations, (c) =>
+            c.id === id ? { ...c, ...data } : c,
+          ),
           currentConversation: s.currentConversation?.id === id ? { ...s.currentConversation, ...data } : s.currentConversation,
         }));
 
@@ -560,24 +603,96 @@ export const useConversationStore = create<ConversationState>()(
           const updated = await api.updateConversation(id, data);
           set((s) => ({
             conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+            projectConversations: mapProjectLists(s.projectConversations, (c) =>
+              c.id === id ? updated : c,
+            ),
             currentConversation: s.currentConversation?.id === id ? updated : s.currentConversation,
           }));
         } catch (err) {
-          // Rollback on failure
-          set({ conversations: previousConversations });
+          set({ conversations: previousConversations, projectConversations: previousProjectConversations });
           toast.error(translateConversation('toasts.conversation.updateError'));
           throw err;
         }
       },
 
+      moveConversationToProject: async (id, projectId) => {
+        const state = get();
+        const previousConversations = state.conversations;
+        const previousProjectConversations = state.projectConversations;
+
+        // Find the conversation in any list to capture its current shape
+        const conv =
+          state.conversations.find((c) => c.id === id) ??
+          Object.values(state.projectConversations)
+            .flat()
+            .find((c) => c.id === id) ??
+          (state.currentConversation?.id === id ? state.currentConversation : null);
+
+        const sourceProjectId = conv?.projectId ?? null;
+        const optimistic: Conversation | null = conv ? { ...conv, projectId } : null;
+
+        set((s) => ({
+          conversations: s.conversations.map((c) => (c.id === id ? { ...c, projectId } : c)),
+          projectConversations: rebalanceProjectLists(
+            s.projectConversations,
+            id,
+            sourceProjectId,
+            projectId,
+            optimistic,
+          ),
+          currentConversation:
+            s.currentConversation?.id === id ? { ...s.currentConversation, projectId } : s.currentConversation,
+        }));
+
+        try {
+          const updated = await api.updateConversation(id, { projectId });
+          set((s) => ({
+            conversations: s.conversations.map((c) => (c.id === id ? updated : c)),
+            projectConversations: rebalanceProjectLists(
+              s.projectConversations,
+              id,
+              sourceProjectId,
+              projectId,
+              updated,
+            ),
+            currentConversation:
+              s.currentConversation?.id === id ? updated : s.currentConversation,
+          }));
+        } catch (err) {
+          set({ conversations: previousConversations, projectConversations: previousProjectConversations });
+          toast.error(translateConversation('toasts.conversation.updateError'));
+          throw err;
+        }
+      },
+
+      detachConversationsFromProject: (projectId) => {
+        set((s) => {
+          const { [projectId]: _removed, ...remainingLists } = s.projectConversations;
+          const { [projectId]: _removedLoading, ...remainingLoading } = s.projectConversationsLoading;
+          return {
+            conversations: s.conversations.map((c) =>
+              c.projectId === projectId ? { ...c, projectId: null } : c,
+            ),
+            projectConversations: remainingLists,
+            projectConversationsLoading: remainingLoading,
+            currentConversation:
+              s.currentConversation?.projectId === projectId
+                ? { ...s.currentConversation, projectId: null }
+                : s.currentConversation,
+          };
+        });
+      },
+
       deleteConversation: async (id) => {
         const state = get();
         const previousConversations = state.conversations;
+        const previousProjectConversations = state.projectConversations;
         const previousTotal = state.conversationsTotal;
 
-        // Optimistic removal
+        // Optimistic removal from both lists
         set((s) => ({
           conversations: s.conversations.filter((c) => c.id !== id),
+          projectConversations: filterProjectLists(s.projectConversations, (c) => c.id !== id),
           conversationsTotal: Math.max(0, s.conversationsTotal - 1),
           currentConversation: s.currentConversation?.id === id ? null : s.currentConversation,
           currentConversationId: s.currentConversationId === id ? null : s.currentConversationId,
@@ -586,8 +701,11 @@ export const useConversationStore = create<ConversationState>()(
         try {
           await api.deleteConversation(id);
         } catch (err) {
-          // Rollback on failure
-          set({ conversations: previousConversations, conversationsTotal: previousTotal });
+          set({
+            conversations: previousConversations,
+            projectConversations: previousProjectConversations,
+            conversationsTotal: previousTotal,
+          });
           toast.error(translateConversation('toasts.conversation.deleteError'));
           throw err;
         }
@@ -1379,6 +1497,8 @@ export const useConversationStore = create<ConversationState>()(
           conversationsTotal: 0,
           conversationsHasMore: false,
           conversationsLoading: false,
+          projectConversations: {},
+          projectConversationsLoading: {},
           // historyPanelOpen NOT cleared - persisted in localStorage
           currentConversationId: null,
           currentConversation: null,
@@ -1437,6 +1557,77 @@ const EMPTY_CONVERSATIONS: Conversation[] = [];
 const EMPTY_MESSAGES: Message[] = [];
 
 export const useConversations = () => useConversationStore((s) => (s.conversations.length === 0 ? EMPTY_CONVERSATIONS : s.conversations));
+
+export const useHistoryConversations = () =>
+  useConversationStore(
+    useShallow((s) => {
+      const filtered = s.conversations.filter((c) => !c.projectId);
+      return filtered.length === 0 ? EMPTY_CONVERSATIONS : filtered;
+    }),
+  );
+
+export const useConversationsByProject = (projectId: string) =>
+  useConversationStore(
+    useShallow((s) => {
+      const list = s.projectConversations[projectId];
+      return !list || list.length === 0 ? EMPTY_CONVERSATIONS : list;
+    }),
+  );
+
+export const useProjectConversationsLoading = (projectId: string) =>
+  useConversationStore((s) => !!s.projectConversationsLoading[projectId]);
+
+// ===== Project list helpers =====
+
+function mapProjectLists(
+  lists: Record<string, Conversation[]>,
+  fn: (c: Conversation) => Conversation,
+): Record<string, Conversation[]> {
+  const next: Record<string, Conversation[]> = {};
+  for (const [pid, arr] of Object.entries(lists)) {
+    next[pid] = arr.map(fn);
+  }
+  return next;
+}
+
+function filterProjectLists(
+  lists: Record<string, Conversation[]>,
+  pred: (c: Conversation) => boolean,
+): Record<string, Conversation[]> {
+  const next: Record<string, Conversation[]> = {};
+  for (const [pid, arr] of Object.entries(lists)) {
+    next[pid] = arr.filter(pred);
+  }
+  return next;
+}
+
+function rebalanceProjectLists(
+  lists: Record<string, Conversation[]>,
+  conversationId: string,
+  fromProjectId: string | null,
+  toProjectId: string | null,
+  conv: Conversation | null,
+): Record<string, Conversation[]> {
+  const next: Record<string, Conversation[]> = { ...lists };
+
+  // Remove from source list (if loaded)
+  if (fromProjectId && next[fromProjectId]) {
+    next[fromProjectId] = next[fromProjectId].filter((c) => c.id !== conversationId);
+  }
+
+  // Add to or update in target list (only if that project's list is loaded)
+  if (toProjectId && conv) {
+    const targetList = next[toProjectId];
+    if (targetList) {
+      const exists = targetList.some((c) => c.id === conversationId);
+      next[toProjectId] = exists
+        ? targetList.map((c) => (c.id === conversationId ? conv : c))
+        : [conv, ...targetList];
+    }
+  }
+
+  return next;
+}
 
 export const useConversationsLoading = () => useConversationStore((s) => s.conversationsLoading);
 
