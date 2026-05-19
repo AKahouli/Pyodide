@@ -29,6 +29,9 @@ The admin module is a permission-gated section of the application that allows au
 - **Audit Logs**: Track all admin actions for compliance
 - **System Logs**: View application logs in real-time for debugging
 - **System**: Toggle maintenance mode
+- **Connectors**: Manage MCP server integrations with OAuth 2.0 authentication
+- **Tools**: Manage tool definitions and attributes
+- **Skills**: Manage skill definitions and imports
 
 Access is controlled by the RBAC (Role-Based Access Control) system defined in the backend.
 
@@ -93,6 +96,21 @@ admin.logs.read     - View system application logs
 system.maintenance  - Toggle maintenance mode
 
 analytics.*         - Various analytics permissions
+
+connectors.read     - Read connectors
+connectors.create   - Create new connectors
+connectors.update   - Update existing connectors
+connectors.delete   - Delete connectors
+
+tools.read          - Read tools
+tools.create        - Create new tools
+tools.update        - Update existing tools
+tools.delete        - Delete tools
+
+skills.read         - Read skills
+skills.create       - Create new skills
+skills.update       - Update existing skills
+skills.delete       - Delete skills
 ```
 
 ### Checking Permissions in Components
@@ -163,7 +181,19 @@ front/src/modules/admin/
     ├── AnalyticsPage.tsx # Analytics dashboard
     ├── AuditLogsPage.tsx # Audit log viewer
     ├── LogsPage.tsx      # System logs viewer
-    └── SystemPage.tsx    # System settings
+    ├── SystemPage.tsx    # System settings
+    │
+    ├── tools/
+    │   ├── index.ts
+    │   └── README.md
+    │
+    └── connectors/
+        ├── index.ts
+        ├── ConnectorsPage.tsx          # Main connectors list page
+        ├── CreateEditConnectorDialog.tsx # Connector CRUD dialog with OAuth
+        ├── connector-form-schema.ts    # Connector form validation
+        ├── mcp-server-config.ts        # MCP config parsing utilities
+        └── README.md
 ```
 
 ---
@@ -556,6 +586,176 @@ Navigation sidebar with permission-filtered menu items.
 
 ---
 
+## Connectors
+
+Connectors enable integration with external MCP (Model Context Protocol) servers, allowing agents to use tools from third-party services like GitHub.
+
+### Connector Features
+
+- **Multiple Transport Types**: Streamable HTTP, SSE, and stdio
+- **OAuth 2.0 Authentication**: Secure connection using OAuth flows (GitHub support)
+- **Runtime Auth Config**: Custom headers and environment variable mappings
+- **MCP Inspection**: Discover and import tools from MCP servers
+- **Admin OAuth**: Separate OAuth connections for admin-level access
+
+### OAuth Connection Flow
+
+```
+1. Admin clicks "Connect to GitHub"
+   ↓
+2. Frontend calls authorizeConnectorAppOAuth('github')
+   ↓
+3. Backend returns authorization URL with PKCE parameters
+   ↓
+4. Frontend opens popup to GitHub authorization page
+   ↓
+5. User authorizes the app
+   ↓
+6. GitHub redirects to OAuth callback endpoint
+   ↓
+7. Backend exchanges code for tokens, encrypts and stores them
+   ↓
+8. Callback page posts message to opener window
+   ↓
+9. Frontend polls status and updates UI to show connected state
+```
+
+### Connector API Functions
+
+```tsx
+// Get OAuth authorization URL
+const { authorizationUrl } = await authorizeConnectorAppOAuth('github');
+window.open(authorizationUrl, 'connector-admin-github-oauth', 'width=600,height=700');
+
+// Check OAuth connection status
+const status = await getConnectorAppOAuthStatus('github');
+// { appKey: 'github', connected: true, status: 'active', connectedAt: '...', ... }
+
+// Disconnect OAuth connection
+await disconnectConnectorAppOAuth('github');
+
+// Inspect MCP server with OAuth
+const result = await inspectMcp(
+  'streamable_http',
+  'https://api.github.com/mcp',
+  {},  // serverConfig
+  'github',  // connectedAppKey
+  {  // runtimeAuthConfig
+    strategy: 'http_header_bearer',
+    headerName: 'Authorization',
+    headerPrefix: 'Bearer '
+  }
+);
+
+// Create connector with OAuth
+const connector = await createConnector({
+  slug: 'github-mcp',
+  name: 'GitHub MCP Server',
+  description: 'GitHub tools for code analysis',
+  authType: 'oauth2',
+  authSourceType: 'connected_app',
+  connectedAppKey: 'github',
+  runtimeAuthConfig: {
+    strategy: 'http_header_bearer',
+    headerName: 'Authorization',
+    headerPrefix: 'Bearer '
+  },
+  mcpTransportType: 'streamable_http',
+  mcpServerUrl: 'https://api.github.com/mcp',
+  actions: [],  // Auto-populated from MCP inspection
+  isActive: true
+});
+```
+
+### Connector OAuth Status Component
+
+The `CreateEditConnectorDialog` component includes an OAuth status indicator:
+
+```tsx
+{form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && (
+  <div className='flex items-center gap-2'>
+    {githubConnected ? (
+      <>
+        <div className='w-2 h-2 rounded-full bg-green-500 animate-pulse' />
+        <span className='text-green-600'>Connected to GitHub</span>
+        <Button onClick={handleGithubDisconnect}>Disconnect</Button>
+      </>
+    ) : (
+      <>
+        <div className='w-2 h-2 rounded-full bg-amber-500' />
+        <span className='text-amber-600'>Not connected to GitHub</span>
+        <Button onClick={handleGithubOAuth}>Connect to GitHub</Button>
+      </>
+    )}
+  </div>
+)}
+```
+
+### OAuth Popup Communication
+
+The OAuth flow uses `postMessage` for popup-to-parent communication:
+
+```tsx
+const handleMessage = (event: MessageEvent) => {
+  if (event.data.type !== 'connector-admin-oauth-result' || event.data.appKey !== 'github') {
+    return;
+  }
+  if (event.data.success) {
+    await refreshGithubConnectionStatus();
+  } else {
+    toast.error('GitHub connection failed', { description: event.data.error });
+  }
+};
+
+window.addEventListener('message', handleMessage);
+```
+
+### PostMessage Message Format
+
+```typescript
+{
+  type: 'connector-admin-oauth-result';
+  appKey: string;      // e.g., 'github'
+  success: boolean;
+  error?: string;      // Error message if failed
+}
+```
+
+### Environment Configuration
+
+For local development, ensure the following are configured in `.env`:
+
+```bash
+# GitHub OAuth
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+GITHUB_CALLBACK_URL=http://localhost:3000/api/v1/admin/connectors/oauth/github/callback
+
+# Frontend URL (for postMessage origin)
+FRONTEND_URL=http://localhost:5173
+```
+
+For production, update the URLs to match your production domain.
+
+### OAuth Callback HTML
+
+The callback page returns HTML that posts the result to the opener window:
+
+```html
+<script>
+  if (window.opener) {
+    window.opener.postMessage({
+      type: 'connector-admin-oauth-result',
+      appKey: 'github',
+      success: true
+    }, 'http://localhost:5173');
+  }
+  setTimeout(function() { window.close(); }, 500);
+</script>
+```
+
+---
+
 ## Testing
 
 Admin tests are co-located with source files (`*.test.ts` / `*.test.tsx`).
@@ -715,5 +915,7 @@ When adding new types, functions, or components, always update:
 
 - Backend Authorization: `back/src/modules/authorization/README.md`
 - Backend Logger: `back/src/modules/logger/README.md`
+- Backend Connector Module: `back/src/modules/connector/README.md`
+- Backend Connected App Module: `back/src/modules/connected-app/README.md`
 - Error Codes: `front/src/lib/error-codes.ts`
 - API Client: `front/src/lib/api/client.ts`
