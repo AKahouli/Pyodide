@@ -43,6 +43,6 @@ import { CryptoService } from '@common/services/crypto.service';
     ConnectedAppTokenService,
     ConnectedAppUserService,
   ],
-  exports: [ConnectedAppTokenService],
+  exports: [ConnectedAppDefinitionService, ConnectedAppOAuthService, ConnectedAppTokenService],
 })
 export class ConnectedAppModule {}

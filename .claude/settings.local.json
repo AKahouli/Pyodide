@@ -22,6 +22,16 @@
       "Bash(lsof -i:50051 -nP -t)",
       "Bash(lsof -tiTCP -i:50051 -sTCP:LISTEN -n)",
       "Bash(awk '{print $2}')",
+      "Bash(npm test *)",
+      "Bash(npx tsc *)",
+      "Bash(python3 -m pytest tests/test_tools/test_utilities/test_render_chart.py -v)",
+      "Bash(python3 -m py_compile utilities/render_chart.py)",
+      "Bash(git restore *)",
+      "Bash(grep -E \"^\\\\+\\\\+\\\\+.*\\\\.\\(ts|tsx\\)$|^\\\\+.*console\\\\.\\(log|warn|error|debug|info\\)\")",
+      "mcp__ide__getDiagnostics",
+      "Bash(npx ts-node *)",
+      "Bash(dir /s /b \"YellowStorm\\\\*.py\")",
+      "Bash(findstr /v node_modules)",
       "mcp__code-review-graph__semantic_search_nodes_tool"
     ]
   }
