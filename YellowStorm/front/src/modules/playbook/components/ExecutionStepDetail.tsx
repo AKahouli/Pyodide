@@ -1315,7 +1315,7 @@ export function ExecutionStepDetail({
 
             {inputPortEntries.length > 0 && (
               <div className="space-y-3">
-                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.inputPortsTitle' as any)}</div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('Input artifacts' as any)}</div>
                 <div className="space-y-2">
                   {inputPortEntries.map((entry) => (
                     <PortArtifactPane

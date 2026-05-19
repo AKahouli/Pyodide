@@ -314,18 +314,52 @@ def _validate_declared_output_ports(
             )
 
 
+def _extract_json_objects(text: str) -> list[Dict[str, Any]]:
+    normalized = (text or "").strip()
+    if not normalized:
+        return []
+    if normalized.startswith("```"):
+        lines = [
+            line for line in normalized.splitlines() if not line.strip().startswith("```")
+        ]
+        normalized = "\n".join(lines).strip()
+    decoder = json.JSONDecoder()
+    pos = 0
+    found: list[Dict[str, Any]] = []
+    while pos < len(normalized):
+        idx = normalized.find("{", pos)
+        if idx == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(normalized, idx)
+            if isinstance(obj, dict):
+                found.append(obj)
+            pos = end
+        except json.JSONDecodeError:
+            pos = idx + 1
+    return found
+
+
+def _extract_json_object(text: str) -> Dict[str, Any]:
+    objects = _extract_json_objects(text)
+    if objects:
+        return objects[-1]
+    raise ValueError("Adaptive replay did not return a JSON object")
+
+
 def _parse_structured_final_response(response_text: str) -> Dict[str, Any]:
-    payload = _extract_json_object(response_text)
-    display_text = str(payload.get("display_text") or "").strip()
-    if not display_text:
-        raise ValueError("Structured final response must include display_text")
-    outputs = payload.get("outputs")
-    if not isinstance(outputs, list):
-        raise ValueError("Structured final response must include an outputs list")
-    return {
-        "display_text": display_text,
-        "outputs": [item for item in outputs if isinstance(item, dict)],
-    }
+    candidates = _extract_json_objects(response_text)
+    for payload in reversed(candidates):
+        display_text = str(payload.get("display_text") or "").strip()
+        outputs = payload.get("outputs")
+        if display_text and isinstance(outputs, list):
+            return {
+                "display_text": display_text,
+                "outputs": [item for item in outputs if isinstance(item, dict)],
+            }
+    if candidates:
+        raise ValueError("Structured final response must include display_text and an outputs list")
+    raise ValueError("Step did not return a JSON object")
 
 
 def _build_plain_text_artifact(
@@ -1470,38 +1504,6 @@ def _resolve_replay_tool(
         return matches[0]
 
     return None
-
-
-def _extract_json_object(text: str) -> Dict[str, Any]:
-    text = (text or "").strip()
-    if not text:
-        return {}
-    if text.startswith("```"):
-        lines = [
-            line for line in text.splitlines() if not line.strip().startswith("```")
-        ]
-        text = "\n".join(lines).strip()
-    # Models sometimes emit multiple JSON objects (e.g. tool-call metadata
-    # on one line, structured response on the next). raw_decode stops at
-    # the end of the first valid JSON value; we scan forward to find the
-    # last such object, which is the structured response payload.
-    decoder = json.JSONDecoder()
-    pos = 0
-    last_obj: Dict[str, Any] | None = None
-    while pos < len(text):
-        idx = text.find("{", pos)
-        if idx == -1:
-            break
-        try:
-            obj, end = decoder.raw_decode(text, idx)
-            if isinstance(obj, dict):
-                last_obj = obj
-            pos = end
-        except json.JSONDecodeError:
-            pos = idx + 1
-    if last_obj is not None:
-        return last_obj
-    raise ValueError("Adaptive replay did not return a JSON object")
 
 
 async def _adapt_replay_tool_args(

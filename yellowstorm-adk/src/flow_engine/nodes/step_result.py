@@ -92,10 +92,10 @@ def _single_text_output_port(output_ports: list[dict[str, Any]]) -> str | None:
     return str(text_ports[0].get("id") or "default").strip() or "default"
 
 
-def _extract_json_object(text: str) -> dict[str, Any]:
+def _extract_json_objects(text: str) -> list[dict[str, Any]]:
     normalized = str(text or "").strip()
     if not normalized:
-        return {}
+        return []
     if normalized.startswith("```"):
         lines = [
             line for line in normalized.splitlines() if not line.strip().startswith("```")
@@ -104,7 +104,7 @@ def _extract_json_object(text: str) -> dict[str, Any]:
 
     decoder = json.JSONDecoder()
     pos = 0
-    last_obj: dict[str, Any] | None = None
+    found: list[dict[str, Any]] = []
     while pos < len(normalized):
         idx = normalized.find("{", pos)
         if idx == -1:
@@ -112,28 +112,34 @@ def _extract_json_object(text: str) -> dict[str, Any]:
         try:
             obj, end = decoder.raw_decode(normalized, idx)
             if isinstance(obj, dict):
-                last_obj = obj
+                found.append(obj)
             pos = end
         except json.JSONDecodeError:
             pos = idx + 1
 
-    if last_obj is not None:
-        return last_obj
+    return found
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    objects = _extract_json_objects(text)
+    if objects:
+        return objects[-1]
     raise ValueError("Step did not return a JSON object")
 
 
 def _parse_structured_final_response(response_text: str) -> dict[str, Any]:
-    payload = _extract_json_object(response_text)
-    display_text = str(payload.get("display_text") or payload.get("displayText") or "").strip()
-    if not display_text:
-        raise ValueError("Structured final response must include display_text")
-    outputs = payload.get("outputs")
-    if not isinstance(outputs, list):
-        raise ValueError("Structured final response must include an outputs list")
-    return {
-        "display_text": display_text,
-        "outputs": [item for item in outputs if isinstance(item, dict)],
-    }
+    candidates = _extract_json_objects(response_text)
+    for payload in reversed(candidates):
+        display_text = str(payload.get("display_text") or payload.get("displayText") or "").strip()
+        outputs = payload.get("outputs")
+        if display_text and isinstance(outputs, list):
+            return {
+                "display_text": display_text,
+                "outputs": [item for item in outputs if isinstance(item, dict)],
+            }
+    if candidates:
+        raise ValueError("Structured final response must include display_text and an outputs list")
+    raise ValueError("Step did not return a JSON object")
 
 
 def _extract_output_port_id(output_spec: dict[str, Any]) -> str:

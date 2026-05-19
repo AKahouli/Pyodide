@@ -905,3 +905,21 @@ def test_extract_json_object_handles_single_object() -> None:
 def test_extract_json_object_raises_on_no_json() -> None:
     with pytest.raises(ValueError, match="did not return a JSON object"):
         _extract_json_object("no json here")
+
+
+def test_parse_structured_final_response_skips_trailing_json_metadata() -> None:
+    raw = (
+        '{"display_text":"Rapport DOCX","outputs":[{"output_port_id":"output-document","artifact_kind":"document","content":"test"}]}\n'
+        '\nDone: {"status":"ok"}'
+    )
+    result = _parse_structured_final_response(raw)
+    assert result["display_text"] == "Rapport DOCX"
+
+
+def test_parse_structured_final_response_skips_leading_json_in_thinking() -> None:
+    raw = (
+        '<thinking>The tool returned {"filename":"report.docx"} successfully.</thinking>\n'
+        '{"display_text":"Report ready","outputs":[{"output_port_id":"out","artifact_kind":"text","content":"done"}]}'
+    )
+    result = _parse_structured_final_response(raw)
+    assert result["display_text"] == "Report ready"
