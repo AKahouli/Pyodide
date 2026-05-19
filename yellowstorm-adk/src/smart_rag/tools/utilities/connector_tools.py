@@ -491,6 +491,82 @@ def _build_signature(parameter_schema: Dict[str, Any]) -> inspect.Signature:
     return inspect.Signature(parameters)
 
 
+_SINGULAR_BRAIN_ID_PARAMS = ("brain_id", "brainId", "workspace_id", "workspaceId")
+_PLURAL_BRAIN_ID_PARAMS = ("brain_ids", "brainIds", "workspace_ids", "workspaceIds")
+
+
+def _resolve_default_brain_id(
+    brain_ids: Optional[List[str]], workspace_id: Optional[str]
+) -> Optional[str]:
+    for value in brain_ids or []:
+        normalized = str(value or "").strip()
+        if normalized:
+            return normalized
+    normalized_workspace_id = str(workspace_id or "").strip()
+    return normalized_workspace_id or None
+
+
+def _relax_bound_brain_id_requirements(
+    parameter_schema: Dict[str, Any],
+    default_brain_id: Optional[str],
+) -> Dict[str, Any]:
+    if not default_brain_id or not isinstance(parameter_schema, dict):
+        return parameter_schema
+
+    properties = parameter_schema.get("properties")
+    required = parameter_schema.get("required")
+    if not isinstance(properties, dict) or not isinstance(required, list):
+        return parameter_schema
+
+    bound_names = {
+        name for name in (*_SINGULAR_BRAIN_ID_PARAMS, *_PLURAL_BRAIN_ID_PARAMS)
+        if name in properties
+    }
+    if not bound_names:
+        return parameter_schema
+
+    relaxed_schema = dict(parameter_schema)
+    relaxed_schema["required"] = [name for name in required if name not in bound_names]
+    return relaxed_schema
+
+
+def _with_default_brain_id_params(
+    params: Dict[str, Any],
+    parameter_schema: Dict[str, Any],
+    brain_ids: Optional[List[str]],
+    workspace_id: Optional[str],
+) -> Dict[str, Any]:
+    default_brain_id = _resolve_default_brain_id(brain_ids, workspace_id)
+    if not default_brain_id:
+        return params
+
+    merged_params = dict(params)
+    properties = (
+        parameter_schema.get("properties")
+        if isinstance(parameter_schema, dict)
+        else None
+    )
+
+    # Generic connector schemas expose a free-form `params` object, so bind the
+    # canonical brain_id there. Explicit schemas only receive declared id fields.
+    if not isinstance(properties, dict) or not properties:
+        merged_params.setdefault("brain_id", default_brain_id)
+        return merged_params
+
+    for name in _SINGULAR_BRAIN_ID_PARAMS:
+        if name in properties and not merged_params.get(name):
+            merged_params[name] = default_brain_id
+
+    available_brain_ids = [
+        str(value).strip() for value in (brain_ids or []) if str(value or "").strip()
+    ] or [default_brain_id]
+    for name in _PLURAL_BRAIN_ID_PARAMS:
+        if name in properties and not merged_params.get(name):
+            merged_params[name] = available_brain_ids
+
+    return merged_params
+
+
 def create_connector_tools(
     bindings: List[Dict[str, Any]],
     workspace_id: Optional[str] = None,
@@ -666,7 +742,11 @@ def create_connector_tools(
                 f"{description} Use this tool to search, browse, or inspect remote items first. "
                 "If the files need to be processed in the current workspace, call the matching import_to_workspace tool afterward with the returned item references."
             )
-            parameter_schema = action.get("parameter_schema") or {}
+            default_brain_id = _resolve_default_brain_id(brain_ids, workspace_id)
+            parameter_schema = _relax_bound_brain_id_requirements(
+                action.get("parameter_schema") or {},
+                default_brain_id,
+            )
             schema = _build_function_schema(tool_name, description, parameter_schema)
             signature = _build_signature(parameter_schema)
 
@@ -679,6 +759,8 @@ def create_connector_tools(
                 _fixed_params: Dict[str, Any] = fixed_params,
                 _auth_headers: Dict[str, str] = dict(binding_auth_headers),
                 _auth_env: Dict[str, str] = binding_auth_env,
+                _parameter_schema: Dict[str, Any] = parameter_schema,
+                _tool_name: str = tool_name,
                 tool_context: ToolContext = None,
                 **kwargs: Any,
             ) -> Any:
@@ -695,11 +777,17 @@ def create_connector_tools(
                     else kwargs
                 )
                 merged_params = {**_fixed_params, **params}
+                merged_params = _with_default_brain_id_params(
+                    merged_params,
+                    _parameter_schema,
+                    brain_ids,
+                    workspace_id,
+                )
                 logger.info(
                     "connector_tool_invocation connector_id=%s action_key=%s tool_name=%s request_payload=%s",
                     _connector_id,
                     _action_key,
-                    tool_name,
+                    _tool_name,
                     _log_payload(merged_params),
                 )
                 response = await call_mcp_tool(
@@ -715,7 +803,7 @@ def create_connector_tools(
                     "connector_tool_response connector_id=%s action_key=%s tool_name=%s response_type=%s full_response=%s",
                     _connector_id,
                     _action_key,
-                    tool_name,
+                    _tool_name,
                     type(response).__name__,
                     _log_payload(response),
                 )
@@ -727,7 +815,7 @@ def create_connector_tools(
                         "connector_tool_registered_response connector_id=%s action_key=%s tool_name=%s source_count=%s citation_source_count=%s registered_response=%s",
                         _connector_id,
                         _action_key,
-                        tool_name,
+                        _tool_name,
                         len(registered_response.get("sources", []))
                         if isinstance(registered_response.get("sources"), list)
                         else 0,
