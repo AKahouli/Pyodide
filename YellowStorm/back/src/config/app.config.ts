@@ -7,6 +7,7 @@ export default registerAs('app', () => ({
   apiPrefix: process.env.API_PREFIX || 'api',
   backendUrl: process.env.BACKEND_URL || `http://localhost:${process.env.PORT || '3000'}`,
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+  githubCallbackUrl: process.env.GITHUB_CALLBACK_URL || '',
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:5173',
   throttleTtl: parseInt(process.env.THROTTLE_TTL || '60', 10),
   throttleLimit: parseInt(process.env.THROTTLE_LIMIT || '100', 10),

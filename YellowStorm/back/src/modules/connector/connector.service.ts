@@ -13,6 +13,7 @@ import {
   ConnectorAction,
 } from './schemas/connector.schema';
 import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
+import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
 
 @Injectable()
 export class ConnectorService {
@@ -24,6 +25,7 @@ export class ConnectorService {
     @InjectModel(Connector.name)
     private readonly connectorModel: Model<ConnectorDocument>,
     private readonly logger: LoggerService,
+    private readonly connectedAppTokenService: ConnectedAppTokenService,
   ) {
     this.logger.setContext(ConnectorService.name);
   }
@@ -244,13 +246,50 @@ export class ConnectorService {
     };
   }
 
-  async inspectMcp(transportType: string, serverUrl: string, serverConfig?: Record<string, unknown>): Promise<IMcpInspectResult> {
+  async inspectMcp(
+    transportType: string,
+    serverUrl: string,
+    serverConfig?: Record<string, unknown>,
+    userId?: string,
+    connectedAppKey?: string,
+    runtimeAuthConfig?: Record<string, unknown>,
+    resolvedToken?: string,
+  ): Promise<IMcpInspectResult> {
     try {
-      this.logger.log('Inspecting MCP server', { transportType, serverUrl });
 
       let client: any;
       let transport: any;
-      const requestInit = this.buildMcpRequestInit(serverConfig);
+      let finalServerConfig = this.sanitizeMcpServerConfig(serverConfig);
+
+      if (resolvedToken) {
+        finalServerConfig = this.applyRuntimeAuthToServerConfig(
+          finalServerConfig,
+          runtimeAuthConfig,
+          resolvedToken,
+        );
+      } else if (userId && connectedAppKey) {
+        // If using connected app auth, fetch the token and inject it per runtime strategy.
+        try {
+          const token = await this.connectedAppTokenService.getValidToken(userId, connectedAppKey);
+          finalServerConfig = this.applyRuntimeAuthToServerConfig(
+            finalServerConfig,
+            runtimeAuthConfig,
+            token,
+          );
+        } catch (error) {
+          this.logger.error('Failed to get OAuth token for MCP inspection', {
+            connectedAppKey,
+            error: (error as Error).message,
+          });
+          return {
+            serverName: '',
+            tools: [],
+            error: `Failed to get authentication token: ${(error as Error).message}`,
+          };
+        }
+      }
+
+      const requestInit = this.buildMcpRequestInit(finalServerConfig);
 
       if (transportType === 'sse') {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -362,6 +401,69 @@ export class ConnectorService {
     delete sanitized.githubPat;
 
     return sanitized;
+  }
+
+  private applyRuntimeAuthToServerConfig(
+    serverConfig: Record<string, unknown>,
+    runtimeAuthConfig: Record<string, unknown> | undefined,
+    token: string,
+  ): Record<string, unknown> {
+    const config = runtimeAuthConfig ?? {};
+    const strategy = typeof config.strategy === 'string' ? config.strategy : 'http_header_bearer';
+    const nextConfig = { ...serverConfig };
+
+    if (strategy === 'env_vars') {
+      const envMap = this.extractStringMap(config.envMap);
+      const existingEnv = this.extractStringMap(nextConfig.env);
+      nextConfig.env = Object.entries(envMap).reduce<Record<string, string>>(
+        (acc, [key, template]) => {
+          acc[key] = template.replace('{token}', token);
+          return acc;
+        },
+        { ...existingEnv },
+      );
+      return nextConfig;
+    }
+
+    const existingHeaders = this.extractStringMap(nextConfig.headers);
+    const authHeaders =
+      strategy === 'custom_headers'
+        ? Object.entries(this.extractStringMap(config.headerMappings)).reduce<Record<string, string>>(
+            (acc, [key, template]) => {
+              acc[key] = template.replace('{token}', token);
+              return acc;
+            },
+            {},
+          )
+        : {
+            [typeof config.headerName === 'string' && config.headerName.trim()
+              ? config.headerName
+              : 'Authorization']:
+              `${typeof config.headerPrefix === 'string' ? config.headerPrefix : 'Bearer '}${token}`,
+          };
+
+    nextConfig.headers = {
+      ...existingHeaders,
+      ...authHeaders,
+    };
+
+    return nextConfig;
+  }
+
+  private extractStringMap(value: unknown): Record<string, string> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return Object.entries(value as Record<string, unknown>).reduce<Record<string, string>>(
+      (acc, [key, entryValue]) => {
+        if (typeof entryValue === 'string') {
+          acc[key] = entryValue;
+        }
+        return acc;
+      },
+      {},
+    );
   }
 
   private normalizeConnectorActions(actions?: Array<{

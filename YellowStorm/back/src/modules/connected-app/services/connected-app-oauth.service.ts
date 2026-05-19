@@ -174,6 +174,8 @@ export class ConnectedAppOAuthService {
       error: error || undefined,
     });
 
+    this.logger.log('Building callback HTML', { appKey, success, frontendUrl: this.frontendUrl });
+
     const statusMsg = success
       ? '<p style="color:green">Connected successfully. You can close this window.</p>'
       : `<p style="color:red">Connection failed: ${error || 'unknown error'}</p>`;

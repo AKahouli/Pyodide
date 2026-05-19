@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -23,9 +23,15 @@ import type { ConnectorResponse, ConnectorActionResponse, SkillResponse, McpTool
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
 import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
-import { Loader2, Plus, TestTube2, Trash2 } from 'lucide-react';
+import { Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { getSkills, inspectMcp } from '../../api';
+import {
+  authorizeConnectorAppOAuth,
+  disconnectConnectorAppOAuth,
+  getConnectorAppOAuthStatus,
+  getSkills,
+  inspectMcp,
+} from '../../api';
 import { useModuleTranslation } from '@/modules/localization';
 import { getAdminConnectedApps } from '@/modules/connected-app/api';
 import type { ConnectedAppAdminResponse } from '@/modules/connected-app/types';
@@ -152,6 +158,17 @@ export function CreateEditConnectorDialog({
   const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppAdminResponse[]>([]);
+  const [githubConnected, setGithubConnected] = useState(false);
+  const [oauthConnecting, setOauthConnecting] = useState(false);
+
+  const refreshGithubConnectionStatus = useCallback(async () => {
+    try {
+      const status = await getConnectorAppOAuthStatus('github');
+      setGithubConnected(status.connected);
+    } catch {
+      setGithubConnected(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (open) {
@@ -163,6 +180,9 @@ export function CreateEditConnectorDialog({
       getAdminConnectedApps()
         .then((apps) => setConnectedApps(apps.filter((app) => app.enabled)))
         .catch(() => setConnectedApps([]));
+
+      void refreshGithubConnectionStatus();
+
       if (connector) {
         const parsedRuntime = parseRuntimeAuthConfig(connector.runtimeAuthConfig);
         const parsedServerConfig = parseMcpServerConfig(connector.mcpServerConfig);
@@ -194,7 +214,20 @@ export function CreateEditConnectorDialog({
         setForm({ ...defaultConnectorFormValues });
       }
     }
-  }, [open, connector]);
+  }, [open, connector, refreshGithubConnectionStatus]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    if (form.authSourceType === 'connected_app' && form.connectedAppKey === 'github') {
+      void refreshGithubConnectionStatus();
+      return;
+    }
+
+    setGithubConnected(false);
+  }, [form.authSourceType, form.connectedAppKey, open, refreshGithubConnectionStatus]);
 
   const handleSubmit = () => {
     if (!form.slug.trim() || !form.name.trim()) {
@@ -256,7 +289,14 @@ export function CreateEditConnectorDialog({
     setInspectError(null);
     setInspectTools([]);
     try {
-      const result = await inspectMcp(form.mcpTransportType, form.mcpServerUrl, mcpServerConfig);
+      const runtimeAuthConfig = buildRuntimeAuthConfig(form);
+      const result = await inspectMcp(
+        form.mcpTransportType,
+        form.mcpServerUrl,
+        mcpServerConfig,
+        form.authSourceType === 'connected_app' ? form.connectedAppKey || undefined : undefined,
+        runtimeAuthConfig,
+      );
       if (result.error) {
         setInspectError(result.error);
         return;
@@ -278,9 +318,101 @@ export function CreateEditConnectorDialog({
     }
   };
 
-  const isGitHubConnector = [form.slug, form.name, form.mcpServerUrl].some((value) =>
-    value.toLowerCase().includes('github'),
-  );
+  const handleGithubOAuth = async () => {
+    setOauthConnecting(true);
+
+    try {
+      const result = await authorizeConnectorAppOAuth('github');
+      const popup = window.open(result.authorizationUrl, 'connector-admin-github-oauth', 'width=600,height=700');
+
+      if (!popup) {
+        toast.error(t('connectors.form.auth.githubConnectFailed'));
+        return;
+      }
+
+      const connected = await new Promise<boolean>((resolve) => {
+        let settled = false;
+        let pollTimer: ReturnType<typeof setInterval>;
+
+        const cleanup = () => {
+          clearInterval(pollTimer);
+          window.removeEventListener('message', handleMessage);
+        };
+
+        const finish = async (success: boolean) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          cleanup();
+          await refreshGithubConnectionStatus();
+          resolve(success);
+        };
+
+        const finishFromStatus = async () => {
+          if (settled) {
+            return;
+          }
+          try {
+            const status = await getConnectorAppOAuthStatus('github');
+            await finish(status.connected);
+          } catch {
+            await finish(false);
+          }
+        };
+
+        const handleMessage = (event: MessageEvent) => {
+          const message = event.data as
+            | { type?: string; appKey?: string; success?: boolean; error?: string }
+            | undefined;
+
+          if (message?.type !== 'connector-admin-oauth-result' || message.appKey !== 'github') {
+            return;
+          }
+
+          if (message.success) {
+            void finish(true);
+            return;
+          }
+
+          toast.error(t('connectors.form.auth.githubConnectFailed'), {
+            description: message.error,
+          });
+          void finish(false);
+        };
+
+        window.addEventListener('message', handleMessage);
+
+        pollTimer = setInterval(() => {
+          if (popup.closed && !settled) {
+            void finishFromStatus();
+          }
+        }, 500);
+      });
+
+      if (!connected) {
+        toast.error(t('connectors.form.auth.githubConnectFailed'));
+      }
+    } catch (err) {
+      toast.error(t('connectors.form.auth.githubConnectFailed'), {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setOauthConnecting(false);
+    }
+  };
+
+  const handleGithubDisconnect = async () => {
+    try {
+      await disconnectConnectorAppOAuth('github');
+      await refreshGithubConnectionStatus();
+      toast.success(t('connectors.form.auth.githubDisconnected'));
+    } catch (err) {
+      toast.error(t('connectors.form.auth.githubDisconnectFailed'), {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    }
+  };
 
   const updateMappingRow = (
     field: 'runtimeHeaderMappings' | 'runtimeEnvMappings',
@@ -312,33 +444,33 @@ export function CreateEditConnectorDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='max-w-2xl max-h-[85vh] overflow-y-auto'>
         <DialogHeader>
-          <DialogTitle>{connector ? 'Edit Connector' : 'Add Connector'}</DialogTitle>
+          <DialogTitle>{connector ? t('connectors.form.dialog.editTitle') : t('connectors.form.dialog.addTitle')}</DialogTitle>
         </DialogHeader>
         <div className='grid gap-4 py-4'>
           <div className='grid grid-cols-2 gap-4'>
             <div>
-              <Label>Slug</Label>
-              <Input placeholder='sharepoint' value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
+              <Label>{t('connectors.form.fields.slug.label')}</Label>
+              <Input placeholder={t('connectors.form.fields.slug.placeholder')} value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} />
             </div>
             <div>
-              <Label>Name</Label>
-              <Input placeholder='SharePoint' value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              <Label>{t('connectors.form.fields.name.label')}</Label>
+              <Input placeholder={t('connectors.form.fields.name.placeholder')} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
           </div>
 
           <div>
-            <Label>Description</Label>
-            <Textarea placeholder='Microsoft SharePoint Online connector' value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
+            <Label>{t('connectors.form.fields.description.label')}</Label>
+            <Textarea placeholder={t('connectors.form.fields.description.placeholder')} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2} />
           </div>
 
           <div className='grid grid-cols-2 gap-4'>
             <div>
-              <Label>Icon</Label>
-              <Input placeholder='Cable' value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })} />
+              <Label>{t('connectors.form.fields.icon.label')}</Label>
+              <Input placeholder={t('connectors.form.fields.icon.placeholder')} value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })} />
             </div>
             <div>
-              <Label>Color</Label>
-              <Input placeholder='#0078d4' value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
+              <Label>{t('connectors.form.fields.color.label')}</Label>
+              <Input placeholder={t('connectors.form.fields.color.placeholder')} value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
             </div>
           </div>
 
@@ -457,25 +589,25 @@ export function CreateEditConnectorDialog({
 
           <div className='grid grid-cols-2 gap-4'>
             <div>
-              <Label>Transport Type</Label>
+              <Label>{t('connectors.form.fields.transportType.label')}</Label>
               <Select value={form.mcpTransportType} onValueChange={(value) => setForm({ ...form, mcpTransportType: value })}>
                 <SelectTrigger>
-                  <SelectValue placeholder='Select transport type' />
+                  <SelectValue placeholder={t('connectors.form.fields.transportType.placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  {TRANSPORT_TYPES.map((t) => (
-                    <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                  {TRANSPORT_TYPES.map((type) => (
+                    <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
-              <Label>{form.mcpTransportType === 'stdio' ? 'Command' : 'MCP Server URL'}</Label>
+              <Label>{form.mcpTransportType === 'stdio' ? t('connectors.form.fields.command.label') : t('connectors.form.fields.serverUrl.label')}</Label>
               <Input
                 placeholder={
                   form.mcpTransportType === 'stdio'
-                    ? 'npx @anthropic/mcp-server-sharepoint'
-                    : 'https://mcp.example.com/mcp'
+                    ? t('connectors.form.fields.command.placeholder')
+                    : t('connectors.form.fields.serverUrl.placeholder')
                 }
                 value={form.mcpServerUrl}
                 onChange={(e) => setForm({ ...form, mcpServerUrl: e.target.value })}
@@ -484,30 +616,88 @@ export function CreateEditConnectorDialog({
           </div>
 
           <div>
-            <Label>MCP Server Config (JSON)</Label>
-            <Textarea placeholder='{"commandArgs": ["--stdio"]}' value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
+            <Label>{t('connectors.form.fields.serverConfig.label')}</Label>
+            <Textarea placeholder={t('connectors.form.fields.serverConfig.placeholder')} value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
           </div>
 
-          {isGitHubConnector ? (
-            <div className='grid gap-2'>
-              <Label>{t('connectors.form.githubPat.label')}</Label>
-              <Input
-                type='password'
-                autoComplete='off'
-                placeholder={t('connectors.form.githubPat.placeholder')}
-                value={form.githubPatToken}
-                onChange={(e) => setForm({ ...form, githubPatToken: e.target.value })}
-              />
-              <p className='text-sm text-muted-foreground'>{t('connectors.form.githubPat.helper')}</p>
+          <div className='rounded-lg border bg-muted/20 p-4 space-y-4'>
+            <div className='space-y-2'>
+              <div className='flex items-center justify-between'>
+                <h4 className='font-semibold flex items-center gap-2'>
+                  <TestTube2 className='h-4 w-4' />
+                  {t('connectors.form.inspect.title')}
+                </h4>
+                {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && (
+                  <div className='flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium'>
+                    {githubConnected ? (
+                      <>
+                        <div className='w-2 h-2 rounded-full bg-green-500 animate-pulse' />
+                        <span className='text-green-600'>{t('connectors.form.auth.githubConnected')}</span>
+                      </>
+                    ) : (
+                      <>
+                        <div className='w-2 h-2 rounded-full bg-amber-500' />
+                        <span className='text-amber-600'>{t('connectors.form.auth.githubNotConnected')}</span>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+              <p className='text-sm text-muted-foreground'>
+                {t('connectors.form.inspect.description')}
+              </p>
             </div>
-          ) : null}
 
-          <div className='flex items-center justify-between gap-3'>
-            <div className='text-sm text-muted-foreground'>{t('connectors.form.inspect.helper')}</div>
-            <Button type='button' variant='outline' onClick={handleInspect} disabled={inspecting}>
-              {inspecting ? <Loader2 className='mr-2 h-4 w-4 animate-spin' /> : <TestTube2 className='mr-2 h-4 w-4' />}
-              {t('connectors.form.inspect.action')}
-            </Button>
+            <div className='flex flex-wrap items-center gap-3'>
+              {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && (
+                <>
+                  {!githubConnected ? (
+                    <Button
+                      type='button'
+                      variant='outline'
+                      onClick={handleGithubOAuth}
+                      disabled={oauthConnecting}
+                      className='flex items-center gap-2'
+                    >
+                      {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <Github className='h-4 w-4' />}
+                      {t('connectors.form.auth.githubConnectAction')}
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        type='button'
+                        variant='default'
+                        className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
+                        disabled
+                      >
+                        <Github className='h-4 w-4' />
+                        {t('connectors.form.auth.githubConnectedAction')}
+                      </Button>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        onClick={handleGithubDisconnect}
+                        disabled={oauthConnecting}
+                        className='flex items-center gap-2'
+                      >
+                        {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <X className='h-4 w-4' />}
+                        {t('connectors.form.auth.githubDisconnectAction')}
+                      </Button>
+                    </>
+                  )}
+                </>
+              )}
+              <Button
+                type='button'
+                variant='outline'
+                onClick={handleInspect}
+                disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && !githubConnected)}
+                className='flex items-center gap-2'
+              >
+                {inspecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <TestTube2 className='h-4 w-4' />}
+                {t('connectors.form.inspect.action')}
+              </Button>
+            </div>
           </div>
 
           {(inspectError || inspectTools.length > 0) && (
@@ -531,9 +721,9 @@ export function CreateEditConnectorDialog({
           )}
 
           <div>
-            <Label>Actions (JSON array)</Label>
+            <Label>{t('connectors.form.fields.actions.label')}</Label>
             <Textarea
-              placeholder='[{"key": "list_files", "label": "List Files", "safety": "read"}]'
+              placeholder={t('connectors.form.fields.actions.placeholder')}
               value={form.actionsJson}
               onChange={(e) => setForm({ ...form, actionsJson: e.target.value, actions: [] })}
               rows={6}
@@ -559,12 +749,12 @@ export function CreateEditConnectorDialog({
 
           <div className='flex items-center gap-2'>
             <Switch checked={form.isActive} onCheckedChange={(checked) => setForm({ ...form, isActive: checked })} />
-            <Label>Active</Label>
+            <Label>{t('connectors.form.fields.active.label')}</Label>
           </div>
         </div>
         <DialogFooter>
-          <Button variant='outline' onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={handleSubmit}>{connector ? 'Update' : 'Create'}</Button>
+          <Button variant='outline' onClick={() => onOpenChange(false)}>{t('connectors.form.dialog.cancel')}</Button>
+          <Button onClick={handleSubmit}>{connector ? t('connectors.form.dialog.update') : t('connectors.form.dialog.create')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
