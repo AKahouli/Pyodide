@@ -32,6 +32,19 @@ function getFallbackSourceHandle(task: PlaybookTask | undefined): string {
   return task?.outputPorts?.[0]?.id ?? 'default';
 }
 
+function formatConstantValue(value: unknown): string {
+  if (!value || typeof value !== 'object') return 'constant';
+  const obj = value as Record<string, unknown>;
+  if ('kind' in obj && 'name' in obj) {
+    const items = Array.isArray(value) ? value : [value];
+    const names = items
+      .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+      .map((item) => `${item.name}`);
+    return names.length > 0 ? names.join(', ') : 'constant';
+  }
+  return 'constant';
+}
+
 export function dataBindingsToLayerEdges(bindings: DataBinding[], tasks: PlaybookTask[]): DataLayerEdge[] {
   const tasksById = new Map(tasks.map((task) => [task.id, task]));
 
@@ -55,7 +68,7 @@ export function dataBindingsToLayerEdges(bindings: DataBinding[], tasks: Playboo
         : db.sourceKind === 'state'
           ? `state.${db.statePath || 'path'}`
           : db.sourceKind === 'constant'
-            ? 'constant'
+            ? formatConstantValue(db.constantValue)
             : 'expression';
     const targetLabel = `${targetTask?.title || db.targetNode}.${targetPort?.name || db.targetPort}`;
     const artifactKind = targetPort?.artifactKind || sourcePort?.artifactKind || 'unknown';

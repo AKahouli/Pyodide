@@ -776,6 +776,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       input_context: toGrpcStruct({
         ...(inputContext || {}),
         __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
+        __playbook_default_workspace_id: (((snapshotOverride || snapshot) as any).workspaces || [])[0] || '',
       }),
         settings: {
           recursion_limit: recursionLimit,

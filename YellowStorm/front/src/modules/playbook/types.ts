@@ -63,8 +63,20 @@ export interface TaskTemplate {
 
 // ===== Domain Entities =====
 
+export type PlaybookResourceKind = 'document' | 'folder' | 'workspace';
+
+export interface PlaybookResourceReference {
+  kind: PlaybookResourceKind;
+  id: string;
+  name: string;
+  workspaceId: string;
+  path?: string;
+  mimeType?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export interface InputFile {
-  type: 'workspace' | 'document';
+  type: 'workspace' | 'document' | 'folder';
   id: string;
   name: string;
   workspaceId?: string;
@@ -1721,6 +1733,8 @@ export interface PlaybookActions {
   setWorkspaceExplorerOpen: (open: boolean) => void;
   addInputFileToTask: (taskId: string, inputFile: InputFile) => void;
   removeInputFileFromTask: (taskId: string, inputFileId: string) => void;
+  bindResourceToInputPort: (taskId: string, portId: string, resource: PlaybookResourceReference) => void;
+  removeResourceBinding: (taskId: string, portId: string) => void;
 
   // Node Templates
   fetchNodeTemplates: () => Promise<void>;

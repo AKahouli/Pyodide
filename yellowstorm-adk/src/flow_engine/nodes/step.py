@@ -56,9 +56,18 @@ def _resolve_output_workspace_id(
     if workspace_id:
         return workspace_id
 
+    default_ws = str(input_context.get("__playbook_default_workspace_id") or "")
+    if default_ws:
+        return default_ws
+
     state_inputs = state.get("inputs", {})
     if isinstance(state_inputs, dict):
-        return _first_workspace_id(state_inputs.get("__playbook_workspace_ids"))
+        workspace_id = _first_workspace_id(state_inputs.get("__playbook_workspace_ids"))
+        if workspace_id:
+            return workspace_id
+        default_ws = str(state_inputs.get("__playbook_default_workspace_id") or "")
+        if default_ws:
+            return default_ws
     return ""
 
 

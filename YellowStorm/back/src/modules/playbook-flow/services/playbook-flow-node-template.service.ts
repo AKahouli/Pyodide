@@ -155,6 +155,8 @@ export class PlaybookFlowNodeTemplateService {
     if (dto.iteratorConfig !== undefined) updatePayload.iteratorConfig = dto.iteratorConfig;
     if (dto.routerConfig !== undefined) updatePayload.routerConfig = dto.routerConfig;
     if (dto.humanApprovalConfig !== undefined) updatePayload.humanApprovalConfig = dto.humanApprovalConfig;
+    if (dto.retryPolicy !== undefined) updatePayload.retryPolicy = dto.retryPolicy;
+    if (dto.modelId !== undefined) updatePayload.modelId = dto.modelId;
     if (dto.enabled !== undefined) updatePayload.enabled = dto.enabled;
 
     const updated = await this.templateModel.findByIdAndUpdate(id, { $set: updatePayload }, { new: true }).exec();

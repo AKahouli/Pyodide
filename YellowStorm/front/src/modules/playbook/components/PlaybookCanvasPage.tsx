@@ -60,7 +60,7 @@ import { autoLayoutTasks } from '../utils/auto-layout';
 import { usePlaybookCanvas, type TriggerNodeActions } from '../hooks/usePlaybookCanvas';
 import { flowEdgesToPlaybookEdges } from '../hooks/helpers/control-edge-serializer';
 import { dataBindingsToLayerEdges } from '../hooks/helpers/data-binding-serializer';
-import { tasksToNodes } from '../hooks/helpers/node-serializer';
+import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { cloneRouterConfig } from '../hooks/helpers/router-template';
 import { useAutosave } from '../hooks/useAutosave';
 import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
@@ -203,6 +203,7 @@ function canExecuteSingleStep(
   const incomingEdges = (playbook?.edges ?? []).filter((edge) => edge.targetId === task.id);
   const tasks = playbook?.tasks ?? [];
   const hasUnsupportedIncomingEdge = incomingEdges.some((edge) => {
+    if (edge.sourceId === TRIGGER_NODE_ID) return false;
     const sourceTask = tasks.find((t) => t.id === edge.sourceId);
     if (!sourceTask) return true;
     const sourceKind = sourceTask.nodeType || 'agent';
@@ -640,7 +641,6 @@ function PlaybookCanvasInner() {
   }, [executionForCanvas?.routerDecisions]);
 
   // Overlay step statuses onto nodes.
-  const TRIGGER_NODE_ID = '__trigger__';
   const mailTrigger = playbook?.triggers.find((tr) => tr.type === 'mail');
 
   const liveNodes = useMemo(() => {

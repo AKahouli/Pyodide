@@ -32,7 +32,7 @@ import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding } from '../types';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
@@ -344,6 +344,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
+  const bindResourceToInputPort = usePlaybookStore((s) => s.bindResourceToInputPort);
   const openPortInspection = usePlaybookStore((s) => s.openPortInspection);
 
   const [isDragOver, setIsDragOver] = useState(false);
@@ -427,12 +428,12 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
   const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
 
-  const resolveDragPayload = useCallback((e: React.DragEvent): InputFile | null => {
+  const resolveDragPayload = useCallback((e: React.DragEvent): (InputFile & { kind?: string }) | null => {
     try {
       const raw = e.dataTransfer.getData('application/json');
       if (!raw) return null;
       const payload = JSON.parse(raw);
-      if (payload && payload.type && payload.id && payload.name) return payload as InputFile;
+      if (payload && payload.type && payload.id && payload.name) return payload as InputFile & { kind?: string };
     } catch { /* noop */ }
     return null;
   }, []);
@@ -532,22 +533,34 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     const payload = resolveDragPayload(e);
     if (!payload) return;
 
-    if (inputPorts.length <= 1) {
-      const portId = inputPorts.length === 1 ? inputPorts[0].id : undefined;
-      addInputFileToTask(id, { ...payload, portId });
-      return;
-    }
+    const resourceKind = (payload.kind || payload.type) as PlaybookResourceReference['kind'];
+    const workspaceId = payload.workspaceId || payload.metadata?.workspaceId || '';
 
-    const nodeEl = e.currentTarget as HTMLDivElement;
-    const rect = nodeEl.getBoundingClientRect();
-    const offsetY = e.clientY - rect.top;
-    const nodeHeight = rect.height;
-    const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+    const resolvePortId = (): string | undefined => {
+      if (inputPorts.length <= 1) return inputPorts.length === 1 ? inputPorts[0].id : undefined;
+      const nodeEl = e.currentTarget as HTMLDivElement;
+      const rect = nodeEl.getBoundingClientRect();
+      const offsetY = e.clientY - rect.top;
+      const nodeHeight = rect.height;
+      const hit = detectPortHit(inputPorts, offsetY, nodeHeight);
+      return hit?.port.id;
+    };
 
-    if (hit) {
-      addInputFileToTask(id, { ...payload, portId: hit.port.id });
+    const portId = resolvePortId();
+
+    if (workspaceId && portId && (resourceKind === 'document' || resourceKind === 'folder' || resourceKind === 'workspace')) {
+      const resource: PlaybookResourceReference = {
+        kind: resourceKind,
+        id: payload.id,
+        name: payload.name,
+        workspaceId,
+        path: payload.metadata?.filepath,
+        mimeType: payload.metadata?.mimeType,
+        metadata: payload.metadata as Record<string, unknown>,
+      };
+      bindResourceToInputPort(id, portId, resource);
     } else {
-      addInputFileToTask(id, payload);
+      addInputFileToTask(id, { ...payload, portId });
     }
   };
 

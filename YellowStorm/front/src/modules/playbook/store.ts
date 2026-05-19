@@ -51,6 +51,7 @@ import type {
   RequestPlaybookIntentData,
   IntentSuggestionHistoryEntry,
   PlaybookIntentSuggestion,
+  PlaybookResourceReference,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -215,6 +216,7 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
       .then(() => {
         const execution = usePlaybookStore.getState().executionCache[executionId];
         const hasPendingEvaluations = execution?.taskResults?.some((task) => task.judgeStatus === 'evaluating') ?? false;
+        console.debug('[judge DEBUG] scheduleJudgeRefresh attempt', attempt, '/', JUDGE_REFRESH_MAX_ATTEMPTS, 'hasPending=', hasPendingEvaluations, 'taskStatuses=', execution?.taskResults?.map(t => ({ taskId: t.taskId, judgeStatus: t.judgeStatus, iteration: t.iteration })));
 
         if (!hasPendingEvaluations || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
           clearJudgeRefreshTimer(executionId);
@@ -2625,13 +2627,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeStarted: (data: PlaybookStepJudgeStartedEvent) => {
+        console.debug('[judge DEBUG] onStepJudgeStarted', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) return state;
+          if (!cached) { console.debug('[judge DEBUG] onStepJudgeStarted: no cached execution'); return state; }
 
-          const taskResults = cached.taskResults.map((tr) =>
-            tr.taskId === data.taskId
-              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration))
+          let matched = false;
+          const taskResults = cached.taskResults.map((tr) => {
+            const isMatch = tr.taskId === data.taskId
+              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
+            if (isMatch) matched = true;
+            return isMatch
               ? {
                   ...tr,
                   judgeStatus: 'evaluating' as const,
@@ -2639,8 +2645,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   judgeError: null,
                   judgeResult: null,
                 }
-              : tr,
-          );
+              : tr;
+          });
+          console.debug('[judge DEBUG] onStepJudgeStarted: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -2651,13 +2658,17 @@ export const usePlaybookStore = create<PlaybookStore>()(
       },
 
       onStepJudgeUpdated: (data: PlaybookStepJudgeUpdatedEvent) => {
+        console.debug('[judge DEBUG] onStepJudgeUpdated', { executionId: data.executionId, taskId: data.taskId, iteration: data.iteration, judgeStatus: data.judgeStatus });
         set((state) => {
           const cached = state.executionCache[data.executionId];
-          if (!cached) return state;
+          if (!cached) { console.debug('[judge DEBUG] onStepJudgeUpdated: no cached execution'); return state; }
 
-          const taskResults = cached.taskResults.map((tr) =>
-            tr.taskId === data.taskId
-              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration))
+          let matched = false;
+          const taskResults = cached.taskResults.map((tr) => {
+            const isMatch = tr.taskId === data.taskId
+              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration));
+            if (isMatch) matched = true;
+            return isMatch
               ? {
                   ...tr,
                   judgeStatus: data.judgeStatus,
@@ -2666,8 +2677,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
                   judgeError: data.judgeError ?? null,
                   judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
                 }
-              : tr,
-          );
+              : tr;
+          });
+          console.debug('[judge DEBUG] onStepJudgeUpdated: matched=', matched, 'cached taskIds=', cached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration })));
 
           const updatedExec = { ...cached, taskResults, updatedAt: new Date().toISOString() };
           const executionCache = { ...state.executionCache, [data.executionId]: updatedExec };
@@ -3172,6 +3184,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestCached = get().executionCache[execId];
           let merged = normalizedExecution;
           if (latestCached) {
+            const cachedBefore = latestCached.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
+            const apiBefore = normalizedExecution.taskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
             const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
             const mergedTaskResults = normalizedExecution.taskResults.map((apiTr) => {
               const cachedTr = cachedResultMap.get(getTaskResultCacheKey(apiTr));
@@ -3183,6 +3197,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               }
               return apiTr;
             });
+            const mergedAfter = mergedTaskResults.map(t => ({ taskId: t.taskId, iteration: t.iteration, judgeStatus: t.judgeStatus }));
+            console.debug('[judge DEBUG] fetchExecution merge', { execId, cachedBefore, apiBefore, mergedAfter });
             // Also include any task results from cache that are not in the API response
             for (const [taskResultKey, cachedTr] of cachedResultMap) {
               if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
@@ -3406,6 +3422,102 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }));
       },
 
+      bindResourceToInputPort: (taskId, portId, resource) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+
+        const bindingId = `bind-${taskId}-${portId}`;
+        const existingBindings = currentPlaybook.dataBindings ?? [];
+        const existing = existingBindings.find(
+          (b) => b.targetNode === taskId && b.targetPort === portId && b.sourceKind === 'constant',
+        );
+
+        let updatedBindings: DataBinding[];
+        if (existing) {
+          const prev = existing.constantValue;
+          if (Array.isArray(prev)) {
+            const dedupKey = `${resource.kind}:${resource.workspaceId}:${resource.id}`;
+            const already = prev.some(
+              (r: Record<string, unknown>) => `${r.kind}:${r.workspaceId}:${r.id}` === dedupKey,
+            );
+            updatedBindings = already
+              ? existingBindings
+              : existingBindings.map((b) =>
+                  b.id === existing.id
+                    ? { ...b, constantValue: [...prev, resource] }
+                    : b,
+                );
+          } else {
+            updatedBindings = existingBindings.map((b) =>
+              b.id === existing.id
+                ? { ...b, constantValue: resource }
+                : b,
+            );
+          }
+        } else {
+          updatedBindings = [
+            ...existingBindings,
+            {
+              id: bindingId,
+              targetNode: taskId,
+              targetPort: portId,
+              sourceKind: 'constant' as const,
+              constantValue: resource,
+            },
+          ];
+        }
+
+        const inputFile: import('./types').InputFile = {
+          type: resource.kind,
+          id: resource.id,
+          name: resource.name,
+          workspaceId: resource.workspaceId,
+          portId,
+          metadata: {
+            workspaceId: resource.workspaceId,
+            documentId: resource.kind === 'document' ? resource.id : undefined,
+            mimeType: resource.mimeType,
+          },
+        };
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const existingFiles = task.inputFiles ?? [];
+          const exists = existingFiles.some((f) => f.id === inputFile.id && f.portId === portId);
+          return exists ? task : { ...task, inputFiles: [...existingFiles, inputFile] };
+        });
+
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks, dataBindings: updatedBindings }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
+      removeResourceBinding: (taskId, portId) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+
+        const updatedBindings = (currentPlaybook.dataBindings ?? []).filter(
+          (b) => !(b.targetNode === taskId && b.targetPort === portId && b.sourceKind === 'constant'),
+        );
+        const updatedTasks = currentPlaybook.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          return { ...task, inputFiles: (task.inputFiles ?? []).filter((f) => f.portId !== portId) };
+        });
+
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? { ...state.currentPlaybook, tasks: updatedTasks, dataBindings: updatedBindings }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+        }));
+      },
+
       addToolBindingToTask: (taskId: string, binding: ToolBinding) => {
         const { currentPlaybook } = get();
         if (!currentPlaybook) return;
@@ -3602,8 +3714,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
               selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
-              retryPolicy: item.retryPolicy ?? null,
-              modelId: item.modelId ?? null,
+              retryPolicy: (item as Record<string, unknown>).retryPolicy as TaskTemplate['retryPolicy'] ?? null,
+              modelId: (item as Record<string, unknown>).modelId as string | null ?? null,
             })),
             nodeTemplatesLoading: false,
             nodeTemplatesLoadedAt: now,
