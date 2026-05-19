@@ -369,6 +369,7 @@ service ChatbotService {
     rpc EvaluateSemanticMatch(EvaluateSemanticMatchRequest) returns (EvaluateSemanticMatchResponse);
     rpc GeneratePlaybook(GeneratePlaybookRequest) returns (GeneratePlaybookResponse);
     rpc StopPlaybookWorkflow(StopPlaybookWorkflowRequest) returns (StopPlaybookWorkflowResponse);
+    rpc AdvisePlaybookNode(AdvisePlaybookNodeRequest) returns (AdvisePlaybookNodeResponse);
 }
 
 // ===== PLAYBOOK LANGGRAPH SERVICE =====
@@ -407,6 +408,8 @@ message PlaybookTaskConfig {
     string task_type = 16;
     repeated PortDocumentBinding input_files_by_port = 17;  // Port-aware document bindings
     repeated ToolBinding tool_bindings = 18;
+    google.protobuf.Struct task_metadata = 21;
+    google.protobuf.Struct evaluation_config = 22;
 }
 
 message ToolBindingAction {
@@ -655,6 +658,30 @@ message PlaybookTaskResult {
     repeated LLMPromptTraceItem llm_prompt_trace = 10;
     repeated TaskArtifact artifacts = 11;
     repeated PortPayload emitted_payloads = 20;
+    repeated IteratorIterationResult iterator_iterations = 21;
+}
+
+message IteratorChildResult {
+    string task_id = 1;
+    string task_title = 2;
+    string status = 3;
+    string output = 4;
+    string error = 5;
+    repeated Component components = 6;
+    repeated ToolTraceItem tool_trace = 7;
+    repeated LLMPromptTraceItem llm_prompt_trace = 8;
+    repeated TaskArtifact artifacts = 9;
+    repeated PortPayload emitted_payloads = 10;
+}
+
+message IteratorIterationResult {
+    int32 index = 1;
+    string status = 2;
+    string item_preview = 3;
+    string output = 4;
+    string error = 5;
+    repeated IteratorChildResult child_results = 6;
+    repeated TaskArtifact artifacts = 7;
 }
 
 message InterruptPayload {
@@ -685,6 +712,9 @@ message PlaybookStepUpdate {
     string status = 3;               // "in_progress" | "suspended" | "completed" | "failed"
     PlaybookTaskResult result = 4;   // Set when completed/failed
     InterruptPayload interrupt = 5;  // Set when suspended
+    string scope = 6;                // "" | "iterator_child"
+    string parent_iterator_id = 7;
+    int32 iteration_index = 8;
 }
 
 message PlaybookStreamChunk {
@@ -712,5 +742,71 @@ message EvaluateSemanticMatchRequest {
 message EvaluateSemanticMatchResponse {
     bool has_match = 1;
     SemanticMatch semantic_match = 2;
+}
+
+enum NodeAdvisorSuggestionType {
+    NODE_ADVISOR_SUGGESTION_TYPE_UNSPECIFIED = 0;
+    NODE_ADVISOR_SUGGESTION_TYPE_TASK_TITLE = 1;
+    NODE_ADVISOR_SUGGESTION_TYPE_TASK_DESCRIPTION = 2;
+    NODE_ADVISOR_SUGGESTION_TYPE_AGENT_SELECTION = 3;
+    NODE_ADVISOR_SUGGESTION_TYPE_DATASOURCE_CONNECTION = 4;
+    NODE_ADVISOR_SUGGESTION_TYPE_INPUT_CONTRACT = 5;
+    NODE_ADVISOR_SUGGESTION_TYPE_OUTPUT_CONTRACT = 6;
+    NODE_ADVISOR_SUGGESTION_TYPE_GENERAL = 7;
+}
+
+message NodeAdvisorPortSuggestion {
+    string id = 1;
+    string name = 2;
+    string artifact_kind = 3;
+    string description = 4;
+}
+
+message NodeAdvisorDatasourceSuggestion {
+    string source_task_id = 1;
+    string source_output_port_id = 2;
+    string target_input_port_id = 3;
+    string datasource_type = 4;
+    string datasource_id = 5;
+    string datasource_name = 6;
+    string rationale = 7;
+}
+
+message NodeAdvisorPatch {
+    string task_title = 1;
+    string task_description = 2;
+    string assigned_agent_id = 3;
+    repeated NodeAdvisorPortSuggestion input_ports = 4;
+    repeated NodeAdvisorPortSuggestion output_ports = 5;
+    repeated NodeAdvisorDatasourceSuggestion datasource_suggestions = 6;
+}
+
+message NodeAdvisorSuggestion {
+    string id = 1;
+    NodeAdvisorSuggestionType type = 2;
+    string title = 3;
+    string summary = 4;
+    string rationale = 5;
+    double confidence = 6;
+    NodeAdvisorPatch patch = 7;
+    repeated string warnings = 8;
+}
+
+message AdvisePlaybookNodeRequest {
+    string playbook_id = 1;
+    string task_id = 2;
+    string playbook_name = 3;
+    PlaybookTaskConfig target_task = 4;
+    repeated PlaybookTaskConfig tasks = 5;
+    repeated PlaybookEdgeConfig edges = 6;
+    repeated string suggestion_types = 7;
+    string user_intent = 8;
+    bool include_graph_context = 9;
+}
+
+message AdvisePlaybookNodeResponse {
+    string playbook_id = 1;
+    string task_id = 2;
+    repeated NodeAdvisorSuggestion suggestions = 3;
 }
 

@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllFolders } from '../store';
+import { useWorkspaceStore, useSelectedWorkspace, useWorkspaceLoading, useDocuments, useAllFolders, useCanWriteWorkspace } from '../store';
 import { useDocumentDragDrop, useIndexingNotifications } from '../hooks';
 import { formatFileSize } from '../utils';
 import { DocumentsTable } from './DocumentsTable';
@@ -34,6 +34,7 @@ export function WorkspaceContent() {
   const selectedWorkspaceId = useWorkspaceStore((state) => state.selectedWorkspaceId);
   const currentFolderId = useWorkspaceStore((state) => state.currentFolderId);
   const isPersonalWorkspace = selectedWorkspace?.isPersonal ?? false;
+  const canWrite = useCanWriteWorkspace();
 
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [createFolderParentId, setCreateFolderParentId] = useState<string | undefined>(undefined);
@@ -174,7 +175,7 @@ export function WorkspaceContent() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input placeholder={t('content.searchPlaceholder')} className="pl-9 h-9" />
                 </div>
-                {isPersonalWorkspace && <UploadButton folderId={currentFolderId ?? undefined} />}
+                {canWrite && <UploadButton folderId={currentFolderId ?? undefined} />}
                 {isPersonalWorkspace && (
                   <Button variant="outline" size="sm" onClick={() => handleOpenCreateFolder(currentFolderId || undefined)} className="gap-2">
                     <Plus className="h-4 w-4" />

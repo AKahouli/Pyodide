@@ -51,6 +51,7 @@ class TaskConfig(TypedDict):
     input_files: Optional[List[str]]
     input_files_by_port: Optional[List[Dict[str, Any]]]  # Port-aware document bindings
     task_type: Optional[str]
+    task_metadata: Optional[Dict[str, Any]]
     evaluation_config: Optional[Dict[str, Any]]
     input_ports: Optional[List[Dict[str, Any]]]
     output_ports: Optional[List[Dict[str, Any]]]
@@ -69,6 +70,9 @@ class StepUpdate(TypedDict, total=False):
     status: str
     result: Optional[Dict[str, Any]]
     interrupt: Optional[Dict[str, Any]]
+    scope: str
+    parent_iterator_id: str
+    iteration_index: int
 
 
 StepCallback = Callable[[StepUpdate], Awaitable[None]]
@@ -201,6 +205,7 @@ class ExecutionState(TypedDict):
     node_timings: Annotated[Dict[str, NodeTiming], merge_timings]
     query: Optional[str]
     workspace_context: Optional[List[Dict[str, Any]]]
+    brain_documents: Optional[List[Dict[str, Any]]]
     trigger_context: Optional[Dict[str, Any]]
     evaluation_user_id: Optional[str]
     execution_mode: Optional[str]
@@ -211,6 +216,7 @@ class ExecutionState(TypedDict):
     task_outputs: Annotated[Dict[str, str], merge_task_outputs]
     artifacts_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
     node_inputs_by_port: Annotated[Dict[str, List[Dict[str, Any]]], merge_artifacts]
+    iterator_context: Optional[Dict[str, Any]]
     clarification_transcripts_by_task: Annotated[
         Dict[str, List[Dict[str, str]]], merge_clarification_transcripts
     ]

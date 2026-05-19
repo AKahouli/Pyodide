@@ -31,7 +31,8 @@
       "mcp__ide__getDiagnostics",
       "Bash(npx ts-node *)",
       "Bash(dir /s /b \"YellowStorm\\\\*.py\")",
-      "Bash(findstr /v node_modules)"
+      "Bash(findstr /v node_modules)",
+      "mcp__code-review-graph__semantic_search_nodes_tool"
     ]
   }
 }

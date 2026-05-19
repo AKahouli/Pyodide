@@ -50,6 +50,24 @@ export interface PlaybookEvaluationConfigData {
   weights: PlaybookEvaluationRubricWeightsData;
 }
 
+export interface PlaybookIteratorConfigData {
+  source: string;
+  mode: 'item' | 'batch';
+  batchSize?: number | null;
+  itemVariable?: string | null;
+  outputVariable?: string | null;
+  errorStrategy?: 'stop' | 'continue';
+}
+
+export interface PlaybookContainerConfigData {
+  parentIteratorId?: string | null;
+}
+
+export interface PlaybookIteratorLayoutData {
+  width?: number | null;
+  height?: number | null;
+}
+
 export interface PlaybookTaskData {
   id: string;
   title: string;
@@ -67,6 +85,8 @@ export interface PlaybookTaskData {
   outputKey: string;
   enabled?: boolean;
   taskType?: string | null;
+  nodeType?: 'agent' | 'action' | 'evaluation' | 'iterator' | null;
+  templateType?: string | null;
   inputPorts?: Array<{ id: string; name: string; artifactKind: string; required: boolean; description?: string }>;
   outputPorts?: Array<{ id: string; name: string; artifactKind: string; description?: string }>;
   notifyOnComplete: boolean;
@@ -88,6 +108,9 @@ export interface PlaybookTaskData {
   stepReplayMode?: string;
   toolBindings?: ToolBindingData[];
   evaluationConfig?: PlaybookEvaluationConfigData | null;
+  iteratorConfig?: PlaybookIteratorConfigData | null;
+  containerConfig?: PlaybookContainerConfigData | null;
+  iteratorLayout?: PlaybookIteratorLayoutData | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
 }

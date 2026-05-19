@@ -36,6 +36,12 @@ from src.langgraph_engine.step_executor import (
     _determine_output_mode,
     _finalize_task_outputs,
 )
+from src.langgraph_engine.artifact_routing import (
+    infer_artifact_kind as _infer_artifact_kind,
+    normalize_port_id as _normalize_port_id,
+    normalize_port_text as _normalize_port_text,
+    semantic_match_output_port,
+)
 from src.langgraph_engine.port_resolution import (
     resolve_task_inputs,
     build_task_prompt,
@@ -207,6 +213,186 @@ def _merge_unique_components(
     return merged
 
 
+def _resolve_iterator_collection(iterator_config: Dict[str, Any], state: ExecutionState) -> List[Any]:
+    source = str(iterator_config.get("source") or "").strip()
+    if not source:
+        return []
+
+    normalized = source
+    if normalized.startswith("{{") and normalized.endswith("}}"):
+        normalized = normalized[2:-2].strip()
+
+    task_outputs = state.get("task_outputs") or {}
+    results = state.get("results") or {}
+
+    if normalized in task_outputs:
+        value = task_outputs.get(normalized)
+        return value if isinstance(value, list) else []
+
+    if normalized in results:
+        candidate = results.get(normalized) or {}
+        output = candidate.get("output")
+        return output if isinstance(output, list) else []
+
+    return []
+
+
+def _resolve_iterator_collection_from_inputs(
+    resolved_inputs: Dict[str, Any],
+) -> List[Any]:
+    def _unwrap_single_list_property(value: Dict[str, Any]) -> Optional[List[Any]]:
+        if len(value) != 1:
+            return None
+        only_value = next(iter(value.values()))
+        return only_value if isinstance(only_value, list) else None
+
+    def _unwrap_single_object_list_property(value: Dict[str, Any]) -> Optional[List[Any]]:
+        object_lists = [
+            item
+            for item in value.values()
+            if isinstance(item, list)
+            and item
+            and all(isinstance(entry, dict) for entry in item)
+        ]
+        if len(object_lists) != 1:
+            return None
+        return object_lists[0]
+
+    ports = resolved_inputs.get("ports") or {}
+    if not ports:
+        return []
+
+    for port_id, port_state in ports.items():
+        input_port = port_state.get("input_port") or {}
+        artifact_kind = str(input_port.get("artifact_kind") or "").strip().lower()
+
+        if artifact_kind == "document":
+            documents = list(port_state.get("resolved_documents") or [])
+            if documents:
+                return documents
+            document_ids = list(
+                ((port_state.get("document_bindings") or {}).get("document_ids") or [])
+            )
+            document_items = [
+                {"document_id": doc_id} for doc_id in document_ids if str(doc_id).strip()
+            ]
+            if document_items:
+                return document_items
+
+        upstream_bindings = list(port_state.get("upstream_bindings") or [])
+        for binding in upstream_bindings:
+            for artifact in binding.get("artifacts") or []:
+                if not isinstance(artifact, dict):
+                    continue
+                if str(artifact.get("artifact_kind") or "").strip().lower() != "data":
+                    continue
+                data = artifact.get("data")
+                if isinstance(data, list):
+                    return data
+                if isinstance(data, dict):
+                    nested_items = data.get(port_id)
+                    if isinstance(nested_items, list):
+                        return nested_items
+                    unwrapped_items = _unwrap_single_list_property(data)
+                    if unwrapped_items is not None:
+                        return unwrapped_items
+                    object_list_items = _unwrap_single_object_list_property(data)
+                    if object_list_items is not None:
+                        return object_list_items
+                if data is not None:
+                    return [data]
+                content = artifact.get("content")
+                if isinstance(content, str) and content.strip():
+                    try:
+                        parsed = json.loads(content)
+                        if isinstance(parsed, list):
+                            return parsed
+                        if isinstance(parsed, dict):
+                            nested_items = parsed.get(port_id)
+                            if isinstance(nested_items, list):
+                                return nested_items
+                            unwrapped_items = _unwrap_single_list_property(parsed)
+                            if unwrapped_items is not None:
+                                return unwrapped_items
+                            object_list_items = _unwrap_single_object_list_property(parsed)
+                            if object_list_items is not None:
+                                return object_list_items
+                        return [parsed]
+                    except Exception:
+                        return [content]
+
+        logger.info(
+            "Iterator input port resolved no iterable items",
+            input_port_id=port_id,
+            artifact_kind=artifact_kind,
+        )
+
+    return []
+
+
+def _build_iterator_item_preview(item: Any, max_length: int = 240) -> str:
+    if isinstance(item, str):
+        preview = item.strip()
+    else:
+        try:
+            preview = json.dumps(item, ensure_ascii=True, default=str)
+        except Exception:
+            preview = str(item)
+
+    if len(preview) <= max_length:
+        return preview
+    return preview[: max_length - 3].rstrip() + "..."
+
+
+def _get_parent_iterator_id(task_config: Dict[str, Any]) -> str:
+    metadata = task_config.get("task_metadata") or {}
+    container = metadata.get("container") if isinstance(metadata, dict) else None
+    parent_id = ""
+    if isinstance(container, dict):
+        parent_id = str(container.get("parentIteratorId") or "").strip()
+    if not parent_id:
+        container_config = task_config.get("container_config") or task_config.get(
+            "containerConfig"
+        )
+        if isinstance(container_config, dict):
+            parent_id = str(container_config.get("parentIteratorId") or "").strip()
+    return parent_id
+
+
+def _merge_local_state_update(
+    state: ExecutionState,
+    state_update: Dict[str, Any],
+) -> ExecutionState:
+    merged = dict(state)
+    if not state_update:
+        return merged
+
+    completed_ids = list(merged.get("completed_task_ids") or [])
+    for task_id in state_update.get("completed_task_ids") or []:
+        if task_id not in completed_ids:
+            completed_ids.append(task_id)
+    merged["completed_task_ids"] = completed_ids
+
+    for key in (
+        "results",
+        "task_outputs",
+        "node_timings",
+        "artifacts_by_port",
+        "node_inputs_by_port",
+    ):
+        if key in state_update:
+            merged[key] = {
+                **(merged.get(key) or {}),
+                **(state_update.get(key) or {}),
+            }
+
+    for key in ("status", "error", "interrupt_payload"):
+        if key in state_update:
+            merged[key] = state_update[key]
+
+    return merged
+
+
 def _reset_citation_parent(component: Dict[str, Any]) -> Dict[str, Any]:
     if component.get("type") != "citation":
         return dict(component)
@@ -250,206 +436,6 @@ def _collect_prior_source_components(
     return _merge_unique_components([], components)
 
 
-_ARTIFACT_KIND_BY_EXTENSION = {
-    ".pdf": "document",
-    ".doc": "document",
-    ".docx": "document",
-    ".odt": "document",
-    ".rtf": "document",
-    ".txt": "text",
-    ".md": "text",
-    ".py": "code",
-    ".js": "code",
-    ".ts": "code",
-    ".tsx": "code",
-    ".jsx": "code",
-    ".java": "code",
-    ".kt": "code",
-    ".go": "code",
-    ".rs": "code",
-    ".c": "code",
-    ".cpp": "code",
-    ".h": "code",
-    ".cs": "code",
-    ".rb": "code",
-    ".php": "code",
-    ".sh": "code",
-    ".bat": "code",
-    ".sql": "code",
-    ".r": "code",
-    ".lua": "code",
-    ".swift": "code",
-    ".csv": "data",
-    ".xlsx": "data",
-    ".xls": "data",
-    ".json": "data",
-    ".xml": "data",
-    ".yaml": "data",
-    ".yml": "data",
-    ".tsv": "data",
-    ".png": "image",
-    ".jpg": "image",
-    ".jpeg": "image",
-    ".gif": "image",
-    ".bmp": "image",
-    ".svg": "image",
-    ".webp": "image",
-    ".pptx": "document",
-    ".ppt": "document",
-    ".odp": "document",
-}
-
-_ARTIFACT_KIND_BY_MIME = {
-    "application/pdf": "document",
-    "application/msword": "document",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "document",
-    "text/plain": "text",
-    "text/markdown": "text",
-    "text/csv": "data",
-    "application/json": "data",
-    "application/xml": "data",
-    "text/xml": "data",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "data",
-    "image/png": "image",
-    "image/jpeg": "image",
-    "image/gif": "image",
-    "image/svg+xml": "image",
-    "image/webp": "image",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "document",
-}
-
-
-def _normalize_port_id(value: Any) -> str:
-    raw = str(value or "default").strip() or "default"
-    if raw.startswith(("in-", "out-")):
-        return raw.split("-", 1)[1] or "default"
-    return raw
-
-
-def _infer_artifact_kind(filename: str = "", mime_type: str = "") -> str | None:
-    lower_filename = str(filename or "").strip().lower()
-    if "." in lower_filename:
-        extension = lower_filename[lower_filename.rfind(".") :]
-        inferred = _ARTIFACT_KIND_BY_EXTENSION.get(extension)
-        if inferred:
-            return inferred
-
-    normalized_mime = str(mime_type or "").strip().lower()
-    if normalized_mime:
-        return _ARTIFACT_KIND_BY_MIME.get(normalized_mime)
-
-    return None
-
-
-def _normalize_port_text(value: Any) -> str:
-    return str(value or "").strip().lower().replace(" ", "-")
-
-
-_FILENAME_PORT_HINTS = {
-    ".docx": ["docx", "doc"],
-    ".pptx": ["pptx", "ppt"],
-    ".xlsx": ["xlsx", "xls", "excel"],
-    ".doc": ["doc"],
-    ".ppt": ["ppt"],
-    ".xls": ["xls", "excel"],
-    ".pdf": ["pdf"],
-    ".md": ["md", "markdown"],
-    ".txt": ["txt", "text"],
-}
-
-_FUZZY_MATCH_THRESHOLD = 0.5
-
-
-def _fuzzy_score(query: str, text: str) -> float:
-    normalized_query = _normalize_port_text(query)
-    normalized_text = _normalize_port_text(text)
-    if not normalized_query or not normalized_text:
-        return 0.0
-    return SequenceMatcher(None, normalized_query, normalized_text).ratio()
-
-
-def _infer_output_port_id_from_filename(
-    filename: str, output_ports: List[Dict[str, Any]]
-) -> str:
-    for candidate in _filename_tokens(filename):
-        for port in output_ports:
-            port_id = _normalize_port_id(port.get("id"))
-            if port_id and _port_matches_filename_token(port, candidate):
-                return port_id
-
-    stem = _normalize_port_text(Path(str(filename or "").strip()).stem)
-    if stem and output_ports:
-        best_score = 0.0
-        best_port_id = ""
-        for port in output_ports:
-            port_id = _normalize_port_id(port.get("id"))
-            if not port_id:
-                continue
-            for field in ("id", "name", "description"):
-                score = _fuzzy_score(stem, str(port.get(field) or ""))
-                if score > best_score:
-                    best_score = score
-                    best_port_id = port_id
-        if best_port_id and best_score >= _FUZZY_MATCH_THRESHOLD:
-            return best_port_id
-
-    return ""
-
-
-def _filename_tokens(filename: str) -> List[str]:
-    normalized_filename = str(filename or "").strip().lower()
-    if not normalized_filename:
-        return []
-
-    tokens = []
-    stem = Path(normalized_filename).stem
-    for candidate in [
-        stem,
-        stem.split("-", 1)[1] if stem.startswith(("out-", "in-")) else "",
-    ]:
-        token = _normalize_port_text(candidate)
-        if token and token not in tokens:
-            tokens.append(token)
-
-    suffix = Path(normalized_filename).suffix.lower()
-    for candidate in [
-        suffix[1:] if suffix else "",
-        *(_FILENAME_PORT_HINTS.get(suffix, [])),
-    ]:
-        token = _normalize_port_text(candidate)
-        if token and token not in tokens:
-            tokens.append(token)
-
-    return tokens
-
-
-def _port_matches_filename_token(port: Dict[str, Any], token: str) -> bool:
-    normalized_token = _normalize_port_text(token)
-    if not normalized_token:
-        return False
-
-    for candidate in [port.get("id"), port.get("name")]:
-        normalized_candidate = _normalize_port_text(candidate)
-        if normalized_candidate and (
-            normalized_candidate == normalized_token
-            or normalized_token in normalized_candidate
-        ):
-            return True
-    return False
-
-
-def _infer_output_port_id_from_filename(
-    filename: str, output_ports: List[Dict[str, Any]]
-) -> str:
-    for candidate in _filename_tokens(filename):
-        for port in output_ports:
-            port_id = _normalize_port_id(port.get("id"))
-            if port_id and _port_matches_filename_token(port, candidate):
-                return port_id
-
-    return ""
-
-
 def _resolve_output_port(
     task_config: TaskConfig,
     output_ports: List[Dict[str, Any]],
@@ -484,8 +470,13 @@ def _resolve_output_port(
             )
         port_kind = str(selected_port.get("artifact_kind") or "").strip()
         if normalized_kind and port_kind and port_kind != normalized_kind:
-            raise ValueError(
-                f"Task '{task_id}' produced {component_label} for output port '{normalized_port_id}' with incompatible kind '{normalized_kind}'"
+            logger.warning(
+                "Task '%s' produced %s for output port '%s' with mismatched kind '%s'; using declared port kind '%s'",
+                task_id,
+                component_label,
+                normalized_port_id,
+                normalized_kind,
+                port_kind,
             )
         return selected_port
 
@@ -495,42 +486,14 @@ def _resolve_output_port(
         if not normalized_kind
         or str(port.get("artifact_kind") or "").strip() == normalized_kind
     ]
-    if len(candidates) == 1:
-        return candidates[0]
-    if filename:
-        inferred_port_id = _infer_output_port_id_from_filename(filename, candidates)
-        if inferred_port_id:
-            selected_port = next(
-                (
-                    port
-                    for port in candidates
-                    if _normalize_port_id(port.get("id")) == inferred_port_id
-                ),
-                None,
-            )
-            if selected_port is not None:
-                return selected_port
-    if len(candidates) > 1:
-        query = (
-            _normalize_port_text(filename)
-            if filename
-            else _normalize_port_text(component_label)
-        )
-        if query:
-            ranked = sorted(
-                candidates,
-                key=lambda p: max(
-                    _fuzzy_score(query, str(p.get(f) or ""))
-                    for f in ("id", "name", "description")
-                ),
-                reverse=True,
-            )
-            top_score = max(
-                _fuzzy_score(query, str(ranked[0].get(f) or ""))
-                for f in ("id", "name", "description")
-            )
-            if top_score >= _FUZZY_MATCH_THRESHOLD:
-                return ranked[0]
+    selected_port = semantic_match_output_port(
+        candidates,
+        preferred_kind=normalized_kind,
+        filename=filename,
+        label=component_label,
+    )
+    if selected_port is not None:
+        return selected_port
     if not candidates and skip_if_no_compatible:
         return None
     if not candidates:
@@ -585,34 +548,42 @@ def _extract_artifacts_from_components(
             mime_type = str(data.get("mime_type") or data.get("mimeType") or "").strip()
             if not file_path or not filename:
                 continue
-            preferred_kind = (
-                str(
-                    data.get("artifact_kind")
-                    or data.get("artifactKind")
-                    or _infer_artifact_kind(filename, mime_type)
-                    or "document"
-                ).strip()
-                or "document"
-            )
+            explicit_port_id = str(
+                data.get("output_port_id") or data.get("outputPortId") or ""
+            ).strip()
+            explicit_kind = str(
+                data.get("artifact_kind") or data.get("artifactKind") or ""
+            ).strip()
+            fallback_kind = _infer_artifact_kind(filename, mime_type) or "document"
+            preferred_kind = explicit_kind or ("" if explicit_port_id else fallback_kind)
             selected_port = _resolve_output_port(
                 task_config,
                 output_ports,
                 preferred_kind=preferred_kind,
-                explicit_port_id=str(
-                    data.get("output_port_id") or data.get("outputPortId") or ""
-                ).strip(),
-                filename=filename,
+                explicit_port_id=explicit_port_id,
+                filename="" if explicit_port_id else filename,
+                skip_if_no_compatible=not explicit_port_id,
                 component_label=f"artifact '{filename or file_path or 'unnamed'}'",
             )
-            port_id = selected_port.get("id", "default") if selected_port else "default"
-            artifact_kind = (
-                str(
-                    selected_port.get("artifact_kind")
-                    if selected_port
-                    else preferred_kind
+            if selected_port is None:
+                logger.warning(
+                    "Generated artifact has no compatible declared output port; skipping artifact",
+                    task_id=str(task_config.get("id") or "unknown"),
+                    filename=filename,
+                    file_path=file_path,
+                    inferred_kind=fallback_kind,
                 )
-                or preferred_kind
-            )
+                continue
+            port_id = selected_port.get("id", "default") if selected_port else "default"
+            port_kind = str(
+                selected_port.get("artifact_kind") if selected_port else ""
+            ).strip()
+            # When the model explicitly targeted a port, the declared port kind
+            # is canonical — coerce any mismatched model-provided kind.
+            if explicit_port_id and port_kind and explicit_kind and explicit_kind != port_kind:
+                artifact_kind = port_kind
+            else:
+                artifact_kind = explicit_kind or port_kind or fallback_kind
             artifacts.append(
                 {
                     "port_id": port_id,
@@ -750,6 +721,83 @@ def _build_default_text_artifact(
     }
 
 
+def _build_iterator_output_artifacts(
+    task_id: str,
+    task_config: TaskConfig,
+    aggregated: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    output_ports = list(task_config.get("output_ports") or [])
+    if not output_ports:
+        return []
+
+    selected_port: Dict[str, Any] | None = None
+    if len(output_ports) == 1:
+        selected_port = output_ports[0]
+    else:
+        selected_port = next(
+            (
+                port
+                for port in output_ports
+                if _normalize_port_id(port.get("id")) == "default"
+            ),
+            None,
+        )
+
+    if selected_port is None:
+        raise ValueError(
+            f"Iterator task '{task_id}' declares multiple output ports but no single routable default port"
+        )
+
+    port_id = _normalize_port_id(selected_port.get("id"))
+    artifact_kind = str(selected_port.get("artifact_kind") or "data").strip() or "data"
+    if artifact_kind != "data":
+        raise ValueError(
+            f"Iterator task '{task_id}' output port '{port_id}' must use artifact_kind 'data'"
+        )
+
+    projected_output: List[Dict[str, Any]] = []
+    for iteration in aggregated:
+        if not isinstance(iteration, dict):
+            continue
+
+        projected_iteration: Dict[str, Any] = {
+            "index": iteration.get("index"),
+            "item_preview": iteration.get("item_preview"),
+            "status": iteration.get("status"),
+            "output": iteration.get("output", ""),
+        }
+
+        if "error" in iteration:
+            projected_iteration["error"] = iteration.get("error")
+        if iteration.get("artifacts"):
+            projected_iteration["artifacts"] = iteration.get("artifacts")
+
+        for key, value in iteration.items():
+            if key in {
+                "index",
+                "item_preview",
+                "status",
+                "output",
+                "error",
+                "artifacts",
+                "child_results",
+            }:
+                continue
+            projected_iteration[key] = value
+
+        projected_output.append(projected_iteration)
+
+    return [
+        {
+            "port_id": port_id,
+            "artifact_kind": "data",
+            "data": projected_output,
+            "source_task_id": task_id,
+            "source_output_port_id": port_id,
+        }
+    ]
+
+
 class DynamicGraphBuilder:
     """Builds dynamic execution graphs from playbook task definitions."""
 
@@ -858,6 +906,229 @@ class DynamicGraphBuilder:
                     logger.warning(
                         f"[{task_id}] step_update callback failed", exc_info=True
                     )
+
+            iterator_config = (task_config.get("task_metadata") or {}).get("iterator")
+            task_type_raw = str(task_config.get("task_type") or "")
+            task_type_match = task_type_raw == "iterator"
+            task_metadata = task_config.get("task_metadata")
+            logger.info(
+                "[ITERATOR_DEBUG _create_task_node] iterator branch gate",
+                task_id=task_id,
+                task_type=task_type_raw,
+                task_type_is_iterator=task_type_match,
+                has_task_metadata=task_metadata is not None,
+                task_metadata_type=type(task_metadata).__name__ if task_metadata is not None else None,
+                task_metadata_keys=list(task_metadata.keys()) if isinstance(task_metadata, dict) else None,
+                has_iterator_config=iterator_config is not None,
+                iterator_config_type=type(iterator_config).__name__ if iterator_config is not None else None,
+            )
+            if task_type_match and isinstance(iterator_config, dict):
+                await _push_step_update("in_progress")
+                resolved_inputs = resolve_task_inputs(task_id, task_config, state)
+                items = _resolve_iterator_collection_from_inputs(resolved_inputs)
+                if not items:
+                    items = _resolve_iterator_collection(iterator_config, state)
+                mode = str(iterator_config.get("mode") or "item").strip().lower()
+                batch_size = max(int(iterator_config.get("batchSize") or 1), 1)
+                error_strategy = str(iterator_config.get("errorStrategy") or "stop").strip().lower()
+                item_variable = str(iterator_config.get("itemVariable") or "item").strip() or "item"
+                output_variable = str(iterator_config.get("outputVariable") or "processed_items").strip() or "processed_items"
+
+                all_state_tasks = state.get("tasks") or []
+                child_tasks = self._get_iterator_child_tasks(task_id, all_state_tasks)
+                logger.info(
+                    "[ITERATOR_DEBUG _create_task_node] iterator resolution",
+                    task_id=task_id,
+                    item_count=len(items) if isinstance(items, list) else 0,
+                    item_preview=str(items[:1])[:200] if isinstance(items, list) and items else None,
+                    state_task_count=len(all_state_tasks),
+                    state_task_ids=[t.get("id") for t in all_state_tasks if isinstance(t, dict)] if isinstance(all_state_tasks, list) else None,
+                    child_task_count=len(child_tasks),
+                    child_task_ids=[c.get("id") for c in child_tasks if isinstance(c, dict)],
+                    mode=mode,
+                    batch_size=batch_size,
+                )
+                nested_child = next(
+                    (
+                        child
+                        for child in child_tasks
+                        if str(child.get("task_type") or "") == "iterator"
+                    ),
+                    None,
+                )
+                if nested_child is not None:
+                    raise ValueError(
+                        f"Nested iterator child tasks are not supported yet: {nested_child.get('id')}"
+                    )
+                child_task_ids = {child.get("id") for child in child_tasks if child.get("id")}
+                child_edges = [
+                    edge
+                    for edge in state.get("edges") or []
+                    if edge.get("source_id") in child_task_ids
+                    and edge.get("target_id") in child_task_ids
+                ]
+                ordered_child_tasks = self._order_tasks_topologically(
+                    child_tasks,
+                    child_edges,
+                )
+
+                current_iteration_index = {"value": 0}
+
+                async def _push_child_step_update(child_update: StepUpdate) -> None:
+                    await on_step_update(
+                        {
+                            **child_update,
+                            "scope": "iterator_child",
+                            "parent_iterator_id": task_id,
+                            "iteration_index": current_iteration_index["value"],
+                        }
+                    )
+
+                body_subgraph = None
+                if ordered_child_tasks:
+                    body_subgraph = self._build_iterator_body_subgraph(
+                        task_id,
+                        ordered_child_tasks,
+                        child_edges,
+                        _push_child_step_update,
+                    )
+
+                if mode == "batch":
+                    iterables: List[Any] = [items[idx: idx + batch_size] for idx in range(0, len(items), batch_size)]
+                else:
+                    iterables = list(items)
+
+                aggregated: List[Dict[str, Any]] = []
+
+                def _serialize_child_results(
+                    child_result_map: Dict[str, Any],
+                ) -> List[Dict[str, Any]]:
+                    return [
+                        {
+                            "task_id": child_id,
+                            "task_title": next(
+                                (
+                                    str(child_task.get("title") or "")
+                                    for child_task in ordered_child_tasks
+                                    if str(child_task.get("id") or "") == child_id
+                                ),
+                                "",
+                            ),
+                            **child_result,
+                        }
+                        for child_id, child_result in child_result_map.items()
+                    ]
+
+                for index, item in enumerate(iterables):
+                    try:
+                        local_state: ExecutionState = {
+                            **state,
+                            "tasks": ordered_child_tasks,
+                            "edges": child_edges,
+                            "results": dict(state.get("results") or {}),
+                            "task_outputs": {
+                                **(state.get("task_outputs") or {}),
+                                item_variable: item,
+                            },
+                            "completed_task_ids": [],
+                            "node_timings": {},
+                            "artifacts_by_port": dict(state.get("artifacts_by_port") or {}),
+                            "node_inputs_by_port": dict(state.get("node_inputs_by_port") or {}),
+                            "iterator_context": {
+                                "parent_iterator_id": task_id,
+                                "iteration_index": index,
+                                "item_variable": item_variable,
+                                "item": item,
+                            },
+                        }
+                        child_results: Dict[str, Any] = {}
+                        child_artifacts: List[Dict[str, Any]] = []
+                        output = ""
+
+                        current_iteration_index["value"] = index
+
+                        if body_subgraph is not None:
+                            local_state = await body_subgraph.ainvoke(local_state, config)
+
+                        for child_task in ordered_child_tasks:
+                            child_id = str(child_task.get("id") or "").strip()
+                            if not child_id:
+                                continue
+                            child_result = (local_state.get("results") or {}).get(
+                                child_id,
+                                {},
+                            )
+                            child_results[child_id] = child_result
+                            output = child_result.get("output") or output
+                            child_artifacts.extend(child_result.get("artifacts") or [])
+                            if child_result.get("status") == "failed":
+                                error_text = str(child_result.get("error") or "")
+                                raise RuntimeError(
+                                    error_text
+                                    or f"Iterator child task {child_id} failed"
+                                )
+
+                        aggregated.append({
+                            "index": index,
+                            "item_preview": _build_iterator_item_preview(item),
+                            item_variable: item,
+                            "status": "completed",
+                            "output": output,
+                            "child_results": _serialize_child_results(child_results),
+                            "artifacts": child_artifacts,
+                        })
+                    except Exception as exc:
+                        if "GraphInterrupt" in type(exc).__name__:
+                            raise
+                        if error_strategy != "continue":
+                            raise
+                        aggregated.append({
+                            "index": index,
+                            "item_preview": _build_iterator_item_preview(item),
+                            item_variable: item,
+                            "status": "failed",
+                            "output": "",
+                            "child_results": _serialize_child_results(child_results),
+                            "artifacts": child_artifacts,
+                            "error": str(exc),
+                        })
+
+                duration_ms = int((time.time() - start_time) * 1000)
+                iterator_artifacts = _build_iterator_output_artifacts(
+                    task_id,
+                    task_config,
+                    aggregated,
+                )
+                result_payload = {
+                    "task_id": task_id,
+                    "status": "completed",
+                    "output": aggregated,
+                    "error": "",
+                    "duration_ms": duration_ms,
+                    "components": [],
+                    "tool_trace": [],
+                    "llm_prompt_trace": [],
+                    "semantic_match": None,
+                    "artifacts": iterator_artifacts,
+                    "iterator_iterations": aggregated,
+                }
+                await _push_step_update("completed", result=result_payload)
+                state_update = {
+                    "completed_task_ids": [task_id],
+                    "results": {
+                        task_id: result_payload,
+                    },
+                    "status": "completed",
+                    "task_outputs": {
+                        task_config.get("output_key") or output_variable: aggregated,
+                    },
+                }
+                if iterator_artifacts:
+                    state_update["artifacts_by_port"] = {
+                        f"{task_id}:{_normalize_port_id(artifact.get('port_id'))}": [artifact]
+                        for artifact in iterator_artifacts
+                    }
+                return state_update
 
             # === ACTION MODE: bypass agent execution ===
             if execution_mode_value == "action":
@@ -1204,6 +1475,29 @@ class DynamicGraphBuilder:
                 context, resolved_inputs, workspace_artifacts = (
                     self._build_structured_context(task_id, task_config, state)
                 )
+                logger.info(
+                    f"[{task_id}] PROMPT_DOCUMENT_RESOLUTION_DEBUG",
+                    resolved_input_ports=[
+                        {
+                            "port_id": port_id,
+                            "bound_document_ids": list(
+                                ((port_state.get("document_bindings") or {}).get("document_ids") or [])
+                            ),
+                            "resolved_documents": list(
+                                port_state.get("resolved_documents") or []
+                            ),
+                            "staged_files": list(port_state.get("staged_files") or []),
+                            "workspace_artifacts": len(
+                                port_state.get("workspace_artifacts") or []
+                            ),
+                        }
+                        for port_id, port_state in (resolved_inputs.get("ports") or {}).items()
+                    ],
+                    brain_documents_count=len(resolved_inputs.get("brain_documents") or []),
+                    workspace_context_count=len(
+                        resolved_inputs.get("playbook_workspace_context") or []
+                    ),
+                )
 
                 workspace_context_for_hint = (
                     state.get("workspace_context")
@@ -1225,6 +1519,7 @@ class DynamicGraphBuilder:
                         user_query=state.get("query", ""),
                         workspace_file_hint=workspace_file_hint,
                         trigger_context=state.get("trigger_context"),
+                        iterator_context=state.get("iterator_context"),
                         prompt_overrides=state.get("prompt_overrides") or {},
                         output_mode=output_mode,
                     )
@@ -1336,6 +1631,7 @@ class DynamicGraphBuilder:
                         input_files=input_files,
                         documents_by_port=tool_scope["documents_by_port"],
                         code_interpreter_files=code_interpreter_files,
+                        output_ports=task.get("output_ports"),
                         output_workspace_id=output_workspace_id,
                         workspace_context_mode=tool_scope["workspace_context_mode"],
                         step_connector_bindings=task.get("tool_bindings"),
@@ -1617,6 +1913,7 @@ class DynamicGraphBuilder:
                         {
                             "output": "" if is_visualizer else response,
                             "task_id": task_id,
+                            "status": "completed",
                             "task_title": task_config["title"],
                             "agent_name": agent["name"],
                             "components": components,
@@ -2055,6 +2352,194 @@ class DynamicGraphBuilder:
 
         return exit_ids
 
+    def _get_iterator_child_tasks(
+        self,
+        iterator_id: str,
+        tasks: List[TaskConfig],
+    ) -> List[TaskConfig]:
+        return [
+            task
+            for task in tasks
+            if _get_parent_iterator_id(task) == iterator_id and task.get("id")
+        ]
+
+    def _order_tasks_topologically(
+        self,
+        tasks: List[TaskConfig],
+        edges: List[EdgeConfig],
+    ) -> List[TaskConfig]:
+        task_by_id = {task["id"]: task for task in tasks if task.get("id")}
+        ordered_ids = sorted(
+            task_by_id,
+            key=lambda task_id: (
+                task_by_id[task_id].get("execution_order", 999),
+                task_id,
+            ),
+        )
+        incoming_count = {task_id: 0 for task_id in ordered_ids}
+        outgoing: Dict[str, List[str]] = {task_id: [] for task_id in ordered_ids}
+
+        for edge in edges:
+            source_id = edge.get("source_id")
+            target_id = edge.get("target_id")
+            if source_id not in task_by_id or target_id not in task_by_id:
+                continue
+            outgoing[source_id].append(target_id)
+            incoming_count[target_id] += 1
+
+        ready = [task_id for task_id in ordered_ids if incoming_count[task_id] == 0]
+        result_ids: List[str] = []
+        while ready:
+            current_id = ready.pop(0)
+            result_ids.append(current_id)
+            for target_id in sorted(
+                outgoing[current_id],
+                key=lambda child_id: (
+                    task_by_id[child_id].get("execution_order", 999),
+                    child_id,
+                ),
+            ):
+                incoming_count[target_id] -= 1
+                if incoming_count[target_id] == 0:
+                    ready.append(target_id)
+            ready.sort(
+                key=lambda task_id: (
+                    task_by_id[task_id].get("execution_order", 999),
+                    task_id,
+                )
+            )
+
+        if len(result_ids) != len(task_by_id):
+            logger.warning(
+                "[DynamicGraphBuilder] Iterator child task cycle detected; "
+                "using execution_order fallback"
+            )
+            return [task_by_id[task_id] for task_id in ordered_ids]
+
+        return [task_by_id[task_id] for task_id in result_ids]
+
+    def _build_iterator_body_subgraph(
+        self,
+        iterator_id: str,
+        child_tasks: List[TaskConfig],
+        child_edges: List[EdgeConfig],
+        child_step_callback: StepCallback = NoopStepCallback,
+    ):
+        """Build a compiled LangGraph subgraph for iterator body execution.
+
+        Each child task becomes a real LangGraph node. Children can emit
+        scoped nested iterator updates via ``child_step_callback``.
+        The subgraph is compiled without a checkpointer because it is
+        invoked fresh per iteration and never streamed.
+        """
+        workflow = StateGraph(ExecutionState)
+
+        child_task_ids = {str(t.get("id") or "") for t in child_tasks if t.get("id")}
+        for task in child_tasks:
+            task_id = str(task.get("id") or "")
+            if not task_id:
+                continue
+            node_func = self._create_task_node(task_id, task, child_step_callback)
+            workflow.add_node(f"task_{task_id}", node_func)
+
+        entry_ids = self._find_entry_tasks(child_tasks, child_edges)
+        exit_ids = self._find_exit_tasks(child_tasks, child_edges)
+
+        if len(entry_ids) == 1:
+            workflow.set_entry_point(f"task_{entry_ids[0]}")
+        elif entry_ids:
+            async def _iterator_start(state: ExecutionState) -> Dict[str, Any]:
+                return {}
+
+            workflow.add_node("__iterator_start__", _iterator_start)
+            workflow.set_entry_point("__iterator_start__")
+            for tid in entry_ids:
+                workflow.add_edge("__iterator_start__", f"task_{tid}")
+
+        incoming_by_target: Dict[str, List[str]] = {}
+        for edge in child_edges:
+            source_id = str(edge.get("source_id") or "")
+            target_id = str(edge.get("target_id") or "")
+            if source_id not in child_task_ids or target_id not in child_task_ids:
+                continue
+            incoming_by_target.setdefault(target_id, []).append(source_id)
+
+        for target_id, source_ids in incoming_by_target.items():
+            target_node = f"task_{target_id}"
+            source_nodes = [f"task_{source_id}" for source_id in source_ids]
+            if len(source_nodes) == 1:
+                workflow.add_edge(source_nodes[0], target_node)
+            else:
+                workflow.add_edge(source_nodes, target_node)
+
+        if len(exit_ids) == 1:
+            workflow.add_edge(f"task_{exit_ids[0]}", END)
+        elif exit_ids:
+            async def _iterator_completion(state: ExecutionState) -> Dict[str, Any]:
+                return {}
+
+            workflow.add_node("__iterator_completion__", _iterator_completion)
+            exit_nodes = [f"task_{tid}" for tid in exit_ids]
+            if len(exit_nodes) == 1:
+                workflow.add_edge(exit_nodes[0], "__iterator_completion__")
+            else:
+                workflow.add_edge(exit_nodes, "__iterator_completion__")
+            workflow.add_edge("__iterator_completion__", END)
+
+        compiled = workflow.compile()
+        logger.info(
+            "[DynamicGraphBuilder] Compiled iterator body subgraph",
+            iterator_id=iterator_id,
+            tasks=len(child_tasks),
+            edges=len(child_edges),
+        )
+        return compiled
+
+    def _get_top_level_tasks(self, tasks: List[TaskConfig]) -> List[TaskConfig]:
+        return [task for task in tasks if not _get_parent_iterator_id(task)]
+
+    def _get_top_level_edges(
+        self,
+        tasks: List[TaskConfig],
+        edges: List[EdgeConfig],
+    ) -> List[EdgeConfig]:
+        top_level_ids = {task.get("id") for task in self._get_top_level_tasks(tasks)}
+        parent_iterator_by_task_id = {
+            str(task.get("id") or ""): _get_parent_iterator_id(task)
+            for task in tasks
+            if task.get("id")
+        }
+
+        normalized_edges: List[EdgeConfig] = []
+        seen_pairs: set[tuple[str, str]] = set()
+
+        for edge in edges:
+            raw_source_id = str(edge.get("source_id") or "")
+            raw_target_id = str(edge.get("target_id") or "")
+            source_id = parent_iterator_by_task_id.get(raw_source_id) or raw_source_id
+            target_id = parent_iterator_by_task_id.get(raw_target_id) or raw_target_id
+
+            if source_id == target_id:
+                continue
+
+            if source_id == "__trigger__":
+                if target_id not in top_level_ids:
+                    continue
+            elif source_id not in top_level_ids or target_id not in top_level_ids:
+                continue
+
+            edge_key = (source_id, target_id)
+            if edge_key in seen_pairs:
+                continue
+            seen_pairs.add(edge_key)
+
+            normalized_edge = dict(edge)
+            normalized_edge["source_id"] = source_id
+            normalized_edge["target_id"] = target_id
+            normalized_edges.append(normalized_edge)
+
+        return normalized_edges
+
     def build_execution_graph(
         self,
         tasks: List[TaskConfig],
@@ -2070,8 +2555,35 @@ class DynamicGraphBuilder:
             plain dict instead of monkey-patching the compiled graph object.
         """
         workflow = StateGraph(ExecutionState)
+        graph_tasks = self._get_top_level_tasks(tasks)
+        graph_edges = self._get_top_level_edges(tasks, edges)
 
-        for task in tasks:
+        logger.info(
+            "[ITERATOR_DEBUG build_execution_graph] inputs",
+            input_task_count=len(tasks),
+            input_tasks=[
+                {
+                    "id": t.get("id"),
+                    "title": t.get("title"),
+                    "task_type": t.get("task_type"),
+                    "parent_iterator_id": _get_parent_iterator_id(t),
+                    "task_metadata_keys": list((t.get("task_metadata") or {}).keys())
+                        if isinstance(t.get("task_metadata"), dict) else None,
+                }
+                for t in tasks
+            ],
+            input_edges=[
+                {"source_id": e.get("source_id"), "target_id": e.get("target_id")}
+                for e in edges
+            ],
+            top_level_task_ids=[t.get("id") for t in graph_tasks],
+            top_level_edges=[
+                {"source_id": e.get("source_id"), "target_id": e.get("target_id")}
+                for e in graph_edges
+            ],
+        )
+
+        for task in graph_tasks:
             task_id = task.get("id")
             if not task_id:
                 continue
@@ -2085,7 +2597,7 @@ class DynamicGraphBuilder:
                 title=task.get("title"),
             )
 
-        entry_task_ids = self._find_entry_tasks(tasks, edges)
+        entry_task_ids = self._find_entry_tasks(graph_tasks, graph_edges)
         logger.info("[DynamicGraphBuilder] Entry tasks", entry_ids=entry_task_ids)
 
         if len(entry_task_ids) == 1:
@@ -2102,7 +2614,7 @@ class DynamicGraphBuilder:
                 workflow.add_edge("__start_parallel__", f"task_{tid}")
 
         incoming_by_target: Dict[str, List[str]] = {}
-        for edge in edges:
+        for edge in graph_edges:
             source_id = edge["source_id"]
             target_id = edge["target_id"]
             if not source_id or not target_id:
@@ -2131,7 +2643,7 @@ class DynamicGraphBuilder:
                 target=target_node,
             )
 
-        exit_task_ids = self._find_exit_tasks(tasks, edges)
+        exit_task_ids = self._find_exit_tasks(graph_tasks, graph_edges)
         logger.info("[DynamicGraphBuilder] Exit tasks", exit_ids=exit_task_ids)
 
         async def completion_node(state: ExecutionState) -> Dict[str, Any]:
@@ -2153,15 +2665,15 @@ class DynamicGraphBuilder:
         logger.info(
             "[DynamicGraphBuilder] Compiled graph",
             playbook_id=playbook_id,
-            tasks=len(tasks),
-            edges=len(edges),
+            tasks=len(graph_tasks),
+            edges=len(graph_edges),
         )
 
         return {
             "compiled": compiled,
             "playbook_id": playbook_id,
-            "task_count": len(tasks),
-            "edge_count": len(edges),
+            "task_count": len(graph_tasks),
+            "edge_count": len(graph_edges),
         }
 
     def build_single_step_graph(

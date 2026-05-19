@@ -143,28 +143,201 @@ def _resolve_document_metadata(
     workspace_context: List[Dict[str, Any]],
     brain_documents: List[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
+    def _document_identifier(document: Dict[str, Any]) -> str:
+        return str(
+            document.get("document_id")
+            or document.get("external_id")
+            or document.get("externalId")
+            or document.get("id")
+            or document.get("_id")
+            or ""
+        ).strip()
+
+    def _document_filename(document: Dict[str, Any]) -> str:
+        return str(document.get("filename") or document.get("name") or "").strip()
+
+    def _document_filepath(document: Dict[str, Any]) -> str:
+        return str(document.get("filepath") or document.get("file_path") or "").strip()
+
+    def _document_workspace_id(
+        document: Dict[str, Any], workspace: Optional[Dict[str, Any]] = None
+    ) -> str:
+        return str(
+            document.get("workspace_id")
+            or document.get("workspaceId")
+            or (workspace or {}).get("workspace_id")
+            or (workspace or {}).get("workspaceId")
+            or ""
+        ).strip()
+
     for workspace in workspace_context:
         for doc in workspace.get("documents", []):
-            if str(doc.get("id") or doc.get("_id") or "").strip() == document_id:
+            if _document_identifier(doc) == document_id:
                 return {
                     "document_id": document_id,
-                    "filename": str(doc.get("filename") or "").strip(),
-                    "filepath": str(doc.get("filepath") or "").strip(),
-                    "workspace_id": str(
-                        doc.get("workspace_id") or workspace.get("workspace_id") or ""
-                    ).strip(),
+                    "filename": _document_filename(doc),
+                    "filepath": _document_filepath(doc),
+                    "workspace_id": _document_workspace_id(doc, workspace),
                 }
 
     for doc in brain_documents:
-        if str(doc.get("_id") or doc.get("id") or "").strip() == document_id:
+        if _document_identifier(doc) == document_id:
             return {
                 "document_id": document_id,
-                "filename": str(doc.get("filename") or "").strip(),
-                "filepath": str(doc.get("filepath") or "").strip(),
-                "workspace_id": str(doc.get("workspace_id") or "").strip(),
+                "filename": _document_filename(doc),
+                "filepath": _document_filepath(doc),
+                "workspace_id": _document_workspace_id(doc),
             }
 
     return None
+
+
+def _coalesce_port_documents(
+    port_state: Dict[str, Any],
+    *,
+    default_workspace_id: str,
+    playbook_workspace_context: List[Dict[str, Any]],
+    fallback_workspace_context: List[Dict[str, Any]],
+    brain_documents: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    documents: List[Dict[str, Any]] = []
+    seen_document_ids = set()
+
+    def add_document(document: Dict[str, Any]) -> None:
+        if not isinstance(document, dict):
+            return
+        document_id = str(document.get("document_id") or "").strip()
+        if document_id and document_id in seen_document_ids:
+            return
+        documents.append(document)
+        if document_id:
+            seen_document_ids.add(document_id)
+
+    for document in port_state.get("resolved_documents") or []:
+        add_document(document)
+
+    if len(documents) >= len(
+        _unique_strings((port_state.get("document_bindings") or {}).get("document_ids") or [])
+    ):
+        return documents
+
+    workspace_context = [
+        *list(playbook_workspace_context or []),
+        *list(fallback_workspace_context or []),
+    ]
+    for document_id in _unique_strings(
+        (port_state.get("document_bindings") or {}).get("document_ids") or []
+    ):
+        if document_id in seen_document_ids:
+            continue
+        metadata = _resolve_document_metadata(
+            document_id,
+            workspace_context=workspace_context,
+            brain_documents=brain_documents,
+        )
+        if metadata is not None:
+            logger.info(
+                "Port document metadata hydrated",
+                document_id=document_id,
+                filename=metadata.get("filename"),
+                filepath=metadata.get("filepath"),
+                workspace_id=metadata.get("workspace_id"),
+                source="workspace_or_brain_documents",
+            )
+            add_document(metadata)
+            continue
+        logger.warning(
+            "Port document metadata missing; using placeholder",
+            document_id=document_id,
+            default_workspace_id=str(default_workspace_id or "").strip(),
+            bound_document_ids=_unique_strings(
+                (port_state.get("document_bindings") or {}).get("document_ids") or []
+            ),
+            workspace_context_document_count=sum(
+                len(workspace.get("documents") or [])
+                for workspace in workspace_context
+                if isinstance(workspace, dict)
+            ),
+            brain_document_count=len(brain_documents),
+            workspace_context_matches=[
+                {
+                    "workspace_id": str(
+                        workspace.get("workspace_id") or workspace.get("workspaceId") or ""
+                    ).strip(),
+                    "documents": [
+                        {
+                            "id": str(
+                                doc.get("document_id")
+                                or doc.get("external_id")
+                                or doc.get("externalId")
+                                or doc.get("id")
+                                or doc.get("_id")
+                                or ""
+                            ).strip(),
+                            "filename": str(
+                                doc.get("filename") or doc.get("name") or ""
+                            ).strip(),
+                            "filepath": str(
+                                doc.get("filepath") or doc.get("file_path") or ""
+                            ).strip(),
+                        }
+                        for doc in (workspace.get("documents") or [])
+                        if isinstance(doc, dict)
+                        and str(
+                            doc.get("document_id")
+                            or doc.get("external_id")
+                            or doc.get("externalId")
+                            or doc.get("id")
+                            or doc.get("_id")
+                            or ""
+                        ).strip()
+                        == document_id
+                    ],
+                }
+                for workspace in workspace_context
+                if isinstance(workspace, dict)
+            ],
+            brain_document_matches=[
+                {
+                    "id": str(
+                        doc.get("document_id")
+                        or doc.get("external_id")
+                        or doc.get("externalId")
+                        or doc.get("id")
+                        or doc.get("_id")
+                        or ""
+                    ).strip(),
+                    "filename": str(doc.get("filename") or doc.get("name") or "").strip(),
+                    "filepath": str(
+                        doc.get("filepath") or doc.get("file_path") or ""
+                    ).strip(),
+                    "workspace_id": str(
+                        doc.get("workspace_id") or doc.get("workspaceId") or ""
+                    ).strip(),
+                }
+                for doc in brain_documents
+                if isinstance(doc, dict)
+                and str(
+                    doc.get("document_id")
+                    or doc.get("external_id")
+                    or doc.get("externalId")
+                    or doc.get("id")
+                    or doc.get("_id")
+                    or ""
+                ).strip()
+                == document_id
+            ],
+        )
+        add_document(
+            {
+                "document_id": document_id,
+                "filename": "",
+                "filepath": "",
+                "workspace_id": str(default_workspace_id or "").strip(),
+            }
+        )
+
+    return documents
 
 
 def _port_map(port_defs: Optional[List[Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
@@ -206,11 +379,15 @@ def _artifact_kind(artifact: Dict[str, Any]) -> str:
 
 
 def _artifact_filename(artifact: Dict[str, Any]) -> str:
+    ref = artifact.get("ref") or {}
     return str(
         artifact.get("filename")
         or artifact.get("name")
+        or ref.get("filename")
         or artifact.get("url")
+        or ref.get("url")
         or artifact.get("filepath")
+        or ref.get("filepath")
         or ""
     ).strip()
 
@@ -266,6 +443,7 @@ def _artifact_prompt_payload(artifact: Dict[str, Any]) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "artifact_kind": _artifact_kind(artifact),
     }
+    ref = artifact.get("ref") or {}
 
     for source_key, target_key in (
         ("source_task_id", "source_task_id"),
@@ -279,6 +457,8 @@ def _artifact_prompt_payload(artifact: Dict[str, Any]) -> Dict[str, Any]:
         ("mime_type", "mime_type"),
     ):
         value = artifact.get(source_key)
+        if value in (None, "", []):
+            value = ref.get(source_key)
         if value not in (None, "", []):
             payload[target_key] = value
 
@@ -305,13 +485,23 @@ def _is_sandbox_local_path(path: str) -> bool:
 def _artifact_file_ref(
     artifact: Dict[str, Any], port_id: str
 ) -> Optional[Dict[str, Any]]:
+    ref = artifact.get("ref") or {}
     filepath = str(
         artifact.get("filepath")
         or artifact.get("file_path")
         or artifact.get("url")
+        or ref.get("filepath")
+        or ref.get("file_path")
+        or ref.get("url")
         or ""
     ).strip()
-    filename = str(artifact.get("filename") or artifact.get("name") or "").strip()
+    filename = str(
+        artifact.get("filename")
+        or artifact.get("name")
+        or ref.get("filename")
+        or ref.get("name")
+        or ""
+    ).strip()
     if not filepath or not filename:
         return None
     if _is_sandbox_local_path(filepath):
@@ -319,12 +509,20 @@ def _artifact_file_ref(
 
     return {
         "document_id": str(
-            artifact.get("document_id") or artifact.get("id") or ""
+            artifact.get("document_id")
+            or ref.get("document_id")
+            or artifact.get("id")
+            or ref.get("id")
+            or ""
         ).strip(),
         "filename": filename,
         "filepath": filepath,
         "workspace_id": str(
-            artifact.get("workspace_id") or artifact.get("brain_id") or ""
+            artifact.get("workspace_id")
+            or ref.get("workspace_id")
+            or artifact.get("brain_id")
+            or ref.get("brain_id")
+            or ""
         ).strip(),
         "port_id": port_id,
     }
@@ -746,6 +944,7 @@ def resolve_task_inputs(
     resolved_inputs = {
         "task_id": task_id,
         "ports": resolved_ports,
+        "brain_documents": brain_documents,
         "playbook_workspace_context": list(workspace_context),
         "fallback_workspace_context": fallback_workspace_context,
         "workspace_context_mode": "fallback_playbook"
@@ -876,12 +1075,20 @@ def build_task_prompt_context(
     user_query: str = "",
     workspace_file_hint: str = "",
     trigger_context: Optional[Dict[str, Any]] = None,
+    iterator_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     ports = resolved_inputs.get("ports") or {}
     output_ports = list(task_config.get("output_ports") or [])
     default_workspace_id = select_output_workspace_id(resolved_inputs)
 
     prompt_inputs: List[Dict[str, Any]] = []
+    playbook_workspace_context = list(
+        resolved_inputs.get("playbook_workspace_context") or []
+    )
+    fallback_workspace_context = list(
+        resolved_inputs.get("fallback_workspace_context") or []
+    )
+    brain_documents = list(resolved_inputs.get("brain_documents") or [])
     for port_id, port_state in ports.items():
         input_port = port_state.get("input_port") or {}
         upstream_bindings = list(
@@ -892,7 +1099,13 @@ def build_task_prompt_context(
                 else [port_state.get("upstream_binding")]
             )
         )
-        resolved_documents = list(port_state.get("resolved_documents") or [])
+        resolved_documents = _coalesce_port_documents(
+            port_state,
+            default_workspace_id=str(default_workspace_id or ""),
+            playbook_workspace_context=playbook_workspace_context,
+            fallback_workspace_context=fallback_workspace_context,
+            brain_documents=brain_documents,
+        )
         staged_files = list(port_state.get("staged_files") or [])
         workspace_artifacts = list(port_state.get("workspace_artifacts") or [])
         retrieval_scope = _build_port_retrieval_scope(
@@ -1018,6 +1231,9 @@ def build_task_prompt_context(
         "trigger_context": trigger_context
         if isinstance(trigger_context, dict)
         else None,
+        "iterator_context": iterator_context
+        if isinstance(iterator_context, dict)
+        else None,
         "has_trigger_port_inputs": task_has_trigger_port_inputs(resolved_inputs),
     }
 
@@ -1030,6 +1246,7 @@ def build_task_prompt(
     user_query: str = "",
     workspace_file_hint: str = "",
     trigger_context: Optional[Dict[str, Any]] = None,
+    iterator_context: Optional[Dict[str, Any]] = None,
     prompt_overrides: Optional[Dict[str, str]] = None,
     output_mode: str = "plain",
 ) -> str:
@@ -1043,6 +1260,7 @@ def build_task_prompt(
         user_query=user_query,
         workspace_file_hint=workspace_file_hint,
         trigger_context=trigger_context,
+        iterator_context=iterator_context,
     )
 
     lines = [
@@ -1054,6 +1272,16 @@ def build_task_prompt(
             "Structured inputs for this task JSON:\n"
             + json.dumps(
                 prompt_context.get("resolved_inputs") or [],
+                ensure_ascii=True,
+                indent=2,
+            )
+        )
+
+    if prompt_context.get("iterator_context"):
+        lines.append(
+            "Iterator context JSON:\n"
+            + json.dumps(
+                prompt_context.get("iterator_context") or {},
                 ensure_ascii=True,
                 indent=2,
             )
@@ -1093,19 +1321,22 @@ def build_task_prompt(
                     "    {\n"
                     '      "output_port_id": "declared-port-id",\n'
                     '      "artifact_kind": "text|code|document|image|data|dashboard",\n'
-                    '      "content": "required for text/code outputs",\n'
-                    '      "filename": "required for generated file outputs",\n'
-                    '      "file_path": "optional exact file path when needed"\n'
+                    '      "content": "artifact payload"\n'
                     "    }\n"
                     "  ]\n"
                     "}\n\n"
                     "Rules:\n"
                     "- `display_text` is the final user-visible answer.\n"
                     "- Use only declared `output_port_id` values.\n"
-                    "- For text/code outputs, include final downstream content in `content`.\n"
+                    "- Every output object must include `artifact_kind`; it must match the declared port kind.\n"
+                    "- Every output object must use `content` for its payload.\n"
+                    "- For text/code outputs, `content` is the final downstream string.\n"
+                    "- For data outputs, `content` is the structured JSON payload.\n"
+                    "- For file outputs, `content` is an object like {\"filename\": \"report.pdf\", \"file_path\": \"optional exact file path\"}.\n"
                     "- For file outputs, reference only files you actually generated.\n"
+                    "- Do not use top-level `data`, `filename`, `file_path`, or `filePath`.\n"
                     "- If no routed output should be produced for a port, omit it.\n"
-                    "- Return JSON only and no markdown fences."
+                    "- Must never add or remove attributes, respect strictly the JSON structure specified above. Return JSON only and no markdown fences."
                 ),
             )
         else:

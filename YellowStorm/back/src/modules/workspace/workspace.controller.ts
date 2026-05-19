@@ -22,10 +22,11 @@ import {
 } from '@nestjs/swagger';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
+import { WorkspaceShareService } from './workspace-share.service';
 import { UsageService } from '../usage/usage.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { UserDocument } from '../user/schemas/user.schema';
-import { WorkspaceOwnerGuard } from './guards/workspace-owner.guard';
+import { WorkspaceOwnerGuard, WorkspaceAccessGuard } from './guards';
 import { CreateWorkspaceDto } from './dto/create-workspace.dto';
 import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { WorkspaceQueryDto } from './dto/workspace-query.dto';
@@ -42,6 +43,7 @@ export class WorkspaceController {
   constructor(
     private readonly workspaceService: WorkspaceService,
     private readonly workspaceDocumentService: WorkspaceDocumentService,
+    private readonly workspaceShareService: WorkspaceShareService,
     @Inject(forwardRef(() => UsageService))
     private readonly usageService: UsageService,
   ) {}
@@ -88,6 +90,18 @@ export class WorkspaceController {
   }
 
   /**
+   * List workspaces shared with current user
+   */
+  @Get('shared-with-me')
+  @ApiOperation({ summary: 'List workspaces shared with current user' })
+  async getSharedWithMe(
+    @CurrentUser() user: UserDocument,
+    @Query() query: WorkspaceQueryDto,
+  ) {
+    return this.workspaceShareService.findSharedWithUser(user._id.toString(), query);
+  }
+
+  /**
    * Get or create personal workspace
    */
   @Get('personal')
@@ -113,7 +127,7 @@ export class WorkspaceController {
    * Get workspace by ID
    */
   @Get(':id')
-  @UseGuards(WorkspaceOwnerGuard)
+  @UseGuards(WorkspaceAccessGuard)
   @ApiOperation({ summary: 'Get workspace by ID' })
   @ApiParam({ name: 'id', description: 'Workspace ID' })
   async findOne(@Param('id') id: string) {

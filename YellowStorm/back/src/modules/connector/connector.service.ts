@@ -386,6 +386,11 @@ export class ConnectorService {
       }
     }
 
+    const githubPat = typeof serverConfig?.githubPat === 'string' ? serverConfig.githubPat.trim() : '';
+    if (githubPat && !headers.Authorization) {
+      headers.Authorization = `Bearer ${githubPat}`;
+    }
+
     return headers;
   }
 
@@ -394,7 +399,10 @@ export class ConnectorService {
       return {};
     }
 
-    return { ...serverConfig };
+    const sanitized = { ...serverConfig };
+    delete sanitized.githubPat;
+
+    return sanitized;
   }
 
   private applyRuntimeAuthToServerConfig(

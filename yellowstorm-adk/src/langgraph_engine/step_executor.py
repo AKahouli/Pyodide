@@ -11,7 +11,6 @@ import json
 import re
 import time
 import uuid
-from collections import Counter
 from pathlib import Path
 from typing import Awaitable, Callable, Dict, Any, Optional, List
 
@@ -27,6 +26,7 @@ from src.langgraph_engine.port_resolution import (
     load_prompt_registry,
     resolve_prompt_template,
 )
+from src.langgraph_engine.artifact_routing import normalize_port_id as _normalize_port_id
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
@@ -34,13 +34,6 @@ logger = get_logger(__name__)
 MAX_TOOL_ITERATIONS = 10
 SKIP_STEP_REASON = "__SKIP_STEP__"
 StepProgressCallback = Callable[[Dict[str, Any]], Awaitable[None]]
-
-
-def _normalize_port_id(value: Any) -> str:
-    raw = str(value or "default").strip() or "default"
-    if raw.startswith(("in-", "out-")):
-        return raw.split("-", 1)[1] or "default"
-    return raw
 
 
 def _get_output_ports(task: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -61,13 +54,12 @@ def _output_port_kind(port: Dict[str, Any]) -> str:
 
 def _task_requires_structured_output_synthesis(task: Dict[str, Any]) -> bool:
     output_ports = _get_output_ports(task)
-    if len(output_ports) <= 1:
+    if not output_ports:
         return False
 
-    kind_counts = Counter(
-        kind for kind in (_output_port_kind(port) for port in output_ports) if kind
-    )
-    return any(count > 1 for count in kind_counts.values())
+    # Plain mode is reserved for text-only tasks; any non-text port needs
+    # structured routing so the model can bind outputs explicitly.
+    return any(_output_port_kind(port) != "text" for port in output_ports)
 
 
 def _determine_output_mode(task: Dict[str, Any]) -> str:
@@ -92,6 +84,9 @@ def _collect_generated_artifacts(
                 "filename": str(data.get("filename") or "").strip(),
                 "artifact_kind": str(
                     data.get("artifact_kind") or data.get("artifactKind") or ""
+                ).strip(),
+                "output_port_id": str(
+                    data.get("output_port_id") or data.get("outputPortId") or ""
                 ).strip(),
                 "mime_type": str(
                     data.get("mime_type") or data.get("mimeType") or ""
@@ -161,12 +156,10 @@ def _find_generated_artifact_match(
     generated_artifacts: List[Dict[str, Any]],
     used_indexes: set[int],
 ) -> Optional[Dict[str, Any]]:
-    requested_filename = str(output_spec.get("filename") or "").strip().lower()
-    requested_file_path = (
-        str(output_spec.get("file_path") or output_spec.get("filePath") or "")
-        .strip()
-        .lower()
-    )
+    content = output_spec.get("content")
+    metadata = content if isinstance(content, dict) else {}
+    requested_filename = str(metadata.get("filename") or "").strip().lower()
+    requested_file_path = str(metadata.get("file_path") or "").strip().lower()
 
     for index, artifact in enumerate(generated_artifacts):
         if index in used_indexes:
@@ -217,28 +210,50 @@ def _build_task_artifacts_from_structured_outputs(
             )
 
         port_kind = _output_port_kind(port)
-        output_kind = (
-            str(
-                output_spec.get("artifact_kind")
-                or output_spec.get("artifactKind")
-                or port_kind
-            ).strip()
-            or port_kind
-        )
-        if port_kind and output_kind and port_kind != output_kind:
+        model_output_kind = str(
+            output_spec.get("artifact_kind") or output_spec.get("artifactKind") or ""
+        ).strip()
+        if not model_output_kind:
             raise ValueError(
-                f"Structured output for port '{output_port_id}' has incompatible kind '{output_kind}' (expected '{port_kind}')"
+                f"Structured output for port '{output_port_id}' must include artifact_kind"
+            )
+        # The declared port contract is canonical once the model selects a port.
+        output_kind = port_kind or model_output_kind
+        if port_kind and model_output_kind and port_kind != model_output_kind:
+            logger.warning(
+                "Structured output kind does not match declared port kind; using declared port kind",
+                output_port_id=output_port_id,
+                model_artifact_kind=model_output_kind,
+                declared_artifact_kind=port_kind,
             )
 
+        content = output_spec.get("content")
+
+        # The model-facing schema always uses `content`; the runtime converts
+        # it back into the existing internal artifact shape for each kind.
         if output_kind in {"text", "code"}:
-            content = str(output_spec.get("content") or "").strip()
-            if not content:
+            text_content = str(content or "").strip()
+            if not text_content:
                 continue
             artifacts.append(
                 {
                     "port_id": str(port.get("id") or output_port_id),
                     "artifact_kind": output_kind,
-                    "content": content,
+                    "content": text_content,
+                }
+            )
+            continue
+
+        if output_kind == "data":
+            if content is None:
+                raise ValueError(
+                    f"Structured output for port '{output_port_id}' must include content"
+                )
+            artifacts.append(
+                {
+                    "port_id": str(port.get("id") or output_port_id),
+                    "artifact_kind": output_kind,
+                    "data": content,
                 }
             )
             continue
@@ -247,15 +262,19 @@ def _build_task_artifacts_from_structured_outputs(
             output_spec, generated_artifacts, used_generated_indexes
         )
         if matched_artifact is None:
+            metadata = content if isinstance(content, dict) else {}
             requested_name = (
-                output_spec.get("filename")
-                or output_spec.get("file_path")
-                or output_spec.get("filePath")
+                metadata.get("filename")
+                or metadata.get("file_path")
                 or output_port_id
             )
-            raise ValueError(
-                f"Structured output for port '{output_port_id}' references unknown artifact '{requested_name}'"
+            logger.warning(
+                "Structured output references unknown generated artifact; skipping output",
+                output_port_id=output_port_id,
+                requested_artifact=str(requested_name),
+                artifact_kind=output_kind,
             )
+            continue
 
         artifacts.append(
             {
@@ -317,7 +336,7 @@ def _build_plain_text_artifact(
         return None
 
     text_ports = [
-        port for port in _get_output_ports(task) if _output_port_kind(port) in {"text", "code"}
+        port for port in _get_output_ports(task) if _output_port_kind(port) == "text"
     ]
     if len(text_ports) != 1:
         return None
@@ -328,46 +347,6 @@ def _build_plain_text_artifact(
         "artifact_kind": _output_port_kind(port) or "text",
         "content": content,
     }
-
-
-def _build_plain_file_artifacts(
-    task: Dict[str, Any], generated_artifacts: List[Dict[str, Any]]
-) -> List[Dict[str, Any]]:
-    file_ports = [
-        port for port in _get_output_ports(task) if _output_port_kind(port) not in {"text", "code"}
-    ]
-    if not file_ports or not generated_artifacts:
-        return []
-
-    artifacts: List[Dict[str, Any]] = []
-    used_port_ids: set[str] = set()
-    for generated_artifact in generated_artifacts:
-        compatible_ports = [
-            port
-            for port in file_ports
-            if str(port.get("id") or "default") not in used_port_ids
-            and (
-                not _output_port_kind(port)
-                or _output_port_kind(port)
-                == str(generated_artifact.get("artifact_kind") or "").strip()
-            )
-        ]
-        if len(compatible_ports) != 1:
-            continue
-
-        port = compatible_ports[0]
-        used_port_ids.add(str(port.get("id") or "default"))
-        artifacts.append(
-            {
-                "port_id": str(port.get("id") or "default").strip() or "default",
-                "artifact_kind": _output_port_kind(port)
-                or str(generated_artifact.get("artifact_kind") or "document"),
-                "url": str(generated_artifact.get("file_path") or ""),
-                "filename": str(generated_artifact.get("filename") or ""),
-                "mime_type": str(generated_artifact.get("mime_type") or ""),
-            }
-        )
-    return artifacts
 
 
 def _finalize_task_outputs(
@@ -389,7 +368,8 @@ def _finalize_task_outputs(
             ),
         )
 
-    artifacts = _build_plain_file_artifacts(task, generated_artifacts)
+    # Plain mode is text-only; non-text outputs are routed through structured mode.
+    artifacts: List[Dict[str, Any]] = []
     text_artifact = _build_plain_text_artifact(task, response_text)
     if text_artifact is not None:
         artifacts.insert(0, text_artifact)
@@ -935,6 +915,7 @@ async def _execute_step_direct(
             input_files=input_files,
             documents_by_port=tool_scope["documents_by_port"],
             code_interpreter_files=code_interpreter_files,
+            output_ports=task.get("output_ports"),
             output_workspace_id=output_workspace_id,
             workspace_context_mode=tool_scope["workspace_context_mode"],
             step_connector_bindings=task.get("tool_bindings"),
@@ -1176,7 +1157,7 @@ async def _execute_with_tools(
         api_key=settings.LITELLM_API_SECRET_KEY,
         model=model_name,
         temperature=temperature,
-        model_kwargs={"user": get_user()},
+        model_kwargs={"user": get_user(), "parallel_tool_calls": True},
     )
     llm_with_tools = llm.bind_tools(tools)
 
@@ -1500,11 +1481,27 @@ def _extract_json_object(text: str) -> Dict[str, Any]:
             line for line in text.splitlines() if not line.strip().startswith("```")
         ]
         text = "\n".join(lines).strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ValueError("Adaptive replay did not return a JSON object")
-    return json.loads(text[start : end + 1])
+    # Models sometimes emit multiple JSON objects (e.g. tool-call metadata
+    # on one line, structured response on the next). raw_decode stops at
+    # the end of the first valid JSON value; we scan forward to find the
+    # last such object, which is the structured response payload.
+    decoder = json.JSONDecoder()
+    pos = 0
+    last_obj: Dict[str, Any] | None = None
+    while pos < len(text):
+        idx = text.find("{", pos)
+        if idx == -1:
+            break
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+            if isinstance(obj, dict):
+                last_obj = obj
+            pos = end
+        except json.JSONDecodeError:
+            pos = idx + 1
+    if last_obj is not None:
+        return last_obj
+    raise ValueError("Adaptive replay did not return a JSON object")
 
 
 async def _adapt_replay_tool_args(

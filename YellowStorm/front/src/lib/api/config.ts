@@ -33,6 +33,7 @@ export const API_ENDPOINTS = {
   users: {
     me: '/users/me',
     completeProfile: '/users/me/complete-profile',
+    search: '/users/search',
   },
   health: {
     check: '/health',
@@ -69,6 +70,12 @@ export const API_ENDPOINTS = {
     create: '/workspaces',
     byId: (id: string) => `/workspaces/${id}`,
     byAlias: (alias: string) => `/workspaces/alias/${alias}`,
+    sharedWithMe: '/workspaces/shared-with-me',
+  },
+  workspaceShares: {
+    list: (workspaceId: string) => `/workspaces/${workspaceId}/shares`,
+    byId: (workspaceId: string, shareId: string) =>
+      `/workspaces/${workspaceId}/shares/${shareId}`,
   },
   workspaceDocuments: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,
@@ -256,6 +263,7 @@ export const API_ENDPOINTS = {
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     intent: (id: string) => `/playbooks/${id}/intent`,
+    nodeAdvisor: (id: string, taskId: string) => `/playbooks/${id}/nodes/${taskId}/advisor`,
     skipStep: (id: string) => `/playbooks/${id}/steps/skip`,
     rerunStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/rerun-step`,
     resumeFromStep: (playbookId: string, executionId: string) => `/playbooks/${playbookId}/executions/${executionId}/resume-from-step`,

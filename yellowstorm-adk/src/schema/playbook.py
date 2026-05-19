@@ -61,6 +61,17 @@ class PlaybookMailTriggerNodeInput(BaseModel):
     message: MailTriggerRuntimePayload
 
 
+class IteratorTaskConfig(BaseModel):
+    """Minimal iterator configuration passed in task metadata."""
+
+    source: str = Field(default="{{items}}")
+    mode: str = Field(default="item")
+    batchSize: Optional[int] = Field(default=10)
+    itemVariable: Optional[str] = Field(default="item")
+    outputVariable: Optional[str] = Field(default="processed_items")
+    errorStrategy: Optional[str] = Field(default="stop")
+
+
 class RunPlaybookStepRequest(BaseModel):
     """Schema for running a playbook_dir step."""
 

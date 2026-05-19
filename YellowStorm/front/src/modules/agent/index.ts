@@ -10,7 +10,7 @@ export {
   useAgentById,
   useAgentTypes,
 } from './store';
-export { AgentButton, AgentDialog, AgentList, AgentCard } from './components';
+export { AgentButton, AgentList, AgentCard, AgentHubPage } from './components';
 export type {
   Agent,
   AgentType,

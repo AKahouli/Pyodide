@@ -22,7 +22,7 @@ import {
 import type { ConnectorResponse, ConnectorActionResponse, SkillResponse, McpToolDefinition } from '../../types';
 import type { ConnectorFormValues } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
-import { parseMcpServerConfig } from './mcp-server-config';
+import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
 import { Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -203,6 +203,7 @@ export function CreateEditConnectorDialog({
           runtimeEnvMappings: parsedRuntime.runtimeEnvMappings,
           mcpTransportType: connector.mcpTransportType || 'streamable_http',
           mcpServerUrl: connector.mcpServerUrl || '',
+          githubPatToken: parsedServerConfig.githubPatToken,
           mcpServerConfig: parsedServerConfig.serverConfigText,
           actions: connector.actions || [],
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
@@ -278,7 +279,7 @@ export function CreateEditConnectorDialog({
 
     let mcpServerConfig: Record<string, unknown> | undefined;
     try {
-      mcpServerConfig = form.mcpServerConfig.trim() ? (JSON.parse(form.mcpServerConfig) as Record<string, unknown>) : undefined;
+      mcpServerConfig = buildMcpServerConfig(form.mcpServerConfig, form.githubPatToken);
     } catch {
       toast.error(t('connectors.form.errors.invalidServerConfigJson'));
       return;

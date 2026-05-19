@@ -6,14 +6,7 @@ import { PlaybookNodeTemplate } from '../schemas/playbook-node-template.schema';
 
 describe('PlaybookNodeTemplateService', () => {
   let service: PlaybookNodeTemplateService;
-  let model: {
-    find: jest.Mock;
-    findById: jest.Mock;
-    findOne: jest.Mock;
-    findByIdAndUpdate: jest.Mock;
-    insertMany: jest.Mock;
-    bulkWrite: jest.Mock;
-  };
+  let model: Record<string, jest.Mock>;
 
   beforeEach(async () => {
     model = {
@@ -23,6 +16,7 @@ describe('PlaybookNodeTemplateService', () => {
       findByIdAndUpdate: jest.fn(),
       insertMany: jest.fn(),
       bulkWrite: jest.fn(),
+      countDocuments: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -52,53 +46,27 @@ describe('PlaybookNodeTemplateService', () => {
   }
 
   function buildExistingDefaults(overrides: Array<Record<string, unknown>> = []): Array<Record<string, unknown>> {
-    const defaults = [
-      { _id: 'summarizer-id', key: 'summarizer', type: 'summarizer', isBuiltIn: true, enabled: true },
-      { _id: 'docxgen-id', key: 'docxgen', type: 'docxgen', isBuiltIn: true, enabled: true },
-      { _id: 'slidegen-id', key: 'slidegen', type: 'slidegen', isBuiltIn: true, enabled: true },
-      { _id: 'codegen-id', key: 'codegen', type: 'codegen', isBuiltIn: true, enabled: true },
-      { _id: 'analyzer-id', key: 'analyzer', type: 'analyzer', isBuiltIn: true, enabled: true },
-    ];
-    return [...defaults, ...overrides];
+    return [...overrides];
   }
 
-  it('seeds and returns the evaluation built-in when missing', async () => {
-    mockFindOnce([]);
-    mockFindAllOnce([
-      {
-        _id: { toString: () => 'evaluation-id' },
-        key: 'evaluation',
-        type: 'evaluation',
-        title: 'Evaluation Task',
-        description: 'Evaluates connected outputs against expected results and optional reference baselines.',
-        icon: 'Scale',
-        color: 'rose',
-        category: 'evaluation',
-        inputPorts: [],
-        outputPorts: [],
-        promptTemplate: '',
-        recommendedAgentTypeSlug: 'researcher',
-        requiredToolNames: [],
-        executionMode: 'agent',
-        assignedAgentId: null,
-        selectedAction: null,
-        enabled: true,
-        version: 1,
-        isBuiltIn: true,
-        createdAt: new Date('2026-01-01T00:00:00Z'),
-        updatedAt: new Date('2026-01-01T00:00:00Z'),
-      },
-    ]);
+  it('inserts initial built-in templates when the collection is empty', async () => {
+    model.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(0) });
+    model.insertMany.mockResolvedValue([]);
 
-    const result = await service.findEnabled();
+    await service.onApplicationBootstrap();
 
     expect(model.insertMany).toHaveBeenCalledTimes(1);
-    expect(model.insertMany.mock.calls[0][0]).toEqual(
-      expect.arrayContaining([expect.objectContaining({ key: 'evaluation', type: 'evaluation', category: 'evaluation' })]),
-    );
-    expect(result.items).toEqual(
-      expect.arrayContaining([expect.objectContaining({ key: 'evaluation', type: 'evaluation', category: 'evaluation' })]),
-    );
+    const inserted = model.insertMany.mock.calls[0][0];
+    expect(inserted.length).toBe(10);
+    expect(inserted[0]).toMatchObject({ key: 'node_template_document_extractor', type: 'document-extractor', isBuiltIn: true });
+  });
+
+  it('skips initial seed when collection already has documents', async () => {
+    model.countDocuments.mockReturnValue({ exec: jest.fn().mockResolvedValue(5) });
+
+    await service.onApplicationBootstrap();
+
+    expect(model.insertMany).not.toHaveBeenCalled();
   });
 
   it('does not rewrite existing built-in templates during reads', async () => {
@@ -235,5 +203,85 @@ describe('PlaybookNodeTemplateService', () => {
     await service.findAll();
 
     expect(model.bulkWrite).not.toHaveBeenCalled();
+  });
+
+  it('persists iteratorConfig on update responses', async () => {
+    const templateId = '507f1f77bcf86cd799439012';
+    const userId = '507f191e810c19729de860ea';
+    const iteratorConfig = {
+      source: '{{items}}',
+      mode: 'batch' as const,
+      batchSize: 25,
+      itemVariable: 'row',
+      outputVariable: 'rows',
+      errorStrategy: 'continue' as const,
+    };
+
+    mockFindOnce(buildExistingDefaults());
+
+    model.findById.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => templateId },
+        key: 'iterator',
+        type: 'iterator',
+        title: 'Iterator',
+        description: 'Iterator template',
+        icon: 'RefreshCw',
+        color: 'cyan',
+        category: 'analysis',
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+        executionMode: 'agent',
+        assignedAgentId: null,
+        selectedAction: null,
+        iteratorConfig: null,
+        enabled: true,
+        version: 1,
+        isBuiltIn: true,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-01T00:00:00Z'),
+      }),
+    });
+
+    model.findByIdAndUpdate.mockReturnValue({
+      exec: jest.fn().mockResolvedValue({
+        _id: { toString: () => templateId },
+        key: 'iterator',
+        type: 'iterator',
+        title: 'Iterator',
+        description: 'Iterator template',
+        icon: 'RefreshCw',
+        color: 'cyan',
+        category: 'analysis',
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        promptTemplate: '',
+        recommendedAgentTypeSlug: null,
+        requiredToolNames: [],
+        executionMode: 'agent',
+        assignedAgentId: null,
+        selectedAction: null,
+        iteratorConfig,
+        enabled: true,
+        version: 2,
+        isBuiltIn: true,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        updatedAt: new Date('2026-01-02T00:00:00Z'),
+      }),
+    });
+
+    const updated = await service.update(templateId, { iteratorConfig }, userId);
+
+    expect(updated.iteratorConfig).toEqual(iteratorConfig);
+    expect(model.findByIdAndUpdate).toHaveBeenCalledWith(
+      templateId,
+      expect.objectContaining({
+        $set: expect.objectContaining({ iteratorConfig }),
+      }),
+      { new: true },
+    );
   });
 });

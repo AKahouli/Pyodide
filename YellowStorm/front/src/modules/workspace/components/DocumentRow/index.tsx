@@ -11,6 +11,7 @@ import { formatFileSize, getFileTypeLabel } from '../../utils';
 import { useIsMobile } from '@/hooks/use-mobile';
 import type { WorkspaceDocument } from '../../types';
 import { useDocumentActions, useWorkspaceStore, useSelectedWorkspace } from '../../hooks';
+import { useCanWriteWorkspace } from '../../store';
 import { IndexingStatusBadge } from './IndexingStatusBadge';
 import { ConfirmDialog } from '../dialogs';
 import { CreateFolderDialog } from '../CreateFolderDialog';
@@ -48,6 +49,7 @@ export const DocumentRow = memo(function DocumentRow({
 
   const selectedWorkspace = useSelectedWorkspace();
   const isPersonalWorkspace = selectedWorkspace?.isPersonal ?? false;
+  const canWrite = useCanWriteWorkspace();
   const isUploading = useWorkspaceStore((state) => state.isUploading);
   const isMobile = useIsMobile();
   const [isSubFolderDialogOpen, setIsSubFolderDialogOpen] = useState(false);
@@ -222,9 +224,11 @@ export const DocumentRow = memo(function DocumentRow({
                 </Tooltip>
               </TooltipProvider>
             )}
-            <Button variant='ghost' size='icon' className='h-8 w-8 text-destructive hover:text-destructive' onClick={handleDeleteClick}>
-              <Trash2 className='h-4 w-4' />
-            </Button>
+            {canWrite && (
+              <Button variant='ghost' size='icon' className='h-8 w-8 text-destructive hover:text-destructive' onClick={handleDeleteClick}>
+                <Trash2 className='h-4 w-4' />
+              </Button>
+            )}
           </div>
         </TableCell>
       </TableRow>

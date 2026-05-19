@@ -159,6 +159,8 @@ export function NewConversationPage() {
             }
           />
           <GroupChatButton />
+        </div>
+        <div className='w-full max-w-7xl px-4'>
           <PlaybooksCarousel />
         </div>
       </div>

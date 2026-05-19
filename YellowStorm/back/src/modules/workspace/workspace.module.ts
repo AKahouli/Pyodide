@@ -3,6 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { Workspace, WorkspaceSchema } from './schemas/workspace.schema';
 import {
+  WorkspaceShare,
+  WorkspaceShareSchema,
+} from './schemas/workspace-share.schema';
+import {
   Conversation,
   ConversationSchema,
 } from '../conversation/schemas/conversation.schema';
@@ -21,17 +25,24 @@ import { WorkspaceController } from './workspace.controller';
 import { WorkspaceSettingController } from './workspace-setting.controller';
 import { WorkspaceDocumentController } from './workspace-document.controller';
 import { WorkspaceIngestController } from './workspace-ingest.controller';
+import { WorkspaceShareController } from './workspace-share.controller';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceSettingService } from './workspace-setting.service';
 import { WorkspaceDocumentService } from './workspace-document.service';
 import { WorkspaceInitializerService } from './workspace-initializer.service';
-import { WorkspaceOwnerGuard } from './guards/workspace-owner.guard';
+import { WorkspaceShareService } from './workspace-share.service';
+import {
+  WorkspaceOwnerGuard,
+  WorkspaceAccessGuard,
+  WritePermissionGuard,
+} from './guards';
 import { AuthModule } from '../auth/auth.module';
 import { LoggerModule } from '../logger';
 import { DocumentModule } from '../document/document.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { UsageModule } from '../usage/usage.module';
 import { IndexingModule } from '../indexing/indexing.module';
+import { UserModule } from '../user/user.module';
 import workspaceConfig from '../../config/workspace.config';
 
 @Module({
@@ -39,6 +50,7 @@ import workspaceConfig from '../../config/workspace.config';
     ConfigModule.forFeature(workspaceConfig),
     MongooseModule.forFeature([
       { name: Workspace.name, schema: WorkspaceSchema },
+      { name: WorkspaceShare.name, schema: WorkspaceShareSchema },
       { name: WorkspaceDoc.name, schema: WorkspaceDocumentSchema },
       { name: WorkspaceSetting.name, schema: WorkspaceSettingSchema },
       { name: UploadSession.name, schema: UploadSessionSchema },
@@ -50,6 +62,7 @@ import workspaceConfig from '../../config/workspace.config';
     forwardRef(() => UsageModule),
     forwardRef(() => NotificationsModule),
     forwardRef(() => IndexingModule),
+    UserModule,
     DocumentModule,
     LoggerModule,
   ],
@@ -58,19 +71,24 @@ import workspaceConfig from '../../config/workspace.config';
     WorkspaceSettingController,
     WorkspaceDocumentController,
     WorkspaceIngestController,
+    WorkspaceShareController,
   ],
   providers: [
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
     WorkspaceInitializerService,
+    WorkspaceShareService,
     WorkspaceOwnerGuard,
+    WorkspaceAccessGuard,
+    WritePermissionGuard,
   ],
   exports: [
     WorkspaceService,
     WorkspaceSettingService,
     WorkspaceDocumentService,
     WorkspaceInitializerService,
+    WorkspaceShareService,
   ],
 })
 export class WorkspaceModule {}

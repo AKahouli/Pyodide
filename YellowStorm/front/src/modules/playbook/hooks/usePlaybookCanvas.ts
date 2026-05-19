@@ -17,10 +17,21 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
-import { migrateEdge } from '../utils/migrate-ports';
+import { migrateEdge, remapIteratorEdgePorts } from '../utils/migrate-ports';
+import { normalizeIteratorTaskPorts } from '../utils/iterator-ports';
+import { getEffectiveNodeType } from '../utils/node-type';
 import type { PlaybookTask, PlaybookEdge, PlaybookNodeData, ArtifactKind } from '../types';
 
 const TRIGGER_NODE_ID = '__trigger__';
+const ITERATOR_HEADER_HEIGHT = 56;
+const ITERATOR_PADDING = 32;
+const ITERATOR_MIN_WIDTH = 360;
+const ITERATOR_MIN_HEIGHT = 220;
+const ITERATOR_CHILD_HORIZONTAL_GAP = 192;
+const ITERATOR_CHILD_VERTICAL_GAP = 192;
+const ITERATOR_CHILD_MAX_COLUMNS = 3;
+const ITERATOR_CHILD_NODE_WIDTH = 384;
+const ITERATOR_CHILD_NODE_HEIGHT = 240;
 
 const MAIL_TRIGGER_PORTS = [
   { id: 'mail_data', name: 'Mail data', artifactKind: 'data' as ArtifactKind },
@@ -42,43 +53,194 @@ function buildTriggerNode(): Node {
   };
 }
 
-export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
-  const taskNodes = tasks.map((task) => ({
+function getIteratorChildTasks(tasks: PlaybookTask[], iteratorId: string): PlaybookTask[] {
+  return tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId);
+}
+
+function buildIteratorContainerNode(task: PlaybookTask, childTasks: PlaybookTask[]): Node {
+  const normalizedTask = normalizeIteratorTaskPorts(task);
+  const bounds = childTasks.reduce(
+    (acc, child) => {
+      const relativeX = child.positionX - task.positionX;
+      const relativeY = child.positionY - task.positionY;
+      acc.maxX = Math.max(acc.maxX, relativeX + ITERATOR_CHILD_NODE_WIDTH);
+      acc.maxY = Math.max(acc.maxY, relativeY + ITERATOR_CHILD_NODE_HEIGHT);
+      return acc;
+    },
+    {
+      maxX: ITERATOR_MIN_WIDTH,
+      maxY: ITERATOR_MIN_HEIGHT,
+    },
+  );
+
+  const autoWidth = Math.max(ITERATOR_MIN_WIDTH, bounds.maxX + ITERATOR_PADDING);
+  const autoHeight = Math.max(ITERATOR_MIN_HEIGHT, bounds.maxY + ITERATOR_PADDING);
+  const manualWidth = normalizedTask.iteratorLayout?.width ?? 0;
+  const manualHeight = normalizedTask.iteratorLayout?.height ?? 0;
+  const width = Math.max(autoWidth, manualWidth);
+  const height = Math.max(autoHeight, manualHeight);
+
+  return {
+    id: normalizedTask.id,
+    type: 'playbookIteratorContainer',
+    position: { x: normalizedTask.positionX, y: normalizedTask.positionY },
+    data: { ...normalizedTask, width, height, childTaskIds: childTasks.map((child) => child.id) } as PlaybookNodeData,
+    style: { width, height },
+  };
+}
+
+function getIteratorNodeMap(tasks: PlaybookTask[]): Map<string, PlaybookTask> {
+  return new Map(tasks.filter((task) => getEffectiveNodeType(task) === 'iterator').map((task) => [task.id, task]));
+}
+
+function toAbsoluteTaskPosition(node: Node, nodeMap: Map<string, Node>): { x: number; y: number } {
+  if (!node.parentId) {
+    return { x: node.position.x, y: node.position.y };
+  }
+
+  const parentNode = nodeMap.get(node.parentId);
+  if (!parentNode) {
+    return { x: node.position.x, y: node.position.y };
+  }
+
+  return {
+    x: parentNode.position.x + node.position.x,
+    y: parentNode.position.y + node.position.y,
+  };
+}
+
+function buildChildFlowNode(task: PlaybookTask, iteratorTasks: Map<string, PlaybookTask>): Node {
+  const parentIteratorId = task.containerConfig?.parentIteratorId;
+  const parentIterator = parentIteratorId ? iteratorTasks.get(parentIteratorId) : null;
+  const isScoped = Boolean(parentIteratorId && parentIterator);
+
+  return {
     id: task.id,
     type: 'playbookStep',
-    position: { x: task.positionX, y: task.positionY },
+    position: isScoped && parentIterator
+      ? {
+          x: task.positionX - parentIterator.positionX,
+          y: task.positionY - parentIterator.positionY,
+        }
+      : { x: task.positionX, y: task.positionY },
+    parentId: isScoped ? parentIteratorId ?? undefined : undefined,
+    extent: isScoped ? 'parent' as const : undefined,
     data: { ...task } as PlaybookNodeData,
-  }));
+  };
+}
+
+function getIteratorChildAbsolutePosition(
+  tasks: PlaybookTask[],
+  iteratorId: string,
+  childIndex: number,
+): { x: number; y: number } | null {
+  const iteratorTask = tasks.find((task) => task.id === iteratorId && getEffectiveNodeType(task) === 'iterator');
+  if (!iteratorTask) {
+    return null;
+  }
+
+  const existingSiblingCount = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId).length;
+  const totalChildren = Math.max(existingSiblingCount, childIndex + 1);
+  const columnCount = Math.min(
+    ITERATOR_CHILD_MAX_COLUMNS,
+    Math.max(1, Math.ceil(Math.sqrt(totalChildren))),
+  );
+  const column = childIndex % columnCount;
+  const row = Math.floor(childIndex / columnCount);
+
+  return {
+    x: iteratorTask.positionX + ITERATOR_PADDING + column * (ITERATOR_CHILD_NODE_WIDTH + ITERATOR_CHILD_HORIZONTAL_GAP),
+    y: iteratorTask.positionY + ITERATOR_HEADER_HEIGHT + 16 + row * (ITERATOR_CHILD_NODE_HEIGHT + ITERATOR_CHILD_VERTICAL_GAP),
+  };
+}
+
+function repackIteratorChildrenInTasks(tasks: PlaybookTask[], iteratorId: string): PlaybookTask[] {
+  const childTasks = tasks.filter((task) => task.containerConfig?.parentIteratorId === iteratorId);
+  if (childTasks.length === 0) {
+    return tasks;
+  }
+
+  const orderedChildIds = [...childTasks]
+    .sort((a, b) => {
+      if (a.executionOrder !== b.executionOrder) {
+        return a.executionOrder - b.executionOrder;
+      }
+      return a.id.localeCompare(b.id);
+    })
+    .map((task) => task.id);
+
+  return tasks.map((task) => {
+    const childIndex = orderedChildIds.indexOf(task.id);
+    if (childIndex === -1) {
+      return task;
+    }
+
+    const nextPosition = getIteratorChildAbsolutePosition(tasks, iteratorId, childIndex);
+    if (!nextPosition) {
+      return task;
+    }
+
+    return {
+      ...task,
+      positionX: nextPosition.x,
+      positionY: nextPosition.y,
+    };
+  });
+}
+
+export function tasksToNodes(tasks: PlaybookTask[], includeTriggerNode = true): Node[] {
+  const iteratorTasks = getIteratorNodeMap(tasks);
+  const iteratorNodes = tasks
+    .filter((task) => getEffectiveNodeType(task) === 'iterator')
+    .map((task) => buildIteratorContainerNode(task, getIteratorChildTasks(tasks, task.id)));
+  const stepNodes = tasks
+    .filter((task) => getEffectiveNodeType(task) !== 'iterator')
+    .map((task) => buildChildFlowNode(task, iteratorTasks));
+  const taskNodes: Node[] = [...iteratorNodes, ...stepNodes];
 
   return includeTriggerNode ? [buildTriggerNode(), ...taskNodes] : taskNodes;
 }
 
 function nodesToTasks(nodes: Node[]): PlaybookTask[] {
-  return nodes.filter((node) => node.type === 'playbookStep').map((node) => {
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.filter((node) => node.type === 'playbookStep' || node.type === 'playbookIteratorContainer').map((node) => {
     const data = node.data as PlaybookNodeData;
+    const absolutePosition = toAbsoluteTaskPosition(node, nodeMap);
     return {
       ...data,
       id: node.id,
-      positionX: node.position.x,
-      positionY: node.position.y,
+      positionX: absolutePosition.x,
+      positionY: absolutePosition.y,
+      containerConfig:
+        node.type === 'playbookStep'
+          ? {
+              parentIteratorId: node.parentId || null,
+            }
+          : data.containerConfig ?? null,
     };
   });
 }
 
-function playbookEdgesToFlowEdges(edges: PlaybookEdge[]): Edge[] {
-  return edges.map((edge) => ({
-    id: edge.id,
-    source: edge.sourceId,
-    target: edge.targetId,
-    sourceHandle: edge.sourceOutputPortId || undefined,
-    targetHandle: edge.targetInputPortId || undefined,
-    type: 'animated',
-    data: {
-      sourceOutputPortId: edge.sourceOutputPortId || 'default',
-      targetInputPortId: edge.targetInputPortId || 'default',
-      isTypeMatch: undefined,
-    },
-  }));
+function playbookEdgesToFlowEdges(edges: PlaybookEdge[], tasks: PlaybookTask[]): Edge[] {
+  return edges
+    .filter((edge) => edge.sourceId !== edge.targetId)
+    .map((edge) => {
+      const normalizedEdge = remapIteratorEdgePorts(edge, tasks);
+
+      return {
+        id: normalizedEdge.id,
+        source: normalizedEdge.sourceId,
+        target: normalizedEdge.targetId,
+        sourceHandle: normalizedEdge.sourceOutputPortId || undefined,
+        targetHandle: normalizedEdge.targetInputPortId || undefined,
+        type: 'animated',
+        data: {
+          sourceOutputPortId: normalizedEdge.sourceOutputPortId || 'default',
+          targetInputPortId: normalizedEdge.targetInputPortId || 'default',
+          isTypeMatch: undefined,
+        },
+      };
+    });
 }
 
 function flowEdgesToPlaybookEdges(edges: Edge[]): PlaybookEdge[] {
@@ -162,6 +324,54 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     );
   }
 
+  function preserveNodeUiState(nextNodes: Node[], previousNodes: Node[]): Node[] {
+    const previousById = new Map(previousNodes.map((node) => [node.id, node]));
+    return nextNodes.map((node) => {
+      const previous = previousById.get(node.id);
+      if (!previous) {
+        return node;
+      }
+      return {
+        ...node,
+        selected: previous.selected,
+        dragging: previous.dragging,
+      };
+    });
+  }
+
+  function applyTaskPatch(tasks: PlaybookTask[], taskId: string, patch: Partial<PlaybookTask>): PlaybookTask[] {
+    const previousTask = tasks.find((task) => task.id === taskId);
+    const nextParentIteratorId = patch.containerConfig
+      ? patch.containerConfig.parentIteratorId ?? null
+      : previousTask?.containerConfig?.parentIteratorId ?? null;
+
+    return tasks.map((task) => {
+      if (task.id !== taskId) {
+        return task;
+      }
+
+      const nextTask: PlaybookTask = {
+        ...task,
+        ...patch,
+        containerConfig: patch.containerConfig ?? task.containerConfig,
+      };
+
+      if (nextParentIteratorId && nextParentIteratorId !== task.containerConfig?.parentIteratorId) {
+        const assignedPosition = getIteratorChildAbsolutePosition(
+          tasks,
+          nextParentIteratorId,
+          tasks.filter((candidate) => candidate.containerConfig?.parentIteratorId === nextParentIteratorId).length,
+        );
+        if (assignedPosition) {
+          nextTask.positionX = assignedPosition.x;
+          nextTask.positionY = assignedPosition.y;
+        }
+      }
+
+      return nextTask;
+    });
+  }
+
   // Sync ReactFlow state when playbook is loaded/changed from the API
   useEffect(() => {
     if (!playbook) {
@@ -174,7 +384,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     if (syncedKeyRef.current !== syncKey) {
       syncedKeyRef.current = syncKey;
       setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
-      setEdges(playbookEdgesToFlowEdges(playbook.edges));
+      setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
     }
   }, [playbook]);
 
@@ -183,7 +393,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     if (!playbook || canvasSyncVersion === 0) return;
     syncedKeyRef.current = `${playbook.id}::${playbook.updatedAt}::v${canvasSyncVersion}`;
     setNodes(buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'));
-    setEdges(playbookEdgesToFlowEdges(playbook.edges));
+    setEdges(playbookEdgesToFlowEdges(playbook.edges, playbook.tasks));
   }, [canvasSyncVersion, playbook]);
 
   // Keep node metadata in sync when task data changes locally in the store
@@ -192,26 +402,19 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   useEffect(() => {
     if (!playbook) return;
 
-    const taskMap = new Map(playbook.tasks.map((task) => [task.id, task]));
     setNodes((nds) => {
-      let changed = false;
-      const updated = nds.map((node) => {
-        const task = taskMap.get(node.id);
-        if (!task) return node;
+      const rebuilt = preserveNodeUiState(
+        buildNodesWithTrigger(playbook.tasks, playbook.automatedTriggerType === 'mail'),
+        nds,
+      );
 
-        const currentData = node.data as PlaybookNodeData;
-        const nextData = { ...currentData, ...task } as PlaybookNodeData;
-        if (JSON.stringify(currentData) === JSON.stringify(nextData)) {
-          return node;
-        }
+      if (JSON.stringify(rebuilt) === JSON.stringify(nds)) {
+        return nds;
+      }
 
-        changed = true;
-        return { ...node, data: nextData };
-      });
-
-      return changed ? updated : nds;
+      return rebuilt;
     });
-  }, [playbook?.tasks]);
+  }, [playbook?.tasks, playbook?.automatedTriggerType]);
 
   // Node position changes: just update local ReactFlow state (no store sync).
   // Store sync happens in onNodeDragStop.
@@ -219,8 +422,12 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     (changes) => {
       const selectChanges = changes.filter((change) => change.type === 'select' && 'selected' in change);
       if (selectChanges.length > 0) {
-        const selectTrue = selectChanges.find((c) => c.selected === true);
-        selectStep(selectTrue ? selectTrue.id : null);
+        const selectTrue = selectChanges.filter((c) => c.selected === true);
+        if (selectTrue.length === 1) {
+          selectStep(selectTrue[0].id);
+        } else if (selectTrue.length === 0) {
+          selectStep(null);
+        }
       }
 
       const removes = changes.filter((c) => c.type === 'remove');
@@ -229,7 +436,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
         if (removedIds.size > 0) {
           captureSnapshot();
           setNodes((nds) => {
-            const updated = nds.filter((n) => !removedIds.has(n.id));
+        const updated = nds.filter((n) => !removedIds.has(n.id));
             deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
             return updated;
           });
@@ -326,20 +533,18 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
   const addNode = useCallback(
     (task: PlaybookTask) => {
-      const newNode: Node = {
-        id: task.id,
-        type: 'playbookStep',
-        position: { x: task.positionX, y: task.positionY },
-        data: { ...task } as PlaybookNodeData,
-      };
       setNodes((nds) => {
-        const updated = [...nds, newNode];
+        const tasks = [...nodesToTasks(nds), task];
+        const updated = preserveNodeUiState(
+          buildNodesWithTrigger(tasks, playbook?.automatedTriggerType === 'mail'),
+          nds,
+        );
         captureSnapshot();
         deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
         return updated;
       });
     },
-    [updateTasks, captureSnapshot],
+    [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
 
   const removeNode = useCallback(
@@ -369,16 +574,55 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const updateNodeData = useCallback(
     (nodeId: string, data: Partial<PlaybookTask>) => {
       setNodes((nds) => {
-        const updated = nds.map((n) =>
-          n.id === nodeId ? { ...n, data: { ...n.data, ...data } } : n,
+        const patchedTasks = applyTaskPatch(nodesToTasks(nds), nodeId, data);
+        const updated = preserveNodeUiState(
+          buildNodesWithTrigger(patchedTasks, playbook?.automatedTriggerType === 'mail'),
+          nds,
         );
         captureSnapshot();
         updateTasks(nodesToTasks(updated));
         return updated;
       });
     },
-    [updateTasks, captureSnapshot],
+    [updateTasks, captureSnapshot, playbook?.automatedTriggerType],
   );
+
+  const setIteratorNodeSize = useCallback((nodeId: string, size: { width: number; height: number }) => {
+    setNodes((nds) => nds.map((node) => {
+      if (node.id !== nodeId || node.type !== 'playbookIteratorContainer') {
+        return node;
+      }
+
+      const nextWidth = Math.round(size.width);
+      const nextHeight = Math.round(size.height);
+      return {
+        ...node,
+        style: {
+          ...(node.style || {}),
+          width: nextWidth,
+          height: nextHeight,
+        },
+        data: {
+          ...(node.data as PlaybookNodeData),
+          width: nextWidth,
+          height: nextHeight,
+        },
+      };
+    }));
+  }, []);
+
+  const repackIteratorChildren = useCallback((nodeId: string) => {
+    setNodes((nds) => {
+      const repackedTasks = repackIteratorChildrenInTasks(nodesToTasks(nds), nodeId);
+      const updated = preserveNodeUiState(
+        buildNodesWithTrigger(repackedTasks, playbook?.automatedTriggerType === 'mail'),
+        nds,
+      );
+      captureSnapshot();
+      updateTasks(nodesToTasks(updated));
+      return updated;
+    });
+  }, [captureSnapshot, playbook?.automatedTriggerType, updateTasks]);
 
   return {
     nodes,
@@ -390,6 +634,8 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     addNode,
     removeNode,
     updateNodeData,
+    setIteratorNodeSize,
+    repackIteratorChildren,
     setNodes,
     setEdges,
     triggerActions: playbook?.id ? triggerActions : undefined,
