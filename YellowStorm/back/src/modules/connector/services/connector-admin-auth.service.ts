@@ -61,8 +61,7 @@ export class ConnectorAdminAuthService {
       expiresAt: new Date(Date.now() + OAUTH_STATE_TTL_MS),
     });
 
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/admin/connectors/oauth/${appConfig.appKey}/callback`;
+    const redirectUri = this.getRedirectUri(appConfig.appKey);
     const params = new URLSearchParams({
       client_id: appConfig.clientId,
       response_type: 'code',
@@ -112,8 +111,7 @@ export class ConnectorAdminAuthService {
     }
 
     const appConfig = await this.definitionService.findByKey(appKey);
-    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    const redirectUri = `${this.backendUrl}/${apiPrefix}/v1/admin/connectors/oauth/${appKey}/callback`;
+    const redirectUri = this.getRedirectUri(appKey);
     const tokenResponse = await this.exchangeCodeForTokens(
       appConfig.tokenUrl,
       appConfig.tenantId,
@@ -436,5 +434,17 @@ ${statusMessage}
 
   private generateCodeChallenge(codeVerifier: string): string {
     return crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  }
+
+  private getRedirectUri(appKey: string): string {
+    if (appKey === 'github') {
+      const githubCallbackUrl = this.configService.get<string>('app.githubCallbackUrl', '').trim();
+      if (githubCallbackUrl) {
+        return githubCallbackUrl;
+      }
+    }
+
+    const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
+    return `${this.backendUrl}/${apiPrefix}/v1/admin/connectors/oauth/${appKey}/callback`;
   }
 }

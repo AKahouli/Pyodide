@@ -7,6 +7,8 @@ export const configValidationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   API_PREFIX: Joi.string().default('api'),
   FRONTEND_URL: Joi.string().uri().default('http://localhost:5173'),
+  BACKEND_URL: Joi.string().uri().optional(),
+  GITHUB_CALLBACK_URL: Joi.string().uri().optional(),
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug', 'verbose').default('info'),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
