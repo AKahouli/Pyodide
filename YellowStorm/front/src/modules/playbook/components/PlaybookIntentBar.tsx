@@ -33,6 +33,8 @@ interface Props {
   onRecordHistory: (suggestion: PlaybookIntentSuggestion, intent: string) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onBarClick?: () => void;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 function getConfidenceColor(score: number): string {
@@ -56,9 +58,11 @@ export function PlaybookIntentBar({
   onRecordHistory,
   onApplyHistorySuggestion,
   onBarClick,
+  collapsed: collapsedProp,
+  onCollapsedChange,
 }: Readonly<Props>) {
   const { t } = useModuleTranslation('playbook');
-  const [collapsed, setCollapsed] = useState(false);
+  const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
   const [pendingHistoryEntry, setPendingHistoryEntry] = useState<IntentSuggestionHistoryEntry | null>(null);
@@ -73,6 +77,15 @@ export function PlaybookIntentBar({
     originY: number;
     moved: boolean;
   } | null>(null);
+  const collapsed = collapsedProp ?? uncontrolledCollapsed;
+
+  const setCollapsed = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === 'function' ? next(collapsed) : next;
+    if (collapsedProp === undefined) {
+      setUncontrolledCollapsed(resolved);
+    }
+    onCollapsedChange?.(resolved);
+  }, [collapsed, collapsedProp, onCollapsedChange]);
 
   const toggleExpanded = useCallback((id: string) => {
     setExpandedItems((prev) => {

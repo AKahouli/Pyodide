@@ -43,6 +43,7 @@ import { PlaybookFlowOutputFormatController } from './controllers/playbook-flow-
 import { PlaybookFlowAdvisorController } from './controllers/playbook-flow-advisor.controller';
 import { PlaybookFlowExecutionAdvisorController } from './controllers/playbook-flow-execution-advisor.controller';
 import { PlaybookFlowStreamController } from './controllers/playbook-flow-stream.controller';
+import { PlaybookFlowPromptTemplateController } from './controllers/playbook-flow-prompt-template.controller';
 
 import { PlaybookFlowService } from './services/playbook-flow.service';
 import { PlaybookFlowReplayService } from './services/playbook-flow-replay.service';
@@ -126,6 +127,7 @@ import { PlaybookFlowTraceRedactionService } from './services/observability/play
     PlaybookFlowAdvisorController,
     PlaybookFlowExecutionAdvisorController,
     PlaybookFlowStreamController,
+    PlaybookFlowPromptTemplateController,
   ],
   providers: [
     PlaybookFlowService,

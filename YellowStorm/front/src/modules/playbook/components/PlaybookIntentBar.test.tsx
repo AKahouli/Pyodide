@@ -73,6 +73,23 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' })).toHaveAttribute('data-state', 'checked');
   });
 
+  it('supports controlled collapsed state', () => {
+    const onCollapsedChange = vi.fn();
+
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+        collapsed
+        onCollapsedChange={onCollapsedChange}
+      />,
+    );
+
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText('intentBar.actions.expand'));
+    expect(onCollapsedChange).toHaveBeenCalledWith(false);
+  });
+
   it('renders a localized fallback label when suggestion label is empty', () => {
     render(
       <PlaybookIntentBar

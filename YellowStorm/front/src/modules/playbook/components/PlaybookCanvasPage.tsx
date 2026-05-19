@@ -250,7 +250,7 @@ function getJudgeResultCompletenessScore(
     return 0;
   }
 
-  return Object.values(judgeResult).reduce((score, value) => {
+  return Object.values(judgeResult).reduce((score: number, value) => {
     return score + (value === null || value === undefined ? 0 : 1);
   }, 0);
 }
@@ -410,6 +410,7 @@ function PlaybookCanvasInner() {
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
   const previousWaitingForHumanInputRef = useRef(false);
+  const viewportInitializedPlaybookRef = useRef<string | null>(null);
 
   const handleToggleTriggerEnabled = useCallback(
     async (playbookId: string, currentlyEnabled: boolean) => {
@@ -503,6 +504,8 @@ function PlaybookCanvasInner() {
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
   const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
+  const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
   const nodeTemplates = usePlaybookStore((s) => s.nodeTemplates);
   const defaultAgents = useDefaultAgents();
@@ -531,6 +534,8 @@ function PlaybookCanvasInner() {
         pageMode: 'design',
       });
       setExecutionPanelCollapsed(true);
+      setIntentBarCollapsed(false);
+      setToolbarCollapsed(true);
       setGlobalSidebarOpen(false);
       fetchPlaybook(id);
       fetchExecutions(id);
@@ -550,6 +555,47 @@ function PlaybookCanvasInner() {
 
     void fetchRepeatability(id);
   }, [evaluationDialogOpen, id, isGeneratingRoute, fetchRepeatability]);
+
+  useEffect(() => {
+    if (viewportInitializedPlaybookRef.current === id) {
+      return;
+    }
+    if (!id || isGeneratingRoute || playbookLoading || playbook?.id !== id || nodes.length === 0) {
+      return;
+    }
+
+    let frameOne = 0;
+    let frameTwo = 0;
+    let zoomTimeout = 0;
+    let cancelled = false;
+
+    frameOne = window.requestAnimationFrame(() => {
+      frameTwo = window.requestAnimationFrame(() => {
+        if (cancelled) {
+          return;
+        }
+        void reactFlow.fitView({
+          padding: 0.24,
+          duration: 300,
+          maxZoom: 1.1,
+        });
+        zoomTimeout = window.setTimeout(() => {
+          if (cancelled) {
+            return;
+          }
+          viewportInitializedPlaybookRef.current = id;
+          void reactFlow.zoomOut({ duration: 180 });
+        }, 320);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      window.cancelAnimationFrame(frameOne);
+      window.cancelAnimationFrame(frameTwo);
+      window.clearTimeout(zoomTimeout);
+    };
+  }, [id, isGeneratingRoute, nodes.length, playbookLoading, playbook?.id, reactFlow]);
 
   useEffect(() => {
     if (executionPanelOpen && pageMode === 'run' && executionPanelCollapsed) {
@@ -2358,6 +2404,7 @@ function PlaybookCanvasInner() {
     if (isDirty) await saveNow();
     setPageMode('run');
     setExecutionPanelCollapsed(false);
+    setIntentBarCollapsed(true);
     setDesignerOpen(false);
     setWorkspaceExplorerOpen(false);
     setConnectorSidebarOpen(false);
@@ -2650,9 +2697,11 @@ function PlaybookCanvasInner() {
     const nextOpen = !executionPanelOpen;
     setExecutionPanelOpen(nextOpen);
     if (nextOpen) {
+      setIntentBarCollapsed(true);
       setExecutionPanelCollapsed(false);
       setPageMode('run');
     } else if (pageMode !== 'design') {
+      setIntentBarCollapsed(false);
       setPageMode('design');
     }
   }, [executionPanelOpen, pageMode, setExecutionPanelOpen, setPageMode]);
@@ -2668,6 +2717,7 @@ function PlaybookCanvasInner() {
     (mode: PlaybookPageMode) => {
       setPageMode(mode);
       if (mode === 'design') {
+        setIntentBarCollapsed(false);
         if (!waitingForHumanInput) {
           setDesignerOpen(false);
         }
@@ -2676,6 +2726,7 @@ function PlaybookCanvasInner() {
         return;
       }
       setDesignerOpen(false);
+      setIntentBarCollapsed(true);
       setExecutionPanelCollapsed(false);
       setExecutionPanelOpen(true);
     },
@@ -2927,7 +2978,9 @@ function PlaybookCanvasInner() {
                   suggestions={intentSuggestions}
                   error={intentError}
                   history={intentHistory}
+                  collapsed={intentBarCollapsed}
                   autoApply={intentAutoApply}
+                  onCollapsedChange={setIntentBarCollapsed}
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
                   onSubmit={() => void handleSubmitIntent()}
@@ -2968,6 +3021,8 @@ function PlaybookCanvasInner() {
                   interruptType={currentExecution?.playbookId === id
                     ? ((currentExecution?.interruptPayload?.type ?? null) as InterruptType | null)
                     : null}
+                  collapsed={toolbarCollapsed}
+                  onCollapsedChange={setToolbarCollapsed}
                 />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
 import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap } from 'lucide-react';
 
@@ -44,6 +44,8 @@ interface Props {
   taskCount?: number;
   waitingForHumanInput?: boolean;
   interruptType?: InterruptType | null;
+  collapsed?: boolean;
+  onCollapsedChange?: (collapsed: boolean) => void;
 }
 
 type Position = { x: number; y: number };
@@ -77,6 +79,8 @@ export function PlaybookCanvasFloatingToolbar({
   taskCount = 0,
   waitingForHumanInput = false,
   interruptType = null,
+  collapsed: collapsedProp,
+  onCollapsedChange,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
@@ -87,8 +91,17 @@ export function PlaybookCanvasFloatingToolbar({
   const dragOffsetRef = useRef<Position>({ x: 0, y: 0 });
   const positionRef = useRef<Position>(DEFAULT_POSITION);
   const [position, setPosition] = useState<Position>(DEFAULT_POSITION);
-  const [collapsed, setCollapsed] = useState(false);
+  const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
   const titleId = useId();
+  const collapsed = collapsedProp ?? uncontrolledCollapsed;
+
+  const setCollapsed = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === 'function' ? next(collapsed) : next;
+    if (collapsedProp === undefined) {
+      setUncontrolledCollapsed(resolved);
+    }
+    onCollapsedChange?.(resolved);
+  }, [collapsed, collapsedProp, onCollapsedChange]);
 
   useEffect(() => {
     void fetchFlowNodeTemplates();

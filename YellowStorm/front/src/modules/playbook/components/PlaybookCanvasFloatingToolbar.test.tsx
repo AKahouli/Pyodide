@@ -185,4 +185,33 @@ describe('PlaybookCanvasFloatingToolbar', () => {
 
     expect(fetchFlowNodeTemplatesMock).toHaveBeenCalledOnce();
   });
+
+  it('supports controlled collapsed state', async () => {
+    const onCollapsedChange = vi.fn();
+
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+        collapsed
+        onCollapsedChange={onCollapsedChange}
+      />,
+    );
+
+    expect(screen.queryByText('toolbar.addBlankStep')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByLabelText('toolbar.expandCanvasToolbar'));
+    expect(onCollapsedChange).toHaveBeenCalledWith(false);
+  });
 });
