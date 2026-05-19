@@ -178,6 +178,11 @@ function getVisibleExecutionStatus(execution?: PlaybookExecution | null): Playbo
   return execution.status;
 }
 
+export function hasPendingJudgeEvaluations(execution?: PlaybookExecution | null): boolean {
+  if (!execution) return false;
+  return execution.taskResults.some((taskResult) => taskResult.judgeStatus === 'evaluating');
+}
+
 function getSnapshotTask(execution?: PlaybookExecution | null, taskId?: string | null): PlaybookTask | null {
   if (!execution || !taskId) return null;
   const snapshotTasks = ((execution.playbookSnapshot as { tasks?: PlaybookTask[] } | null)?.tasks) || [];
@@ -574,7 +579,19 @@ function PlaybookCanvasInner() {
         ? latestHistoryExecution
         : null;
 
-    const executionToRefresh = activeExecution ?? recoveryExecution;
+    const terminalExecutionAwaitingJudges = !activeExecution
+      && !recoveryExecution
+      && selectedExecution
+      && hasPendingJudgeEvaluations(selectedExecution)
+        ? selectedExecution
+        : !activeExecution
+          && !recoveryExecution
+          && latestHistoryExecution
+          && hasPendingJudgeEvaluations(latestHistoryExecution)
+            ? latestHistoryExecution
+            : null;
+
+    const executionToRefresh = activeExecution ?? recoveryExecution ?? terminalExecutionAwaitingJudges;
 
     if (!executionToRefresh) return;
 
@@ -591,6 +608,7 @@ function PlaybookCanvasInner() {
     execution?.id,
     execution?.status,
     execution?.playbookId,
+    execution?.taskResults,
     currentExecution?.id,
     currentExecution?.status,
     currentExecution?.taskResults,

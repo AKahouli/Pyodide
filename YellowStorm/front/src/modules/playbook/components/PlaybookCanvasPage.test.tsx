@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCanvasJudgeStateMap } from './PlaybookCanvasPage';
+import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from './PlaybookCanvasPage';
 import { makeExecution } from '../test-utils';
 
 describe('buildCanvasJudgeStateMap', () => {
@@ -115,5 +115,29 @@ describe('buildCanvasJudgeStateMap', () => {
       judgeResult: { overallScore: 92, reason: 'Newer', rewriteHints: [] },
       iteration: 1,
     });
+  });
+});
+
+describe('hasPendingJudgeEvaluations', () => {
+  it('returns true when any task result is still evaluating', () => {
+    const execution = makeExecution({
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', judgeStatus: 'idle' },
+        { ...makeExecution().taskResults[0], taskId: 'task-2', judgeStatus: 'evaluating' },
+      ] as any,
+    });
+
+    expect(hasPendingJudgeEvaluations(execution)).toBe(true);
+  });
+
+  it('returns false once all judge states are terminal', () => {
+    const execution = makeExecution({
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', judgeStatus: 'evaluated', judgeResult: { overallScore: 90 } },
+        { ...makeExecution().taskResults[0], taskId: 'task-2', judgeStatus: 'failed', judgeResult: null },
+      ] as any,
+    });
+
+    expect(hasPendingJudgeEvaluations(execution)).toBe(false);
   });
 });
