@@ -96,6 +96,23 @@ class TestStepPrompt:
         assert '"output_port_id": "report"' in prompt
 
 
+def test_build_prompt_sandbox_note_can_be_appended() -> None:
+    prompt = build_step_prompt(
+        label="Summarize CV",
+        node_id="step-1",
+        input_context={"default": {"name": "CV_Kevin_Diallo.pdf"}},
+    )
+
+    prompt = (
+        f"{prompt}\n\nSandbox Files:\n"
+        "Python sandbox files are mounted by these exact local filenames only: "
+        "CV_Kevin_Diallo.pdf. Use those exact filenames in code."
+    )
+
+    assert "Sandbox Files:" in prompt
+    assert "CV_Kevin_Diallo.pdf" in prompt
+
+
 class _CalculatorArgs(BaseModel):
     expression: str
 
@@ -233,6 +250,246 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
     )
 
     assert captured_kwargs["output_workspace_id"] == "workspace-1"
+
+
+@pytest.mark.anyio
+async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
+    captured_kwargs = {}
+    captured_messages = []
+
+    def _fake_create_langchain_tools(**kwargs):
+        captured_kwargs.update(kwargs)
+        return [], None
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("done")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        captured_messages.extend(kwargs.get("messages") or [])
+        return _Stream()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
+    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+
+    await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Summarize CV",
+            "metadata": {
+                "agent_name": "Document agent",
+                "agent_tools": [{"name": "code interpreter"}],
+            },
+            "output": {"ports": [{"id": "default", "type": "text"}]},
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {"__playbook_default_workspace_id": "workspace-1"},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+        node_inputs={
+            "default": {
+                "workspaceId": "workspace-1",
+                "path": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                "kind": "document",
+                "id": "doc-1",
+                "metadata": {
+                    "documentId": "doc-1",
+                    "workspaceId": "workspace-1",
+                    "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+                    "filename": "doc-1-CV_Kevin_Diallo.pdf",
+                },
+                "name": "CV_Kevin_Diallo.pdf",
+            }
+        },
+    )
+
+    assert captured_kwargs["input_files"] == ["doc-1"]
+    assert captured_kwargs["documents_by_port"] == {"default": ["doc-1"]}
+    assert captured_kwargs["code_interpreter_files"] == [
+        {
+            "document_id": "doc-1",
+            "filename": "CV_Kevin_Diallo.pdf",
+            "filepath": "user/workspace/doc-1/CV_Kevin_Diallo.pdf",
+            "workspace_id": "workspace-1",
+        }
+    ]
+    assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
+    user_message = next(message["content"] for message in captured_messages if message.get("role") == "user")
+    assert "Sandbox Files:" in user_message
+    assert "CV_Kevin_Diallo.pdf" in user_message
+    assert "doc-1-CV_Kevin_Diallo.pdf" not in user_message
+
+
+@pytest.mark.anyio
+async def test_run_step_passes_opaque_document_refs_into_tool_scope(monkeypatch):
+    captured_kwargs = {}
+
+    def _fake_create_langchain_tools(**kwargs):
+        captured_kwargs.update(kwargs)
+        return [], None
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("done")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
+    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+
+    await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Summarize report",
+            "metadata": {
+                "agent_name": "Document agent",
+                "agent_tools": [{"name": "code interpreter"}],
+                "brain_context": [
+                    {
+                        "workspace_id": "workspace-1",
+                        "workspace_documents": [
+                            {
+                                "_id": "doc-1",
+                                "filename": "report.xlsx",
+                                "filepath": "user/workspace/doc-1/report.xlsx",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {"__playbook_default_workspace_id": "workspace-1"},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+        node_inputs={"report": {"document_id": "doc-1", "filename": "report.xlsx"}},
+    )
+
+    assert captured_kwargs["input_files"] == ["doc-1"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["doc-1"]}
+    assert captured_kwargs["code_interpreter_files"] == [
+        {
+            "document_id": "doc-1",
+            "filename": "report.xlsx",
+            "filepath": "user/workspace/doc-1/report.xlsx",
+            "workspace_id": "workspace-1",
+        }
+    ]
+    assert captured_kwargs["workspace_context"] == []
+
+
+@pytest.mark.anyio
+async def test_run_step_does_not_fallback_to_workspace_for_unresolved_opaque_ref(monkeypatch):
+    captured_kwargs = {}
+
+    def _fake_create_langchain_tools(**kwargs):
+        captured_kwargs.update(kwargs)
+        return [], None
+
+    class _Chunk:
+        def __init__(self, token):
+            self.choices = [SimpleNamespace(delta=SimpleNamespace(content=token))]
+
+    class _Stream:
+        def __aiter__(self):
+            self._iter = iter([_Chunk("done")])
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self._iter)
+            except StopIteration as exc:
+                raise StopAsyncIteration from exc
+
+    async def _fake_acompletion(*args, **kwargs):
+        return _Stream()
+
+    monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
+    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
+    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+
+    await run_step(
+        node_id="step-1",
+        node_config={
+            "label": "Summarize report",
+            "metadata": {
+                "agent_name": "Document agent",
+                "agent_tools": [{"name": "code interpreter"}],
+                "brain_context": [
+                    {
+                        "workspace_id": "workspace-1",
+                        "workspace_documents": [
+                            {
+                                "_id": "doc-1",
+                                "filename": "report.xlsx",
+                                "filepath": "user/workspace/doc-1/report.xlsx",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+        state={
+            "execution_id": "exec-1",
+            "flow_id": "flow-1",
+            "inputs": {"__playbook_default_workspace_id": "workspace-1"},
+            "task_outputs": {},
+            "iterations": {},
+            "router_decisions": {},
+            "errors": [],
+            "pending_approval": None,
+            "cancelled": False,
+        },
+        node_inputs={"report": {"document_id": "doc-2", "filename": "generated-report.xlsx"}},
+    )
+
+    assert captured_kwargs["input_files"] == ["doc-2"]
+    assert captured_kwargs["documents_by_port"] == {"report": ["doc-2"]}
+    assert captured_kwargs["code_interpreter_files"] == []
+    assert captured_kwargs["workspace_context"] == []
+    assert captured_kwargs["workspace_context_mode"] == "resolved_inputs_only"
 
 
 @pytest.mark.anyio

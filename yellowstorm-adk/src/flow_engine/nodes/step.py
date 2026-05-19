@@ -18,6 +18,11 @@ from langgraph.config import get_stream_writer
 
 from src.config.settings import get_settings
 from src.flow_engine.nodes.step_prompt import build_step_prompt
+from src.flow_engine.nodes.step_tool_scope import (
+    build_prompt_input_context,
+    build_sandbox_prompt_note,
+    build_step_tool_scope,
+)
 from src.flow_engine.observability import TraceCollector, extract_usage
 from src.flow_engine.nodes.step_result import finalize_step_result, requires_structured_response
 from src.flow_engine.nodes.step_tools import (
@@ -148,15 +153,30 @@ async def run_step(
 
     input_context = node_inputs if node_inputs is not None else state.get("inputs", {})
     trigger_context = state.get("inputs", {})
+    prompt_input_context = build_prompt_input_context(
+        input_context if isinstance(input_context, dict) else {}
+    )
+    tool_scope = build_step_tool_scope(
+        input_context if isinstance(input_context, dict) else {},
+        metadata,
+    )
+    tool_names = {
+        str(tool.get("name") or "")
+        for tool in agent_config.get("tools", [])
+        if isinstance(tool, dict)
+    }
     user_msg = _build_prompt(
         label=label,
         node_id=node_id,
-        input_context=input_context,
+        input_context=prompt_input_context,
         node_description=node_description,
         output_contract=output_contract if isinstance(output_contract, dict) else None,
         iteration=iteration,
         trigger_context=trigger_context if isinstance(trigger_context, dict) else None,
     )
+    sandbox_prompt_note = build_sandbox_prompt_note(tool_scope, tool_names)
+    if sandbox_prompt_note:
+        user_msg = f"{user_msg}\n\nSandbox Files:\n{sandbox_prompt_note}"
     trace_collector = TraceCollector()
     trace_collector.record_prompt("initial_request", model_id, f"[system] {system_prompt}\n\n[user] {user_msg}")
 
@@ -175,8 +195,14 @@ async def run_step(
 
         tools, collector = create_langchain_tools(
             agent_config=agent_config,
+            workspace_context=tool_scope.workspace_context,
+            input_files=tool_scope.input_files,
+            documents_by_port=tool_scope.documents_by_port,
+            code_interpreter_files=tool_scope.code_interpreter_files,
+            output_ports=(output_contract or {}).get("ports") if isinstance(output_contract, dict) else None,
             step_connector_bindings=connector_bindings,
             output_workspace_id=output_workspace_id,
+            workspace_context_mode=tool_scope.workspace_context_mode,
         )
         components: list[dict[str, Any]] = []
 

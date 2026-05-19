@@ -224,6 +224,83 @@ const STEP_STATUS_PRIORITY: Record<StepStatus, number> = {
   queued: 0,
 };
 
+const CANVAS_JUDGE_STATUS_PRIORITY = {
+  idle: 0,
+  evaluating: 1,
+  evaluated: 2,
+  failed: 2,
+} as const;
+
+type CanvasJudgeState = {
+  judgeStatus: NonNullable<PlaybookExecution['taskResults'][number]['judgeStatus']>;
+  judgeResult: PlaybookExecution['taskResults'][number]['judgeResult'];
+  iteration: number;
+};
+
+function getJudgeResultCompletenessScore(
+  judgeResult: PlaybookExecution['taskResults'][number]['judgeResult'],
+): number {
+  if (!judgeResult) {
+    return 0;
+  }
+
+  return Object.values(judgeResult).reduce((score, value) => {
+    return score + (value === null || value === undefined ? 0 : 1);
+  }, 0);
+}
+
+function shouldReplaceCanvasJudgeState(current: CanvasJudgeState | undefined, incoming: CanvasJudgeState): boolean {
+  if (!current) {
+    return true;
+  }
+
+  const currentPriority = CANVAS_JUDGE_STATUS_PRIORITY[current.judgeStatus] ?? 0;
+  const incomingPriority = CANVAS_JUDGE_STATUS_PRIORITY[incoming.judgeStatus] ?? 0;
+  if (incomingPriority !== currentPriority) {
+    return incomingPriority > currentPriority;
+  }
+
+  if (incoming.judgeStatus !== current.judgeStatus) {
+    return incoming.iteration >= current.iteration;
+  }
+
+  const incomingResultCompleteness = getJudgeResultCompletenessScore(incoming.judgeResult);
+  const currentResultCompleteness = getJudgeResultCompletenessScore(current.judgeResult);
+  if (incomingResultCompleteness !== currentResultCompleteness) {
+    return incomingResultCompleteness > currentResultCompleteness;
+  }
+
+  if (incoming.judgeResult && !current.judgeResult) {
+    return true;
+  }
+
+  if (current.judgeResult && !incoming.judgeResult) {
+    return false;
+  }
+
+  return incoming.iteration >= current.iteration;
+}
+
+export function buildCanvasJudgeStateMap(
+  taskResults: PlaybookExecution['taskResults'] | null | undefined,
+): Map<string, CanvasJudgeState> {
+  const map = new Map<string, CanvasJudgeState>();
+  if (!taskResults) return map;
+
+  for (const tr of taskResults) {
+    const incomingState: CanvasJudgeState = {
+      judgeStatus: tr.judgeStatus || 'idle',
+      judgeResult: tr.judgeResult || null,
+      iteration: tr.iteration ?? 0,
+    };
+    if (shouldReplaceCanvasJudgeState(map.get(tr.taskId), incomingState)) {
+      map.set(tr.taskId, incomingState);
+    }
+  }
+
+  return map;
+}
+
 export function buildCanvasStepStatusMap(
   taskResults: PlaybookExecution['taskResults'] | null | undefined,
   tasks: ReadonlyArray<Pick<PlaybookTask, 'id' | 'containerConfig'>>,
@@ -613,18 +690,16 @@ function PlaybookCanvasInner() {
 
   const stepJudgeStatusMap = useMemo(() => {
     const map = new Map<string, NonNullable<PlaybookExecution['taskResults'][number]['judgeStatus']>>();
-    if (!executionTaskResults) return map;
-    for (const tr of executionTaskResults) {
-      map.set(tr.taskId, tr.judgeStatus || 'idle');
+    for (const [taskId, judgeState] of buildCanvasJudgeStateMap(executionTaskResults)) {
+      map.set(taskId, judgeState.judgeStatus);
     }
     return map;
   }, [executionTaskResults]);
 
   const stepJudgeResultMap = useMemo(() => {
     const map = new Map<string, PlaybookExecution['taskResults'][number]['judgeResult']>();
-    if (!executionTaskResults) return map;
-    for (const tr of executionTaskResults) {
-      map.set(tr.taskId, tr.judgeResult || null);
+    for (const [taskId, judgeState] of buildCanvasJudgeStateMap(executionTaskResults)) {
+      map.set(taskId, judgeState.judgeResult || null);
     }
     return map;
   }, [executionTaskResults]);

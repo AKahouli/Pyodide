@@ -203,7 +203,7 @@ describe('playbook store', () => {
       });
 
       // SSE step_start recreates the task with iteration: 0
-      usePlaybookStore.getState().onStepStart({ executionId: 'e-single', taskId: 't2' });
+      usePlaybookStore.getState().onStepStart({ executionId: 'e-single', taskId: 't2', status: 'running' });
 
       // SSE step_complete
       usePlaybookStore.getState().onStepComplete({

@@ -27,6 +27,7 @@ export class FlowNodeTemplatePortDto {
   artifactKind!: string;
 
   @ApiPropertyOptional({ default: false })
+  @IsOptional()
   @IsBoolean()
   required?: boolean;
 

@@ -1318,6 +1318,7 @@ describe('ExecutionStepDetail', () => {
               createdAt: '2025-01-01T00:01:00.000Z',
               attemptNumber: 1,
               model: 'advisor-model-v1',
+              scoringMode: 'llm' as const,
               judgeResult: {
                 accuracyScore: 70,
                 completenessScore: 72,
@@ -1351,6 +1352,7 @@ describe('ExecutionStepDetail', () => {
               createdAt: '2025-01-01T00:02:00.000Z',
               attemptNumber: 2,
               model: 'advisor-model-v2',
+              scoringMode: 'heuristic' as const,
               judgeResult: {
                 accuracyScore: 81,
                 completenessScore: 83,
