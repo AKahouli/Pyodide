@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Play, Check, CheckSquare, RotateCcw } from 'lucide-react';
+import { AlertCircle, ChevronDown, ClipboardCheck, ClipboardCopy, Download, FileText, Loader2, MoreHorizontal, Pencil, Check, CheckSquare, RotateCcw } from 'lucide-react';
 import { HumanFeedbackInline } from './HumanFeedbackInline';
 import { ArtifactBadge } from './ArtifactBadge';
 import { AdvisorChangeReviewDialog } from './AdvisorChangeReviewDialog';
@@ -377,7 +377,6 @@ export function ExecutionStepDetail({
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const traceReplayExecution = usePlaybookStore((s) => s.traceReplayExecution);
-  const reExecuteExecution = usePlaybookStore((s) => s.reExecuteExecution);
   const portInspection = usePlaybookStore((s) => s.portInspection);
   const closePortInspection = usePlaybookStore((s) => s.closePortInspection);
   const [detailInspectTaskId, setDetailInspectTaskId] = useState<string | null>(null);
@@ -1222,16 +1221,6 @@ export function ExecutionStepDetail({
             <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.traceReplayHint')}</span>
           </div>
         )}
-        {step.status === 'completed' && (
-          <div className="mb-3 flex flex-wrap gap-2">
-            <Button size="sm" variant="default" onClick={() => execution && reExecuteExecution(execution.id)}>
-              <Play className="mr-1 h-4 w-4" />
-              {t('detail.actions.reExecute')}
-            </Button>
-            <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.reExecuteHint')}</span>
-          </div>
-        )}
-
         <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>

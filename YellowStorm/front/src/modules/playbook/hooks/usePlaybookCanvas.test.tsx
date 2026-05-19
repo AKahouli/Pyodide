@@ -662,13 +662,13 @@ describe('usePlaybookCanvas', () => {
     expect(updatedChildNode).toMatchObject({
       parentId: 'iterator-1',
       extent: 'parent',
-      position: { x: 608, y: 72 },
+      position: { x: 637, y: 72 },
     });
     expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'child-2',
-          positionX: 708,
+          positionX: 737,
           positionY: 192,
           containerConfig: { parentIteratorId: 'iterator-1' },
         }),
@@ -718,14 +718,14 @@ describe('usePlaybookCanvas', () => {
     expect(updatedChildNode).toMatchObject({
       parentId: 'iterator-1',
       extent: 'parent',
-      position: { x: 32, y: 504 },
+      position: { x: 32, y: 533 },
     });
     expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'child-3',
           positionX: 132,
-          positionY: 624,
+          positionY: 653,
           containerConfig: { parentIteratorId: 'iterator-1' },
         }),
       ]),
@@ -776,13 +776,13 @@ describe('usePlaybookCanvas', () => {
     const childNode3 = result.current.nodes.find((node) => node.id === 'child-3');
 
     expect(childNode1).toMatchObject({ position: { x: 32, y: 72 } });
-    expect(childNode2).toMatchObject({ position: { x: 608, y: 72 } });
-    expect(childNode3).toMatchObject({ position: { x: 32, y: 504 } });
+    expect(childNode2).toMatchObject({ position: { x: 637, y: 72 } });
+    expect(childNode3).toMatchObject({ position: { x: 32, y: 533 } });
     expect(storeFns.updateTasks).toHaveBeenLastCalledWith(
       expect.arrayContaining([
         expect.objectContaining({ id: 'child-1', positionX: 132, positionY: 192 }),
-        expect.objectContaining({ id: 'child-2', positionX: 708, positionY: 192 }),
-        expect.objectContaining({ id: 'child-3', positionX: 132, positionY: 624 }),
+        expect.objectContaining({ id: 'child-2', positionX: 737, positionY: 192 }),
+        expect.objectContaining({ id: 'child-3', positionX: 132, positionY: 653 }),
       ]),
     );
   });

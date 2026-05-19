@@ -102,11 +102,13 @@ function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookSchedu
 
 const AUTO_APPLY_MIN_CONFIDENCE = 0.75;
 const CHANGE_HIGHLIGHT_DURATION_MS = 10_000;
-const ITERATOR_CHILD_HORIZONTAL_GAP = 192;
-const ITERATOR_CHILD_VERTICAL_GAP = 192;
+const ITERATOR_CHILD_HORIZONTAL_GAP = 221;
+const ITERATOR_CHILD_VERTICAL_GAP = 221;
 const ITERATOR_CHILD_MAX_COLUMNS = 3;
 const ITERATOR_CHILD_NODE_WIDTH = 384;
 const ITERATOR_CHILD_NODE_HEIGHT = 240;
+const DEFAULT_NODE_SPACING_X = 368;
+const TOOLBAR_MIN_TOP_OFFSET = 92;
 
 function getIteratorBodyChildPosition(iteratorX: number, iteratorY: number, childIndex: number, totalChildren: number) {
   const columnCount = Math.min(
@@ -1697,7 +1699,7 @@ function PlaybookCanvasInner() {
         executionMode: (matchedTemplate?.executionMode as PlaybookTask['executionMode']) ?? 'agent',
         selectedAction: matchedTemplate?.executionMode === 'action' ? (matchedTemplate.selectedAction ?? undefined) : undefined,
         executionOrder: order,
-        positionX: (anchorTask?.positionX || 0) + 320,
+        positionX: (anchorTask?.positionX || 0) + DEFAULT_NODE_SPACING_X,
         positionY: anchorTask?.positionY || 0,
         interruptBefore: false,
         interruptAfter: false,
@@ -3023,6 +3025,7 @@ function PlaybookCanvasInner() {
                     : null}
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
+                  minTopOffset={TOOLBAR_MIN_TOP_OFFSET}
                 />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>

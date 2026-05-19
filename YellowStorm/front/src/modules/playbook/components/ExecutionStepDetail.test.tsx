@@ -1546,34 +1546,4 @@ describe('ExecutionStepDetail', () => {
     storeState.currentPlaybook = null;
   });
 
-  it('calls reExecuteExecution when re-execute button is clicked', async () => {
-    const execution: PlaybookExecution = {
-      id: 'e1',
-      playbookId: 'p1',
-      executedBy: 'u1',
-      executionNumber: 1,
-      status: 'completed',
-      executionMode: 'live',
-      replaySourceByTask: null,
-      taskResults: [baseStep],
-      threadId: null,
-      interruptPayload: null,
-      error: null,
-      durationMs: 5200,
-      startedAt: '2025-01-01T00:00:00.000Z',
-      completedAt: '2025-01-01T00:00:05.200Z',
-      singleStepTaskId: null,
-      playbookSnapshot: null,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalTokens: 0,
-      createdAt: '2025-01-01T00:00:00.000Z',
-      updatedAt: '2025-01-01T00:00:05.200Z',
-    };
-
-    render(<ExecutionStepDetail step={baseStep} execution={execution} />);
-
-    await userEvent.click(screen.getByRole('button', { name: 'detail.actions.reExecute' }));
-    expect(storeState.reExecuteExecution).toHaveBeenCalledWith('e1');
-  });
 });

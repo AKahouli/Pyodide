@@ -3,8 +3,8 @@ import type { PlaybookTask, PlaybookEdge } from '../types';
 
 const NODE_WIDTH = 384;
 const NODE_HEIGHT = 160;
-const NODE_SEP = 60;
-const RANK_SEP = 100;
+const NODE_SEP = 69;
+const RANK_SEP = 115;
 const ITERATOR_MIN_WIDTH = 360;
 const ITERATOR_MIN_HEIGHT = 220;
 const ITERATOR_PADDING = 32;

@@ -46,6 +46,7 @@ interface Props {
   interruptType?: InterruptType | null;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
+  minTopOffset?: number;
 }
 
 type Position = { x: number; y: number };
@@ -81,6 +82,7 @@ export function PlaybookCanvasFloatingToolbar({
   interruptType = null,
   collapsed: collapsedProp,
   onCollapsedChange,
+  minTopOffset = DEFAULT_POSITION.y,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const flowNodeTemplates = usePlaybookStore((s) => s.flowNodeTemplates);
@@ -89,8 +91,9 @@ export function PlaybookCanvasFloatingToolbar({
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragPointerIdRef = useRef<number | null>(null);
   const dragOffsetRef = useRef<Position>({ x: 0, y: 0 });
-  const positionRef = useRef<Position>(DEFAULT_POSITION);
-  const [position, setPosition] = useState<Position>(DEFAULT_POSITION);
+  const initialPosition = { x: DEFAULT_POSITION.x, y: Math.max(DEFAULT_POSITION.y, minTopOffset) };
+  const positionRef = useRef<Position>(initialPosition);
+  const [position, setPosition] = useState<Position>(initialPosition);
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
   const titleId = useId();
   const collapsed = collapsedProp ?? uncontrolledCollapsed;
@@ -116,14 +119,18 @@ export function PlaybookCanvasFloatingToolbar({
       const parsed = JSON.parse(raw) as Partial<Position>;
       const next = {
         x: Number.isFinite(parsed.x) ? Number(parsed.x) : DEFAULT_POSITION.x,
-        y: Number.isFinite(parsed.y) ? Number(parsed.y) : DEFAULT_POSITION.y,
+        y: Number.isFinite(parsed.y) ? Number(parsed.y) : Math.max(DEFAULT_POSITION.y, minTopOffset),
       };
-      positionRef.current = next;
-      setPosition(next);
+      const clamped = {
+        x: next.x,
+        y: Math.max(next.y, minTopOffset),
+      };
+      positionRef.current = clamped;
+      setPosition(clamped);
     } catch {
       window.localStorage.removeItem(STORAGE_KEY);
     }
-  }, []);
+  }, [minTopOffset]);
 
   useEffect(() => {
     positionRef.current = position;
@@ -135,12 +142,13 @@ export function PlaybookCanvasFloatingToolbar({
     if (!containerRect || !toolbarRect) return next;
 
     const maxX = Math.max(DEFAULT_POSITION.x, containerRect.width - toolbarRect.width - 16);
-    const maxY = Math.max(DEFAULT_POSITION.y, containerRect.height - toolbarRect.height - 16);
+      const minY = Math.max(DEFAULT_POSITION.y, minTopOffset);
+      const maxY = Math.max(minY, containerRect.height - toolbarRect.height - 16);
 
-    return {
-      x: Math.min(Math.max(DEFAULT_POSITION.x, next.x), maxX),
-      y: Math.min(Math.max(DEFAULT_POSITION.y, next.y), maxY),
-    };
+      return {
+        x: Math.min(Math.max(DEFAULT_POSITION.x, next.x), maxX),
+        y: Math.min(Math.max(minY, next.y), maxY),
+      };
   };
 
   const handlePointerMove = (event: PointerEvent) => {
