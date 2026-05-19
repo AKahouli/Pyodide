@@ -1,4 +1,4 @@
-import { FlowNode, ControlEdge, DataBinding, FlowTriggerConfig, FlowSettings } from '../schemas/playbook-flow.schema';
+import { FlowNode, ControlEdge, DataBinding, FlowTriggerConfig, FlowSettings, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 export interface IFlowActiveReplay {
   id: string;
@@ -23,6 +23,11 @@ export interface IFlowResponse {
   controlEdges: ControlEdge[];
   dataBindings: DataBinding[];
   workspaces: string[];
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
   activeReplays: Record<string, IFlowActiveReplay>;
   createdAt: Date;
   updatedAt: Date;

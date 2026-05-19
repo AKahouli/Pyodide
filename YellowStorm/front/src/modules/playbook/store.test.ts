@@ -13,6 +13,8 @@ const apiMock = vi.hoisted(() => ({
   executePlaybook: vi.fn(),
   cancelFlowExecution: vi.fn(),
   resumeFlowApproval: vi.fn(),
+  rerunPlaybookStep: vi.fn(),
+  resumePlaybookFromStep: vi.fn(),
   deleteExecution: vi.fn(),
   deleteAllExecutions: vi.fn(),
   getExecutions: vi.fn(),
@@ -132,6 +134,112 @@ describe('playbook store', () => {
     expect(state.currentExecution?.taskResults[0]).toMatchObject({ taskId: 't1', status: 'pending' });
     expect(state.currentExecution?.taskResults[1]).toMatchObject({ taskId: 't2', status: 'running' });
     expect(state.selectedStepId).toBe('t2');
+  });
+
+  it('applies single-step judge SSE updates to the optimistic base iteration', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+      ],
+    });
+    apiMock.executePlaybook.mockResolvedValueOnce({ executionId: 'e-single' });
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionPanelOpen: false, selectedStepId: null });
+
+    await usePlaybookStore.getState().executePlaybook('p1', { singleStepTaskId: 't2' });
+    usePlaybookStore.getState().onStepComplete({
+      executionId: 'e-single',
+      taskId: 't2',
+      iteration: 0,
+      status: 'completed',
+      output: 'done',
+    });
+    usePlaybookStore.getState().onStepJudgeStarted({
+      executionId: 'e-single',
+      taskId: 't2',
+      iteration: 0,
+      judgeStatus: 'evaluating',
+    });
+    usePlaybookStore.getState().onStepJudgeUpdated({
+      executionId: 'e-single',
+      taskId: 't2',
+      iteration: 0,
+      judgeStatus: 'evaluated',
+      judgeError: null,
+      judgeResult: { overallScore: 95 } as any,
+    });
+
+    const matchingResults = usePlaybookStore.getState().executionCache['e-single'].taskResults.filter((tr) => tr.taskId === 't2');
+    expect(matchingResults).toHaveLength(1);
+    expect(matchingResults[0]).toMatchObject({
+      taskId: 't2',
+      status: 'completed',
+      judgeStatus: 'evaluated',
+      judgeResult: { overallScore: 95 },
+    });
+  });
+
+  it('survives execution_start SSE overwrite and correctly applies single-step judge SSE updates', () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+      ],
+    });
+    apiMock.executePlaybook.mockResolvedValueOnce({ executionId: 'e-single' });
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionPanelOpen: false, selectedStepId: null });
+
+    return usePlaybookStore.getState().executePlaybook('p1', { singleStepTaskId: 't2' }).then(() => {
+      // SSE execution_start arrives AFTER optimistic — replaces cache with empty taskResults
+      usePlaybookStore.getState().onExecutionStart({
+        executionId: 'e-single',
+        playbookId: 'p1',
+        executionNumber: 1,
+        status: 'running',
+      });
+
+      // SSE step_start recreates the task with iteration: 0
+      usePlaybookStore.getState().onStepStart({ executionId: 'e-single', taskId: 't2' });
+
+      // SSE step_complete
+      usePlaybookStore.getState().onStepComplete({
+        executionId: 'e-single',
+        taskId: 't2',
+        iteration: 0,
+        status: 'completed',
+        output: 'done',
+      });
+
+      // SSE judge events
+      usePlaybookStore.getState().onStepJudgeStarted({
+        executionId: 'e-single',
+        taskId: 't2',
+        iteration: 0,
+        judgeStatus: 'evaluating',
+      });
+      usePlaybookStore.getState().onStepJudgeUpdated({
+        executionId: 'e-single',
+        taskId: 't2',
+        iteration: 0,
+        judgeStatus: 'evaluated',
+        judgeError: null,
+        judgeResult: { overallScore: 95 } as any,
+      });
+
+      const matchingResults = usePlaybookStore.getState().executionCache['e-single'].taskResults
+        .filter((tr) => tr.taskId === 't2');
+      expect(matchingResults).toHaveLength(1);
+      expect(matchingResults[0]).toMatchObject({
+        taskId: 't2',
+        status: 'completed',
+        judgeStatus: 'evaluated',
+        judgeResult: { overallScore: 95 },
+      });
+    });
   });
 
   it('refreshes execution details after completion so terminal task states win', async () => {
@@ -330,6 +438,11 @@ describe('playbook store', () => {
     const savedPlaybook = makePlaybook({
       id: 'p1',
       tasks: [makeTask({ id: 't1', title: 'Renamed task' })],
+      reflectionEnabled: false,
+      advisorScoringMode: 'heuristic',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 93,
+      advisorAutopilotMaxTurns: 5,
       updatedAt: '2025-01-01T00:00:20.000Z',
     });
     apiMock.updatePlaybook.mockResolvedValueOnce(savedPlaybook);
@@ -359,6 +472,13 @@ describe('playbook store', () => {
     expect(state.isDirty).toBe(false);
     expect(state.isSaving).toBe(false);
     expect(state.currentPlaybook?.tasks[0].title).toBe('Renamed task');
+    expect(state.currentPlaybook).toMatchObject({
+      reflectionEnabled: false,
+      advisorScoringMode: 'heuristic',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 93,
+      advisorAutopilotMaxTurns: 5,
+    });
     expect(state.currentPlaybook?.updatedAt).toBe('2025-01-01T00:00:20.000Z');
   });
 
@@ -939,9 +1059,25 @@ describe('playbook store', () => {
       playbookId: 'p1',
       executionNumber: 1,
       status: 'running',
+      singleStepTaskId: 'task-2',
+      reflectionEnabled: false,
+      advisorScoringMode: 'heuristic',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 93,
+      advisorAutopilotMaxTurns: 5,
       taskResults: [],
     });
-    expect(usePlaybookStore.getState().executionPanelOpen).toBe(true);
+    const state = usePlaybookStore.getState();
+    expect(state.executionPanelOpen).toBe(true);
+    expect(state.currentExecution).toMatchObject({
+      singleStepTaskId: 'task-2',
+      reflectionEnabled: false,
+      advisorScoringMode: 'heuristic',
+      advisorAutopilotEnabled: true,
+      advisorAutopilotTargetScore: 93,
+      advisorAutopilotMaxTurns: 5,
+    });
+    expect(state.executionHistory[0]).toMatchObject({ singleStepTaskId: 'task-2' });
   });
 
   it('onExecutionStart does NOT open panel for a different playbook', () => {
@@ -1347,7 +1483,130 @@ describe('playbook store', () => {
     ]);
   });
 
-  it('optimistically updates statuses when resuming from a step', async () => {
+  it('matches cached judge state by taskId and iteration during fetchExecution', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 81 } } as any,
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'evaluating', judgeResult: null } as any,
+      ],
+    });
+
+    usePlaybookStore.setState({ executionCache: { e1: cached }, currentExecution: cached });
+
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 81 } } as any,
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 92 } } as any,
+      ],
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const taskResults = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(taskResults[0]).toMatchObject({ iteration: 0, judgeStatus: 'evaluated', judgeResult: { overallScore: 81 } });
+    expect(taskResults[1]).toMatchObject({ iteration: 1, judgeStatus: 'evaluated', judgeResult: { overallScore: 92 } });
+  });
+
+  it('treats undefined and zero iteration as the same base task during fetchExecution', async () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: undefined, status: 'completed', judgeStatus: 'evaluating', judgeResult: null } as any,
+      ],
+    });
+
+    usePlaybookStore.setState({ executionCache: { e1: cached }, currentExecution: cached });
+
+    apiMock.getExecution.mockResolvedValueOnce(makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 88 } } as any,
+      ],
+    }));
+
+    await usePlaybookStore.getState().fetchExecution('p1', 'e1');
+
+    const taskResults = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(taskResults).toHaveLength(1);
+    expect(taskResults[0]).toMatchObject({ taskId: 'task-1', iteration: 0, judgeStatus: 'evaluated', judgeResult: { overallScore: 88 } });
+  });
+
+  it('matches cached judge state by taskId and iteration during active hydration', () => {
+    const cached = makeExecution({
+      id: 'e1',
+      playbookId: 'p1',
+      status: 'completed',
+      taskResults: [
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 81 } } as any,
+        { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'evaluating', judgeResult: null } as any,
+      ],
+    });
+
+    usePlaybookStore.setState({
+      executionCache: { e1: cached },
+      currentPlaybook: makePlaybook({ id: 'p1' }),
+    });
+
+    usePlaybookStore.getState().hydrateActiveExecutions([
+      makeExecution({
+        id: 'e1',
+        playbookId: 'p1',
+        status: 'completed',
+        taskResults: [
+          { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 0, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 81 } } as any,
+          { ...makeExecution().taskResults[0], taskId: 'task-1', iteration: 1, status: 'completed', judgeStatus: 'evaluated', judgeResult: { overallScore: 92 } } as any,
+        ],
+      }),
+    ]);
+
+    const taskResults = usePlaybookStore.getState().executionCache.e1.taskResults;
+    expect(taskResults[0]).toMatchObject({ iteration: 0, judgeStatus: 'evaluated', judgeResult: { overallScore: 81 } });
+    expect(taskResults[1]).toMatchObject({ iteration: 1, judgeStatus: 'evaluated', judgeResult: { overallScore: 92 } });
+  });
+
+  it('keeps hydrated pending-approval executions active after reconnect', () => {
+    usePlaybookStore.setState({ currentPlaybook: makePlaybook({ id: 'p1' }) });
+
+    usePlaybookStore.getState().hydrateActiveExecutions([
+      makeExecution({
+        id: 'e-pending',
+        playbookId: 'p1',
+        status: 'pending_approval' as any,
+        interruptPayload: {
+          type: 'human_approval',
+          taskId: 'task-7',
+          message: 'Need approval',
+          iteration: 2,
+        } as any,
+        waitingForHumanInput: true,
+        currentInterruptTaskId: 'task-7',
+        taskResults: [],
+      }),
+    ]);
+
+    const state = usePlaybookStore.getState();
+    expect(state.executingPlaybookIds).toContain('p1');
+    expect(state.currentExecution).toMatchObject({
+      status: 'pending_approval',
+      waitingForHumanInput: true,
+      currentInterruptTaskId: 'task-7',
+      interruptPayload: expect.objectContaining({ taskId: 'task-7' }),
+    });
+  });
+
+  it('calls the targeted resume endpoint when resuming from a step', async () => {
+    apiMock.resumePlaybookFromStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
+
     const execution = makeExecution({
       id: 'e1',
       playbookId: 'p1',
@@ -1406,13 +1665,28 @@ describe('playbook store', () => {
 
     await usePlaybookStore.getState().resumeFromStep('p1', 'e1', 't2');
 
-    expect(toastMock.warning).toHaveBeenCalled();
+    expect(apiMock.resumePlaybookFromStep).toHaveBeenCalledWith('p1', 'e1', {
+      taskId: 't2',
+      streaming: false,
+    });
   });
 
-  it('rerunStepInExecution warns until the new runtime supports targeted reruns', async () => {
+  it('calls the targeted rerun endpoint when rerunning a step', async () => {
+    apiMock.rerunPlaybookStep.mockResolvedValueOnce({ status: 'running', executionId: 'e1' });
+
     await usePlaybookStore.getState().rerunStepInExecution('p1', 'e1', 't1');
 
-    expect(toastMock.warning).toHaveBeenCalled();
+    expect(apiMock.rerunPlaybookStep).toHaveBeenCalledWith('p1', 'e1', {
+      taskId: 't1',
+      runEvaluation: false,
+      executionMode: 'live',
+      streaming: false,
+      runNodeReflection: true,
+      advisorAutopilotEnabled: false,
+      advisorAutopilotTargetScore: undefined,
+      advisorAutopilotMaxTurns: undefined,
+      skipStepExecution: false,
+    });
   });
 
   // ===== Schedule =====
@@ -1573,6 +1847,7 @@ describe('playbook store', () => {
         judgeStatus: 'evaluated',
         judgeResult: { overallScore: 92 },
         judgeError: null,
+        judgeScoringMode: 'heuristic',
         judgeHistory: [{ id: 'judge-1' }],
       },
     });
@@ -1602,7 +1877,12 @@ describe('playbook store', () => {
 
     const taskResults = usePlaybookStore.getState().currentExecution?.taskResults || [];
     expect(taskResults[0]).toMatchObject({ iteration: 0, judgeStatus: 'idle', judgeResult: null });
-    expect(taskResults[1]).toMatchObject({ iteration: 1, judgeStatus: 'evaluated', judgeResult: { overallScore: 92 } });
+    expect(taskResults[1]).toMatchObject({
+      iteration: 1,
+      judgeStatus: 'evaluated',
+      judgeResult: { overallScore: 92 },
+      judgeScoringMode: 'heuristic',
+    });
   });
 
   it('marks only the targeted iteration as failed when advisor evaluation errors', async () => {

@@ -729,6 +729,7 @@ describe('executePlaybook', () => {
     });
 
     expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
+      reflectionEnabled: true,
       advisorAutopilotEnabled: true,
       advisorAutopilotTargetScore: 92,
       advisorAutopilotMaxTurns: 4,
@@ -942,9 +943,12 @@ describe('getExecution', () => {
       },
     });
 
-    const result = await runAdvisorEvaluation('exec-3', 'task-9', 2);
+    const result = await runAdvisorEvaluation('exec-3', 'task-9', 2, 'heuristic');
 
-    expect(apiClientMock.post).toHaveBeenCalledWith('/executions/exec-3/tasks/task-9/advisor-evaluation', { iteration: 2 });
+    expect(apiClientMock.post).toHaveBeenCalledWith('/executions/exec-3/tasks/task-9/advisor-evaluation', {
+      iteration: 2,
+      advisorScoringMode: 'heuristic',
+    });
     expect(result).toMatchObject({
       executionId: 'exec-3',
       taskId: 'task-9',

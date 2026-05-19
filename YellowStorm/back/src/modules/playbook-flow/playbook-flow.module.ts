@@ -63,8 +63,11 @@ import { PlaybookFlowContextService } from './services/playbook-flow-context.ser
 import { PlaybookFlowOutputFormatService } from './services/playbook-flow-output-format.service';
 import { PlaybookFlowDesignService } from './services/playbook-flow-design.service';
 import { PlaybookFlowAdvisorService } from './services/playbook-flow-advisor.service';
+import { PlaybookFlowAdvisorModelService } from './services/advisor/playbook-flow-advisor-model.service';
 import { PlaybookFlowExecutionAdvisorService } from './services/advisor/playbook-flow-execution-advisor.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './services/advisor/playbook-flow-execution-advisor.mapper';
+import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './services/advisor/playbook-flow-heuristic-advisor-evaluator.service';
+import { PlaybookFlowLlmAdvisorEvaluatorService } from './services/advisor/playbook-flow-llm-advisor-evaluator.service';
 import { PlaybookFlowDesignGrpcService } from './services/playbook-flow-design-grpc.service';
 import { PlaybookFlowMailWebhookService } from './services/playbook-flow-mail-webhook.service';
 import { PlaybookFlowMailGraphClientService } from './services/playbook-flow-mail-graph-client.service';
@@ -140,6 +143,9 @@ import { PlaybookFlowTraceRedactionService } from './services/observability/play
     PlaybookFlowOutputFormatService,
     PlaybookFlowDesignService,
     PlaybookFlowAdvisorService,
+    PlaybookFlowAdvisorModelService,
+    PlaybookFlowHeuristicAdvisorEvaluatorService,
+    PlaybookFlowLlmAdvisorEvaluatorService,
     PlaybookFlowExecutionAdvisorService,
     PlaybookFlowExecutionAdvisorMapper,
     PlaybookFlowDesignGrpcService,

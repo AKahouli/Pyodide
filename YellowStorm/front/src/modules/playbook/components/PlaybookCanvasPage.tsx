@@ -86,7 +86,7 @@ import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -215,6 +215,7 @@ const STEP_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
   interrupted: 4,
   pending_approval: 4,
+  cancelled: 3,
   failed: 3,
   completed: 2,
   skipped: 1,
@@ -394,6 +395,7 @@ function PlaybookCanvasInner() {
   const [nodeAdvisorTaskId, setNodeAdvisorTaskId] = useState<string | null>(null);
   const [nodeAdvisorSuggestions, setNodeAdvisorSuggestions] = useState<PlaybookNodeAdvisorSuggestion[]>([]);
   const [nodeReflectionEnabled, setNodeReflectionEnabled] = useState(true);
+  const [advisorScoringMode, setAdvisorScoringMode] = useState<'llm' | 'heuristic'>('llm');
   const [advisorAutopilotEnabled, setAdvisorAutopilotEnabled] = useState(false);
   const [editingOutputFormatTaskId, setEditingOutputFormatTaskId] = useState<string | null>(null);
   const [editingOutputFormatVersion, setEditingOutputFormatVersion] = useState<number | null>(null);
@@ -927,7 +929,11 @@ function PlaybookCanvasInner() {
                 promptTemplate: '',
                 timeoutSeconds: 3600,
               }
+              : null,
+        retryPolicy: template.retryPolicy
+          ? { ...template.retryPolicy }
           : null,
+        modelId: template.modelId ?? null,
       };
       addNode(newTask);
     },
@@ -1593,6 +1599,10 @@ function PlaybookCanvasInner() {
             : genericOutputPorts.length > 0
               ? genericOutputPorts
             : clonePortSet(anchorTask?.outputPorts, [{ id: 'default', name: 'Output', artifactKind: 'text' }]),
+        retryPolicy: matchedTemplate?.retryPolicy
+          ? { ...matchedTemplate.retryPolicy }
+          : null,
+        modelId: matchedTemplate?.modelId ?? null,
       };
     };
 
@@ -1604,13 +1614,14 @@ function PlaybookCanvasInner() {
       return edge;
     };
 
-    const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[]) => {
+    const commitGraph = (nextTasks: PlaybookTask[], nextEdges: Edge[], nextDataBindings: DataBinding[]) => {
       const layoutedTasks = autoLayoutTasks(nextTasks, flowEdgesToPlaybookEdges(nextEdges));
       captureSnapshot();
       setNodes(tasksToNodes(layoutedTasks));
       setEdges(nextEdges);
       updateTasks(layoutedTasks);
       updateEdges(flowEdgesToPlaybookEdges(nextEdges));
+      updateDataBindings(nextDataBindings);
       setIntentSuggestions([]);
       const changedIds = layoutedTasks.filter((task) => changedNodeIds.has(task.id)).map((task) => task.id);
       setRecentlyChangedNodeIds(changedIds);
@@ -1641,6 +1652,7 @@ function PlaybookCanvasInner() {
 
     let nextTasks = options?.replaceAll ? [] : [...playbook.tasks];
     let nextEdges = options?.replaceAll ? [] : [...edges];
+    let nextDataBindings = options?.replaceAll ? [] : [...(playbook.dataBindings ?? [])];
     const createdNodeRefs = new Map<string, string>();
     let deletedBounds: { x: number; y: number; width: number; height: number } | null = null;
 
@@ -1755,15 +1767,12 @@ function PlaybookCanvasInner() {
             return;
           }
 
-          nextEdges = [
-            ...nextEdges,
-            markEdgeChanged(createProgrammaticEdge(
-              sourceId,
-              targetId,
-              resolvedPorts.sourceOutputPortId,
-              resolvedPorts.targetInputPortId,
-            )),
-          ];
+          appendIntentEdge(
+            sourceId,
+            targetId,
+            resolvedPorts.sourceOutputPortId,
+            resolvedPorts.targetInputPortId,
+          );
         });
       }
 
@@ -1772,52 +1781,65 @@ function PlaybookCanvasInner() {
       }
 
         if (anchorTasks.length > 1) {
-          nextEdges = [
-            ...nextEdges,
-          ...anchorTasks.flatMap((task, index) => {
+          anchorTasks.forEach((task, index) => {
             const resolvedPorts = resolveIntentEdgePorts(task, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
               || { sourceOutputPortId: getPreferredIntentOutputPortId(task), targetInputPortId: getPreferredIntentInputPortId(newTask, index) };
-            return [markEdgeChanged(createProgrammaticEdge(task.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId))];
-          }),
-        ];
-        return true;
-      }
+            appendIntentEdge(task.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
+          });
+          return true;
+        }
 
         if (mode === 'as_input') {
           const resolvedPorts = resolveIntentEdgePorts(newTask, anchorTask, anchorSourceOutputPortId, anchorTargetInputPortId)
             || { sourceOutputPortId: getPreferredIntentOutputPortId(newTask), targetInputPortId: getPreferredIntentInputPortId(anchorTask) };
-          nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId))];
+          appendIntentEdge(newTask.id, anchorTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
           return true;
         }
 
       if (mode === 'before') {
         const incomingEdges = nextEdges.filter((edge) => edge.target === anchorTask.id);
         const untouchedEdges = nextEdges.filter((edge) => edge.target !== anchorTask.id);
-          const rewiredIncoming = incomingEdges.map((edge) => {
-            const data = (edge.data || {}) as { sourceOutputPortId?: string };
-            return markEdgeChanged(createProgrammaticEdge(edge.source, newTask.id, data.sourceOutputPortId || edge.sourceHandle || 'default', getPreferredIntentInputPortId(newTask)));
-          });
-        nextEdges = [...untouchedEdges, ...rewiredIncoming, markEdgeChanged(createProgrammaticEdge(newTask.id, anchorTask.id, getPreferredIntentOutputPortId(newTask), getPreferredIntentInputPortId(anchorTask)))];
+        nextEdges = untouchedEdges;
+        incomingEdges.forEach((edge) => {
+          const data = (edge.data || {}) as { sourceOutputPortId?: string };
+          const edgeTargetInputPortId = ((edge.data || {}) as { targetInputPortId?: string }).targetInputPortId || edge.targetHandle || 'default';
+          const rewrittenTargetInputPortId = newTask.inputPorts?.some((port) => port.id === edgeTargetInputPortId)
+            ? edgeTargetInputPortId
+            : getPreferredIntentInputPortId(newTask);
+          appendIntentEdge(
+            edge.source,
+            newTask.id,
+            data.sourceOutputPortId || edge.sourceHandle || 'default',
+            rewrittenTargetInputPortId,
+          );
+        });
+        appendIntentEdge(newTask.id, anchorTask.id, getPreferredIntentOutputPortId(newTask), getPreferredIntentInputPortId(anchorTask));
           return true;
         }
 
         if (mode === 'after') {
           const outgoingEdges = nextEdges.filter((edge) => edge.source === anchorTask.id);
           const untouchedEdges = nextEdges.filter((edge) => edge.source !== anchorTask.id);
-          const rewiredOutgoing = outgoingEdges.map((edge) => {
+          nextEdges = untouchedEdges;
+          const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
+            || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
+          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
+          outgoingEdges.forEach((edge) => {
             const data = (edge.data || {}) as { targetInputPortId?: string };
-            return markEdgeChanged(createProgrammaticEdge(newTask.id, edge.target, getPreferredIntentOutputPortId(newTask), data.targetInputPortId || edge.targetHandle || 'default'));
+            appendIntentEdge(
+              newTask.id,
+              edge.target,
+              getPreferredIntentOutputPortId(newTask),
+              data.targetInputPortId || edge.targetHandle || 'default',
+            );
           });
-        const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
-          || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
-        nextEdges = [...untouchedEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId)), ...rewiredOutgoing];
           return true;
         }
 
         {
           const resolvedPorts = resolveIntentEdgePorts(anchorTask, newTask, anchorSourceOutputPortId, anchorTargetInputPortId)
             || { sourceOutputPortId: getPreferredIntentOutputPortId(anchorTask), targetInputPortId: getPreferredIntentInputPortId(newTask) };
-          nextEdges = [...nextEdges, markEdgeChanged(createProgrammaticEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId))];
+          appendIntentEdge(anchorTask.id, newTask.id, resolvedPorts.sourceOutputPortId, resolvedPorts.targetInputPortId);
         }
         return true;
       };
@@ -1835,20 +1857,189 @@ function PlaybookCanvasInner() {
       const incomingEdges = nextEdges.filter((edge) => edge.target === taskId);
       const outgoingEdges = nextEdges.filter((edge) => edge.source === taskId);
       const untouchedEdges = nextEdges.filter((edge) => edge.source !== taskId && edge.target !== taskId);
-      const bridgedEdges = incomingEdges.flatMap((incomingEdge) => outgoingEdges.map((outgoingEdge) => {
-        const incomingData = (incomingEdge.data || {}) as { sourceOutputPortId?: string };
-        const outgoingData = (outgoingEdge.data || {}) as { targetInputPortId?: string };
-        return markEdgeChanged(createProgrammaticEdge(
-          incomingEdge.source,
-          outgoingEdge.target,
-          incomingData.sourceOutputPortId || incomingEdge.sourceHandle || 'default',
-          outgoingData.targetInputPortId || outgoingEdge.targetHandle || 'default',
-        ));
-      })).filter((edge) => edge.source !== edge.target);
-      const edgeById = new Map<string, Edge>();
-      [...untouchedEdges, ...bridgedEdges].forEach((edge) => edgeById.set(edge.id, edge));
       nextTasks = nextTasks.filter((task) => task.id !== taskId);
-      nextEdges = Array.from(edgeById.values());
+      nextEdges = untouchedEdges;
+      nextDataBindings = nextDataBindings.filter(
+        (b) => b.targetNode !== taskId && b.sourceNode !== taskId,
+      );
+
+      const existingEdgeIds = new Set(nextEdges.map((edge) => edge.id));
+      incomingEdges.forEach((incomingEdge) => {
+        const incomingData = (incomingEdge.data || {}) as { sourceOutputPortId?: string };
+        const sourceOutputPortId = incomingData.sourceOutputPortId || incomingEdge.sourceHandle || 'default';
+
+        outgoingEdges.forEach((outgoingEdge) => {
+          if (incomingEdge.source === outgoingEdge.target) {
+            return;
+          }
+
+          const outgoingData = (outgoingEdge.data || {}) as { targetInputPortId?: string };
+          const targetInputPortId = outgoingData.targetInputPortId || outgoingEdge.targetHandle || 'default';
+          const bridgedEdge = createProgrammaticEdge(
+            incomingEdge.source,
+            outgoingEdge.target,
+            sourceOutputPortId,
+            targetInputPortId,
+          );
+          if (existingEdgeIds.has(bridgedEdge.id)) {
+            return;
+          }
+
+          existingEdgeIds.add(bridgedEdge.id);
+          appendIntentEdge(
+            incomingEdge.source,
+            outgoingEdge.target,
+            sourceOutputPortId,
+            targetInputPortId,
+          );
+        });
+      });
+    };
+
+    const upsertNodeOutputBinding = (
+      resolvedTargetId: string,
+      targetPort: string,
+      resolvedSourceId: string,
+      sourcePort: string,
+      sourceKind: 'node-output' = 'node-output',
+      iteration: 'current' | 'previous' = 'current',
+    ) => {
+      const targetTask = nextTasks.find((t) => t.id === resolvedTargetId);
+      const sourceTask = nextTasks.find((t) => t.id === resolvedSourceId);
+      if (!targetTask || !sourceTask) return;
+
+      const targetInputPort = targetTask.inputPorts?.find((p) => p.id === targetPort);
+      const sourceOutputPort = sourceTask.outputPorts?.find((p) => p.id === sourcePort);
+      if (!targetInputPort || !sourceOutputPort) return;
+
+      if (targetInputPort.artifactKind !== sourceOutputPort.artifactKind) return;
+
+      nextDataBindings = nextDataBindings.filter(
+        (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
+      );
+
+      nextDataBindings = [
+        ...nextDataBindings,
+        {
+          id: `db-${crypto.randomUUID().slice(0, 8)}`,
+          targetNode: resolvedTargetId,
+          targetPort,
+          sourceKind,
+          sourceNode: resolvedSourceId,
+          sourcePort,
+          iteration,
+        },
+      ];
+    };
+
+    const removeNodeOutputBinding = (
+      resolvedTargetId: string,
+      targetPort: string,
+      resolvedSourceId: string,
+      sourcePort: string,
+    ) => {
+      nextDataBindings = nextDataBindings.filter((binding) => !(
+        binding.targetNode === resolvedTargetId
+        && binding.targetPort === targetPort
+        && binding.sourceKind === 'node-output'
+        && binding.sourceNode === resolvedSourceId
+        && binding.sourcePort === sourcePort
+      ));
+    };
+
+    const appendIntentEdge = (
+      sourceId: string,
+      targetId: string,
+      sourceOutputPortId: string,
+      targetInputPortId: string,
+    ) => {
+      const targetTask = nextTasks.find((task) => task.id === targetId);
+      const targetInputPort = targetTask?.inputPorts?.find((port) => port.id === targetInputPortId);
+      if (targetInputPort?.required) {
+        nextEdges = nextEdges.filter((edge) => {
+          const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
+          const matchesTargetPort = edge.target === targetId
+            && (edgeData.targetInputPortId || edge.targetHandle || 'default') === targetInputPortId;
+          const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+          if (isConditionalEdge) {
+            return true;
+          }
+          if (matchesTargetPort) {
+            changedEdgeIds.add(edge.id);
+          }
+          return !matchesTargetPort;
+        });
+      }
+
+      nextEdges = [
+        ...nextEdges,
+        markEdgeChanged(createProgrammaticEdge(sourceId, targetId, sourceOutputPortId, targetInputPortId)),
+      ];
+
+      if (targetInputPort?.required) {
+        upsertNodeOutputBinding(targetId, targetInputPortId, sourceId, sourceOutputPortId);
+      }
+    };
+
+    const reconcileRequiredNodeOutputBindings = () => {
+      nextTasks.forEach((task) => {
+        task.inputPorts?.forEach((port) => {
+          if (!port.required) {
+            return;
+          }
+
+          const incomingEdges = nextEdges.filter((edge) => {
+            const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
+            const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+            return !isConditionalEdge
+              && edge.target === task.id
+              && (edgeData.targetInputPortId || edge.targetHandle || 'default') === port.id;
+          });
+
+          if (incomingEdges.length !== 1) {
+            return;
+          }
+
+          const edge = incomingEdges[0];
+          const edgeData = (edge.data || {}) as { sourceOutputPortId?: string };
+          const sourceOutputPortId = edgeData.sourceOutputPortId || edge.sourceHandle || 'default';
+          upsertNodeOutputBinding(task.id, port.id, edge.source, sourceOutputPortId);
+        });
+      });
+    };
+
+    const applyDataBindingChange = (
+      type: 'create_data_binding' | 'delete_data_binding',
+      targetTaskId: string | null,
+      targetNodeRef: string | null,
+      targetPort: string,
+      sourceKind?: 'node-output',
+      sourceTaskId?: string | null,
+      sourceNodeRef?: string | null,
+      sourcePort?: string | null,
+      iteration?: 'current' | 'previous',
+    ) => {
+      const resolvedTargetId = resolveTaskReference(targetTaskId) || resolveTaskReference(targetNodeRef);
+      if (!resolvedTargetId || !targetPort) return;
+
+      if (type === 'delete_data_binding') {
+        nextDataBindings = nextDataBindings.filter(
+          (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
+        );
+        return;
+      }
+
+      const resolvedSourceId = resolveTaskReference(sourceTaskId) || resolveTaskReference(sourceNodeRef);
+      if (!resolvedSourceId || !sourcePort) return;
+
+      upsertNodeOutputBinding(
+        resolvedTargetId,
+        targetPort,
+        resolvedSourceId,
+        sourcePort,
+        sourceKind ?? 'node-output',
+        iteration ?? 'current',
+      );
     };
 
     const applyEdgeChange = (
@@ -1874,9 +2065,9 @@ function PlaybookCanvasInner() {
       }
 
       if (type === 'delete_edge') {
-        nextEdges = nextEdges.filter((edge) => {
+        const deletedEdges = nextEdges.filter((edge) => {
           const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
-          const shouldDelete = edgeMatchesIntentPortPair(
+          return edgeMatchesIntentPortPair(
             {
               sourceId: edge.source,
               targetId: edge.target,
@@ -1888,10 +2079,14 @@ function PlaybookCanvasInner() {
             sourceOutputPortId,
             targetInputPortId,
           );
-          if (shouldDelete) {
-            changedEdgeIds.add(edge.id);
-          }
-          return !shouldDelete;
+        });
+        deletedEdges.forEach((edge) => changedEdgeIds.add(edge.id));
+        nextEdges = nextEdges.filter((edge) => !deletedEdges.some((deletedEdge) => deletedEdge.id === edge.id));
+        deletedEdges.forEach((edge) => {
+          const edgeData = (edge.data || {}) as { sourceOutputPortId?: string; targetInputPortId?: string };
+          const deletedSourceOutputPortId = edgeData.sourceOutputPortId || edge.sourceHandle || 'default';
+          const deletedTargetInputPortId = edgeData.targetInputPortId || edge.targetHandle || 'default';
+          removeNodeOutputBinding(resolvedTargetId, deletedTargetInputPortId, resolvedSourceId, deletedSourceOutputPortId);
         });
         return;
       }
@@ -1919,15 +2114,12 @@ function PlaybookCanvasInner() {
         return;
       }
 
-      nextEdges = [
-        ...nextEdges,
-        markEdgeChanged(createProgrammaticEdge(
-          resolvedSourceId,
-          resolvedTargetId,
-          resolvedPorts.sourceOutputPortId,
-          resolvedPorts.targetInputPortId,
-        )),
-      ];
+      appendIntentEdge(
+        resolvedSourceId,
+        resolvedTargetId,
+        resolvedPorts.sourceOutputPortId,
+        resolvedPorts.targetInputPortId,
+      );
     };
 
     if (suggestion.kind === 'single_change') {
@@ -1935,16 +2127,16 @@ function PlaybookCanvasInner() {
       const targetTask = change.targetTaskId ? nextTasks.find((task) => task.id === change.targetTaskId) || null : selectedTask;
       if (change.type === 'delete_node') {
         if (!targetTask) {
-          commitGraph(nextTasks, nextEdges);
+          commitGraph(nextTasks, nextEdges, nextDataBindings);
           return;
         }
         deleteTaskAndBridgeEdges(targetTask.id);
-        commitGraph(nextTasks, nextEdges);
+        commitGraph(nextTasks, nextEdges, nextDataBindings);
         return;
       }
       if (change.type === 'update_node') {
         if (!targetTask) {
-          commitGraph(nextTasks, nextEdges);
+          commitGraph(nextTasks, nextEdges, nextDataBindings);
           return;
         }
         if (!change.task) return;
@@ -1955,17 +2147,18 @@ function PlaybookCanvasInner() {
           assignedAgentId: change.task?.agentSlug ? resolveAssignedAgentId(change.task.agentSlug) : task.assignedAgentId,
         } : task);
         changedNodeIds.add(targetTask.id);
-        commitGraph(nextTasks, nextEdges);
+        commitGraph(nextTasks, nextEdges, nextDataBindings);
         return;
       }
       if (!change.task) return;
       applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.task.templateType, change.task.inputPorts, change.task.outputPorts, change.task.iteratorBody, change.anchorMode, change.targetTaskId, null, null);
-      commitGraph(nextTasks, nextEdges);
+      commitGraph(nextTasks, nextEdges, nextDataBindings);
       return;
     }
 
     const orderedChanges = [
-      ...suggestion.changes.filter((change) => change.type !== 'delete_node' && change.type !== 'delete_edge'),
+      ...suggestion.changes.filter((change) => change.type === 'delete_data_binding'),
+      ...suggestion.changes.filter((change) => change.type !== 'delete_node' && change.type !== 'delete_edge' && change.type !== 'delete_data_binding'),
       ...suggestion.changes.filter((change) => change.type === 'delete_edge'),
       ...suggestion.changes.filter((change) => change.type === 'delete_node'),
     ];
@@ -2005,6 +2198,31 @@ function PlaybookCanvasInner() {
         continue;
       }
 
+      if (change.type === 'create_data_binding') {
+        applyDataBindingChange(
+          'create_data_binding',
+          change.targetTaskId,
+          change.targetNodeRef,
+          change.targetPort,
+          change.sourceKind,
+          change.sourceTaskId,
+          change.sourceNodeRef,
+          change.sourcePort,
+          change.iteration,
+        );
+        continue;
+      }
+
+      if (change.type === 'delete_data_binding') {
+        applyDataBindingChange(
+          'delete_data_binding',
+          change.targetTaskId,
+          change.targetNodeRef,
+          change.targetPort,
+        );
+        continue;
+      }
+
         if (change.type === 'update_node') {
           if (nextTasks.some((task) => task.id === change.targetTaskId)) {
             nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? {
@@ -2023,8 +2241,9 @@ function PlaybookCanvasInner() {
       }
     }
 
-    commitGraph(nextTasks, nextEdges);
-  }, [captureSnapshot, createProgrammaticEdge, defaultAgents, edges, focusChangedArea, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateEdges, updateTasks]);
+    reconcileRequiredNodeOutputBindings();
+    commitGraph(nextTasks, nextEdges, nextDataBindings);
+  }, [captureSnapshot, createProgrammaticEdge, defaultAgents, edges, focusChangedArea, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateDataBindings, updateEdges, updateTasks]);
 
   const canvasNodes = useMemo(() => liveNodes.map((node) => ({
     ...node,
@@ -2129,7 +2348,8 @@ function PlaybookCanvasInner() {
   useEffect(() => {
     if (!playbook) return;
     setNodeReflectionEnabled(playbook.reflectionEnabled !== false);
-  }, [playbook?.reflectionEnabled]);
+    setAdvisorScoringMode(playbook.advisorScoringMode === 'heuristic' ? 'heuristic' : 'llm');
+  }, [playbook?.reflectionEnabled, playbook?.advisorScoringMode]);
 
   useEffect(() => {
     if (!playbook) return;
@@ -2138,24 +2358,49 @@ function PlaybookCanvasInner() {
 
   const handleNodeReflectionChange = useCallback(
     async (enabled: boolean) => {
+      const previous = nodeReflectionEnabled;
       setNodeReflectionEnabled(enabled);
       if (!id || !playbook) return;
 
       try {
         await updatePlaybook(id, {
           reflectionEnabled: enabled,
+          advisorScoringMode,
           advisorAutopilotEnabled,
           advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
           advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
         });
       } catch {
+        setNodeReflectionEnabled(previous);
       }
     },
-    [advisorAutopilotEnabled, id, playbook, updatePlaybook],
+    [advisorAutopilotEnabled, advisorScoringMode, id, nodeReflectionEnabled, playbook, updatePlaybook],
+  );
+
+  const handleAdvisorScoringModeChange = useCallback(
+    async (mode: 'llm' | 'heuristic') => {
+      const previous = advisorScoringMode;
+      setAdvisorScoringMode(mode);
+      if (!id || !playbook) return;
+
+      try {
+        await updatePlaybook(id, {
+          advisorScoringMode: mode,
+          reflectionEnabled: nodeReflectionEnabled,
+          advisorAutopilotEnabled,
+          advisorAutopilotTargetScore: playbook.advisorAutopilotTargetScore ?? undefined,
+          advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
+        });
+      } catch {
+        setAdvisorScoringMode(previous);
+      }
+    },
+    [advisorAutopilotEnabled, advisorScoringMode, id, nodeReflectionEnabled, playbook, updatePlaybook],
   );
 
   const handleAdvisorAutopilotChange = useCallback(
     async (enabled: boolean) => {
+      const previous = advisorAutopilotEnabled;
       setAdvisorAutopilotEnabled(enabled);
       if (!id || !playbook) return;
 
@@ -2166,10 +2411,10 @@ function PlaybookCanvasInner() {
           advisorAutopilotMaxTurns: playbook.advisorAutopilotMaxTurns ?? undefined,
         });
       } catch {
-        // handled by the store/API layer
+        setAdvisorAutopilotEnabled(previous);
       }
     },
-    [id, playbook, updatePlaybook],
+    [advisorAutopilotEnabled, id, playbook, updatePlaybook],
   );
 
   const handleAutoLayout = useCallback(() => {
@@ -2477,6 +2722,8 @@ function PlaybookCanvasInner() {
             onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
             onAdvisorAutopilotChange={handleAdvisorAutopilotChange}
+            advisorScoringMode={advisorScoringMode}
+            onAdvisorScoringModeChange={handleAdvisorScoringModeChange}
             onTriggers={() => setTriggersSheetOpen(true)}
             triggersOpen={triggersSheetOpen}
             designSettings={playbook.designSettings}

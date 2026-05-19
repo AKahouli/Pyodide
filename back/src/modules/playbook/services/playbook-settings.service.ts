@@ -19,15 +19,23 @@ export class PlaybookSettingsService {
 
   async updateAdminSettings(dto: UpdateAdminPlaybookSettingsDto): Promise<AdminPlaybookSettings> {
     const inferenceModelId = dto.inferenceModelId?.trim() || null;
+    const advisorEvaluationModelId = dto.advisorEvaluationModelId?.trim() || null;
     if (inferenceModelId) {
       const validation = await this.modelsService.validateModelActive(inferenceModelId);
       if (!validation.valid) {
         throw new BadRequestException(ErrorCode.BAD_REQUEST);
       }
     }
+    if (advisorEvaluationModelId) {
+      const validation = await this.modelsService.validateModelActive(advisorEvaluationModelId);
+      if (!validation.valid) {
+        throw new BadRequestException(validation.inactive ? ErrorCode.MODEL_INACTIVE : ErrorCode.MODEL_NOT_FOUND);
+      }
+    }
 
     return this.systemService.setPlaybookSettings({
       inferenceModelId,
+      advisorEvaluationModelId,
       nodeSuggestionsMode: dto.nodeSuggestionsMode,
       approvalSuggestionMode: dto.approvalSuggestionMode,
     });

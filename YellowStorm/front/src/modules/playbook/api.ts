@@ -53,6 +53,10 @@ import type {
   PlaybookTask,
   PlaybookEdge,
   PlaybookNodeType,
+  PlaybookIteratorConfig,
+  HumanApprovalConfig,
+  RetryPolicy,
+  AdvisorScoringMode,
   RouterDecision,
   TaskResult,
  } from './types';
@@ -167,6 +171,13 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
             timeoutSeconds: task.humanApprovalConfig.timeoutSeconds ?? null,
           }
         : null,
+      retryPolicy: task.retryPolicy
+        ? {
+            maxRetries: task.retryPolicy.maxRetries,
+            delayMs: task.retryPolicy.delayMs,
+          }
+        : null,
+      modelId: task.modelId ?? null,
       expectedResult: task.expectedResult,
       disableAdvisorEvaluation: task.disableAdvisorEvaluation,
     }));
@@ -189,6 +200,7 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     edges: sanitizedEdges,
     workspaces: data.workspaces,
     reflectionEnabled: data.reflectionEnabled,
+    advisorScoringMode: data.advisorScoringMode,
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
@@ -223,6 +235,7 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     edges: data.edges,
     workspaces: data.workspaces,
     reflectionEnabled: data.reflectionEnabled,
+    advisorScoringMode: data.advisorScoringMode,
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
@@ -300,13 +313,47 @@ function mapFlowNodeToPlaybookTask(node: FlowNode, index: number): PlaybookTask 
     disableAdvisorEvaluation: (meta.disableAdvisorEvaluation as boolean) ?? false,
     stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
     nodeType: (meta.nodeType as import('./types').PlaybookNodeType) ?? kindToNodeType(node.kind),
-    iteratorConfig: node.iteratorConfig
-      ? { source: node.iteratorConfig.collectionPath, batchSize: node.iteratorConfig.maxItems ?? undefined } as any
-      : (meta.iteratorConfig as any) ?? null,
+    iteratorConfig: buildPlaybookIteratorConfig(node.iteratorConfig, meta),
     routerConfig: node.routerConfig ?? (meta.routerConfig as any) ?? null,
-    humanApprovalConfig: node.humanApprovalConfig ?? (meta.humanApprovalConfig as any) ?? null,
+    humanApprovalConfig: buildPlaybookHumanApprovalConfig(node.humanApprovalConfig, meta),
+    retryPolicy: node.retryPolicy ?? (meta.retryPolicy as any) ?? null,
+    modelId: node.modelId || (meta.modelId as string | null | undefined) || null,
     ...(inputPorts ? { inputPorts } : {}),
     ...(outputPorts ? { outputPorts } : {}),
+  };
+}
+
+function buildPlaybookIteratorConfig(
+  iteratorConfig: { collectionPath: string; maxItems?: number } | undefined,
+  meta: Record<string, unknown>,
+): PlaybookIteratorConfig | null {
+  if (!iteratorConfig) {
+    return (meta.iteratorConfig as PlaybookIteratorConfig | null | undefined) ?? null;
+  }
+  const iteratorMeta = meta.iteratorConfig as Partial<PlaybookIteratorConfig> | undefined;
+  return {
+    source: iteratorConfig.collectionPath,
+    mode: iteratorMeta?.mode ?? 'item',
+    batchSize: iteratorConfig.maxItems ?? undefined,
+    itemVariable: iteratorMeta?.itemVariable ?? 'item',
+    outputVariable: iteratorMeta?.outputVariable ?? 'processed_items',
+    errorStrategy: iteratorMeta?.errorStrategy ?? 'stop',
+  };
+}
+
+function buildPlaybookHumanApprovalConfig(
+  approvalConfig: HumanApprovalConfig | undefined,
+  meta: Record<string, unknown>,
+): HumanApprovalConfig | null {
+  if (!approvalConfig) {
+    return (meta.humanApprovalConfig as HumanApprovalConfig | null | undefined) ?? null;
+  }
+  return {
+    ...approvalConfig,
+    timeoutSeconds:
+      meta.humanApprovalTimeoutUnlimited === true && approvalConfig.timeoutSeconds === 0
+        ? null
+        : approvalConfig.timeoutSeconds,
   };
 }
 
@@ -439,9 +486,21 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     semanticMatch: raw.semanticMatch ?? null,
     traceMetadata: raw.traceMetadata ?? null,
     judgeStatus: raw.judgeStatus ?? 'idle',
+    judgeScoringMode: raw.judgeScoringMode === 'heuristic' ? 'heuristic' : raw.judgeScoringMode === 'llm' ? 'llm' : null,
     judgeResult: raw.judgeResult ?? null,
     judgeError: toNullableString(raw.judgeError),
-    judgeHistory: Array.isArray(raw.judgeHistory) ? raw.judgeHistory : [],
+    judgeHistory: Array.isArray(raw.judgeHistory)
+      ? raw.judgeHistory.map((entry: any) => ({
+          ...entry,
+          scoringMode: entry?.scoringMode === 'heuristic'
+            ? 'heuristic'
+            : entry?.model === 'deterministic-execution-advisor'
+              ? 'heuristic'
+              : 'llm',
+          usage: entry?.usage ?? null,
+          llmPromptTrace: Array.isArray(entry?.llmPromptTrace) ? entry.llmPromptTrace : [],
+        }))
+      : [],
     advisorTurnCount: toNullableNumber(raw.advisorTurnCount) ?? undefined,
     advisorTurnHistory: Array.isArray(raw.advisorTurnHistory) ? raw.advisorTurnHistory : [],
     advisorOptimizationHistory: Array.isArray(raw.advisorOptimizationHistory) ? raw.advisorOptimizationHistory : [],
@@ -503,6 +562,8 @@ function normalizeExecution(raw: any): PlaybookExecution {
     totalQueueSize: toNullableNumber(raw.totalQueueSize),
     recursionBudgetUsed: toNullableNumber(raw.recursionBudgetUsed),
     recursionBudgetMax: toNullableNumber(raw.recursionBudgetMax) ?? toNullableNumber(raw.recursionLimit),
+    reflectionEnabled: raw.reflectionEnabled !== false,
+    advisorScoringMode: raw.advisorScoringMode === 'heuristic' ? 'heuristic' : 'llm',
     advisorAutopilotEnabled: Boolean(raw.advisorAutopilotEnabled),
     advisorAutopilotTargetScore: toNullableNumber(raw.advisorAutopilotTargetScore) ?? undefined,
     advisorAutopilotMaxTurns: toNullableNumber(raw.advisorAutopilotMaxTurns) ?? undefined,
@@ -610,6 +671,7 @@ export async function updatePlaybook(
   };
 
   if (sanitized.reflectionEnabled !== undefined) body.reflectionEnabled = sanitized.reflectionEnabled;
+  if (sanitized.advisorScoringMode !== undefined) body.advisorScoringMode = sanitized.advisorScoringMode;
   if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
   if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
   if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
@@ -735,6 +797,7 @@ export async function executePlaybook(
   if (data?.advisorAutopilotTargetScore !== undefined) payload.advisorAutopilotTargetScore = data.advisorAutopilotTargetScore;
   if (data?.advisorAutopilotMaxTurns !== undefined) payload.advisorAutopilotMaxTurns = data.advisorAutopilotMaxTurns;
   if (data?.runNodeReflection !== undefined) payload.reflectionEnabled = data.runNodeReflection;
+  if (data?.advisorScoringMode !== undefined) payload.advisorScoringMode = data.advisorScoringMode;
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(id),
     payload,
@@ -1013,10 +1076,15 @@ export async function runAdvisorEvaluation(
   executionId: string,
   taskId: string,
   iteration?: number,
+  advisorScoringMode?: AdvisorScoringMode,
 ): Promise<RunAdvisorEvaluationResponse> {
+  const payload = {
+    ...(iteration !== undefined ? { iteration } : {}),
+    ...(advisorScoringMode !== undefined ? { advisorScoringMode } : {}),
+  };
   const response = await apiClient.post<ApiResponse<any>>(
     API_ENDPOINTS.playbookFlows.runAdvisorEvaluation(executionId, taskId),
-    iteration === undefined ? undefined : { iteration },
+    Object.keys(payload).length > 0 ? payload : undefined,
   );
   const data = response.data.data;
   const hasJudgeSummaryStatus = Object.prototype.hasOwnProperty.call(data, 'judgeSummaryStatus');
@@ -1271,10 +1339,24 @@ export async function startFlowExecution(
   flowId: string,
   inputContext?: Record<string, unknown>,
   idempotencyKey?: string,
+  options?: {
+    reflectionEnabled?: boolean;
+    advisorScoringMode?: import('./types').AdvisorScoringMode;
+    advisorAutopilotEnabled?: boolean;
+    advisorAutopilotTargetScore?: number;
+    advisorAutopilotMaxTurns?: number;
+  },
 ): Promise<{ executionId: string }> {
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(flowId),
-    { inputContext },
+    {
+      inputContext,
+      ...(options?.reflectionEnabled !== undefined ? { reflectionEnabled: options.reflectionEnabled } : {}),
+      ...(options?.advisorScoringMode !== undefined ? { advisorScoringMode: options.advisorScoringMode } : {}),
+      ...(options?.advisorAutopilotEnabled !== undefined ? { advisorAutopilotEnabled: options.advisorAutopilotEnabled } : {}),
+      ...(options?.advisorAutopilotTargetScore !== undefined ? { advisorAutopilotTargetScore: options.advisorAutopilotTargetScore } : {}),
+      ...(options?.advisorAutopilotMaxTurns !== undefined ? { advisorAutopilotMaxTurns: options.advisorAutopilotMaxTurns } : {}),
+    },
     idempotencyKey
       ? { headers: { 'Idempotency-Key': idempotencyKey } }
       : undefined,

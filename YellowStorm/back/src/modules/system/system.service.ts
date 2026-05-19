@@ -278,6 +278,7 @@ export class SystemService implements OnApplicationBootstrap {
   async setPlaybookSettings(settings: AdminPlaybookSettings): Promise<AdminPlaybookSettings> {
     const value: AdminPlaybookSettings = {
       inferenceModelId: settings.inferenceModelId?.trim() || null,
+      advisorEvaluationModelId: settings.advisorEvaluationModelId?.trim() || null,
       nodeSuggestionsMode: settings.nodeSuggestionsMode,
       approvalSuggestionMode: settings.approvalSuggestionMode,
     };
@@ -477,6 +478,9 @@ export class SystemService implements OnApplicationBootstrap {
       this.playbookSettingsCache = {
         inferenceModelId: typeof value?.inferenceModelId === 'string' && value.inferenceModelId.trim()
           ? value.inferenceModelId.trim()
+          : null,
+        advisorEvaluationModelId: typeof value?.advisorEvaluationModelId === 'string' && value.advisorEvaluationModelId.trim()
+          ? value.advisorEvaluationModelId.trim()
           : null,
         nodeSuggestionsMode: value?.nodeSuggestionsMode === 'auto' ? 'auto' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.nodeSuggestionsMode,
         approvalSuggestionMode: value?.approvalSuggestionMode === 'manual' ? 'manual' : DEFAULT_ADMIN_PLAYBOOK_SETTINGS.approvalSuggestionMode,

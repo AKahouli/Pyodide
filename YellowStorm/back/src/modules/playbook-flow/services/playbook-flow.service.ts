@@ -66,6 +66,11 @@ export class PlaybookFlowService {
       controlEdges,
       dataBindings,
       workspaces,
+      reflectionEnabled: dto.reflectionEnabled ?? false,
+      advisorScoringMode: dto.advisorScoringMode ?? 'llm',
+      advisorAutopilotEnabled: dto.advisorAutopilotEnabled ?? false,
+      advisorAutopilotTargetScore: dto.advisorAutopilotTargetScore,
+      advisorAutopilotMaxTurns: dto.advisorAutopilotMaxTurns,
     });
 
     try {
@@ -170,6 +175,7 @@ export class PlaybookFlowService {
     if (dto.controlEdges !== undefined) existing.controlEdges = dto.controlEdges as any[];
     if (dto.dataBindings !== undefined) existing.dataBindings = dto.dataBindings as any[];
     if (dto.reflectionEnabled !== undefined) existing.reflectionEnabled = dto.reflectionEnabled;
+    if (dto.advisorScoringMode !== undefined) existing.advisorScoringMode = dto.advisorScoringMode;
     if (dto.advisorAutopilotEnabled !== undefined) existing.advisorAutopilotEnabled = dto.advisorAutopilotEnabled;
     if (dto.advisorAutopilotTargetScore !== undefined) existing.advisorAutopilotTargetScore = dto.advisorAutopilotTargetScore;
     if (dto.advisorAutopilotMaxTurns !== undefined) existing.advisorAutopilotMaxTurns = dto.advisorAutopilotMaxTurns;
@@ -325,6 +331,7 @@ export class PlaybookFlowService {
       designSettings: existing.designSettings,
       isFavorite: existing.isFavorite,
       reflectionEnabled: existing.reflectionEnabled,
+      advisorScoringMode: existing.advisorScoringMode ?? 'llm',
       advisorAutopilotEnabled: existing.advisorAutopilotEnabled,
       advisorAutopilotTargetScore: existing.advisorAutopilotTargetScore,
       advisorAutopilotMaxTurns: existing.advisorAutopilotMaxTurns,

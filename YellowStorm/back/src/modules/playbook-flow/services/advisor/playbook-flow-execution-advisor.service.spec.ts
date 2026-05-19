@@ -11,6 +11,7 @@ function createService() {
             id: 'exec-1',
             ownerId: 'user-1',
             flowId: '507f1f77bcf86cd799439011',
+            advisorScoringMode: 'llm',
             snapshot: { nodes: [{ id: 'task-1', label: 'Task 1', metadata: { expectedResult: 'expected' } }] },
           }),
         }),
@@ -34,35 +35,74 @@ function createService() {
   const outputFormatModel = {
     findOne: jest.fn(() => ({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue(null) }) })),
   };
-  const grpcService = {
-    isAvailable: true,
-    evaluateTask: jest.fn().mockResolvedValue({
-      accuracy_score: 80,
-      completeness_score: 70,
-      result_matching_score: 75,
-      overall_score: 76,
-      confidence: 0.8,
-      tool_usage_score: 68,
-      expected_result_source: 'node_field',
-      expected_result_type: 'semantic_description',
-      expected_result_matched: true,
-      expected_result_reason: 'Matched',
-      missing_facts: [],
-      incoherences: [],
-      unsupported_claims: [],
-      handoff_risks: [],
-      rewrite_hints: [],
-      tool_selection_issues: [],
-      missing_tool_calls: [],
-      redundant_tool_calls: [],
-      tool_output_use_issues: [],
-      tool_sequencing_issues: [],
-      tool_usage_strengths: [],
-      tool_usage_recommendation: 'Looks fine',
-      safe_auto_fix_type: 'none',
-      recommendation: 'none',
-      reason: 'Done',
+  const heuristicEvaluator = {
+    evaluate: jest.fn().mockResolvedValue({
+      judgeResult: {
+        accuracyScore: 80,
+        completenessScore: 70,
+        resultMatchingScore: 75,
+        overallScore: 76,
+        confidence: 80,
+        toolUsageScore: 68,
+        expectedResultSource: 'node_field',
+        expectedResultType: 'semantic_description',
+        expectedResultMatched: true,
+        expectedResultReason: 'Matched',
+        missingFacts: [],
+        incoherences: [],
+        unsupportedClaims: [],
+        handoffRisks: [],
+        rewriteHints: [],
+        toolSelectionIssues: [],
+        missingToolCalls: [],
+        redundantToolCalls: [],
+        toolOutputUseIssues: [],
+        toolSequencingIssues: [],
+        toolUsageStrengths: [],
+        toolUsageRecommendation: 'Looks fine',
+        safeAutoFixType: 'none',
+        recommendation: 'none',
+        reason: 'Done',
+      },
+      model: 'deterministic-execution-advisor',
+      scoringMode: 'heuristic',
+      usage: null,
+      llmPromptTrace: [],
+    }),
+  };
+  const llmEvaluator = {
+    evaluate: jest.fn().mockResolvedValue({
+      judgeResult: {
+        accuracyScore: 83,
+        completenessScore: 77,
+        resultMatchingScore: 79,
+        overallScore: 80,
+        confidence: 84,
+        toolUsageScore: 73,
+        expectedResultSource: 'node_field',
+        expectedResultType: 'semantic_description',
+        expectedResultMatched: true,
+        expectedResultReason: 'Matched',
+        missingFacts: [],
+        incoherences: [],
+        unsupportedClaims: [],
+        handoffRisks: [],
+        rewriteHints: [],
+        toolSelectionIssues: [],
+        missingToolCalls: [],
+        redundantToolCalls: [],
+        toolOutputUseIssues: [],
+        toolSequencingIssues: [],
+        toolUsageStrengths: [],
+        toolUsageRecommendation: 'Looks fine',
+        safeAutoFixType: 'none',
+        recommendation: 'none',
+        reason: 'Done',
+      },
       model: 'advisor-v1',
+      scoringMode: 'llm',
+      usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, model: 'advisor-v1' },
+      llmPromptTrace: [{ stage: 'advisor_evaluation', model: 'advisor-v1', prompt: 'prompt' }],
     }),
   };
   const streamEvents = {
@@ -76,37 +116,57 @@ function createService() {
       executionModel as any,
       taskResultModel as any,
       outputFormatModel as any,
-      grpcService as any,
       streamEvents as any,
       mapper,
+      heuristicEvaluator as any,
+      llmEvaluator as any,
     ),
     executionModel,
     taskResultModel,
     taskResultDocument,
     outputFormatModel,
-    grpcService,
+    heuristicEvaluator,
+    llmEvaluator,
     streamEvents,
   };
 }
 
 describe('PlaybookFlowExecutionAdvisorService', () => {
-  it('evaluates a completed task and appends judge history', async () => {
-    const { service, taskResultDocument, streamEvents } = createService();
+  it('uses llm scoring by default and appends usage metadata', async () => {
+    const { service, taskResultDocument, streamEvents, heuristicEvaluator, llmEvaluator } = createService();
 
     const result = await service.runTaskEvaluation('exec-1', 'task-1', 'user-1');
 
+    expect(llmEvaluator.evaluate).toHaveBeenCalledTimes(1);
+    expect(heuristicEvaluator.evaluate).not.toHaveBeenCalled();
     expect(taskResultDocument.save).toHaveBeenCalledTimes(2);
-    expect(streamEvents.emitStepJudgeStarted).toHaveBeenCalledWith('user-1', 'exec-1', 'task-1', undefined);
+    expect(streamEvents.emitStepJudgeStarted).toHaveBeenCalledWith('user-1', 'exec-1', 'task-1', undefined, 'llm');
     expect(streamEvents.emitStepJudgeUpdated).toHaveBeenCalledWith(
       'user-1',
       'exec-1',
       'task-1',
-      expect.objectContaining({ judgeStatus: 'evaluated' }),
+      expect.objectContaining({ judgeStatus: 'evaluated', advisorScoringMode: 'llm' }),
       undefined,
     );
     expect(result.taskResult.judgeStatus).toBe('evaluated');
+    expect(result.taskResult.judgeScoringMode).toBe('llm');
     expect(result.taskResult.judgeHistory).toHaveLength(1);
+    expect(result.taskResult.judgeHistory[0]).toMatchObject({
+      scoringMode: 'llm',
+      usage: { totalTokens: 15 },
+    });
     expect(result.taskResult.iteration).toBeUndefined();
+  });
+
+  it('uses heuristic scoring when explicitly requested', async () => {
+    const { service, heuristicEvaluator, llmEvaluator } = createService();
+
+    const result = await service.runTaskEvaluation('exec-1', 'task-1', 'user-1', { advisorScoringMode: 'heuristic' });
+
+    expect(heuristicEvaluator.evaluate).toHaveBeenCalledTimes(1);
+    expect(llmEvaluator.evaluate).not.toHaveBeenCalled();
+    expect(result.taskResult.judgeScoringMode).toBe('heuristic');
+    expect(result.taskResult.judgeHistory[0]).toMatchObject({ scoringMode: 'heuristic' });
   });
 
   it('returns not found when execution does not exist', async () => {
@@ -128,9 +188,9 @@ describe('PlaybookFlowExecutionAdvisorService', () => {
     await expect(service.runTaskEvaluation('exec-1', 'task-1', 'user-1')).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('stores failed advisor status when grpc evaluation errors', async () => {
-    const { service, grpcService, taskResultDocument, streamEvents } = createService();
-    grpcService.evaluateTask.mockRejectedValueOnce(new Error('grpc failed'));
+  it('stores failed advisor status when llm evaluation errors', async () => {
+    const { service, llmEvaluator, taskResultDocument, streamEvents } = createService();
+    llmEvaluator.evaluate.mockRejectedValueOnce(new Error('llm failed'));
 
     const result = await service.runTaskEvaluation('exec-1', 'task-1', 'user-1');
 
@@ -140,7 +200,7 @@ describe('PlaybookFlowExecutionAdvisorService', () => {
       'user-1',
       'exec-1',
       'task-1',
-      expect.objectContaining({ judgeStatus: 'failed', judgeError: 'grpc failed' }),
+      expect.objectContaining({ judgeStatus: 'failed', judgeError: 'llm failed', advisorScoringMode: 'llm' }),
       undefined,
     );
   });

@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 export class StartPlaybookFlowExecutionDto {
   @ApiPropertyOptional({ description: 'Optional single node id for targeted step execution' })
@@ -31,4 +32,9 @@ export class StartPlaybookFlowExecutionDto {
   @IsOptional()
   @IsBoolean()
   reflectionEnabled?: boolean;
+
+  @ApiPropertyOptional({ description: 'Advisor scoring mode', enum: ADVISOR_SCORING_MODES, default: 'llm' })
+  @IsOptional()
+  @IsIn(ADVISOR_SCORING_MODES)
+  advisorScoringMode?: AdvisorScoringMode;
 }

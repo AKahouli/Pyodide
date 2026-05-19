@@ -915,12 +915,14 @@ export interface SyncModelsResponse {
 
 export interface AdminPlaybookSettings {
   inferenceModelId: string | null;
+  advisorEvaluationModelId: string | null;
   nodeSuggestionsMode: 'auto' | 'manual';
   approvalSuggestionMode: 'auto' | 'manual';
 }
 
 export interface UpdateAdminPlaybookSettingsRequest {
   inferenceModelId?: string | null;
+  advisorEvaluationModelId?: string | null;
   nodeSuggestionsMode: 'auto' | 'manual';
   approvalSuggestionMode: 'auto' | 'manual';
 }

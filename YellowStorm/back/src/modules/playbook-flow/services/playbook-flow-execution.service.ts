@@ -38,6 +38,7 @@ import {
   IResumeApprovalPayload,
 } from '../interfaces/playbook-flow-execution.interface';
 import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import {
   flattenUsage,
@@ -254,6 +255,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     advisorAutopilotTargetScore?: number,
     advisorAutopilotMaxTurns?: number,
     reflectionEnabled?: boolean,
+    advisorScoringMode?: AdvisorScoringMode,
   ): Promise<IFlowExecutionResponse> {
     const flow = await this.flowService.findOne(flowId, ownerId);
 
@@ -349,6 +351,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
     const enabledAutopilot = advisorAutopilotEnabled ?? (flow as any).advisorAutopilotEnabled ?? false;
     const enabledReflection = reflectionEnabled ?? (flow as any).reflectionEnabled ?? false;
+    const resolvedAdvisorScoringMode = advisorScoringMode ?? (flow as any).advisorScoringMode ?? 'llm';
     const execution = new this.executionModel({
       flowId,
       ownerId,
@@ -364,6 +367,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       advisorAutopilotTargetScore: advisorAutopilotTargetScore ?? (flow as any).advisorAutopilotTargetScore ?? undefined,
       advisorAutopilotMaxTurns: advisorAutopilotMaxTurns ?? (flow as any).advisorAutopilotMaxTurns ?? undefined,
       reflectionEnabled: enabledReflection,
+      advisorScoringMode: resolvedAdvisorScoringMode,
       seededTaskOutputs,
     });
 
@@ -656,7 +660,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         return;
       }
 
-      this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId);
+      const executionStartState = await this.executionModel.findById(
+        executionId,
+        'singleStepTaskId advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode',
+      ).lean().exec();
+
+      this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId, {
+        executionMode: 'live',
+        reflectionEnabled: executionStartState?.reflectionEnabled,
+        advisorScoringMode: executionStartState?.advisorScoringMode,
+        advisorAutopilotEnabled: executionStartState?.advisorAutopilotEnabled,
+        advisorAutopilotTargetScore: executionStartState?.advisorAutopilotTargetScore,
+        advisorAutopilotMaxTurns: executionStartState?.advisorAutopilotMaxTurns,
+        singleStepTaskId: executionStartState?.singleStepTaskId ?? null,
+      });
 
     this.logger.log(`Starting playbook flow execution ${executionId} with ${snapshot.nodes.length} nodes, ${agentIds.size} agent IDs found, ${agentMap.size} agents resolved`);
 
@@ -1035,9 +1052,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         this.observabilityService.toStreamPayload(resultPayload),
       );
 
-      const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled').lean().exec();
+      const execDoc = await this.executionModel.findById(executionId, 'ownerId advisorAutopilotEnabled reflectionEnabled advisorScoringMode').lean().exec();
       if (execDoc?.ownerId && (execDoc.advisorAutopilotEnabled || execDoc.reflectionEnabled)) {
-        this.advisorService.runTaskEvaluation(executionId, taskNodeId, String(execDoc.ownerId), { iteration }).catch((err) => {
+        this.advisorService.runTaskEvaluation(executionId, taskNodeId, String(execDoc.ownerId), {
+          iteration,
+          advisorScoringMode: execDoc.advisorScoringMode,
+        }).catch((err) => {
           this.logger.warn(`Auto-advisor evaluation failed for ${executionId}:${taskNodeId}: ${err instanceof Error ? err.message : String(err)}`);
         });
       }
@@ -1221,6 +1241,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           semanticMatch: r.semanticMatch as unknown as FlowSemanticMatchSummary | null | undefined,
           traceMetadata: r.traceMetadata as Record<string, unknown> ?? {},
           judgeStatus: (r as any).judgeStatus ?? 'idle',
+          judgeScoringMode: (r as any).judgeScoringMode ?? null,
           judgeResult: (r as any).judgeResult ?? null,
           judgeError: (r as any).judgeError ?? null,
           judgeHistory: Array.isArray((r as any).judgeHistory) ? (r as any).judgeHistory : [],
@@ -1301,6 +1322,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     execution.status = 'cancelled';
     execution.endedAt = new Date();
     await execution.save();
+
+    await this.taskResultModel.updateMany(
+      { executionId, status: { $in: ['pending', 'running'] } },
+      { status: 'cancelled' },
+    );
+
+    this.streamEvents.emitExecutionCancelled(executionId);
 
     if (this.isGrpcAvailable) {
       this.playbookFlowClient.Cancel({ execution_id: executionId }, (err: Error | null) => {

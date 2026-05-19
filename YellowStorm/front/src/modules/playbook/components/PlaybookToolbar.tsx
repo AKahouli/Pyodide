@@ -31,6 +31,8 @@ interface Props {
   onNodeReflectionChange: (enabled: boolean) => void;
   advisorAutopilotEnabled?: boolean;
   onAdvisorAutopilotChange?: (enabled: boolean) => void;
+  advisorScoringMode?: import('../types').AdvisorScoringMode;
+  onAdvisorScoringModeChange?: (mode: import('../types').AdvisorScoringMode) => void;
   /** Opens triggers dialog (design mode). */
   onTriggers?: () => void;
   triggersOpen?: boolean;
@@ -58,6 +60,8 @@ export function PlaybookToolbar({
   onNodeReflectionChange,
   advisorAutopilotEnabled = false,
   onAdvisorAutopilotChange,
+  advisorScoringMode = 'llm',
+  onAdvisorScoringModeChange,
   onTriggers,
   triggersOpen = false,
   designSettings,
@@ -125,6 +129,23 @@ export function PlaybookToolbar({
             <span>{t('toolbar.advisor')}</span>
             <Switch checked={nodeReflectionEnabled} onCheckedChange={onNodeReflectionChange} />
           </div>
+          {nodeReflectionEnabled && onAdvisorScoringModeChange && (
+            <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
+              <span>{t('toolbar.scoring')}</span>
+              <Select
+                value={advisorScoringMode}
+                onValueChange={(value: 'llm' | 'heuristic') => onAdvisorScoringModeChange(value)}
+              >
+                <SelectTrigger className="h-8 w-[130px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="llm">{t('toolbar.scoringLlm')}</SelectItem>
+                  <SelectItem value="heuristic">{t('toolbar.scoringHeuristic')}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {onAdvisorAutopilotChange && (
             <div className="flex items-center justify-between rounded-md border px-3 py-2 text-sm">
               <span>{t('toolbar.stepAutopilot')}</span>

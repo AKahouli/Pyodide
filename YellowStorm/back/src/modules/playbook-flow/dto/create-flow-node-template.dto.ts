@@ -14,6 +14,7 @@ import {
   FlowNodeTemplateRouterConfigDto,
   FlowNodeTemplateIteratorConfigDto,
   FlowNodeTemplateHumanApprovalConfigDto,
+  FlowNodeTemplateRetryPolicyDto,
 } from './flow-node-template-fields.dto';
 
 export type FlowNodeTemplateNodeType = 'agent' | 'action' | 'evaluation' | 'iterator' | 'router' | 'human_approval';
@@ -119,6 +120,17 @@ export class CreateFlowNodeTemplateDto {
   @ValidateNested()
   @Type(() => FlowNodeTemplateHumanApprovalConfigDto)
   humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfigDto | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FlowNodeTemplateRetryPolicyDto)
+  retryPolicy?: FlowNodeTemplateRetryPolicyDto | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  modelId?: string | null;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()

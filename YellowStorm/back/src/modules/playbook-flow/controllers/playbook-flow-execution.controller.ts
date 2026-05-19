@@ -9,6 +9,7 @@ import { RequirePermissions } from '@modules/authorization/decorators/require-pe
 import { PermissionsGuard } from '@modules/authorization/guards/permissions.guard';
 import { Permissions } from '@modules/authorization/constants/permissions';
 import { StartPlaybookFlowExecutionDto } from '../dto/start-playbook-flow-execution.dto';
+import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 @ApiTags('Playbook Flow Executions')
 @ApiBearerAuth()
@@ -35,9 +36,10 @@ export class PlaybookFlowExecutionController {
     const advisorAutopilotTargetScore: number | undefined = body.advisorAutopilotTargetScore;
     const advisorAutopilotMaxTurns: number | undefined = body.advisorAutopilotMaxTurns;
     const reflectionEnabled: boolean | undefined = body.reflectionEnabled;
+    const advisorScoringMode: AdvisorScoringMode | undefined = body.advisorScoringMode;
     const execution = await this.executionService.start(
       flowId, userId, body.inputContext, idempotencyKey, singleStepTaskId,
-      advisorAutopilotEnabled, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, reflectionEnabled,
+      advisorAutopilotEnabled, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, reflectionEnabled, advisorScoringMode,
     );
     return { executionId: (execution as any).id ?? (execution as any)._id?.toString() };
   }

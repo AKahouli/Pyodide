@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import { ADVISOR_SCORING_MODES, AdvisorScoringMode } from './playbook-flow.schema';
 
 export type FlowTaskResultDocument = HydratedDocument<FlowTaskResult>;
 
@@ -176,6 +177,15 @@ export class FlowTaskJudgeHistoryEntry {
   @Prop({ required: false, type: String, default: null })
   model?: string | null;
 
+  @Prop({ required: false, type: String, enum: ADVISOR_SCORING_MODES, default: 'llm' })
+  scoringMode?: AdvisorScoringMode;
+
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowTaskUsage), default: null })
+  usage?: FlowTaskUsage | null;
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskLlmPromptTraceItem)], default: [] })
+  llmPromptTrace?: FlowTaskLlmPromptTraceItem[];
+
   @Prop({ required: true, type: SchemaFactory.createForClass(FlowTaskJudgeResult) })
   judgeResult!: FlowTaskJudgeResult;
 }
@@ -191,7 +201,7 @@ export class FlowTaskResult {
   @Prop({ required: true, type: Number, default: 0 })
   iteration!: number;
 
-  @Prop({ required: true, type: String, enum: ['pending', 'running', 'completed', 'failed', 'skipped'], default: 'pending' })
+  @Prop({ required: true, type: String, enum: ['pending', 'running', 'completed', 'failed', 'skipped', 'cancelled'], default: 'pending' })
   status!: string;
 
   @Prop({ required: false, type: Object })
@@ -238,6 +248,9 @@ export class FlowTaskResult {
 
   @Prop({ required: false, type: SchemaFactory.createForClass(FlowTaskJudgeResult), default: null })
   judgeResult?: FlowTaskJudgeResult | null;
+
+  @Prop({ required: false, type: String, enum: ADVISOR_SCORING_MODES, default: null })
+  judgeScoringMode?: AdvisorScoringMode | null;
 
   @Prop({ required: false, type: String, default: null })
   judgeError?: string | null;

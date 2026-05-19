@@ -3,6 +3,9 @@ import { HydratedDocument } from 'mongoose';
 
 export type FlowDocument = HydratedDocument<Flow>;
 
+export const ADVISOR_SCORING_MODES = ['llm', 'heuristic'] as const;
+export type AdvisorScoringMode = (typeof ADVISOR_SCORING_MODES)[number];
+
 @Schema({ _id: false })
 export class FlowTriggerConfig {
   @Prop({ required: false, type: String })
@@ -276,6 +279,9 @@ export class Flow {
 
   @Prop({ required: false, type: Boolean, default: false })
   reflectionEnabled?: boolean;
+
+  @Prop({ required: false, type: String, enum: ADVISOR_SCORING_MODES, default: 'llm' })
+  advisorScoringMode?: AdvisorScoringMode;
 
   @Prop({ required: false, type: Boolean, default: false })
   advisorAutopilotEnabled?: boolean;

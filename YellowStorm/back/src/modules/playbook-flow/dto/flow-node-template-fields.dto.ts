@@ -134,3 +134,17 @@ export class FlowNodeTemplateHumanApprovalConfigDto {
   @Min(0)
   timeoutSeconds?: number | null;
 }
+
+export class FlowNodeTemplateRetryPolicyDto {
+  @ApiProperty({ minimum: 0, maximum: 10, default: 1 })
+  @IsInt()
+  @Min(0)
+  @Max(10)
+  maxRetries!: number;
+
+  @ApiPropertyOptional({ minimum: 0, default: 1000 })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  delayMs?: number;
+}

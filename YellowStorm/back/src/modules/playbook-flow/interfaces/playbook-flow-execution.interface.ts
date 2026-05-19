@@ -6,6 +6,7 @@ import {
   FlowUsageSummary,
 } from './playbook-flow-observability.interface';
 import type { FlowExecutionJudgeHistoryEntry, FlowExecutionJudgeResult } from './playbook-flow-execution-advisor.interface';
+import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 export interface IFlowExecutionResponse {
   id: string;
@@ -23,6 +24,11 @@ export interface IFlowExecutionResponse {
   pendingApproval: PendingApproval | null;
   queuePosition?: number;
   threadId?: string;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -61,6 +67,7 @@ export interface IFlowTaskResultResponse {
   semanticMatch?: FlowSemanticMatchSummary | null;
   traceMetadata?: Record<string, unknown>;
   judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeScoringMode?: AdvisorScoringMode | null;
   judgeResult?: FlowExecutionJudgeResult | null;
   judgeError?: string | null;
   judgeHistory?: FlowExecutionJudgeHistoryEntry[];

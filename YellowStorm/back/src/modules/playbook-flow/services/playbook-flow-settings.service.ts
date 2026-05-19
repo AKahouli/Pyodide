@@ -21,6 +21,31 @@ export class PlaybookFlowSettingsService {
     return this.systemService.getPlaybookSettings();
   }
 
+  async resolveAdvisorEvaluationModelId(): Promise<string> {
+    const adminSettings = await this.getAdminSettings();
+    const configuredModelId = adminSettings.advisorEvaluationModelId?.trim() || null;
+
+    if (configuredModelId) {
+      const validation = await this.modelsService.validateModelActive(configuredModelId);
+      if (validation.valid && validation.model) {
+        const identifier = this.modelsService.getModelIdentifier(validation.model);
+        if (identifier) {
+          return identifier;
+        }
+      }
+
+      throw new BadRequestException(ErrorCode.MODEL_INACTIVE, 'Advisor evaluation model is unavailable.');
+    }
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const fallbackIdentifier = this.modelsService.getModelIdentifier(defaultModel);
+    if (!fallbackIdentifier) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    return fallbackIdentifier;
+  }
+
   getDefaultPlaybookSettings(): FlowDesignSettings {
     return { ...DEFAULT_FLOW_DESIGN_SETTINGS };
   }
@@ -74,6 +99,7 @@ export class PlaybookFlowSettingsService {
 
     return {
       inferenceModelId: resolvedInferenceModelId,
+      advisorEvaluationModelId: adminSettings.advisorEvaluationModelId,
       nodeSuggestionsMode: normalized.nodeSuggestionsMode === 'inherit'
         ? adminSettings.nodeSuggestionsMode : normalized.nodeSuggestionsMode,
       approvalSuggestionMode: normalized.approvalSuggestionMode === 'inherit'

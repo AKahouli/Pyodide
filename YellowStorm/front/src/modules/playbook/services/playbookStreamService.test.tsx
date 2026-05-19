@@ -147,6 +147,54 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     unmount();
   });
 
+  it('hydrates empty active execution lists on reconnect and follower state sync', () => {
+    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
+
+    act(() => { vi.advanceTimersByTime(250); });
+
+    const es = EventSourceMock.instances[0];
+    const connectedListener = es.listeners.get('playbook_connected')?.[0];
+    connectedListener?.({
+      data: JSON.stringify({ connectionId: 'c1', activeExecutions: [] }),
+    } as MessageEvent);
+
+    expect(store.hydrateActiveExecutions).toHaveBeenCalledWith([]);
+
+    const bc = BroadcastChannelMock.instances[0];
+    bc.onmessage?.({ data: { type: 'state-response', activeExecutions: [] } } as MessageEvent);
+
+    expect(store.hydrateActiveExecutions).toHaveBeenLastCalledWith([]);
+
+    unmount();
+  });
+
+  it('shares pending-approval executions with follower tabs', () => {
+    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
+
+    act(() => { vi.advanceTimersByTime(250); });
+
+    const bc = BroadcastChannelMock.instances[0];
+    (store as any).executionCache = {
+      'exec-pending': {
+        id: 'exec-pending',
+        status: 'pending_approval',
+      },
+      'exec-complete': {
+        id: 'exec-complete',
+        status: 'completed',
+      },
+    };
+
+    bc.onmessage?.({ data: { type: 'state-request' } } as MessageEvent);
+
+    expect(bc.postMessage).toHaveBeenCalledWith({
+      type: 'state-response',
+      activeExecutions: [{ id: 'exec-pending', status: 'pending_approval' }],
+    });
+
+    unmount();
+  });
+
   it('batches rapid step updates and only applies the latest payload per step', () => {
     const { unmount } = renderHook(() => usePlaybookStreamGlobal());
 

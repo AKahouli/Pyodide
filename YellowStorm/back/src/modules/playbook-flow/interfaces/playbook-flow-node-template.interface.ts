@@ -34,6 +34,11 @@ export interface FlowNodeTemplateHumanApprovalConfig {
   timeoutSeconds?: number | null;
 }
 
+export interface FlowNodeTemplateRetryPolicy {
+  maxRetries: number;
+  delayMs?: number;
+}
+
 export interface FlowNodeTemplateResponse {
   id: string;
   key: string;
@@ -55,6 +60,8 @@ export interface FlowNodeTemplateResponse {
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
   routerConfig?: FlowNodeTemplateRouterConfig | null;
   humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | null;
+  retryPolicy?: FlowNodeTemplateRetryPolicy | null;
+  modelId?: string | null;
   enabled: boolean;
   version: number;
   isBuiltIn: boolean;
@@ -86,6 +93,8 @@ export interface CreateFlowNodeTemplateRequest {
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
   routerConfig?: FlowNodeTemplateRouterConfig | null;
   humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | null;
+  retryPolicy?: FlowNodeTemplateRetryPolicy | null;
+  modelId?: string | null;
   enabled?: boolean;
 }
 
@@ -109,5 +118,7 @@ export interface UpdateFlowNodeTemplateRequest {
   iteratorConfig?: FlowNodeTemplateIteratorConfig | null;
   routerConfig?: FlowNodeTemplateRouterConfig | null;
   humanApprovalConfig?: FlowNodeTemplateHumanApprovalConfig | null;
+  retryPolicy?: FlowNodeTemplateRetryPolicy | null;
+  modelId?: string | null;
   enabled?: boolean;
 }

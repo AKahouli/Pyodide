@@ -1,3 +1,5 @@
+import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
+
 export interface FlowExecutionJudgeResult {
   accuracyScore: number;
   completenessScore: number;
@@ -26,12 +28,36 @@ export interface FlowExecutionJudgeResult {
   reason: string;
 }
 
+export interface FlowExecutionJudgeUsage {
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  model?: string | null;
+}
+
+export interface FlowExecutionJudgePromptTraceItem {
+  stage: string;
+  model: string;
+  prompt: string;
+}
+
 export interface FlowExecutionJudgeHistoryEntry {
   id: string;
   createdAt: string;
   attemptNumber: number | null;
   model: string | null;
+  scoringMode: AdvisorScoringMode;
+  usage?: FlowExecutionJudgeUsage | null;
+  llmPromptTrace?: FlowExecutionJudgePromptTraceItem[];
   judgeResult: FlowExecutionJudgeResult;
+}
+
+export interface FlowExecutionAdvisorEvaluationResult {
+  judgeResult: FlowExecutionJudgeResult;
+  model: string | null;
+  scoringMode: AdvisorScoringMode;
+  usage?: FlowExecutionJudgeUsage | null;
+  llmPromptTrace?: FlowExecutionJudgePromptTraceItem[];
 }
 
 export interface FlowExecutionAdvisorTaskResponse {
@@ -44,6 +70,7 @@ export interface FlowExecutionAdvisorTaskResponse {
     output?: unknown;
     error?: string;
     judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+    judgeScoringMode?: AdvisorScoringMode | null;
     judgeResult: FlowExecutionJudgeResult | null;
     judgeError: string | null;
     judgeHistory: FlowExecutionJudgeHistoryEntry[];

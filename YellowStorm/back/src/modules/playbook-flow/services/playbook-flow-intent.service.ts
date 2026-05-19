@@ -98,6 +98,25 @@ type PlaybookIntentWorkflowChange =
     sourceNodeRef: string | null;
     targetTaskId: string | null;
     targetNodeRef: string | null;
+    sourceOutputPortId?: string | null;
+    targetInputPortId?: string | null;
+  }
+  | {
+    type: 'create_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetPort: string;
+    sourceKind: 'node-output';
+    sourceTaskId: string | null;
+    sourceNodeRef: string | null;
+    sourcePort: string | null;
+    iteration?: 'current' | 'previous';
+  }
+  | {
+    type: 'delete_data_binding';
+    targetTaskId: string | null;
+    targetNodeRef: string | null;
+    targetPort: string;
   };
 
 interface PlaybookIntentWorkflowPlanSuggestion {
@@ -113,6 +132,8 @@ interface PlaybookIntentWorkflowPlanSuggestion {
     nodesToDelete: number;
     edgesToCreate: number;
     edgesToDelete: number;
+    dataBindingsToCreate: number;
+    dataBindingsToDelete: number;
     affectedTaskIds: string[];
     businessOutcome: string;
   };
@@ -217,38 +238,56 @@ export class PlaybookFlowIntentService {
   }
 
   private buildWorkflowSummary(flow: any, selectedNodeId: string | null) {
-    const nodes: Array<{ id: string; label?: string; description?: string }> = flow.nodes || [];
-    const edges: Array<{ source: string; target: string }> = flow.controlEdges || [];
+    const nodes: Array<{ id: string; label?: string; description?: string; input?: { ports?: Array<{ id: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const edges: Array<{ source: string; target: string; sourceOutputPortId?: string; targetInputPortId?: string }> = flow.controlEdges || [];
+    const bindings: Array<{ id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string; iteration?: string }> = flow.dataBindings || [];
 
     return {
       taskCount: nodes.length,
       edgeCount: edges.length,
+      dataBindingCount: bindings.length,
       tasks: nodes.map((node) => ({
         id: node.id,
         title: node.label || node.id,
         description: node.description || '',
+        inputPorts: (node.input?.ports || []).map((p) => ({ id: p.id, type: p.type, required: p.required === true })),
+        outputPorts: (node.output?.ports || []).map((p) => ({ id: p.id, type: p.type })),
       })),
       edges: edges.map((edge) => ({
         sourceId: edge.source,
         targetId: edge.target,
+        sourceOutputPortId: edge.sourceOutputPortId || null,
+        targetInputPortId: edge.targetInputPortId || null,
+      })),
+      dataBindings: bindings.map((b) => ({
+        id: b.id,
+        sourceKind: b.sourceKind,
+        targetNode: b.targetNode,
+        targetPort: b.targetPort,
+        sourceNode: b.sourceNode || null,
+        sourcePort: b.sourcePort || null,
+        iteration: b.iteration || null,
       })),
     };
   }
 
   private buildSelectedNodeContext(flow: any, selectedNodeId: string | null) {
     if (!selectedNodeId) {
-      return { upstream: [], downstream: [] };
+      return { upstream: [], downstream: [], incomingBindings: [], outgoingBindings: [] };
     }
 
     const edges: Array<{ source: string; target: string }> = flow.controlEdges || [];
-    const nodes: Array<{ id: string; label?: string; description?: string }> = flow.nodes || [];
+    const nodes: Array<{ id: string; label?: string; description?: string; input?: { ports?: Array<{ id: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const bindings: Array<{ id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string }> = flow.dataBindings || [];
 
     const upstreamIds = edges.filter((e) => e.target === selectedNodeId).map((e) => e.source);
     const downstreamIds = edges.filter((e) => e.source === selectedNodeId).map((e) => e.target);
 
     return {
-      upstream: nodes.filter((n) => upstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '' })),
-      downstream: nodes.filter((n) => downstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '' })),
+      upstream: nodes.filter((n) => upstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', outputPorts: (n.output?.ports || []).map((p) => ({ id: p.id, type: p.type })) })),
+      downstream: nodes.filter((n) => downstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', inputPorts: (n.input?.ports || []).map((p) => ({ id: p.id, type: p.type, required: p.required === true })) })),
+      incomingBindings: bindings.filter((b) => b.targetNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, sourceNode: b.sourceNode || null, sourcePort: b.sourcePort || null, targetPort: b.targetPort })),
+      outgoingBindings: bindings.filter((b) => b.sourceNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, targetNode: b.targetNode, targetPort: b.targetPort, sourcePort: b.sourcePort || null })),
     };
   }
 
@@ -402,6 +441,47 @@ export class PlaybookFlowIntentService {
       };
     }
 
+    if (item.type === 'create_data_binding') {
+      const targetTaskId = this.normalizeText(item.targetTaskId);
+      const targetNodeRef = this.normalizeText(item.targetNodeRef);
+      const targetPort = this.normalizeText(item.targetPort);
+      if (!targetPort || !(targetTaskId || targetNodeRef)) {
+        return null;
+      }
+      const sourceTaskId = this.normalizeText(item.sourceTaskId);
+      const sourceNodeRef = this.normalizeText(item.sourceNodeRef);
+      const sourcePort = this.normalizeText(item.sourcePort);
+      if (item.sourceKind !== 'node-output' || !(sourceTaskId || sourceNodeRef) || !sourcePort) {
+        return null;
+      }
+      return {
+        type: 'create_data_binding',
+        targetTaskId: targetTaskId || null,
+        targetNodeRef: targetNodeRef || null,
+        targetPort,
+        sourceKind: 'node-output',
+        sourceTaskId: sourceTaskId || null,
+        sourceNodeRef: sourceNodeRef || null,
+        sourcePort: sourcePort || null,
+        iteration: item.iteration === 'previous' ? 'previous' : 'current',
+      };
+    }
+
+    if (item.type === 'delete_data_binding') {
+      const targetTaskId = this.normalizeText(item.targetTaskId);
+      const targetNodeRef = this.normalizeText(item.targetNodeRef);
+      const targetPort = this.normalizeText(item.targetPort);
+      if (!targetPort || !(targetTaskId || targetNodeRef)) {
+        return null;
+      }
+      return {
+        type: 'delete_data_binding',
+        targetTaskId: targetTaskId || null,
+        targetNodeRef: targetNodeRef || null,
+        targetPort,
+      };
+    }
+
     return null;
   }
 
@@ -547,6 +627,8 @@ export class PlaybookFlowIntentService {
       nodesToDelete: this.normalizeCount(item.nodesToDelete, changes.filter((change) => change.type === 'delete_node').length),
       edgesToCreate: this.normalizeCount(item.edgesToCreate, changes.filter((change) => change.type === 'create_edge').length),
       edgesToDelete: this.normalizeCount(item.edgesToDelete, changes.filter((change) => change.type === 'delete_edge').length),
+      dataBindingsToCreate: this.normalizeCount((item as Record<string, unknown>).dataBindingsToCreate, changes.filter((change) => change.type === 'create_data_binding').length),
+      dataBindingsToDelete: this.normalizeCount((item as Record<string, unknown>).dataBindingsToDelete, changes.filter((change) => change.type === 'delete_data_binding').length),
       affectedTaskIds: [...new Set(affectedTaskIds)],
       businessOutcome: this.normalizeText(item.businessOutcome),
     };

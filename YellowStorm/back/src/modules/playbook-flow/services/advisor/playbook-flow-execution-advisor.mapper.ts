@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { FlowNode } from '../../schemas/playbook-flow.schema';
 import type { FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
 import type {
+  FlowExecutionAdvisorEvaluationResult,
   FlowExecutionAdvisorTaskResponse,
   FlowExecutionJudgeHistoryEntry,
   FlowExecutionJudgeResult,
@@ -87,13 +88,57 @@ export class PlaybookFlowExecutionAdvisorMapper {
     };
   }
 
-  buildHistoryEntry(judgeResult: FlowExecutionJudgeResult, model: string | null, attemptNumber: number): FlowExecutionJudgeHistoryEntry {
+  mapLlmJudgeResult(rawContent: string): FlowExecutionJudgeResult {
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(rawContent) as Record<string, unknown>;
+    } catch {
+      throw new Error('Advisor evaluation returned invalid JSON.');
+    }
+
+    const list = (key: keyof FlowExecutionJudgeResult) => Array.isArray(parsed[key]) ? parsed[key].map(String) : [];
+    const score = (key: keyof FlowExecutionJudgeResult) => this.clampScore(parsed[key]);
+    const text = (key: keyof FlowExecutionJudgeResult) => typeof parsed[key] === 'string' ? parsed[key] : '';
+
+    return {
+      accuracyScore: score('accuracyScore'),
+      completenessScore: score('completenessScore'),
+      resultMatchingScore: score('resultMatchingScore'),
+      overallScore: score('overallScore'),
+      confidence: score('confidence'),
+      toolUsageScore: score('toolUsageScore'),
+      expectedResultSource: this.mapExpectedResultSource(parsed.expectedResultSource),
+      expectedResultType: this.mapExpectedResultType(parsed.expectedResultType),
+      expectedResultMatched: Boolean(parsed.expectedResultMatched),
+      expectedResultReason: text('expectedResultReason'),
+      missingFacts: list('missingFacts'),
+      incoherences: list('incoherences'),
+      unsupportedClaims: list('unsupportedClaims'),
+      handoffRisks: list('handoffRisks'),
+      rewriteHints: list('rewriteHints'),
+      toolSelectionIssues: list('toolSelectionIssues'),
+      missingToolCalls: list('missingToolCalls'),
+      redundantToolCalls: list('redundantToolCalls'),
+      toolOutputUseIssues: list('toolOutputUseIssues'),
+      toolSequencingIssues: list('toolSequencingIssues'),
+      toolUsageStrengths: list('toolUsageStrengths'),
+      toolUsageRecommendation: text('toolUsageRecommendation'),
+      safeAutoFixType: parsed.safeAutoFixType === 'optimize_step' ? 'optimize_step' : 'none',
+      recommendation: this.mapRecommendation(parsed.recommendation),
+      reason: text('reason'),
+    };
+  }
+
+  buildHistoryEntry(evaluation: FlowExecutionAdvisorEvaluationResult, attemptNumber: number): FlowExecutionJudgeHistoryEntry {
     return {
       id: randomUUID(),
       createdAt: new Date().toISOString(),
       attemptNumber,
-      model,
-      judgeResult,
+      model: evaluation.model,
+      scoringMode: evaluation.scoringMode,
+      usage: evaluation.usage ?? null,
+      llmPromptTrace: evaluation.llmPromptTrace ?? [],
+      judgeResult: evaluation.judgeResult,
     };
   }
 
@@ -105,6 +150,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
     taskOutput?: unknown;
     taskError?: string;
     judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+    judgeScoringMode?: import('../../schemas/playbook-flow.schema').AdvisorScoringMode | null;
     judgeResult: FlowExecutionJudgeResult | null;
     judgeError: string | null;
     judgeHistory: FlowExecutionJudgeHistoryEntry[];
@@ -119,6 +165,7 @@ export class PlaybookFlowExecutionAdvisorMapper {
         output: params.taskOutput,
         error: params.taskError,
         judgeStatus: params.judgeStatus,
+        judgeScoringMode: params.judgeScoringMode ?? null,
         judgeResult: params.judgeResult,
         judgeError: params.judgeError,
         judgeHistory: params.judgeHistory,
@@ -147,5 +194,13 @@ export class PlaybookFlowExecutionAdvisorMapper {
     return value === 'update_current_playbook' || value === 'generate_new_optimized_playbook' || value === 'none'
       ? value
       : 'none';
+  }
+
+  private clampScore(value: unknown): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.min(100, Math.round(value)));
   }
 }

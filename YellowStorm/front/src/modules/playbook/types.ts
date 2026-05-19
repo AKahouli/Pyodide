@@ -57,6 +57,8 @@ export interface TaskTemplate {
   iteratorConfig?: PlaybookIteratorConfig | null;
   routerConfig?: RouterConfig | null;
   humanApprovalConfig?: HumanApprovalConfig | null;
+  retryPolicy?: RetryPolicy | null;
+  modelId?: string | null;
 }
 
 // ===== Domain Entities =====
@@ -86,6 +88,7 @@ export type ControlEdgeKind = 'sequential' | 'conditional';
 export type DataBindingSourceKind = 'node-output' | 'trigger' | 'state' | 'constant' | 'expression';
 export type DataBindingIterationRef = 'current' | 'previous';
 export type RouterConditionOperator = 'equals' | 'not_equals' | 'contains' | 'exists' | 'gt' | 'gte' | 'lt' | 'lte';
+export type AdvisorScoringMode = 'llm' | 'heuristic';
 
 export type IteratorMode = 'item' | 'batch';
 export type IteratorErrorStrategy = 'stop' | 'continue';
@@ -233,6 +236,8 @@ export interface PlaybookTask {
   containerConfig?: PlaybookContainerConfig | null;
   routerConfig?: RouterConfig | null;
   humanApprovalConfig?: HumanApprovalConfig | null;
+  retryPolicy?: RetryPolicy | null;
+  modelId?: string | null;
   expectedResult?: string | null;
   disableAdvisorEvaluation?: boolean;
   advisorOptimizedAt?: string | null;
@@ -410,6 +415,23 @@ export type PlaybookIntentWorkflowChange =
       targetNodeRef: string | null;
       sourceOutputPortId?: string | null;
       targetInputPortId?: string | null;
+    }
+  | {
+      type: 'create_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetPort: string;
+      sourceKind: 'node-output';
+      sourceTaskId: string | null;
+      sourceNodeRef: string | null;
+      sourcePort: string | null;
+      iteration?: 'current' | 'previous';
+    }
+  | {
+      type: 'delete_data_binding';
+      targetTaskId: string | null;
+      targetNodeRef: string | null;
+      targetPort: string;
     };
 
 export interface PlaybookIntentWorkflowImpact {
@@ -418,6 +440,8 @@ export interface PlaybookIntentWorkflowImpact {
   nodesToDelete: number;
   edgesToCreate: number;
   edgesToDelete: number;
+  dataBindingsToCreate: number;
+  dataBindingsToDelete: number;
   affectedTaskIds: string[];
   businessOutcome: string;
 }
@@ -688,6 +712,7 @@ export interface Playbook {
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
   reflectionEnabled: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   workspaces: string[];
   createdBy: string;
   isFavorite: boolean;
@@ -811,6 +836,7 @@ export interface TaskResult {
   semanticMatch?: SemanticMatchResult | null;
   traceMetadata?: Record<string, unknown> | null;
   judgeStatus?: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+  judgeScoringMode?: AdvisorScoringMode | null;
   judgeResult?: {
     accuracyScore: number;
     completenessScore: number;
@@ -844,6 +870,14 @@ export interface TaskResult {
     createdAt: string;
     attemptNumber: number | null;
     model: string | null;
+    scoringMode: AdvisorScoringMode;
+    usage?: {
+      inputTokens?: number | null;
+      outputTokens?: number | null;
+      totalTokens?: number | null;
+      model?: string | null;
+    } | null;
+    llmPromptTrace?: LLMPromptTraceItem[];
     judgeResult: {
       accuracyScore: number;
       completenessScore: number;
@@ -912,6 +946,7 @@ export interface PlaybookExecution {
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   executionTrigger?: 'manual' | 'scheduled';
   reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1050,7 +1085,7 @@ export interface OutputFormatTemplate {
 
 // ===== Enums =====
 
-export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted' | 'queued' | 'pending_approval';
+export type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted' | 'cancelled' | 'queued' | 'pending_approval';
 export type ExecutionStatus = 'queued' | 'pending' | 'running' | 'pending_approval' | 'completed' | 'failed' | 'interrupted' | 'cancelled';
 export type PlaybookPageMode = 'design' | 'run';
 export type PlaybookCopilotMode = 'design' | 'interrupt';
@@ -1134,6 +1169,7 @@ export interface PlaybookExecutionStartEvent {
   status: string;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1249,6 +1285,7 @@ export interface PlaybookStepJudgeStartedEvent {
   executionId: string;
   taskId: string;
   iteration?: number;
+  advisorScoringMode?: AdvisorScoringMode;
   judgeStatus: 'evaluating';
 }
 
@@ -1256,6 +1293,7 @@ export interface PlaybookStepJudgeUpdatedEvent {
   executionId: string;
   taskId: string;
   iteration?: number;
+  advisorScoringMode?: AdvisorScoringMode;
   judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
   judgeResult?: TaskResult['judgeResult'];
   judgeError?: string | null;
@@ -1334,6 +1372,7 @@ export interface PlaybookSnapshot {
 export interface PlaybookUndoSnapshot {
   tasks: PlaybookTask[];
   edges: PlaybookEdge[];
+  dataBindings: DataBinding[];
   name: string;
   workspaces: string[];
 }
@@ -1367,6 +1406,7 @@ export interface UpdatePlaybookData {
   settings?: FlowSettings;
   workspaces?: string[];
   reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1380,6 +1420,7 @@ export interface ExecutePlaybookData {
   runEvaluation?: boolean;
   streaming?: boolean;
   runNodeReflection?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1420,6 +1461,7 @@ export interface RerunStepData {
   executionMode?: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   streaming?: boolean;
   runNodeReflection?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
@@ -1919,6 +1961,11 @@ export interface Flow {
   dataBindings: DataBinding[];
   workspaces: string[];
   designSettings?: Record<string, unknown>;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number | null;
+  advisorAutopilotMaxTurns?: number | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -1955,4 +2002,9 @@ export interface UpdateFlowData {
   dataBindings?: DataBinding[];
   workspaces?: string[];
   designSettings?: Record<string, unknown>;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number;
+  advisorAutopilotMaxTurns?: number;
 }

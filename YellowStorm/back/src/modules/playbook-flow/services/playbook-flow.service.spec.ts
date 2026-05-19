@@ -117,8 +117,50 @@ describe('PlaybookFlowService', () => {
 
     expect(flowModel).toHaveBeenCalledWith(expect.objectContaining({
       workspaces: ['workspace-1'],
+      advisorScoringMode: 'llm',
     }));
     expect(result.workspaces).toEqual(['workspace-1']);
+  });
+
+  it('defaults advisor scoring mode to llm on create', async () => {
+    const savedFlow = {
+      toJSON: jest.fn().mockReturnValue({
+        id: 'flow-2',
+        ownerId: 'owner-1',
+        schemaVersion: 1,
+        name: 'Flow',
+        description: 'Description',
+        settings: { recursionLimit: 25, maxParallelism: 5 },
+        nodes: [],
+        controlEdges: [],
+        dataBindings: [],
+        workspaces: ['workspace-1'],
+        advisorScoringMode: 'llm',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    };
+    const flowModel = jest.fn().mockImplementation((doc) => ({
+      ...doc,
+      save: jest.fn().mockResolvedValue(savedFlow),
+    }));
+    const validatorService = { validate: jest.fn() };
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      validatorService as any,
+      {} as any,
+    );
+
+    await service.create('owner-1', {
+      name: 'Flow',
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: ['workspace-1'],
+    } as any);
+
+    expect(flowModel).toHaveBeenCalledWith(expect.objectContaining({ advisorScoringMode: 'llm' }));
   });
 
   it('rejects create when no workspace is selected', async () => {
@@ -174,6 +216,7 @@ describe('PlaybookFlowService', () => {
       controlEdges: [],
       dataBindings: [],
       workspaces: ['workspace-1'],
+      advisorScoringMode: 'heuristic',
       save: jest.fn().mockResolvedValue({
         toJSON: () => ({
           id: '507f1f77bcf86cd799439011',
@@ -192,6 +235,7 @@ describe('PlaybookFlowService', () => {
             targetInputPortId: 'in-3',
           }],
           dataBindings: [],
+          advisorScoringMode: 'heuristic',
           createdAt: new Date(),
           updatedAt: new Date(),
         }),
@@ -218,6 +262,7 @@ describe('PlaybookFlowService', () => {
         sourceOutputPortId: 'out-2',
         targetInputPortId: 'in-3',
       }],
+      advisorScoringMode: 'heuristic',
     } as any);
 
     expect(existing.controlEdges[0]).toMatchObject({
@@ -241,6 +286,7 @@ describe('PlaybookFlowService', () => {
       sourceOutputPortId: 'out-2',
       targetInputPortId: 'in-3',
     });
+    expect(existing.advisorScoringMode).toBe('heuristic');
   });
 
   it('normalizes workspace updates to a single default workspace', async () => {
@@ -678,6 +724,7 @@ describe('PlaybookFlowService', () => {
       workspaces: [],
       designSettings: { inferenceModelId: 'model-1' },
       reflectionEnabled: true,
+      advisorScoringMode: 'heuristic',
       advisorAutopilotEnabled: true,
       advisorAutopilotTargetScore: 91,
       advisorAutopilotMaxTurns: 5,
@@ -697,6 +744,7 @@ describe('PlaybookFlowService', () => {
       workspaces: [],
       designSettings: { inferenceModelId: 'model-1' },
       reflectionEnabled: true,
+      advisorScoringMode: 'heuristic',
       advisorAutopilotEnabled: true,
       advisorAutopilotTargetScore: 91,
       advisorAutopilotMaxTurns: 5,

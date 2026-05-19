@@ -9,6 +9,7 @@ import { ControlEdgeDto } from './playbook-flow-control-edge.dto';
 import { DataBindingDto } from './playbook-flow-data-binding.dto';
 import { FlowTriggerConfigDto, FlowSettingsDto } from './playbook-flow-node.dto';
 import { NODE_KINDS } from '../constants/node-kinds';
+import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 export class CreatePlaybookFlowDto {
   @ApiProperty({ minLength: 2, maxLength: 100 })
@@ -68,6 +69,11 @@ export class CreatePlaybookFlowDto {
   @ApiPropertyOptional()
   @IsOptional()
   reflectionEnabled?: boolean;
+
+  @ApiPropertyOptional({ enum: ADVISOR_SCORING_MODES, default: 'llm' })
+  @IsOptional()
+  @IsEnum(ADVISOR_SCORING_MODES)
+  advisorScoringMode?: AdvisorScoringMode;
 
   @ApiPropertyOptional()
   @IsOptional()

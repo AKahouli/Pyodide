@@ -155,6 +155,21 @@ export class FlowNodeTemplate {
     timeoutSeconds?: number | null;
   } | null;
 
+  @Prop({
+    type: {
+      maxRetries: { type: Number, min: 0, max: 10, default: 1 },
+      delayMs: { type: Number, min: 0, default: 1000 },
+    },
+    default: null,
+  })
+  retryPolicy!: {
+    maxRetries: number;
+    delayMs?: number;
+  } | null;
+
+  @Prop({ type: String, default: null, trim: true })
+  modelId!: string | null;
+
   @Prop({ type: Number, default: 1, min: 1 })
   version!: number;
 

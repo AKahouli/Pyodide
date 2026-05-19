@@ -214,12 +214,9 @@ function scheduleJudgeRefresh(executionId: string, playbookId: string): void {
     void usePlaybookStore.getState().fetchExecution(playbookId, executionId)
       .then(() => {
         const execution = usePlaybookStore.getState().executionCache[executionId];
-        const hasJudgeResult = Boolean(
-          execution?.judgeSummaryStatus === 'evaluated'
-          || execution?.taskResults?.some((task) => task.judgeStatus === 'evaluated' && task.judgeResult),
-        );
+        const hasPendingEvaluations = execution?.taskResults?.some((task) => task.judgeStatus === 'evaluating') ?? false;
 
-        if (hasJudgeResult || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
+        if (!hasPendingEvaluations || attempt >= JUDGE_REFRESH_MAX_ATTEMPTS) {
           clearJudgeRefreshTimer(executionId);
           return;
         }
@@ -256,8 +253,10 @@ function getPreferredSelectedStepId(
 /** Status priority for smart merge — higher wins. */
 const STATUS_PRIORITY: Record<string, number> = {
   pending: 0,
+  queued: 0,
   running: 1,
   interrupted: 2,
+  pending_approval: 2,
   completed: 3,
   failed: 3,
   skipped: 3,
@@ -265,7 +264,7 @@ const STATUS_PRIORITY: Record<string, number> = {
 };
 
 function isActiveExecutionStatus(status: ExecutionStatus | string | null | undefined): boolean {
-  return status === 'running' || status === 'interrupted';
+  return status === 'queued' || status === 'running' || status === 'interrupted' || status === 'pending_approval';
 }
 
 function isNewerStatus(a: string, b: string): boolean {
@@ -367,6 +366,17 @@ function hasRicherJudgeState(
   }
 
   return (cachedTaskResult.judgeHistory?.length || 0) > (incomingTaskResult.judgeHistory?.length || 0);
+}
+
+function getTaskResultCacheKey(taskResult: Pick<PlaybookExecution['taskResults'][number], 'taskId' | 'iteration'>): string {
+  const normalizedIteration = taskResult.iteration === undefined || taskResult.iteration === 0
+    ? 'base'
+    : taskResult.iteration;
+  return `${taskResult.taskId}::${normalizedIteration}`;
+}
+
+function iterationsMatch(a: number | undefined, b: number | undefined): boolean {
+  return (a ?? 0) === (b ?? 0);
 }
 
 function buildAncestorTaskIdSet(
@@ -828,6 +838,21 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 tasks: state.currentPlaybook.tasks,
                 edges: state.currentPlaybook.edges,
                 dataBindings: state.currentPlaybook.dataBindings,
+                reflectionEnabled: hasNewerLocalChanges
+                  ? state.currentPlaybook.reflectionEnabled
+                  : playbook.reflectionEnabled,
+                advisorScoringMode: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorScoringMode
+                  : playbook.advisorScoringMode,
+                advisorAutopilotEnabled: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorAutopilotEnabled
+                  : playbook.advisorAutopilotEnabled,
+                advisorAutopilotTargetScore: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorAutopilotTargetScore
+                  : playbook.advisorAutopilotTargetScore,
+                advisorAutopilotMaxTurns: hasNewerLocalChanges
+                  ? state.currentPlaybook.advisorAutopilotMaxTurns
+                  : playbook.advisorAutopilotMaxTurns,
               },
             isDirty: hasNewerLocalChanges ? state.isDirty : false,
             isSaving: isLatestSaveRequest ? false : state.isSaving,
@@ -1151,6 +1176,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           settings: currentPlaybook.settings,
           workspaces: currentPlaybook.workspaces,
           reflectionEnabled: currentPlaybook.reflectionEnabled,
+          advisorScoringMode: currentPlaybook.advisorScoringMode,
           advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
           advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
           advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
@@ -1190,6 +1216,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionMode: data?.executionMode || 'live',
               executionTrigger: 'manual',
               reflectionEnabled: data?.runNodeReflection !== false,
+              advisorScoringMode: data?.advisorScoringMode ?? state.currentPlaybook?.advisorScoringMode ?? 'llm',
               advisorAutopilotEnabled: data?.advisorAutopilotEnabled === true,
               advisorAutopilotTargetScore: data?.advisorAutopilotTargetScore ?? 90,
               advisorAutopilotMaxTurns: data?.advisorAutopilotMaxTurns ?? 4,
@@ -1243,6 +1270,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         set({ isStopping: true });
         try {
           await api.cancelFlowExecution(executionId);
+          set({ isStopping: false });
         } catch (err) {
           set({ isStopping: false });
           handleApiError(err);
@@ -1915,7 +1943,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
       runAdvisorEvaluation: async (executionId, taskId, iteration) => {
         const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
           taskResult.taskId === taskId
-          && (iteration === undefined || taskResult.iteration === iteration)
+          && (iteration === undefined || iterationsMatch(taskResult.iteration, iteration))
         );
 
         set((state) => {
@@ -1936,19 +1964,25 @@ export const usePlaybookStore = create<PlaybookStore>()(
         });
 
         try {
-          const result = await api.runAdvisorEvaluation(executionId, taskId, iteration);
+          const result = await api.runAdvisorEvaluation(
+            executionId,
+            taskId,
+            iteration,
+            get().executionCache[executionId]?.advisorScoringMode,
+          );
           set((state) => {
             const cached = state.executionCache[result.executionId];
             if (!cached) return state;
 
             const taskResults = cached.taskResults.map((taskResult) => (
               taskResult.taskId === result.taskId
-                && taskResult.iteration === result.taskResult.iteration
+                && iterationsMatch(taskResult.iteration, result.taskResult.iteration)
                 ? {
                     ...taskResult,
                     judgeStatus: result.taskResult.judgeStatus,
                     judgeResult: result.taskResult.judgeResult,
                     judgeError: result.taskResult.judgeError,
+                    judgeScoringMode: result.taskResult.judgeScoringMode,
                     judgeHistory: result.taskResult.judgeHistory,
                   }
                 : taskResult
@@ -2185,6 +2219,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           executionMode: data.executionMode || 'live',
           executionTrigger: 'manual',
           reflectionEnabled: data.reflectionEnabled !== false,
+          advisorScoringMode: data.advisorScoringMode ?? 'llm',
           advisorAutopilotEnabled: data.advisorAutopilotEnabled === true,
           advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 90,
           advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 4,
@@ -2225,7 +2260,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           durationMs: null,
           startedAt: new Date().toISOString(),
           completedAt: null,
-          singleStepTaskId: null,
+          singleStepTaskId: data.singleStepTaskId ?? null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         };
@@ -2393,7 +2428,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const existing = cached.taskResults;
           const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
             taskResult.taskId === data.taskId
-            && (data.iteration === undefined || taskResult.iteration === data.iteration)
+            && (data.iteration === undefined || iterationsMatch(taskResult.iteration, data.iteration))
           );
           const found = existing.some(matchesTargetIteration);
           const taskResults = found
@@ -2596,8 +2631,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const taskResults = cached.taskResults.map((tr) =>
             tr.taskId === data.taskId
-              && (data.iteration === undefined || tr.iteration === data.iteration)
-              ? { ...tr, judgeStatus: 'evaluating' as const, judgeError: null }
+              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration))
+              ? {
+                  ...tr,
+                  judgeStatus: 'evaluating' as const,
+                  judgeScoringMode: data.advisorScoringMode ?? tr.judgeScoringMode ?? null,
+                  judgeError: null,
+                  judgeResult: null,
+                }
               : tr,
           );
 
@@ -2616,14 +2657,15 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
           const taskResults = cached.taskResults.map((tr) =>
             tr.taskId === data.taskId
-              && (data.iteration === undefined || tr.iteration === data.iteration)
+              && (data.iteration === undefined || iterationsMatch(tr.iteration, data.iteration))
               ? {
                   ...tr,
                   judgeStatus: data.judgeStatus,
-                judgeResult: data.judgeResult ?? null,
-                judgeError: data.judgeError ?? null,
-                judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
-              }
+                  judgeScoringMode: data.advisorScoringMode ?? tr.judgeScoringMode ?? null,
+                  judgeResult: data.judgeResult ?? null,
+                  judgeError: data.judgeError ?? null,
+                  judgeHistory: data.judgeHistoryEntry ? [...(tr.judgeHistory || []), data.judgeHistoryEntry] : tr.judgeHistory || [],
+                }
               : tr,
           );
 
@@ -2792,7 +2834,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           let executionCache = state.executionCache;
           if (cachedExec) {
             let taskResults = cachedExec.taskResults;
-            if (status === 'completed' || status === 'failed') {
+            if (status === 'completed' || status === 'failed' || status === 'cancelled') {
               const terminalTaskStatus = status;
               taskResults = taskResults.map((tr) => (
                 tr.status === 'running'
@@ -2982,7 +3024,22 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== Catch-up =====
 
       hydrateActiveExecutions: (executions: PlaybookExecution[]) => {
-        if (executions.length === 0) return;
+        if (executions.length === 0) {
+          set((state) => {
+            const executionCache = Object.fromEntries(
+              Object.entries(state.executionCache).filter(([, execution]) => !isActiveExecutionStatus(execution.status)),
+            );
+
+            return {
+              executionCache,
+              executingPlaybookIds: [],
+              currentExecution: state.currentExecution && !isActiveExecutionStatus(state.currentExecution.status)
+                ? state.currentExecution
+                : null,
+            };
+          });
+          return;
+        }
         set((state) => {
           let executionCache = { ...state.executionCache };
           const executingIds = new Set(state.executingPlaybookIds);
@@ -2995,9 +3052,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
             if (cached) {
               // Smart merge: per task result, keep whichever status is more advanced.
               // This prevents stale DB data from overwriting fresh SSE-based data.
-              const cachedMap = new Map(cached.taskResults.map((tr) => [tr.taskId, tr]));
+              const cachedMap = new Map(cached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
               const mergedTaskResults = incoming.taskResults.map((inTr) => {
-                const cachedTr = cachedMap.get(inTr.taskId);
+                const cachedTr = cachedMap.get(getTaskResultCacheKey(inTr));
                 if (cachedTr && shouldKeepCachedTaskResult(cachedTr, inTr)) {
                   return cachedTr;
                 }
@@ -3007,8 +3064,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 return inTr;
               });
               // Include any task results only present in the cache
-              for (const [taskId, cachedTr] of cachedMap) {
-                if (!mergedTaskResults.some((tr) => tr.taskId === taskId)) {
+              for (const [taskResultKey, cachedTr] of cachedMap) {
+                if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
                   mergedTaskResults.push(cachedTr);
                 }
               }
@@ -3115,9 +3172,9 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const latestCached = get().executionCache[execId];
           let merged = normalizedExecution;
           if (latestCached) {
-            const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [tr.taskId, tr]));
+            const cachedResultMap = new Map(latestCached.taskResults.map((tr) => [getTaskResultCacheKey(tr), tr]));
             const mergedTaskResults = normalizedExecution.taskResults.map((apiTr) => {
-              const cachedTr = cachedResultMap.get(apiTr.taskId);
+              const cachedTr = cachedResultMap.get(getTaskResultCacheKey(apiTr));
               if (cachedTr && shouldKeepCachedTaskResult(cachedTr, apiTr)) {
                 return cachedTr;
               }
@@ -3127,8 +3184,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               return apiTr;
             });
             // Also include any task results from cache that are not in the API response
-            for (const [taskId, cachedTr] of cachedResultMap) {
-              if (!mergedTaskResults.some((tr) => tr.taskId === taskId)) {
+            for (const [taskResultKey, cachedTr] of cachedResultMap) {
+              if (!mergedTaskResults.some((tr) => getTaskResultCacheKey(tr) === taskResultKey)) {
                 mergedTaskResults.push(cachedTr);
               }
             }
@@ -3413,6 +3470,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const snapshot: PlaybookUndoSnapshot = {
           tasks: structuredClone(currentPlaybook.tasks),
           edges: structuredClone(currentPlaybook.edges),
+          dataBindings: structuredClone(currentPlaybook.dataBindings ?? []),
           name: currentPlaybook.name,
           workspaces: [...currentPlaybook.workspaces],
         };
@@ -3429,6 +3487,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const currentSnapshot: PlaybookUndoSnapshot = {
           tasks: structuredClone(currentPlaybook.tasks),
           edges: structuredClone(currentPlaybook.edges),
+          dataBindings: structuredClone(currentPlaybook.dataBindings ?? []),
           name: currentPlaybook.name,
           workspaces: [...currentPlaybook.workspaces],
         };
@@ -3439,6 +3498,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ...currentPlaybook,
             tasks: snapshot.tasks,
             edges: snapshot.edges,
+            dataBindings: snapshot.dataBindings,
             name: snapshot.name,
             workspaces: snapshot.workspaces,
           },
@@ -3455,6 +3515,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
         const currentSnapshot: PlaybookUndoSnapshot = {
           tasks: structuredClone(currentPlaybook.tasks),
           edges: structuredClone(currentPlaybook.edges),
+          dataBindings: structuredClone(currentPlaybook.dataBindings ?? []),
           name: currentPlaybook.name,
           workspaces: [...currentPlaybook.workspaces],
         };
@@ -3465,6 +3526,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             ...currentPlaybook,
             tasks: snapshot.tasks,
             edges: snapshot.edges,
+            dataBindings: snapshot.dataBindings,
             name: snapshot.name,
             workspaces: snapshot.workspaces,
           },
@@ -3540,6 +3602,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionMode: (item.executionMode as 'agent' | 'action') || 'agent',
               assignedAgentId: item.assignedAgentId,
               selectedAction: item.selectedAction as 'index' | 'delete' | 'read' | undefined,
+              retryPolicy: item.retryPolicy ?? null,
+              modelId: item.modelId ?? null,
             })),
             nodeTemplatesLoading: false,
             nodeTemplatesLoadedAt: now,
@@ -3581,6 +3645,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
               iteratorConfig: item.iteratorConfig ?? null,
               routerConfig: item.routerConfig ?? null,
               humanApprovalConfig: item.humanApprovalConfig ?? null,
+              retryPolicy: item.retryPolicy ?? null,
+              modelId: item.modelId ?? null,
             })),
             flowNodeTemplatesLoading: false,
             flowNodeTemplatesLoadedAt: now,

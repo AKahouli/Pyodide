@@ -15,6 +15,7 @@ const statusIcons: Record<StepStatus, { icon: React.ElementType; className: stri
   pending: { icon: Circle, className: 'text-muted-foreground' },
   running: { icon: Loader2, className: 'text-primary animate-spin' },
   completed: { icon: CheckCircle2, className: 'text-green-600' },
+  cancelled: { icon: XCircle, className: 'text-muted-foreground' },
   failed: { icon: XCircle, className: 'text-destructive' },
   skipped: { icon: CornerDownRight, className: 'text-muted-foreground' },
   interrupted: { icon: PauseCircle, className: 'text-yellow-600' },

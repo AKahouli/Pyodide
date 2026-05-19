@@ -1,5 +1,6 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import { ADVISOR_SCORING_MODES, AdvisorScoringMode } from './playbook-flow.schema';
 
 export type FlowExecutionDocument = HydratedDocument<FlowExecution>;
 
@@ -92,8 +93,15 @@ export class FlowExecution {
   @Prop({ required: false, type: Boolean, default: false })
   reflectionEnabled?: boolean;
 
+  @Prop({ required: false, type: String, enum: ADVISOR_SCORING_MODES, default: 'llm' })
+  advisorScoringMode?: AdvisorScoringMode;
+
   @Prop({ required: false, type: [SeededTaskOutput], default: [] })
   seededTaskOutputs?: SeededTaskOutput[];
+
+  createdAt?: Date;
+
+  updatedAt?: Date;
 }
 
 export const FlowExecutionSchema = SchemaFactory.createForClass(FlowExecution);

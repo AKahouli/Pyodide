@@ -427,7 +427,9 @@ export function ExecutionStepDetail({
   const advisorAutopilotActive = execution?.advisorAutopilotEnabled === true;
   const latestJudgeHistory = judgeHistory[judgeHistory.length - 1] || null;
   const selectedJudgeHistory = judgeHistory.find((entry) => entry.id === selectedJudgeHistoryId) || latestJudgeHistory;
-  const stepJudgeResult = selectedJudgeHistory?.judgeResult || step?.judgeResult || null;
+  const stepJudgeResult = stepJudgeStatus === 'evaluating'
+    ? null
+    : (selectedJudgeHistory?.judgeResult || step?.judgeResult || null);
   const normalizedExpectedResultSource = normalizeExpectedResultSource(stepJudgeResult?.expectedResultSource);
   const normalizedExpectedResultType = normalizeExpectedResultType(stepJudgeResult?.expectedResultType);
   const normalizedResultMatchingScore = normalizeAdvisorScore(stepJudgeResult?.resultMatchingScore);
@@ -1877,6 +1879,7 @@ export function ExecutionStepDetail({
                         {judgeHistory.map((entry) => (
                           <SelectItem key={entry.id} value={entry.id}>
                             {t('detail.evaluation.attempt')} {entry.attemptNumber ?? '-'} · {new Date(entry.createdAt).toLocaleString()} · {formatPercent(entry.judgeResult.overallScore)}
+                            {entry.scoringMode && ` · ${t(`detail.judge.scoring${entry.scoringMode === 'heuristic' ? 'Heuristic' : 'Llm'}`)}`}
                           </SelectItem>
                         ))}
                       </SelectContent>

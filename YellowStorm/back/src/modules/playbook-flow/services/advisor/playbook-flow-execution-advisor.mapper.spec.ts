@@ -49,4 +49,31 @@ describe('PlaybookFlowExecutionAdvisorMapper', () => {
       reason: 'done',
     });
   });
+
+  it('maps llm judge json and clamps invalid scores', () => {
+    const result = mapper.mapLlmJudgeResult(JSON.stringify({
+      accuracyScore: 120,
+      completenessScore: -5,
+      resultMatchingScore: 74.4,
+      overallScore: 78,
+      confidence: 66,
+      toolUsageScore: 71,
+      expectedResultSource: 'unexpected',
+      expectedResultType: 'semantic_description',
+      expectedResultMatched: true,
+      expectedResultReason: 'Matched.',
+      missingFacts: ['missing'],
+      recommendation: 'update_current_playbook',
+      reason: 'done',
+    }));
+
+    expect(result).toMatchObject({
+      accuracyScore: 100,
+      completenessScore: 0,
+      resultMatchingScore: 74,
+      expectedResultSource: 'none',
+      expectedResultType: 'semantic_description',
+      recommendation: 'update_current_playbook',
+    });
+  });
 });

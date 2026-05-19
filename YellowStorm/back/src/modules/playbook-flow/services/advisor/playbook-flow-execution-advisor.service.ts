@@ -5,20 +5,21 @@ import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import {
   BadRequestException,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@modules/exceptions/exceptions/http.exceptions';
 import { FlowExecution, FlowExecutionDocument } from '../../schemas/playbook-flow-execution.schema';
 import { FlowTaskResult, FlowTaskResultDocument } from '../../schemas/playbook-flow-task-result.schema';
 import { FlowOutputFormat, FlowOutputFormatDocument, OutputFormatStatus } from '../../schemas/playbook-flow-output-format.schema';
-import { PlaybookFlowDesignGrpcService } from '../playbook-flow-design-grpc.service';
 import { PlaybookFlowStreamEventsService } from '../playbook-flow-stream-events.service';
 import { PlaybookFlowExecutionAdvisorMapper } from './playbook-flow-execution-advisor.mapper';
+import { PlaybookFlowHeuristicAdvisorEvaluatorService } from './playbook-flow-heuristic-advisor-evaluator.service';
+import { PlaybookFlowLlmAdvisorEvaluatorService } from './playbook-flow-llm-advisor-evaluator.service';
 import type {
+  FlowExecutionAdvisorEvaluationResult,
   FlowExecutionAdvisorTaskResponse,
   FlowExecutionJudgeHistoryEntry,
 } from '../../interfaces/playbook-flow-execution-advisor.interface';
 import type { RunFlowExecutionAdvisorDto } from '../../dto/run-flow-execution-advisor.dto';
-import type { FlowNode } from '../../schemas/playbook-flow.schema';
+import type { AdvisorScoringMode, FlowNode } from '../../schemas/playbook-flow.schema';
 
 @Injectable()
 export class PlaybookFlowExecutionAdvisorService {
@@ -31,9 +32,10 @@ export class PlaybookFlowExecutionAdvisorService {
     private readonly taskResultModel: Model<FlowTaskResultDocument>,
     @InjectModel(FlowOutputFormat.name)
     private readonly outputFormatModel: Model<FlowOutputFormatDocument>,
-    private readonly grpcService: PlaybookFlowDesignGrpcService,
     private readonly streamEvents: PlaybookFlowStreamEventsService,
     private readonly mapper: PlaybookFlowExecutionAdvisorMapper,
+    private readonly heuristicEvaluator: PlaybookFlowHeuristicAdvisorEvaluatorService,
+    private readonly llmEvaluator: PlaybookFlowLlmAdvisorEvaluatorService,
   ) {}
 
   async runTaskEvaluation(
@@ -48,6 +50,7 @@ export class PlaybookFlowExecutionAdvisorService {
     }
 
     const snapshot = (execution.snapshot ?? null) as { nodes?: FlowNode[] } | null;
+    const executionScoringMode = execution.advisorScoringMode === 'heuristic' ? 'heuristic' : 'llm';
     const node = snapshot?.nodes?.find((candidate) => candidate.id === taskId) ?? null;
     if (!node) {
       throw new NotFoundException(ErrorCode.PLAYBOOK_TASK_NOT_FOUND, 'Playbook task not found');
@@ -69,32 +72,39 @@ export class PlaybookFlowExecutionAdvisorService {
       throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Advisor evaluation requires a completed task result.');
     }
 
-    if (!this.grpcService.isAvailable) {
-      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR, 'AI service is unavailable.');
-    }
-
     const existingHistory: FlowExecutionJudgeHistoryEntry[] = Array.isArray(taskResult.judgeHistory)
       ? taskResult.judgeHistory.map((entry: any) => ({
           id: String(entry.id),
           createdAt: entry.createdAt instanceof Date ? entry.createdAt.toISOString() : String(entry.createdAt || ''),
           attemptNumber: typeof entry.attemptNumber === 'number' ? entry.attemptNumber : null,
           model: typeof entry.model === 'string' ? entry.model : null,
+          scoringMode: entry.scoringMode === 'heuristic' ? 'heuristic' : 'llm',
+          usage: entry.usage ?? null,
+          llmPromptTrace: Array.isArray(entry.llmPromptTrace) ? entry.llmPromptTrace : [],
           judgeResult: entry.judgeResult,
         }))
       : [];
     const nextAttemptNumber = existingHistory.length + 1;
+    const scoringMode = dto?.advisorScoringMode ?? executionScoringMode;
 
     taskResult.judgeStatus = 'evaluating';
     taskResult.judgeError = null;
     await taskResult.save();
-    this.streamEvents.emitStepJudgeStarted(ownerId, executionId, taskId, taskResult.iteration);
+    this.streamEvents.emitStepJudgeStarted(ownerId, executionId, taskId, taskResult.iteration, scoringMode);
 
     const expectedResult = this.resolveExpectedResult(node);
     const outputFormatGuide = await this.loadOutputFormatGuide(execution.flowId, taskId);
     const baselineOutput = null;
+    const snapshotRecord = (execution.snapshot ?? null) as Record<string, unknown> | null;
+    const workflowGoal = typeof snapshotRecord?.description === 'string'
+      ? snapshotRecord.description
+      : typeof snapshotRecord?.name === 'string'
+        ? snapshotRecord.name
+        : '';
+    const upstreamContextJson = this.buildUpstreamContextJson(snapshot?.nodes ?? [], taskResult.taskId);
 
     try {
-      const grpcRequest = this.mapper.buildEvaluateTaskRequest({
+      const evaluation = await this.evaluateTask({
         executionId,
         ownerId,
         flowId: execution.flowId,
@@ -103,20 +113,23 @@ export class PlaybookFlowExecutionAdvisorService {
         expectedResult,
         outputFormatGuide,
         baselineOutput,
+        workflowGoal,
+        upstreamContextJson,
+        scoringMode,
       });
-      const grpcResponse = await this.grpcService.evaluateTask(grpcRequest);
-      const judgeResult = this.mapper.mapGrpcJudgeResult(grpcResponse as Record<string, unknown>);
-      const historyEntry = this.mapper.buildHistoryEntry(judgeResult, this.extractModel(grpcResponse), nextAttemptNumber);
+      const historyEntry = this.mapper.buildHistoryEntry(evaluation, nextAttemptNumber);
 
       taskResult.judgeStatus = 'evaluated';
-      taskResult.judgeResult = judgeResult as any;
+      taskResult.judgeResult = evaluation.judgeResult as any;
+      taskResult.judgeScoringMode = evaluation.scoringMode;
       taskResult.judgeError = null;
       taskResult.judgeHistory = [...existingHistory, historyEntry] as any;
       await taskResult.save();
 
       this.streamEvents.emitStepJudgeUpdated(ownerId, executionId, taskId, {
         judgeStatus: 'evaluated',
-        judgeResult,
+        advisorScoringMode: evaluation.scoringMode,
+        judgeResult: evaluation.judgeResult,
         judgeError: null,
         judgeHistoryEntry: historyEntry,
       }, taskResult.iteration);
@@ -129,7 +142,8 @@ export class PlaybookFlowExecutionAdvisorService {
         taskOutput: taskResult.output,
         taskError: taskResult.error,
         judgeStatus: 'evaluated',
-        judgeResult,
+        judgeScoringMode: evaluation.scoringMode,
+        judgeResult: evaluation.judgeResult,
         judgeError: null,
         judgeHistory: [...existingHistory, historyEntry],
       });
@@ -142,6 +156,7 @@ export class PlaybookFlowExecutionAdvisorService {
 
       this.streamEvents.emitStepJudgeUpdated(ownerId, executionId, taskId, {
         judgeStatus: 'failed',
+        advisorScoringMode: scoringMode,
         judgeError: message,
       }, taskResult.iteration);
 
@@ -153,6 +168,7 @@ export class PlaybookFlowExecutionAdvisorService {
         taskOutput: taskResult.output,
         taskError: taskResult.error,
         judgeStatus: 'failed',
+        judgeScoringMode: taskResult.judgeScoringMode ?? scoringMode,
         judgeResult: null,
         judgeError: message,
         judgeHistory: existingHistory,
@@ -177,13 +193,39 @@ export class PlaybookFlowExecutionAdvisorService {
       : null;
   }
 
-  private extractModel(response: unknown): string | null {
-    if (!response || typeof response !== 'object') {
-      return null;
+  private async evaluateTask(params: {
+    executionId: string;
+    ownerId: string;
+    flowId: string;
+    node: FlowNode;
+    taskResult: FlowTaskResultDocument;
+    expectedResult: string | null;
+    outputFormatGuide: string | null;
+    baselineOutput: string | null;
+    workflowGoal: string;
+    upstreamContextJson: string;
+    scoringMode: AdvisorScoringMode;
+  }): Promise<FlowExecutionAdvisorEvaluationResult> {
+    if (params.scoringMode === 'heuristic') {
+      return this.heuristicEvaluator.evaluate(params);
     }
-    const record = response as Record<string, unknown>;
-    return typeof record.model === 'string' && record.model.trim().length > 0
-      ? record.model
-      : null;
+
+    return this.llmEvaluator.evaluate(params);
+  }
+
+  private buildUpstreamContextJson(nodes: FlowNode[], taskId: string): string {
+    const currentIndex = nodes.findIndex((node) => node.id === taskId);
+    if (currentIndex <= 0) {
+      return '[]';
+    }
+
+    // Keep the context small and deterministic for judge prompts.
+    const upstreamNodes = nodes.slice(0, currentIndex).map((node) => ({
+      id: node.id,
+      label: node.label || node.id,
+      description: node.description || '',
+    }));
+
+    return JSON.stringify(upstreamNodes, null, 2);
   }
 }

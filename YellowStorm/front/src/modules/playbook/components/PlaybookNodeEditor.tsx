@@ -18,6 +18,7 @@ import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/s
 import { ChevronDown, Loader2, X, Plus, Trash2, GripVertical } from 'lucide-react';
 import { useAgents, useAgentStore } from '@/modules/agent/store';
 import { useAuth } from '@/modules/auth';
+import { useModels, useModelsStore } from '@/modules/models';
 import { usePlaybookStore } from '../store';
 import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
 import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
@@ -35,6 +36,7 @@ import type {
   PlaybookIteratorConfig,
   RouterConfig,
   HumanApprovalConfig,
+  RetryPolicy,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
 import { PORT_COLORS } from '../utils/port-colors';
@@ -69,6 +71,8 @@ interface EditorDraft {
   iteratorConfig: PlaybookIteratorConfig | null;
   routerConfig: RouterConfig | null;
   humanApprovalConfig: HumanApprovalConfig | null;
+  retryPolicy: RetryPolicy | null;
+  modelId: string | null;
   disableAdvisorEvaluation: boolean;
   expectedResult: string | null;
 }
@@ -90,6 +94,11 @@ const DEFAULT_ROUTER_CONFIG: RouterConfig = {
 const DEFAULT_HUMAN_APPROVAL_CONFIG: HumanApprovalConfig = {
   promptTemplate: '',
   timeoutSeconds: 3600,
+};
+
+const DEFAULT_RETRY_POLICY: RetryPolicy = {
+  maxRetries: 1,
+  delayMs: 1000,
 };
 
 const DEFAULT_EVALUATION_CONFIG: PlaybookEvaluationConfig = {
@@ -149,6 +158,8 @@ function buildDraftFromTask(task: PlaybookTask): EditorDraft {
     humanApprovalConfig: task.humanApprovalConfig
       ? { ...task.humanApprovalConfig }
       : null,
+    retryPolicy: task.retryPolicy ?? null,
+    modelId: task.modelId ?? null,
     disableAdvisorEvaluation: task.disableAdvisorEvaluation ?? false,
     expectedResult: task.expectedResult ?? null,
   };
@@ -175,9 +186,15 @@ function draftToSavePayload(draft: EditorDraft): Partial<PlaybookTask> {
     iteratorConfig: draft.nodeType === 'iterator' ? draft.iteratorConfig : null,
     routerConfig: draft.nodeType === 'router' ? draft.routerConfig : null,
     humanApprovalConfig: draft.nodeType === 'human_approval' ? draft.humanApprovalConfig : null,
+    retryPolicy: isStepLikeNodeType(draft.nodeType) && draft.retryPolicy ? draft.retryPolicy : null,
+    modelId: isStepLikeNodeType(draft.nodeType) ? draft.modelId : null,
     disableAdvisorEvaluation: draft.disableAdvisorEvaluation,
     expectedResult: draft.expectedResult,
   };
+}
+
+function isStepLikeNodeType(nodeType: PlaybookNodeType): boolean {
+  return nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation';
 }
 
 interface Props {
@@ -194,6 +211,8 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave }: Props) {
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
+  const models = useModels();
+  const fetchModels = useModelsStore((s) => s.fetchModels);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const activateTaskReplay = usePlaybookStore((s) => s.activateTaskReplay);
   const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
@@ -206,13 +225,11 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const { t } = useModuleTranslation('playbook');
 
   useEffect(() => {
-    if (open) fetchAgents();
-  }, [open, fetchAgents]);
-
-  const agentOptions = useMemo<SearchableSelectOption[]>(
-    () => agents.map((agent) => ({ value: agent.id, label: agent.name })),
-    [agents],
-  );
+    if (open) {
+      fetchAgents();
+      fetchModels();
+    }
+  }, [open, fetchAgents, fetchModels]);
 
   const [draft, setDraft] = useState<EditorDraft>({
     title: '',
@@ -233,9 +250,27 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     iteratorConfig: null,
     routerConfig: null,
     humanApprovalConfig: null,
+    retryPolicy: null,
+    modelId: null,
     disableAdvisorEvaluation: false,
     expectedResult: null,
   });
+
+  const agentOptions = useMemo<SearchableSelectOption[]>(
+    () => agents.map((agent) => ({ value: agent.id, label: agent.name })),
+    [agents],
+  );
+
+  const modelOptions = useMemo<SearchableSelectOption[]>(
+    () => {
+      const opts = models
+        .filter((model) => model.isActive || model.id === draft.modelId)
+        .map((model) => ({ value: model.id, label: model.name }));
+      opts.unshift({ value: '', label: t('nodeEditor.modelDefault') });
+      return opts;
+    },
+    [models, draft.modelId, t],
+  );
 
   const updateDraft = useCallback((patch: Partial<EditorDraft>) => {
     setDraft((prev) => ({ ...prev, ...patch }));
@@ -605,6 +640,8 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   patch.outputPorts = getDefaultIteratorOutputPorts();
                   patch.routerConfig = null;
                   patch.humanApprovalConfig = null;
+                  patch.retryPolicy = null;
+                  patch.modelId = null;
                 } else if (nextType === 'router') {
                   patch.executionMode = 'agent';
                   patch.assignedAgentId = null;
@@ -620,12 +657,16 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                   }));
                   patch.iteratorConfig = null;
                   patch.humanApprovalConfig = null;
+                  patch.retryPolicy = null;
+                  patch.modelId = null;
                 } else if (nextType === 'human_approval') {
                   patch.executionMode = 'agent';
                   patch.assignedAgentId = null;
                   patch.humanApprovalConfig = draft.humanApprovalConfig ?? { ...DEFAULT_HUMAN_APPROVAL_CONFIG };
                   patch.iteratorConfig = null;
                   patch.routerConfig = null;
+                  patch.retryPolicy = null;
+                  patch.modelId = null;
                 } else {
                   patch.executionMode = 'agent';
                   patch.iteratorConfig = null;
@@ -688,6 +729,53 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
               )}
             </div>
           ) : null}
+
+          {isStepLikeNodeType(draft.nodeType) && (
+            <>
+              <div className="space-y-2">
+                <Label>{t('nodeEditor.model')}</Label>
+                <SearchableSelect
+                  options={modelOptions}
+                  value={draft.modelId || ''}
+                  onValueChange={(v) => updateDraft({ modelId: v || null })}
+                  placeholder={t('nodeEditor.selectModel')}
+                  searchPlaceholder={t('nodeEditor.searchModel')}
+                  emptyText={t('nodeEditor.noModelFound')}
+                />
+              </div>
+
+              <div className="space-y-3 rounded-md border p-3">
+                <h4 className="text-sm font-medium">{t('nodeEditor.retryPolicy')}</h4>
+                <p className="text-xs text-muted-foreground">{t('nodeEditor.retryPolicyHint')}</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>{t('nodeEditor.retryMaxRetries')}</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={10}
+                      value={draft.retryPolicy?.maxRetries ?? 1}
+                      onChange={(e) => updateDraft({
+                        retryPolicy: { ...(draft.retryPolicy ?? { ...DEFAULT_RETRY_POLICY }), maxRetries: Number(e.target.value || 0) },
+                      })}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>{t('nodeEditor.retryDelayMs')}</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={100}
+                      value={draft.retryPolicy?.delayMs ?? 1000}
+                      onChange={(e) => updateDraft({
+                        retryPolicy: { ...(draft.retryPolicy ?? { ...DEFAULT_RETRY_POLICY }), delayMs: Number(e.target.value || 0) },
+                      })}
+                    />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           {isIteratorTask && draft.iteratorConfig && (
             <div className="space-y-4">

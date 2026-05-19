@@ -17,6 +17,20 @@ import type { AdminModelResponse, AdminPlaybookSettings } from '../types';
 
 const GLOBAL_DEFAULT_MODEL = '__global_default__';
 
+function buildSelectableModels(models: AdminModelResponse[], selectedModelId: string | null): AdminModelResponse[] {
+  const activeModels = models.filter((model) => model.isActive);
+  if (!selectedModelId) {
+    return activeModels;
+  }
+
+  const selectedModel = models.find((model) => model.id === selectedModelId);
+  if (!selectedModel || selectedModel.isActive) {
+    return activeModels;
+  }
+
+  return [selectedModel, ...activeModels.filter((model) => model.id !== selectedModel.id)];
+}
+
 export function PlaybookSettingsPage() {
   const { t } = useModuleTranslation('admin');
   const [loading, setLoading] = useState(true);
@@ -24,6 +38,7 @@ export function PlaybookSettingsPage() {
   const [models, setModels] = useState<AdminModelResponse[]>([]);
   const [settings, setSettings] = useState<AdminPlaybookSettings>({
     inferenceModelId: null,
+    advisorEvaluationModelId: null,
     nodeSuggestionsMode: 'manual',
     approvalSuggestionMode: 'auto',
   });
@@ -41,7 +56,7 @@ export function PlaybookSettingsPage() {
         if (cancelled) return;
 
         setSettings(settingsResult);
-        setModels(modelsResult.models.filter((model) => model.isActive));
+        setModels(modelsResult.models);
       } catch (error) {
         if (!cancelled) {
           showError(t('playbookSettings.toasts.loadError.title'), {
@@ -60,9 +75,22 @@ export function PlaybookSettingsPage() {
   }, [t]);
 
   const selectedModelValue = settings.inferenceModelId || GLOBAL_DEFAULT_MODEL;
+  const selectableInferenceModels = useMemo(
+    () => buildSelectableModels(models, settings.inferenceModelId),
+    [models, settings.inferenceModelId],
+  );
   const selectedModel = useMemo(
     () => models.find((model) => model.id === settings.inferenceModelId) || null,
     [models, settings.inferenceModelId],
+  );
+  const selectedAdvisorEvalModelValue = settings.advisorEvaluationModelId || GLOBAL_DEFAULT_MODEL;
+  const selectableAdvisorModels = useMemo(
+    () => buildSelectableModels(models, settings.advisorEvaluationModelId),
+    [models, settings.advisorEvaluationModelId],
+  );
+  const selectedAdvisorEvalModel = useMemo(
+    () => models.find((model) => model.id === settings.advisorEvaluationModelId) || null,
+    [models, settings.advisorEvaluationModelId],
   );
 
   const handleSave = async () => {
@@ -119,17 +147,51 @@ export function PlaybookSettingsPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value={GLOBAL_DEFAULT_MODEL}>{t('playbookSettings.fields.model.globalDefault')}</SelectItem>
-                    {models.map((model) => (
+                    {selectableInferenceModels.map((model) => (
                       <SelectItem key={model.id} value={model.id}>
                         {model.name}
+                        {model.isActive ? '' : ` ${t('playbookSettings.fields.inactiveSuffix')}`}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
                   {selectedModel
-                    ? t('playbookSettings.fields.model.selectedHelp', { model: selectedModel.name })
+                    ? selectedModel.isActive
+                      ? t('playbookSettings.fields.model.selectedHelp', { model: selectedModel.name })
+                      : t('playbookSettings.fields.model.inactiveHelp', { model: selectedModel.name })
                     : t('playbookSettings.fields.model.globalHelp')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="advisor-eval-model">{t('playbookSettings.fields.advisorEvalModel.label')}</Label>
+                <Select
+                  value={selectedAdvisorEvalModelValue}
+                  onValueChange={(value) => setSettings((prev) => ({
+                    ...prev,
+                    advisorEvaluationModelId: value === GLOBAL_DEFAULT_MODEL ? null : value,
+                  }))}
+                >
+                  <SelectTrigger id="advisor-eval-model">
+                    <SelectValue placeholder={t('playbookSettings.fields.advisorEvalModel.placeholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={GLOBAL_DEFAULT_MODEL}>{t('playbookSettings.fields.advisorEvalModel.globalDefault')}</SelectItem>
+                    {selectableAdvisorModels.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
+                        {model.isActive ? '' : ` ${t('playbookSettings.fields.inactiveSuffix')}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {selectedAdvisorEvalModel
+                    ? selectedAdvisorEvalModel.isActive
+                      ? t('playbookSettings.fields.advisorEvalModel.selectedHelp', { model: selectedAdvisorEvalModel.name })
+                      : t('playbookSettings.fields.advisorEvalModel.inactiveHelp', { model: selectedAdvisorEvalModel.name })
+                    : t('playbookSettings.fields.advisorEvalModel.globalHelp')}
                 </p>
               </div>
 

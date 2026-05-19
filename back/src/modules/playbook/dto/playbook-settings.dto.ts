@@ -7,6 +7,11 @@ export class UpdateAdminPlaybookSettingsDto {
   @IsString()
   inferenceModelId?: string | null;
 
+  @ApiPropertyOptional({ description: 'Model registry ID to use for Advisor evaluation. Null inherits the global default model.' })
+  @IsOptional()
+  @IsString()
+  advisorEvaluationModelId?: string | null;
+
   @ApiProperty({ enum: ['auto', 'manual'], default: 'manual' })
   @IsIn(['auto', 'manual'])
   nodeSuggestionsMode!: 'auto' | 'manual';

@@ -24,6 +24,7 @@ const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
   running: 'border-running shadow-md shadow-running/10',
   completed: '',
+  cancelled: 'ring-2 ring-destructive/60',
   failed: 'ring-2 ring-destructive/60',
   skipped: '',
   interrupted: 'ring-2 ring-yellow-500/60 shadow-md shadow-yellow-500/10',

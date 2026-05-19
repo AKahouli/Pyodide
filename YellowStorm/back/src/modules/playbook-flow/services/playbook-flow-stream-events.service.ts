@@ -34,6 +34,15 @@ export class PlaybookFlowStreamEventsService {
     executionId: string,
     flowId: string,
     ownerId: string,
+    payload?: {
+      executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+      reflectionEnabled?: boolean;
+      advisorScoringMode?: 'llm' | 'heuristic';
+      advisorAutopilotEnabled?: boolean;
+      advisorAutopilotTargetScore?: number;
+      advisorAutopilotMaxTurns?: number;
+      singleStepTaskId?: string | null;
+    },
   ): Promise<void> {
     const count = await this.executionModel.countDocuments({ flowId });
     this.cacheOwner(executionId, ownerId);
@@ -45,7 +54,13 @@ export class PlaybookFlowStreamEventsService {
         playbookId: flowId,
         executionNumber: count,
         status: 'running',
-        executionMode: 'live',
+        executionMode: payload?.executionMode ?? 'live',
+        ...(payload?.reflectionEnabled !== undefined ? { reflectionEnabled: payload.reflectionEnabled } : {}),
+        ...(payload?.advisorScoringMode !== undefined ? { advisorScoringMode: payload.advisorScoringMode } : {}),
+        ...(payload?.advisorAutopilotEnabled !== undefined ? { advisorAutopilotEnabled: payload.advisorAutopilotEnabled } : {}),
+        ...(payload?.advisorAutopilotTargetScore !== undefined ? { advisorAutopilotTargetScore: payload.advisorAutopilotTargetScore } : {}),
+        ...(payload?.advisorAutopilotMaxTurns !== undefined ? { advisorAutopilotMaxTurns: payload.advisorAutopilotMaxTurns } : {}),
+        ...(payload?.singleStepTaskId !== undefined ? { singleStepTaskId: payload.singleStepTaskId } : {}),
         taskResults: [],
       },
     });
@@ -152,13 +167,20 @@ export class PlaybookFlowStreamEventsService {
     });
   }
 
-  emitStepJudgeStarted(ownerId: string, executionId: string, taskId: string, iteration?: number): void {
+  emitStepJudgeStarted(
+    ownerId: string,
+    executionId: string,
+    taskId: string,
+    iteration?: number,
+    advisorScoringMode?: 'llm' | 'heuristic',
+  ): void {
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_step_judge_started',
       data: {
         executionId,
         taskId,
         ...(iteration !== undefined ? { iteration } : {}),
+        ...(advisorScoringMode !== undefined ? { advisorScoringMode } : {}),
         judgeStatus: 'evaluating',
       },
     });
@@ -170,6 +192,7 @@ export class PlaybookFlowStreamEventsService {
     taskId: string,
     payload: {
       judgeStatus: 'idle' | 'evaluating' | 'evaluated' | 'failed';
+      advisorScoringMode?: 'llm' | 'heuristic';
       judgeResult?: FlowExecutionJudgeResult | null;
       judgeError?: string | null;
       judgeHistoryEntry?: FlowExecutionJudgeHistoryEntry;
@@ -183,6 +206,7 @@ export class PlaybookFlowStreamEventsService {
         taskId,
         ...(iteration !== undefined ? { iteration } : {}),
         judgeStatus: payload.judgeStatus,
+        ...(payload.advisorScoringMode !== undefined ? { advisorScoringMode: payload.advisorScoringMode } : {}),
         ...(payload.judgeResult !== undefined ? { judgeResult: payload.judgeResult } : {}),
         ...(payload.judgeError !== undefined ? { judgeError: payload.judgeError } : {}),
         ...(payload.judgeHistoryEntry !== undefined ? { judgeHistoryEntry: payload.judgeHistoryEntry } : {}),
@@ -244,12 +268,65 @@ export class PlaybookFlowStreamEventsService {
     });
   }
 
-  emitConnected(userId: string): void {
+  async emitConnected(userId: string): Promise<void> {
+    const activeExecutions = await this.executionModel.find(
+      {
+        ownerId: userId,
+        status: { $in: ['queued', 'running', 'pending_approval'] },
+      },
+      'flowId status startedAt createdAt updatedAt threadId singleStepTaskId pendingApproval advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode',
+    ).lean().exec();
+
     this.streamGateway.sendToUser(userId, {
       type: 'playbook_connected',
       data: {
         connectionId: `${userId}:${Date.now()}`,
-        activeExecutions: [],
+        activeExecutions: activeExecutions.map((execution) => ({
+          id: execution._id.toString(),
+          playbookId: execution.flowId,
+          executedBy: '',
+          executionNumber: 0,
+          status: execution.status,
+          executionMode: 'live',
+          executionTrigger: 'manual',
+          reflectionEnabled: execution.reflectionEnabled ?? false,
+          advisorScoringMode: execution.advisorScoringMode ?? 'llm',
+          advisorAutopilotEnabled: execution.advisorAutopilotEnabled ?? false,
+          advisorAutopilotTargetScore: execution.advisorAutopilotTargetScore ?? 90,
+          advisorAutopilotMaxTurns: execution.advisorAutopilotMaxTurns ?? 4,
+          advisorAutopilotStatus: 'idle',
+          advisorAutopilotTaskId: null,
+          advisorAutopilotAttemptCount: 0,
+          advisorAutopilotLastError: null,
+          judgeSummaryStatus: 'idle',
+          judgeSummary: null,
+          replaySourceByTask: null,
+          taskResults: [],
+          threadId: execution.threadId ?? null,
+          interruptPayload: execution.pendingApproval
+            ? {
+                type: 'approval_request',
+                message: execution.pendingApproval.prompt,
+                taskId: execution.pendingApproval.nodeId,
+                iteration: execution.pendingApproval.iteration,
+              }
+            : null,
+          waitingForHumanInput: execution.status === 'pending_approval',
+          currentInterruptId: null,
+          currentInterruptTaskId: execution.pendingApproval?.nodeId ?? null,
+          hitlHistory: [],
+          error: null,
+          durationMs: null,
+          startedAt: execution.startedAt ?? execution.createdAt,
+          completedAt: null,
+          singleStepTaskId: execution.singleStepTaskId ?? null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: execution.createdAt,
+          updatedAt: execution.updatedAt,
+        })),
       },
     });
   }
@@ -271,6 +348,19 @@ export class PlaybookFlowStreamEventsService {
     this.streamGateway.sendToUser(ownerId, {
       type: 'playbook_execution_queue_update',
       data: { executionId, queuePosition },
+    });
+  }
+
+  emitExecutionCancelled(executionId: string): void {
+    const ownerId = this.executionOwnerCache.get(executionId);
+    if (!ownerId) return;
+
+    this.streamGateway.sendToUser(ownerId, {
+      type: 'playbook_execution_complete',
+      data: {
+        executionId,
+        status: 'cancelled',
+      },
     });
   }
 }

@@ -11,6 +11,9 @@ import type {
   ControlEdge,
   PlaybookTask,
   PlaybookEdge,
+  PlaybookIteratorConfig,
+  HumanApprovalConfig,
+  RetryPolicy,
 } from './types';
 
 export function kindToNodeType(kind: string): PlaybookNodeType | undefined {
@@ -88,13 +91,47 @@ export function mapFlowNodeToPlaybookTask(
     activeReplayLabel: activeReplays?.[node.id]?.label ?? (meta.activeReplayLabel as string | null | undefined) ?? undefined,
     stepReplayMode: (meta.stepReplayMode as any) ?? undefined,
     nodeType: (meta.nodeType as import('./types').PlaybookNodeType) ?? kindToNodeType(node.kind),
-    iteratorConfig: node.iteratorConfig
-      ? { source: node.iteratorConfig.collectionPath, batchSize: node.iteratorConfig.maxItems ?? undefined } as any
-      : (meta.iteratorConfig as any) ?? null,
+    iteratorConfig: buildPlaybookIteratorConfig(node.iteratorConfig, meta),
     routerConfig: node.routerConfig ?? (meta.routerConfig as any) ?? null,
-    humanApprovalConfig: node.humanApprovalConfig ?? (meta.humanApprovalConfig as any) ?? null,
+    humanApprovalConfig: buildPlaybookHumanApprovalConfig(node.humanApprovalConfig, meta),
+    retryPolicy: node.retryPolicy ?? (meta.retryPolicy as RetryPolicy | null | undefined) ?? null,
+    modelId: node.modelId || (meta.modelId as string | null | undefined) || null,
     ...(inputPorts ? { inputPorts } : {}),
     ...(outputPorts ? { outputPorts } : {}),
+  };
+}
+
+function buildPlaybookIteratorConfig(
+  iteratorConfig: { collectionPath: string; maxItems?: number } | undefined,
+  meta: Record<string, unknown>,
+): PlaybookIteratorConfig | null {
+  if (!iteratorConfig) {
+    return (meta.iteratorConfig as PlaybookIteratorConfig | null | undefined) ?? null;
+  }
+  const iteratorMeta = meta.iteratorConfig as Partial<PlaybookIteratorConfig> | undefined;
+  return {
+    source: iteratorConfig.collectionPath,
+    mode: iteratorMeta?.mode ?? 'item',
+    batchSize: iteratorConfig.maxItems ?? undefined,
+    itemVariable: iteratorMeta?.itemVariable ?? 'item',
+    outputVariable: iteratorMeta?.outputVariable ?? 'processed_items',
+    errorStrategy: iteratorMeta?.errorStrategy ?? 'stop',
+  };
+}
+
+function buildPlaybookHumanApprovalConfig(
+  approvalConfig: HumanApprovalConfig | undefined,
+  meta: Record<string, unknown>,
+): HumanApprovalConfig | null {
+  if (!approvalConfig) {
+    return (meta.humanApprovalConfig as HumanApprovalConfig | null | undefined) ?? null;
+  }
+  return {
+    ...approvalConfig,
+    timeoutSeconds:
+      meta.humanApprovalTimeoutUnlimited === true && approvalConfig.timeoutSeconds === 0
+        ? null
+        : approvalConfig.timeoutSeconds,
   };
 }
 
@@ -197,6 +234,7 @@ export function normalizePlaybook(raw: any): Playbook {
     automatedTriggerType: triggerFields.automatedTriggerType,
     createdBy: raw.createdBy ?? raw.ownerId ?? '',
     reflectionEnabled: raw.reflectionEnabled ?? false,
+    advisorScoringMode: raw.advisorScoringMode === 'heuristic' ? 'heuristic' : 'llm',
     designSettings: raw.designSettings ?? {
       inferenceModelId: null,
       nodeSuggestionsMode: 'inherit',
@@ -239,7 +277,15 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
       maxItems: task.iteratorConfig.batchSize ?? undefined,
     };
   }
-  if (task.humanApprovalConfig) node.humanApprovalConfig = task.humanApprovalConfig;
+  if (task.humanApprovalConfig) {
+    const timeoutSeconds = task.humanApprovalConfig.timeoutSeconds;
+    node.humanApprovalConfig = {
+      promptTemplate: task.humanApprovalConfig.promptTemplate,
+      timeoutSeconds: timeoutSeconds ?? 0,
+    };
+  }
+  if (task.retryPolicy) node.retryPolicy = task.retryPolicy;
+  if (task.modelId) node.modelId = task.modelId;
 
   if (task.inputPorts && task.inputPorts.length > 0) {
     node.input = {
@@ -291,6 +337,17 @@ export function taskToFlowNode(task: PlaybookTask): FlowNode {
   if (task.notifyEmails.length > 0) meta.notifyEmails = task.notifyEmails;
   if (task.stepReplayMode) meta.stepReplayMode = task.stepReplayMode;
   if (task.inputFiles.length > 0) meta.inputFiles = task.inputFiles;
+  if (task.iteratorConfig) {
+    meta.iteratorConfig = {
+      mode: task.iteratorConfig.mode,
+      itemVariable: task.iteratorConfig.itemVariable ?? null,
+      outputVariable: task.iteratorConfig.outputVariable ?? null,
+      errorStrategy: task.iteratorConfig.errorStrategy ?? 'stop',
+    };
+  }
+  if (task.humanApprovalConfig && task.humanApprovalConfig.timeoutSeconds == null) {
+    meta.humanApprovalTimeoutUnlimited = true;
+  }
   if (Object.keys(meta).length > 0) node.metadata = meta;
 
   return node;
