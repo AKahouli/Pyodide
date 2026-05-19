@@ -256,7 +256,6 @@ export class ConnectorService {
     resolvedToken?: string,
   ): Promise<IMcpInspectResult> {
     try {
-      this.logger.log('Inspecting MCP server', { transportType, serverUrl, userId, connectedAppKey });
 
       let client: any;
       let transport: any;
@@ -277,7 +276,6 @@ export class ConnectorService {
             runtimeAuthConfig,
             token,
           );
-          this.logger.log('Using OAuth token for MCP inspection', { connectedAppKey });
         } catch (error) {
           this.logger.error('Failed to get OAuth token for MCP inspection', {
             connectedAppKey,
