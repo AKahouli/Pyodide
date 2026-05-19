@@ -7,7 +7,6 @@ import { CryptoService } from '@common/services/crypto.service';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { LoggerService } from '@modules/logger';
-import { ConnectedAppDefinitionService } from '@modules/connected-app/services/connected-app-definition.service';
 import {
   AdminConnectorAuth,
   AdminConnectorAuthDocument,
@@ -20,6 +19,18 @@ import {
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
+const GITHUB_APP_KEY = 'github';
+
+type AdminGithubOAuthConfig = {
+  appKey: typeof GITHUB_APP_KEY;
+  authorizationUrl: string;
+  tokenUrl: string;
+  revokeUrl?: string;
+  clientId: string;
+  clientSecret: string;
+  scopes: string[];
+  pkceEnabled: boolean;
+};
 
 @Injectable()
 export class ConnectorAdminAuthService {
@@ -31,7 +42,6 @@ export class ConnectorAdminAuthService {
     private readonly oauthStateModel: Model<AdminConnectorOAuthStateDocument>,
     @InjectModel(AdminConnectorAuth.name)
     private readonly authModel: Model<AdminConnectorAuthDocument>,
-    private readonly definitionService: ConnectedAppDefinitionService,
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
@@ -42,7 +52,7 @@ export class ConnectorAdminAuthService {
   }
 
   async buildAuthorizationUrl(userId: string, appKey: string): Promise<string> {
-    const appConfig = await this.definitionService.findByKey(appKey);
+    const appConfig = this.getOAuthConfig(appKey);
     const state = crypto.randomBytes(32).toString('hex');
 
     let codeVerifier: string | undefined;
@@ -75,12 +85,7 @@ export class ConnectorAdminAuthService {
       params.set('code_challenge_method', 'S256');
     }
 
-    let authorizationUrl = appConfig.authorizationUrl;
-    if (appConfig.tenantId) {
-      authorizationUrl = authorizationUrl.replace('{tenant}', appConfig.tenantId);
-    }
-
-    return `${authorizationUrl}?${params.toString()}`;
+    return `${appConfig.authorizationUrl}?${params.toString()}`;
   }
 
   async handleCallback(
@@ -110,11 +115,10 @@ export class ConnectorAdminAuthService {
       );
     }
 
-    const appConfig = await this.definitionService.findByKey(appKey);
+    const appConfig = this.getOAuthConfig(appKey);
     const redirectUri = this.getRedirectUri(appKey);
     const tokenResponse = await this.exchangeCodeForTokens(
       appConfig.tokenUrl,
-      appConfig.tenantId,
       code,
       redirectUri,
       appConfig.clientId,
@@ -215,7 +219,7 @@ export class ConnectorAdminAuthService {
     }
 
     try {
-      const appConfig = await this.definitionService.findByKey(appKey);
+      const appConfig = this.getOAuthConfig(appKey);
       if (appConfig.revokeUrl && record.accessToken) {
         const token = this.cryptoService.decrypt(record.accessToken);
         await this.revokeTokenAtProvider(appConfig.revokeUrl, token);
@@ -290,13 +294,9 @@ ${statusMessage}
       );
     }
 
-    const appConfig = await this.definitionService.findByKey(appKey);
-    let tokenUrl = appConfig.tokenUrl;
-    if (appConfig.tenantId) {
-      tokenUrl = tokenUrl.replace('{tenant}', appConfig.tenantId);
-    }
+    const appConfig = this.getOAuthConfig(appKey);
 
-    const response = await fetch(tokenUrl, {
+    const response = await fetch(appConfig.tokenUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -363,18 +363,12 @@ ${statusMessage}
 
   private async exchangeCodeForTokens(
     tokenUrl: string,
-    tenantId: string | undefined,
     code: string,
     redirectUri: string,
     clientId: string,
     clientSecret: string,
     codeVerifier?: string,
   ): Promise<Record<string, unknown>> {
-    let resolvedTokenUrl = tokenUrl;
-    if (tenantId) {
-      resolvedTokenUrl = resolvedTokenUrl.replace('{tenant}', tenantId);
-    }
-
     const body = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
@@ -387,7 +381,7 @@ ${statusMessage}
       body.set('code_verifier', codeVerifier);
     }
 
-    const response = await fetch(resolvedTokenUrl, {
+    const response = await fetch(tokenUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -436,8 +430,37 @@ ${statusMessage}
     return crypto.createHash('sha256').update(codeVerifier).digest('base64url');
   }
 
+  private getOAuthConfig(appKey: string): AdminGithubOAuthConfig {
+    if (appKey !== GITHUB_APP_KEY) {
+      throw new NotFoundException(
+        ErrorCode.CONNECTED_APP_NOT_FOUND,
+        `Admin connector OAuth is not configured for '${appKey}'`,
+      );
+    }
+
+    const clientId = this.configService.get<string>('app.githubClientId', '').trim();
+    const clientSecret = this.configService.get<string>('app.githubClientSecret', '').trim();
+
+    if (!clientId || !clientSecret) {
+      throw new BadRequestException(
+        ErrorCode.CONNECTED_APP_OAUTH_FAILED,
+        'GitHub OAuth is not configured on the server',
+      );
+    }
+
+    return {
+      appKey: GITHUB_APP_KEY,
+      authorizationUrl: 'https://github.com/login/oauth/authorize',
+      tokenUrl: 'https://github.com/login/oauth/access_token',
+      clientId,
+      clientSecret,
+      scopes: ['repo', 'read:org'],
+      pkceEnabled: false,
+    };
+  }
+
   private getRedirectUri(appKey: string): string {
-    if (appKey === 'github') {
+    if (appKey === GITHUB_APP_KEY) {
       const githubCallbackUrl = this.configService.get<string>('app.githubCallbackUrl', '').trim();
       if (githubCallbackUrl) {
         return githubCallbackUrl;

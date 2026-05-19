@@ -307,9 +307,9 @@ BACKEND_URL=http://localhost:3000    # or production domain
 Add the following to your `.env` file:
 
 ```bash
-GITHUB_CLIENT_ID=Ov23ctlwVGCnHyBP1m1y
-GITHUB_CLIENT_SECRET=09cfb5d0003fffc1f875e3b1d1fd895f9681a03f
-GITHUB_CALLBACK_URL=http://localhost:3000/api/v1/admin/connectors/oauth/github/callback
+GITHUB_CLIENT_ID=-------
+GITHUB_CLIENT_SECRET=------------------
+GITHUB_CALLBACK_URL=http://server/api/v1/admin/connectors/oauth/github/callback
 ```
 
 ### Step 3: Ensure Connected App Definition
