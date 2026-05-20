@@ -5,5 +5,6 @@ export { default as microsoftConfig } from './microsoft.config';
 export { default as healthConfig } from './health.config';
 export { default as workspaceConfig } from './workspace.config';
 export { default as conversationConfig } from './conversation.config';
+export { default as conversationV2Config } from './conversation-v2.config';
 export { default as loggingConfig } from './logging.config';
 export { configValidationSchema } from './config.schema';

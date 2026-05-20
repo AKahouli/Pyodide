@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { History } from 'lucide-react';
+import { History, Sparkles } from 'lucide-react';
 import { ChatBubbleIcon } from '@radix-ui/react-icons';
 import { toast } from 'sonner';
 
@@ -222,6 +222,13 @@ export const AppSidebar = memo(function AppSidebar() {
               <SidebarMenuButton tooltip={t('actions.newChat.tooltip')} onClick={() => navigate('/')}>
                 <ChatBubbleIcon />
                 <span>{t('actions.newChat.label')}</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+
+            <SidebarMenuItem>
+              <SidebarMenuButton tooltip='Manus Agent (v2)' onClick={() => navigate('/conversation-v2')}>
+                <Sparkles />
+                <span>Manus (v2)</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
