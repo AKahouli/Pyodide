@@ -9,13 +9,14 @@ sys.modules.setdefault(
     SimpleNamespace(import_connector_items_to_workspace_request=lambda *args, **kwargs: None),
 )
 
-from src.langgraph_engine.playbook_tool_factory import (
+from src.flow_engine.tools.langchain_factory import (
     ToolResultCollector,
     _collect_connector_response_components,
     _create_code_interpreter_tool,
     _create_connector_mcp_tools,
     _select_generated_artifact_output_port,
 )
+from src.flow_engine.nodes.step_tools import _tool_to_openai_definition
 
 
 def test_collect_connector_response_components_emits_sources_and_citations() -> None:
@@ -298,7 +299,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
         }
 
     monkeypatch.setattr(
-        "src.langgraph_engine.mcp_client_factory.call_mcp_tool",
+        "src.flow_engine.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -328,7 +329,7 @@ def test_connector_mcp_tools_emit_citation_components(monkeypatch: pytest.Monkey
         for tool in tools
         if tool.name == "sharepoint_searchv2_search_document_blocks"
     )
-    result = asyncio.run(search_tool.ainvoke({"query": "revenue"}))
+    result = asyncio.run(search_tool.ainvoke({"params": {"query": "revenue"}}))
     components = collector.get_and_clear()
 
     assert "Use citation [1]" in result["text"]
@@ -363,7 +364,7 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.langgraph_engine.mcp_client_factory.call_mcp_tool",
+        "src.flow_engine.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -399,7 +400,7 @@ def test_connector_mcp_tools_do_not_inject_workspace_or_external_headers(
         for tool in tools
         if tool.name == "sharepoint_searchv2_search_document_blocks"
     )
-    result = asyncio.run(search_tool.ainvoke({"query": "revenue"}))
+    result = asyncio.run(search_tool.ainvoke({"params": {"query": "revenue"}}))
 
     assert result == {"text": "ok"}
     assert captured["params"] == {"query": "revenue"}
@@ -417,7 +418,7 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
         return {"text": "ok"}
 
     monkeypatch.setattr(
-        "src.langgraph_engine.mcp_client_factory.call_mcp_tool",
+        "src.flow_engine.mcp.call_mcp_tool",
         fake_call_mcp_tool,
     )
 
@@ -453,9 +454,41 @@ def test_connector_mcp_tools_preserve_explicit_auth_headers(
         for tool in tools
         if tool.name == "sharepoint_searchv2_search_document_blocks"
     )
-    asyncio.run(search_tool.ainvoke({"query": "revenue"}))
+    asyncio.run(search_tool.ainvoke({"params": {"query": "revenue"}}))
 
     assert captured["auth_headers"] == {
         "Authorization": "Bearer token",
         "X-Custom-Header": "custom-value",
     }
+
+
+def test_connector_mcp_tool_definition_exposes_params_when_schema_is_missing() -> None:
+    collector = ToolResultCollector()
+    tools = _create_connector_mcp_tools(
+        [
+            {
+                "connector_id": "connector-1",
+                "connector_name": "SharePoint",
+                "connector_slug": "sharepoint",
+                "mcp_transport_type": "streamable_http",
+                "mcp_server_url": "https://example.com/mcp",
+                "actions": [
+                    {
+                        "action_key": "searchv2_search_document_blocks",
+                        "label": "Search",
+                        "description": "Search documents",
+                    }
+                ],
+            }
+        ],
+        collector,
+    )
+
+    search_tool = next(
+        tool
+        for tool in tools
+        if tool.name == "sharepoint_searchv2_search_document_blocks"
+    )
+    definition = _tool_to_openai_definition(search_tool)
+
+    assert definition["function"]["parameters"]["properties"]["params"]["type"] == "object"

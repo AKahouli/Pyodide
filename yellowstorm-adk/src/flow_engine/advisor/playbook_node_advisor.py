@@ -6,11 +6,7 @@ from typing import Any
 
 
 def advise_playbook_node(request: dict[str, Any]) -> dict[str, Any]:
-    """Return structured node-level advisor suggestions.
-
-    The first version keeps logic deterministic and lightweight so the backend
-    contract is stable before richer model-backed suggestions are added.
-    """
+    """Return structured node-level advisor suggestions."""
 
     task = request.get("target_task") or {}
     task_id = str(request.get("task_id") or task.get("id") or "")

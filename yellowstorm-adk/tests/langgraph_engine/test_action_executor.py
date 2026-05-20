@@ -71,6 +71,29 @@ async def test_execute_action_task_uses_node_inputs_bound_to_document_ports_only
         "src.langgraph_engine.action_executor._get_vectorstores_url",
         lambda: "https://vectorstores.example.com",
     )
+    captured_documents = []
+
+    async def _fake_action_index_trigger(documents, vectorstores_url, task_id, workspace_settings):
+        captured_documents.extend(documents)
+        return {
+            "results": [{"document_id": doc["document_id"]} for doc in documents],
+            "errors": [],
+        }
+
+    async def _fake_await_indexing_completions(documents, futures, timeout=600):
+        return {
+            "completed": [{"document_id": doc["document_id"], "status": "ready"} for doc in documents],
+            "failed": [],
+        }
+
+    monkeypatch.setattr(
+        "src.langgraph_engine.action_executor._action_index_trigger",
+        _fake_action_index_trigger,
+    )
+    monkeypatch.setattr(
+        "src.langgraph_engine.action_executor._await_indexing_completions",
+        _fake_await_indexing_completions,
+    )
 
     task = {
         "id": "task-1",
@@ -118,6 +141,7 @@ async def test_execute_action_task_uses_node_inputs_bound_to_document_ports_only
     )
 
     assert result["status"] != "failed"
+    assert [item["document_id"] for item in captured_documents] == ["doc-1"]
     result_payload = (result.get("results") or {}).get("task-1", {})
     artifact_docs = result_payload.get("artifacts") or []
     assert all(item.get("metadata", {}).get("document_id") != "doc-2" for item in artifact_docs)

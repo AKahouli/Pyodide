@@ -15,7 +15,10 @@ from pydantic import BaseModel, Field, create_model
 from structlog import get_logger
 
 from src.config.settings import get_settings
-from src.langgraph_engine.artifact_routing import infer_artifact_kind, semantic_match_output_port
+from src.flow_engine.runtime.artifact_routing import (
+    infer_artifact_kind,
+    semantic_match_output_port,
+)
 from src.smart_rag.tools.utilities.connector_tools import (
     import_connector_items_to_workspace_request,
 )
@@ -1460,13 +1463,13 @@ def _create_connector_mcp_tools(
                 ah: Dict[str, str] = dict(binding_auth_headers),
                 ae: Dict[str, str] = binding_auth_env,
             ) -> StructuredTool:
-                async def _execute_mcp(**kwargs: Any) -> Any:
+                async def _execute_mcp(*args: Any, **kwargs: Any) -> Any:
                     raw_params = kwargs.get("params")
                     if isinstance(raw_params, dict):
                         params = raw_params
+                    elif args and isinstance(args[0], dict):
+                        params = args[0]
                     else:
-                        # Some model/tool calling stacks send the declared fields directly
-                        # instead of nesting them under `params`.
                         params = {k: v for k, v in kwargs.items() if k != "params"}
                     if not isinstance(params, dict):
                         params = {}
@@ -1476,7 +1479,7 @@ def _create_connector_mcp_tools(
                                 f"Error: No MCP server configured for connector {cid}"
                             )
 
-                        from src.langgraph_engine.mcp_client_factory import (
+                        from src.flow_engine.mcp import (
                             call_mcp_tool,
                         )
 

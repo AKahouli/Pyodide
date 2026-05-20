@@ -185,7 +185,7 @@ async def run_step(
         litellm.api_key = settings.LITELLM_API_SECRET_KEY
         litellm.drop_params = True
 
-        from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
+        from src.flow_engine.tools import create_langchain_tools
 
         output_workspace_id = _resolve_output_workspace_id(
             metadata,

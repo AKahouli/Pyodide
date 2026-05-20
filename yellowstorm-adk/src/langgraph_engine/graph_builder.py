@@ -36,7 +36,7 @@ from src.langgraph_engine.step_executor import (
     _determine_output_mode,
     _finalize_task_outputs,
 )
-from src.langgraph_engine.artifact_routing import (
+from src.flow_engine.runtime.artifact_routing import (
     infer_artifact_kind as _infer_artifact_kind,
     normalize_port_id as _normalize_port_id,
     normalize_port_text as _normalize_port_text,
@@ -1599,7 +1599,7 @@ class DynamicGraphBuilder:
                         task_id,
                     )
 
-                    from src.langgraph_engine.playbook_tool_factory import (
+                    from src.flow_engine.tools.langchain_factory import (
                         create_langchain_tools,
                     )
                     from src.langgraph_engine.step_executor import (

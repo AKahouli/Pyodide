@@ -25,7 +25,7 @@ from google.protobuf.json_format import MessageToDict
 from structlog import get_logger
 from src.config.settings import get_settings
 from src.routers.authentification import create_access_token
-from src.langgraph_engine.generate_playbook_prompt import build_generate_playbook_prompt
+from src.flow_engine.generation.prompt import build_generate_playbook_prompt
 
 from src.middleware.correlation import UserContext, user_ctx
 # Import generated protobuf code (will be generated after running proto generation)
@@ -39,8 +39,8 @@ except ImportError:
 from src.smart_rag.core import AgentTeamService
 from src.evaluation.semantic_match import evaluate_semantic_match
 from src.schema.chatbot_schema import RunAgentTeamRequest, AgentSuggestion
-from src.langgraph_engine.types import PortPayload
-from src.langgraph_engine.playbook_node_advisor import advise_playbook_node
+from src.flow_engine.legacy_runtime import PortPayload
+from src.flow_engine.advisor.playbook_node_advisor import advise_playbook_node
 from src.flow_engine.advisor.execution_advisor_service import evaluate_task_execution
 
 logger = get_logger(__name__)
@@ -1672,8 +1672,9 @@ class ChatbotServicer(
 
     async def RunPlaybookWorkflow(self, request, context):
         """Execute a playbook workflow with server-streaming step updates."""
-        from src.langgraph_engine.workflow_service import run_playbook
-        from src.langgraph_engine.playbook_queue import register_task, remove_task
+        from src.flow_engine.legacy_runtime import (
+            run_playbook, register_task, remove_task,
+        )
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
         user_token = user_ctx.set(username)
@@ -1785,8 +1786,9 @@ class ChatbotServicer(
 
     async def ResumePlaybookWorkflow(self, request, context):
         """Resume an interrupted playbook with server-streaming step updates."""
-        from src.langgraph_engine.workflow_service import resume_playbook
-        from src.langgraph_engine.playbook_queue import register_task, remove_task
+        from src.flow_engine.legacy_runtime import (
+            resume_playbook, register_task, remove_task,
+        )
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
         user_token = user_ctx.set(username)
@@ -1855,7 +1857,7 @@ class ChatbotServicer(
 
     async def StopPlaybookWorkflow(self, request, context):
         """Stop a running playbook workflow by thread_id."""
-        from src.langgraph_engine.playbook_queue import cancel_task
+        from src.flow_engine.legacy_runtime import cancel_task
 
         thread_id = request.thread_id
         logger.info("[StopPlaybookWorkflow] Request received", thread_id=thread_id)
@@ -1954,8 +1956,7 @@ class ChatbotServicer(
 
     async def RunStep(self, request, context):
         """Execute a single task with an agent."""
-        from src.langgraph_engine.step_executor import execute_step
-        from src.langgraph_engine.action_executor import execute_action_task
+        from src.flow_engine.legacy_runtime import execute_step, execute_action_task
         import time
         from datetime import datetime
 
@@ -2081,8 +2082,7 @@ class ChatbotServicer(
 
     async def RunStepStream(self, request, context):
         """Execute a single task and stream step updates in realtime."""
-        from src.langgraph_engine.step_executor import execute_step
-        from src.langgraph_engine.action_executor import execute_action_task
+        from src.flow_engine.legacy_runtime import execute_step, execute_action_task
         import time
         from datetime import datetime
 
@@ -2279,7 +2279,7 @@ class ChatbotServicer(
 
     async def ResumeStep(self, request, context):
         """Resume an interrupted step with human response."""
-        from src.langgraph_engine.step_executor import resume_step
+        from src.flow_engine.legacy_runtime import resume_step
 
         username = request.user_context.username or request.user_context.user_id or "unknown"
         user_token = user_ctx.set(username)

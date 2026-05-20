@@ -826,9 +826,14 @@ def resolve_task_inputs(
                     )
                     continue
             else:
+                raw_artifacts = _artifact_list(node_inputs_by_port.get(port_id))
+                if not raw_artifacts:
+                    raw_artifacts = _artifact_list(
+                        node_inputs_by_port.get(_normalize_port_id(port_id))
+                    )
                 artifacts = [
                     artifact
-                    for artifact in _artifact_list(node_inputs_by_port.get(port_id))
+                    for artifact in raw_artifacts
                     if str(artifact.get("source_task_id") or "").strip() == source_task_id
                     and _normalize_port_id(
                         artifact.get("source_output_port_id")

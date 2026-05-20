@@ -162,9 +162,9 @@ async def test_run_step_executes_bound_tools(monkeypatch):
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
     monkeypatch.setattr("src.flow_engine.nodes.step_tools.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([_FakeTool()], None)
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     result = await run_step(
         node_id="step-1",
@@ -222,9 +222,9 @@ async def test_run_step_uses_state_workspace_when_node_inputs_are_resolved(monke
         return _Stream()
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     await run_step(
         node_id="step-1",
@@ -281,9 +281,9 @@ async def test_run_step_passes_code_interpreter_file_scope(monkeypatch):
         return _Stream()
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     await run_step(
         node_id="step-1",
@@ -367,9 +367,9 @@ async def test_run_step_passes_opaque_document_refs_into_tool_scope(monkeypatch)
         return _Stream()
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     await run_step(
         node_id="step-1",
@@ -446,9 +446,9 @@ async def test_run_step_does_not_fallback_to_workspace_for_unresolved_opaque_ref
         return _Stream()
 
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = _fake_create_langchain_tools
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     await run_step(
         node_id="step-1",
@@ -529,9 +529,9 @@ async def test_run_step_emits_structured_result_payload(monkeypatch):
 
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     result = await run_step(
         node_id="step-1",
@@ -599,9 +599,9 @@ async def test_run_step_preserves_opaque_structured_refs(monkeypatch):
 
     monkeypatch.setattr("src.flow_engine.nodes.step.get_stream_writer", lambda: _writer)
     monkeypatch.setattr("src.flow_engine.nodes.step.litellm.acompletion", _fake_acompletion)
-    fake_factory_module = types.ModuleType("src.langgraph_engine.playbook_tool_factory")
+    fake_factory_module = types.ModuleType("src.flow_engine.tools")
     fake_factory_module.create_langchain_tools = lambda **kwargs: ([], None)
-    monkeypatch.setitem(sys.modules, "src.langgraph_engine.playbook_tool_factory", fake_factory_module)
+    monkeypatch.setitem(sys.modules, "src.flow_engine.tools", fake_factory_module)
 
     result = await run_step(
         node_id="step-1",

@@ -17,6 +17,11 @@ from urllib.parse import urlencode
 
 import aiohttp
 
+from src.flow_engine.runtime.indexing_webhook import (
+    pop_indexing_future,
+    register_indexing_future,
+    resolve_indexing_webhook,
+)
 from src.langgraph_engine.port_resolution import (
     build_tool_scope,
     resolve_task_inputs,
@@ -28,26 +33,12 @@ logger = logging.getLogger(__name__)
 _cached_token: Optional[str] = None
 _cached_token_expires_at: float = 0.0
 
-# Registry of pending indexing completions: document_id → Future
-_pending_indexing: Dict[str, "asyncio.Future[Dict[str, Any]]"] = {}
 
-
-def _register_indexing_future(doc_id: str) -> "asyncio.Future[Dict[str, Any]]":
-    future: asyncio.Future[Dict[str, Any]] = asyncio.get_running_loop().create_future()
-    _pending_indexing[doc_id] = future
-    return future
-
-
-def resolve_indexing_webhook(doc_id: str, status: str, payload: Dict[str, Any]) -> bool:
-    """Called by the webhook endpoint when vectorstores POSTs a completion callback.
-
-    Returns True if a waiting Future was found and resolved.
-    """
-    future = _pending_indexing.pop(doc_id, None)
-    if future is None or future.done():
-        return False
-    future.set_result({"status": status, "payload": payload})
-    return True
+def _normalize_task_port_id(value: Any) -> str:
+    raw = str(value or "default").strip() or "default"
+    if raw.startswith(("in-", "out-")):
+        return raw.split("-", 1)[1] or "default"
+    return raw
 
 
 def _get_vectorstores_url() -> str:
@@ -125,7 +116,7 @@ def get_action_document_ids(
     for port in input_ports:
         if str(port.get("artifact_kind") or "") != "document":
             continue
-        port_id = str(port.get("id") or "default")
+        port_id = _normalize_task_port_id(port.get("id"))
         doc_ids.extend(tool_scope["documents_by_port"].get(port_id, []))
 
     return _unique_strings(doc_ids)
@@ -143,7 +134,7 @@ def get_action_document_metadata(
     for port in input_ports:
         if str(port.get("artifact_kind") or "") != "document":
             continue
-        port_id = str(port.get("id") or "default")
+        port_id = _normalize_task_port_id(port.get("id"))
         for f in tool_scope.get("files_by_port", {}).get(port_id, []):
             if not isinstance(f, dict):
                 continue
@@ -157,6 +148,39 @@ def get_action_document_metadata(
                 "workspace_id": str(f.get("workspace_id") or "").strip(),
                 "filename": str(f.get("filename") or "").strip(),
             })
+    return result
+
+
+def _collect_direct_input_documents(
+    task: Dict[str, Any],
+    node_inputs_by_port: Optional[Dict[str, List[Dict[str, Any]]]],
+) -> List[Dict[str, str]]:
+    result: List[Dict[str, str]] = []
+    seen = set()
+
+    for port in task.get("input_ports") or []:
+        if str(port.get("artifact_kind") or "") != "document":
+            continue
+        port_id = _normalize_task_port_id(port.get("id"))
+        port_inputs = (node_inputs_by_port or {}).get(port_id) or (node_inputs_by_port or {}).get(
+            str(port.get("id") or "default")
+        ) or []
+        for item in port_inputs:
+            if not isinstance(item, dict):
+                continue
+            doc_id = str(item.get("document_id") or "").strip()
+            if not doc_id or doc_id in seen:
+                continue
+            seen.add(doc_id)
+            result.append(
+                {
+                    "document_id": doc_id,
+                    "filepath": str(item.get("filepath") or "").strip(),
+                    "workspace_id": str(item.get("workspace_id") or "").strip(),
+                    "filename": str(item.get("filename") or "").strip(),
+                }
+            )
+
     return result
 
 
@@ -400,7 +424,7 @@ async def _await_indexing_completions(
                 error = payload.get("error") or f"Indexing failed with status: {webhook_status}"
                 failed.append({"document_id": doc_id, "status": "failed", "error": error})
         except asyncio.TimeoutError:
-            _pending_indexing.pop(doc_id, None)
+            pop_indexing_future(doc_id)
             failed.append({
                 "document_id": doc_id,
                 "status": "timeout",
@@ -464,6 +488,9 @@ async def execute_action_task(
 
     document_ids = get_action_document_ids(task, resolved_inputs)
     documents = get_action_document_metadata(task, resolved_inputs)
+    if not document_ids:
+        documents = _collect_direct_input_documents(task, node_inputs_by_port)
+        document_ids = [item["document_id"] for item in documents]
     workspace_id = get_action_workspace_id(resolved_inputs)
     workspace_settings = get_workspace_indexing_settings(
         resolved_inputs, workspace_id
@@ -498,7 +525,7 @@ async def execute_action_task(
     try:
         if action == "index":
             # Register futures before triggering to avoid missing the callback
-            futures = {doc["document_id"]: _register_indexing_future(doc["document_id"]) for doc in documents}
+            futures = {doc["document_id"]: register_indexing_future(doc["document_id"]) for doc in documents}
 
             trigger_result = await _action_index_trigger(
                 documents, vectorstores_url, task_id, workspace_settings
@@ -509,7 +536,7 @@ async def execute_action_task(
             # Cancel futures for documents that failed to trigger
             for doc in documents:
                 if doc["document_id"] not in triggered_ids:
-                    f = _pending_indexing.pop(doc["document_id"], None)
+                    f = pop_indexing_future(doc["document_id"])
                     if f and not f.done():
                         f.cancel()
 

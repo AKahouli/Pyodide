@@ -183,9 +183,12 @@ async def test_resume_playbook_rejects_stale_interrupt_id(monkeypatch) -> None:
     async def fake_send_sentinel(_queue) -> None:
         return None
 
+    async def fake_get_or_rebuild(**kwargs):
+        return FakeGraph()
+
     monkeypatch.setattr(
-        "src.langgraph_engine.graph_cache.get_thread_graph",
-        lambda _thread_id: FakeGraph(),
+        "src.langgraph_engine.workflow_service._get_or_rebuild_thread_graph",
+        fake_get_or_rebuild,
     )
     monkeypatch.setattr(
         "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",

@@ -26,7 +26,7 @@ from src.langgraph_engine.port_resolution import (
     load_prompt_registry,
     resolve_prompt_template,
 )
-from src.langgraph_engine.artifact_routing import normalize_port_id as _normalize_port_id
+from src.flow_engine.runtime.artifact_routing import normalize_port_id as _normalize_port_id
 from src.skills.runtime import inject_skill_catalog
 
 logger = get_logger(__name__)
@@ -925,7 +925,7 @@ async def _execute_step_direct(
         }
 
     try:
-        from src.langgraph_engine.playbook_tool_factory import create_langchain_tools
+        from src.flow_engine.tools.langchain_factory import create_langchain_tools
 
         tool_scope = build_tool_scope(resolved_inputs)
         output_workspace_id = select_output_workspace_id(resolved_inputs)
