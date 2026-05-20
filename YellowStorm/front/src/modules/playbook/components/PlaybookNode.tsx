@@ -360,6 +360,18 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const outputPorts = migratedTask.outputPorts ?? [];
   const hasMultiplePorts = inputPorts.length > 1 || outputPorts.length > 1;
 
+  const dataBindings = usePlaybookStore((s) => s.currentPlaybook?.dataBindings ?? []);
+  const unboundRequiredPortIds = useMemo(() => {
+    const portIds = new Set<string>();
+    for (const port of inputPorts) {
+      if (!port.required) continue;
+      if (!dataBindings.some((b) => b.targetNode === id && b.targetPort === port.id)) {
+        portIds.add(port.id);
+      }
+    }
+    return portIds;
+  }, [inputPorts, dataBindings, id]);
+
   useEffect(() => {
     updateNodeInternals(id);
   }, [id, inputPorts.length, outputPorts.length, updateNodeInternals]);
@@ -632,6 +644,8 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                   kind={port.artifactKind}
                   position="left"
                   selected={isSelected}
+                  warning={port.required && unboundRequiredPortIds.has(port.id)}
+                  warningTooltip={t('node.unboundRequiredPort')}
                   onInspect={() => openPortInspection({ nodeId: id, portId: port.id, portName: port.name, portKind: port.artifactKind, isInput: true })}
                 />
                 {port.required && hasMultiplePorts && (

@@ -31,6 +31,60 @@ const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   outputFormat: 'bg-orange-100 text-orange-700 border-orange-200',
 };
 
+type JudgeResultLike = {
+  missingFacts?: string[];
+  incoherences?: string[];
+  unsupportedClaims?: string[];
+  handoffRisks?: string[];
+  toolSelectionIssues?: string[];
+  missingToolCalls?: string[];
+  redundantToolCalls?: string[];
+  toolOutputUseIssues?: string[];
+  toolSequencingIssues?: string[];
+  toolUsageStrengths?: string[];
+  rewriteHints?: string[];
+};
+
+function buildLocalRemediationItems(
+  judgeResult: JudgeResultLike | null,
+  mode: 'optimize-step' | 'update-current' | 'generate-new',
+  taskId?: string,
+): AdvisorRemediationItem[] {
+  if (!judgeResult) return [];
+  const items: AdvisorRemediationItem[] = [];
+  const scope = mode === 'optimize-step' ? 'task' as const : 'playbook' as const;
+  const targetTaskId = mode === 'optimize-step' ? (taskId ?? null) : null;
+  const mappings: Array<{ entries: string[]; category: RemediationCategory; defaultSelected: boolean }> = [
+    { entries: judgeResult.missingFacts || [], category: 'structure', defaultSelected: true },
+    { entries: judgeResult.incoherences || [], category: 'prompt', defaultSelected: true },
+    { entries: judgeResult.unsupportedClaims || [], category: 'contract', defaultSelected: true },
+    { entries: judgeResult.handoffRisks || [], category: 'handoff', defaultSelected: true },
+    { entries: judgeResult.toolSelectionIssues || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.missingToolCalls || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.redundantToolCalls || [], category: 'tooling', defaultSelected: false },
+    { entries: judgeResult.toolOutputUseIssues || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.toolSequencingIssues || [], category: 'tooling', defaultSelected: true },
+    { entries: judgeResult.toolUsageStrengths || [], category: 'evidence', defaultSelected: false },
+    { entries: judgeResult.rewriteHints || [], category: 'prompt', defaultSelected: true },
+  ];
+  for (const { entries, category, defaultSelected } of mappings) {
+    entries.forEach((description, index) => {
+      items.push({
+        id: `local-${category}-${index}`,
+        category,
+        scope,
+        targetTaskId,
+        title: description.length > 80 ? description.slice(0, 80) + '...' : description,
+        description,
+        editable: true,
+        defaultSelected,
+        source: { kind: 'judge_result', field: category, index },
+      });
+    });
+  }
+  return items;
+}
+
 function RemediationItemRow({
   text,
   category,
@@ -741,13 +795,18 @@ export function ExecutionStepDetail({
     setRemediationDialogMode(mode);
     try {
       const taskId = mode === 'optimize-step' ? step?.taskId : undefined;
-      const items = await fetchAdvisorRemediations(currentPlaybook.id, execution.id, taskId);
+      let items: AdvisorRemediationItem[];
+      try {
+        items = await fetchAdvisorRemediations(currentPlaybook.id, execution.id, taskId);
+      } catch {
+        items = buildLocalRemediationItems(stepJudgeResult, mode, step?.taskId);
+      }
       setRemediationItems(items);
       setRemediationDialogOpen(true);
     } finally {
       setRemediationLoading(false);
     }
-  }, [execution, currentPlaybook, step, fetchAdvisorRemediations]);
+  }, [execution, currentPlaybook, step, fetchAdvisorRemediations, stepJudgeResult]);
 
   const handleGenerateJudgePlaybook = useCallback(async () => {
     await openRemediationDialog('generate-new');

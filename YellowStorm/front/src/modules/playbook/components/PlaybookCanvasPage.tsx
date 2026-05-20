@@ -468,7 +468,7 @@ function PlaybookCanvasInner() {
     setEdges,
   } = usePlaybookCanvas(triggerNodeActions);
 
-  const { saveNow } = useAutosave();
+  const { saveNow, hasUnboundRequiredPorts } = useAutosave();
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
   const [dataBindingsVisible, setDataBindingsVisible] = useState(true);
@@ -2871,6 +2871,7 @@ function PlaybookCanvasInner() {
             hasActiveExecution={hasActiveExecution}
             isStopping={isStopping}
             canRun={(playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0) && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
+            hasValidationIssues={hasUnboundRequiredPorts}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}

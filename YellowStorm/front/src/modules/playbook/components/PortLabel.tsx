@@ -1,4 +1,4 @@
-import { Search } from 'lucide-react';
+import { AlertTriangle, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { PORT_COLORS } from '../utils/port-colors';
 import type { ArtifactKind } from '../types';
@@ -8,10 +8,12 @@ interface PortLabelProps {
   kind: ArtifactKind;
   position: 'left' | 'right';
   selected?: boolean;
+  warning?: boolean;
+  warningTooltip?: string;
   onInspect?: () => void;
 }
 
-export function PortLabel({ name, kind, position, selected = false, onInspect }: PortLabelProps) {
+export function PortLabel({ name, kind, position, selected = false, warning, warningTooltip, onInspect }: PortLabelProps) {
   const colors = PORT_COLORS[kind];
   if (!colors) return null;
 
@@ -30,6 +32,14 @@ export function PortLabel({ name, kind, position, selected = false, onInspect }:
     >
       <Icon className={cn('h-3 w-3 shrink-0', selected && 'text-foreground')} style={selected ? undefined : { color: colors.raw }} />
       <span className={cn('min-w-0 truncate', selected ? 'text-foreground' : 'text-foreground/85')}>{name}</span>
+      {warning && (
+        <span
+          className={cn('shrink-0 flex items-center', onInspect ? '' : 'group-hover:flex')}
+          title={warningTooltip || 'Required input has no data binding'}
+        >
+          <AlertTriangle className="h-3 w-3 text-amber-500" />
+        </span>
+      )}
       {onInspect && (
         <button
           type="button"

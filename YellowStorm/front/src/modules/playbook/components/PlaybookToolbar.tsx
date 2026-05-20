@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2, Square } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -27,6 +27,7 @@ interface Props {
   hasActiveExecution?: boolean;
   isStopping?: boolean;
   canRun: boolean;
+  hasValidationIssues?: boolean;
   nodeReflectionEnabled: boolean;
   onNodeReflectionChange: (enabled: boolean) => void;
   advisorAutopilotEnabled?: boolean;
@@ -56,6 +57,7 @@ export function PlaybookToolbar({
   hasActiveExecution = false,
   isStopping = false,
   canRun,
+  hasValidationIssues,
   nodeReflectionEnabled,
   onNodeReflectionChange,
   advisorAutopilotEnabled = false,
@@ -195,18 +197,20 @@ export function PlaybookToolbar({
         variant={isDirty ? 'outline' : 'ghost'}
         size="sm"
         onClick={onSave}
-        disabled={!isDirty || isSaving}
+        disabled={!isDirty || isSaving || hasValidationIssues}
         className="px-2 sm:px-3"
       >
         {isSaving ? (
           <Loader2 className="h-4 w-4 sm:mr-1 animate-spin" />
+        ) : hasValidationIssues ? (
+          <AlertTriangle className="h-4 w-4 sm:mr-1 text-amber-500" />
         ) : isDirty ? (
           <Save className="h-4 w-4 sm:mr-1" />
         ) : (
           <Check className="h-4 w-4 sm:mr-1" />
         )}
         <span className="hidden sm:inline">
-          {isSaving ? t('toolbar.saving') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
+          {isSaving ? t('toolbar.saving') : hasValidationIssues ? t('toolbar.validationIssues') : isDirty ? t('toolbar.save') : t('toolbar.saved')}
         </span>
       </Button>
       {isExecuting || hasActiveExecution ? (
