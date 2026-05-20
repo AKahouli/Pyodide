@@ -77,8 +77,8 @@ async def run_step_with_tools(
         response = await litellm.acompletion(
             model=model_id,
             messages=messages,
-            temperature=0.7,
-            max_tokens=4096,
+            temperature=0,
+            max_tokens=32000,
             tools=tool_definitions,
             tool_choice="auto",
         )

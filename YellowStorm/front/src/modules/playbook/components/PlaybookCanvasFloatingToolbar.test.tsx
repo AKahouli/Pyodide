@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -81,15 +81,26 @@ vi.mock('../utils/port-colors', () => ({
 }));
 
 describe('PlaybookCanvasFloatingToolbar', () => {
+  let toolbarRect = { x: 0, y: 0, left: 0, top: 0, right: 280, bottom: 54, width: 280, height: 54, toJSON: () => ({}) };
+  let avoidRect = { x: 0, y: 0, left: 0, top: 0, right: 20, bottom: 140, width: 20, height: 140, toJSON: () => ({}) };
   const container = document.createElement('div');
   Object.defineProperty(container, 'getBoundingClientRect', {
     value: () => ({ x: 0, y: 0, left: 0, top: 0, right: 800, bottom: 600, width: 800, height: 600, toJSON: () => ({}) }),
   });
 
   const containerRef = { current: container };
+  const avoidRectElement = document.createElement('div');
+  Object.defineProperty(avoidRectElement, 'getBoundingClientRect', {
+    value: () => avoidRect,
+  });
+
+  const avoidRectRef = { current: avoidRectElement };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
+    toolbarRect = { x: 0, y: 0, left: 0, top: 0, right: 280, bottom: 54, width: 280, height: 54, toJSON: () => ({}) };
+    avoidRect = { x: 0, y: 0, left: 0, top: 0, right: 20, bottom: 140, width: 20, height: 140, toJSON: () => ({}) };
   });
 
   it('renders canvas edit actions and calls handlers', async () => {
@@ -213,5 +224,153 @@ describe('PlaybookCanvasFloatingToolbar', () => {
     expect(screen.queryByText('toolbar.addBlankStep')).not.toBeInTheDocument();
     await userEvent.click(screen.getByLabelText('toolbar.expandCanvasToolbar'));
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
+  });
+
+  it('respects the minimum left offset when restoring position', () => {
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 8, y: 16 }));
+
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+        minLeftOffset={40}
+      />,
+    );
+
+    const toolbar = screen.getByRole('toolbar').parentElement;
+    expect(toolbar).toHaveStyle({ left: '40px', top: '16px' });
+  });
+
+  it('defaults to the bottom left when there is no stored position', () => {
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+        collapsed
+      />,
+    );
+
+    const toolbar = screen.getByRole('toolbar').parentElement;
+    expect(toolbar).toHaveStyle({ left: '16px', top: '584px' });
+  });
+
+  it('allows restoring position at the top edge', () => {
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 40, y: 0 }));
+
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+        minLeftOffset={40}
+      />,
+    );
+
+    const toolbar = screen.getByRole('toolbar').parentElement;
+    expect(toolbar).toHaveStyle({ left: '40px', top: '0px' });
+  });
+
+  it('moves restored position to the right of the avoid rect when they overlap', () => {
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 16, y: 16 }));
+
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        avoidRectRef={avoidRectRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+      />,
+    );
+
+    const toolbar = screen.getByRole('toolbar').parentElement;
+    expect(toolbar).toHaveStyle({ left: '32px', top: '16px' });
+  });
+
+  it('reclamps after expand changes the toolbar size', async () => {
+    window.localStorage.setItem('playbook-canvas-floating-toolbar-position', JSON.stringify({ x: 40, y: 92 }));
+    avoidRect = { x: 300, y: 0, left: 300, top: 0, right: 780, bottom: 200, width: 480, height: 200, toJSON: () => ({}) };
+
+    render(
+      <PlaybookCanvasFloatingToolbar
+        containerRef={containerRef}
+        avoidRectRef={avoidRectRef}
+        onAddStep={vi.fn()}
+        onAddStepFromTemplate={vi.fn()}
+        onAutoLayout={vi.fn()}
+        onUndo={vi.fn()}
+        onRedo={vi.fn()}
+        onToggleExplorer={vi.fn()}
+        onToggleConnectors={vi.fn()}
+        explorerOpen={false}
+        connectorsOpen={false}
+        canUndo
+        canRedo
+        waitingForHumanInput={false}
+        interruptType={null}
+        collapsed
+      />,
+    );
+
+    const wrapper = screen.getByRole('toolbar').parentElement as HTMLDivElement;
+    Object.defineProperty(wrapper, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => toolbarRect,
+    });
+
+    toolbarRect = { x: 0, y: 0, left: 0, top: 0, right: 280, bottom: 54, width: 280, height: 54, toJSON: () => ({}) };
+    await userEvent.click(screen.getByLabelText('toolbar.expandCanvasToolbar'));
+
+    toolbarRect = { x: 0, y: 0, left: 0, top: 0, right: 597.3125, bottom: 54, width: 597.3125, height: 54, toJSON: () => ({}) };
+    await act(async () => {
+      window.dispatchEvent(new Event('resize'));
+    });
+
+    expect(wrapper).toHaveStyle({ top: '212px' });
   });
 });

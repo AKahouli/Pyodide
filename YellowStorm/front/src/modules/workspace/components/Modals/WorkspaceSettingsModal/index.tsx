@@ -35,7 +35,7 @@ export function WorkspaceSettingsModal() {
       chunks: 5,
       hybridSearch: false,
       ragType: 'standard',
-      maxToken: 4096,
+      maxToken: 32000,
       topK: 10,
     },
   });
@@ -62,7 +62,7 @@ export function WorkspaceSettingsModal() {
         chunks: 5,
         hybridSearch: false,
         ragType: 'standard',
-        maxToken: 4096,
+        maxToken: 32000,
         topK: 10,
       });
     }

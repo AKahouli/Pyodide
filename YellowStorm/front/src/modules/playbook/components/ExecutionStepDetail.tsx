@@ -1020,7 +1020,10 @@ export function ExecutionStepDetail({
         artifacts = [{
           portId: port.id,
           artifactKind: port.artifactKind,
-          content: typeof binding.constantValue === 'string' ? binding.constantValue : JSON.stringify(binding.constantValue),
+          content: typeof binding.constantValue === 'string'
+            ? binding.constantValue
+            : (binding.constantValue as Record<string, unknown>)?.text?.toString()
+              ?? JSON.stringify(binding.constantValue),
         }];
         sourceLabel = '(constant)';
       }

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 import { usePlaybookStore, useIsDirty, useIsSaving, useDirtyVersion } from '../store';
-import { getUnboundRequiredPorts } from '../utils/required-port-validation';
+import { getUnboundRequiredPorts, hasIncompleteDataBindings } from '../utils/required-port-validation';
 
 const DEBOUNCE_MS = 1000;
 
@@ -18,6 +18,11 @@ export function useAutosave() {
     const playbook = s.currentPlaybook;
     if (!playbook) return false;
     return getUnboundRequiredPorts(playbook.tasks, playbook.dataBindings ?? []).length > 0;
+  });
+  const hasIncompleteBindings = usePlaybookStore((s) => {
+    const playbook = s.currentPlaybook;
+    if (!playbook) return false;
+    return hasIncompleteDataBindings(playbook.dataBindings ?? []);
   });
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -32,22 +37,22 @@ export function useAutosave() {
   }, [clearTimer, saveCurrentPlaybook]);
 
   useEffect(() => {
-    if (!isDirty || isSaving || dirtyVersion === 0 || hasUnboundRequiredPorts) return;
+    if (!isDirty || isSaving || dirtyVersion === 0 || hasUnboundRequiredPorts || hasIncompleteBindings) return;
 
     clearTimer();
     debounceRef.current = setTimeout(doSave, DEBOUNCE_MS);
 
     return clearTimer;
-  }, [dirtyVersion, isDirty, isSaving, doSave, clearTimer]);
+  }, [dirtyVersion, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings, doSave, clearTimer]);
 
   // Cleanup on unmount
   useEffect(() => clearTimer, [clearTimer]);
 
   const saveNow = useCallback(() => {
-    if (hasUnboundRequiredPorts) return Promise.resolve();
+    if (hasUnboundRequiredPorts || hasIncompleteBindings) return Promise.resolve();
     clearTimer();
     return saveCurrentPlaybook();
-  }, [clearTimer, saveCurrentPlaybook, hasUnboundRequiredPorts]);
+  }, [clearTimer, saveCurrentPlaybook, hasUnboundRequiredPorts, hasIncompleteBindings]);
 
-  return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts };
+  return { saveNow, isDirty, isSaving, hasUnboundRequiredPorts, hasIncompleteBindings };
 }

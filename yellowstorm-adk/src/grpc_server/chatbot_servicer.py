@@ -1531,7 +1531,7 @@ class ChatbotServicer(
                 ],
                 api_base=app_settings.LITELLM_API_BASE_URL,
                 api_key=app_settings.LITELLM_API_SECRET_KEY,
-                max_tokens=4096,
+                max_tokens=32000,
                 response_format={"type": "json_object"},
                 user=username,
             )

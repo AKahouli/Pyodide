@@ -243,7 +243,7 @@ async def run_step(
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=32000,
                 stream=True,
             )
 

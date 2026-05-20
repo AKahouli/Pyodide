@@ -73,6 +73,46 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' })).toHaveAttribute('data-state', 'checked');
   });
 
+  it('anchors the assistant in the top left by default', () => {
+    const { container } = render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+      />,
+    );
+
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper.className).toContain('left-3');
+    expect(wrapper.className).toContain('top-3');
+    expect(wrapper.className).not.toContain('-translate-x-1/2');
+  });
+
+  it('hides the suggestion list while auto-apply is enabled', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={selectedTask}
+        suggestions={[
+          {
+            id: 's1',
+            kind: 'single_change',
+            label: 'Add validation step',
+            summary: 'Add a validation checkpoint after this step.',
+            reason: 'Helps confirm output quality.',
+            confidence: 0.8,
+            operationType: 'insert_after',
+            task: { title: 'Validate output', description: 'Review and validate the generated output.' },
+            targetTaskId: 'task-1',
+            isDirectIntentFallback: false,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByText('Add validation step')).not.toBeInTheDocument();
+    expect(screen.queryByText('intentBar.actions.apply')).not.toBeInTheDocument();
+  });
+
   it('supports controlled collapsed state', () => {
     const onCollapsedChange = vi.fn();
 
@@ -95,6 +135,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={null}
+        autoApply={false}
         suggestions={[
           {
             id: 'fallback',
@@ -122,6 +163,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply={false}
         value="Improve this step"
         suggestions={[
           {
@@ -150,6 +192,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply={false}
         value="Create a review workflow"
         suggestions={[
           {
@@ -193,6 +236,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply={false}
         suggestions={[
           {
             id: 'plan-1',
@@ -231,6 +275,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply={false}
         suggestions={[
           {
             id: 'plan-edge-1',
@@ -286,12 +331,14 @@ describe('PlaybookIntentBar', () => {
 
   it('exposes accessible header controls and calls onBarClick on title click but not on drag', () => {
     const onBarClick = vi.fn();
+    const onPositionChange = vi.fn();
 
     render(
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
         onBarClick={onBarClick}
+        onPositionChange={onPositionChange}
       />,
     );
 
@@ -308,6 +355,7 @@ describe('PlaybookIntentBar', () => {
     fireEvent.pointerMove(dragHandle, { pointerId: 2, clientX: 130, clientY: 125 });
     fireEvent.pointerUp(dragHandle, { pointerId: 2, clientX: 130, clientY: 125 });
     expect(onBarClick).toHaveBeenCalledTimes(1);
+    expect(onPositionChange).toHaveBeenCalledWith({ x: 30, y: 25 });
   });
 
   it('shows applied suggestions in the inline history panel with the same card layout', () => {
@@ -320,6 +368,7 @@ describe('PlaybookIntentBar', () => {
       <PlaybookIntentBar
         {...defaultProps}
         selectedTask={selectedTask}
+        autoApply={false}
         value="Improve this step"
         onValueChange={onValueChange}
         onApplyHistorySuggestion={onApplyHistorySuggestion}

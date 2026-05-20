@@ -73,7 +73,7 @@ import { ConditionalEdge } from './ConditionalEdge';
 import { DataBindingEdge } from './DataBindingEdge';
 import { PlaybookNodeEditor } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
-import { PlaybookCanvasFloatingToolbar } from './PlaybookCanvasFloatingToolbar';
+import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
 import { PlaybookWorkspaceSelect } from './PlaybookWorkspaceSelect';
 import { PlaybookGeneratingOverlay } from './PlaybookGeneratingOverlay';
@@ -107,8 +107,8 @@ const ITERATOR_CHILD_VERTICAL_GAP = 221;
 const ITERATOR_CHILD_MAX_COLUMNS = 3;
 const ITERATOR_CHILD_NODE_WIDTH = 384;
 const ITERATOR_CHILD_NODE_HEIGHT = 240;
-const DEFAULT_NODE_SPACING_X = 368;
-const TOOLBAR_MIN_TOP_OFFSET = 92;
+const DEFAULT_NODE_SPACING_X = 520;
+const TOOLBAR_MIN_LEFT_OFFSET = 40;
 
 function getIteratorBodyChildPosition(iteratorX: number, iteratorY: number, childIndex: number, totalChildren: number) {
   const columnCount = Math.min(
@@ -375,7 +375,6 @@ function PlaybookCanvasInner() {
   const setCopilotMode = usePlaybookStore((s) => s.setCopilotMode);
   const setWorkspaceExplorerOpen = usePlaybookStore((s) => s.setWorkspaceExplorerOpen);
   const setPageMode = usePlaybookStore((s) => s.setPageMode);
-  const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const updatePlaybook = usePlaybookStore((s) => s.updatePlaybook);
   const clonePlaybook = usePlaybookStore((s) => s.clonePlaybook);
@@ -411,6 +410,8 @@ function PlaybookCanvasInner() {
 
   const reactFlow = useReactFlow();
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
+  const intentBarRef = useRef<HTMLDivElement | null>(null);
+  const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
   const previousWaitingForHumanInputRef = useRef(false);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
 
@@ -468,10 +469,10 @@ function PlaybookCanvasInner() {
     setEdges,
   } = usePlaybookCanvas(triggerNodeActions);
 
-  const { saveNow, hasUnboundRequiredPorts } = useAutosave();
+  const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave();
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
-  const [dataBindingsVisible, setDataBindingsVisible] = useState(true);
+  const [dataBindingsVisible, setDataBindingsVisible] = useState(false);
   const editorOpen = usePlaybookStore((s) => s.nodeEditorOpen);
   const setEditorOpen = usePlaybookStore((s) => s.setNodeEditorOpen);
   const [editingName, setEditingName] = useState(false);
@@ -538,13 +539,16 @@ function PlaybookCanvasInner() {
       setExecutionPanelCollapsed(true);
       setIntentBarCollapsed(false);
       setToolbarCollapsed(true);
+      setDataBindingsVisible(false);
+      setIntentSuggestions([]);
+      setLastIntentSuggestions([]);
       setGlobalSidebarOpen(false);
-      fetchPlaybook(id);
-      fetchExecutions(id);
+      void usePlaybookStore.getState().fetchPlaybook(id);
+      void usePlaybookStore.getState().fetchExecutions(id);
     }
     // Ensure agents are loaded so nodes can display agent names
-    useAgentStore.getState().fetchAgents();
-  }, [id, isGeneratingRoute, fetchPlaybook, fetchExecutions]);
+    void useAgentStore.getState().fetchAgents();
+  }, [id, isGeneratingRoute]);
 
   useEffect(() => {
     if (searchParams.get('triggers') === '1' || searchParams.get('schedule') === '1') {
@@ -2460,7 +2464,6 @@ function PlaybookCanvasInner() {
         selectedTaskId: resolvedSelectedTaskId,
       });
       const newSuggestions = result.suggestions || [];
-      setLastIntentSuggestions(newSuggestions);
       const topSuggestion = newSuggestions.reduce<PlaybookIntentSuggestion | null>((best, suggestion) => {
         if (suggestion.isDirectIntentFallback) {
           return best;
@@ -2471,9 +2474,12 @@ function PlaybookCanvasInner() {
         return best;
       }, null);
       if (intentAutoApply && topSuggestion && topSuggestion.confidence >= AUTO_APPLY_MIN_CONFIDENCE) {
+        addIntentSuggestionHistoryEntry(id, playbook?.name ?? '', topSuggestion, normalizedIntent);
         handleApplyIntentSuggestion(topSuggestion);
+        setLastIntentSuggestions([]);
         setIntentSuggestions([]);
       } else {
+        setLastIntentSuggestions(newSuggestions);
         setIntentSuggestions(newSuggestions);
       }
     } catch (error) {
@@ -2483,7 +2489,7 @@ function PlaybookCanvasInner() {
     } finally {
       setIntentLoading(false);
     }
-  }, [handleApplyIntentSuggestion, id, intentAutoApply, intentValue, nodeTemplates, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
+  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, nodeTemplates, playbook, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
 
   useEffect(() => () => {
     if (typeof window === 'undefined') {
@@ -2620,6 +2626,10 @@ function PlaybookCanvasInner() {
     setExecutionPanelOpen,
     setWorkspaceExplorerOpen,
   ]);
+
+  const handleIntentBarPositionChange = useCallback(() => {
+    floatingToolbarRef.current?.reclampPosition();
+  }, []);
 
   useEffect(() => {
     const wasWaitingForHumanInput = previousWaitingForHumanInputRef.current;
@@ -2871,7 +2881,7 @@ function PlaybookCanvasInner() {
             hasActiveExecution={hasActiveExecution}
             isStopping={isStopping}
             canRun={(playbook.tasks.length > 0 || (playbook.nodes?.length || 0) > 0) && (playbook.workspaces?.length || 0) > 0 && !hasActiveExecution && !isSaving && !isDirty}
-            hasValidationIssues={hasUnboundRequiredPorts}
+            hasValidationIssues={hasUnboundRequiredPorts || hasIncompleteBindings}
             nodeReflectionEnabled={nodeReflectionEnabled}
             onNodeReflectionChange={handleNodeReflectionChange}
             advisorAutopilotEnabled={advisorAutopilotEnabled}
@@ -2975,6 +2985,7 @@ function PlaybookCanvasInner() {
                   <Controls />
                 </Canvas>
                 <PlaybookIntentBar
+                  ref={intentBarRef}
                   selectedTask={playbook?.tasks.find((task) => task.id === selectedStepId) || null}
                   loading={intentLoading}
                   value={intentValue}
@@ -2984,6 +2995,7 @@ function PlaybookCanvasInner() {
                   collapsed={intentBarCollapsed}
                   autoApply={intentAutoApply}
                   onCollapsedChange={setIntentBarCollapsed}
+                  onPositionChange={handleIntentBarPositionChange}
                   onValueChange={setIntentValue}
                   onAutoApplyChange={setIntentAutoApply}
                   onSubmit={() => void handleSubmitIntent()}
@@ -2997,7 +3009,9 @@ function PlaybookCanvasInner() {
                   onApplyHistorySuggestion={(suggestion) => handleApplyIntentSuggestion(suggestion, { replaceAll: true })}
                 />
                 <PlaybookCanvasFloatingToolbar
+                  ref={floatingToolbarRef}
                   containerRef={canvasChromeRef}
+                  avoidRectRef={intentBarRef}
                   onAddStep={handleAddStep}
                   onAddRouterNode={handleAddRouterNode}
                   onAddHumanApprovalNode={handleAddHumanApprovalNode}
@@ -3026,7 +3040,7 @@ function PlaybookCanvasInner() {
                     : null}
                   collapsed={toolbarCollapsed}
                   onCollapsedChange={setToolbarCollapsed}
-                  minTopOffset={TOOLBAR_MIN_TOP_OFFSET}
+                  minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
                 />
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>

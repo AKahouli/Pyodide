@@ -297,7 +297,7 @@ def describe_image(image_path, language, user_id="unknown"):
                                                       }
                                                   ]}
                                               ],
-                                              max_tokens=4096
+                                              max_tokens=32000
                                               )
     response = response.json()
     response = json.loads(response)

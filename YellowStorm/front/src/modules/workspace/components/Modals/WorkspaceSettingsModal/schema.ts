@@ -7,7 +7,7 @@ export const settingsSchema = z.object({
   chunks: z.number().min(1).max(100).default(5),
   hybridSearch: z.boolean().default(false),
   ragType: z.enum(['standard', 'advancedRag', 'smartRag']).default('standard'),
-  maxToken: z.number().min(100).max(128000).default(4096),
+  maxToken: z.number().min(100).max(128000).default(32000),
   topK: z.number().min(1).max(100).default(10),
 });
 

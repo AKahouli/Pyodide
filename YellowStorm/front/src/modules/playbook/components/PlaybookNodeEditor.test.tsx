@@ -319,4 +319,21 @@ describe('PlaybookNodeEditor', () => {
     vi.useRealTimers();
   });
 
+  it('renders inputs and outputs before retry policy for generic steps', () => {
+    const { container } = render(
+      <PlaybookNodeEditor
+        playbookId="playbook-1"
+        task={genericTask}
+        open
+        onOpenChange={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    const content = container.textContent ?? '';
+    expect(content.indexOf('nodeEditor.sectionInputs')).toBeGreaterThan(content.indexOf('nodeEditor.sectionExecution'));
+    expect(content.indexOf('nodeEditor.sectionOutputs')).toBeGreaterThan(content.indexOf('nodeEditor.sectionInputs'));
+    expect(content.indexOf('nodeEditor.retryPolicy')).toBeGreaterThan(content.indexOf('nodeEditor.sectionOutputs'));
+  });
+
 });

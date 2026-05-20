@@ -74,6 +74,13 @@ describe('PlaybookToolbar', () => {
     expect(screen.getByText('toolbar.save')).toBeInTheDocument();
   });
 
+  it('shows validation state and disables save when validation issues exist', () => {
+    render(<PlaybookToolbar {...defaultProps} isDirty={true} hasValidationIssues />);
+    expect(screen.getByText('toolbar.validationIssues')).toBeInTheDocument();
+    const saveButton = screen.getByText('toolbar.validationIssues').closest('button');
+    expect(saveButton).toBeDisabled();
+  });
+
   it('shows saving label and disables when saving', () => {
     render(<PlaybookToolbar {...defaultProps} isDirty={true} isSaving={true} />);
     expect(screen.getByText('toolbar.saving')).toBeInTheDocument();

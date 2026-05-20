@@ -33,14 +33,18 @@ function getFallbackSourceHandle(task: PlaybookTask | undefined): string {
 }
 
 function formatConstantValue(value: unknown): string {
-  if (!value || typeof value !== 'object') return 'constant';
-  const obj = value as Record<string, unknown>;
-  if ('kind' in obj && 'name' in obj) {
-    const items = Array.isArray(value) ? value : [value];
-    const names = items
-      .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
-      .map((item) => `${item.name}`);
-    return names.length > 0 ? names.join(', ') : 'constant';
+  if (!value) return 'constant';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    if (typeof obj.text === 'string') return obj.text;
+    if ('kind' in obj && 'name' in obj) {
+      const items = Array.isArray(value) ? value : [value];
+      const names = items
+        .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+        .map((item) => `${item.name}`);
+      return names.length > 0 ? names.join(', ') : 'constant';
+    }
   }
   return 'constant';
 }

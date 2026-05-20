@@ -27,7 +27,7 @@ const step2Schema = z.object({
   chunks: z.number().min(1).max(100).default(5),
   hybridSearch: z.boolean().default(false),
   ragType: z.enum(['standard', 'advancedRag', 'smartRag']).default('standard'),
-  maxToken: z.number().min(100).max(128000).default(4096),
+  maxToken: z.number().min(100).max(128000).default(32000),
   topK: z.number().min(1).max(100).default(10),
 });
 
@@ -76,7 +76,7 @@ export function CreateTemplateStep2({ onBack, onSubmit }: CreateTemplateStep2Pro
       chunks: 5,
       hybridSearch: false,
       ragType: 'standard',
-      maxToken: 4096,
+      maxToken: 32000,
       topK: 10,
     },
   });
@@ -227,7 +227,7 @@ export function CreateTemplateStep2({ onBack, onSubmit }: CreateTemplateStep2Pro
               <FormItem>
                 <FormLabel>{t(key('form.maxTokensLabel'))}</FormLabel>
                 <FormControl>
-                  <Input type='number' min={100} max={128000} {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 4096)} />
+                  <Input type='number' min={100} max={128000} {...field} onChange={(e) => field.onChange(parseInt(e.target.value) || 32000)} />
                 </FormControl>
                 <FormMessage />
               </FormItem>

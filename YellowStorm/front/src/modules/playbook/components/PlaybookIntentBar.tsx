@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { forwardRef, useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Clock, GripVertical, Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -18,6 +18,22 @@ import { cn } from '@/lib/utils';
 import { useModuleTranslation } from '@/modules/localization';
 import type { PlaybookIntentSuggestion, PlaybookTask, IntentSuggestionHistoryEntry } from '../types';
 
+function releasePointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
+  if (typeof target.hasPointerCapture === 'function' && !target.hasPointerCapture(pointerId)) {
+    return;
+  }
+
+  target.releasePointerCapture?.(pointerId);
+}
+
+function setPointerCaptureSafely(target: HTMLDivElement, pointerId: number) {
+  try {
+    target.setPointerCapture?.(pointerId);
+  } catch {
+    // Radix/dialog focus handoff can invalidate the pointer before capture completes.
+  }
+}
+
 interface Props {
   selectedTask: PlaybookTask | null;
   loading: boolean;
@@ -33,6 +49,7 @@ interface Props {
   onRecordHistory: (suggestion: PlaybookIntentSuggestion, intent: string) => void;
   onApplyHistorySuggestion?: (suggestion: PlaybookIntentSuggestion) => void;
   onBarClick?: () => void;
+  onPositionChange?: (offset: { x: number; y: number }) => void;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
 }
@@ -43,7 +60,7 @@ function getConfidenceColor(score: number): string {
   return 'text-red-600 dark:text-red-400 border-red-500/40 bg-red-50 dark:bg-red-950/30';
 }
 
-export function PlaybookIntentBar({
+export const PlaybookIntentBar = forwardRef<HTMLDivElement, Readonly<Props>>(function PlaybookIntentBar({
   selectedTask,
   loading,
   value,
@@ -58,9 +75,10 @@ export function PlaybookIntentBar({
   onRecordHistory,
   onApplyHistorySuggestion,
   onBarClick,
+  onPositionChange,
   collapsed: collapsedProp,
   onCollapsedChange,
-}: Readonly<Props>) {
+}: Readonly<Props>, forwardedRef) {
   const { t } = useModuleTranslation('playbook');
   const [uncontrolledCollapsed, setUncontrolledCollapsed] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -140,11 +158,11 @@ export function PlaybookIntentBar({
     }
 
     const rect = containerRef.current.getBoundingClientRect();
-    const horizontalLimit = Math.max(0, (window.innerWidth - rect.width - 32) / 2);
+    const horizontalLimit = Math.max(0, window.innerWidth - rect.width - 24);
     const verticalLimit = Math.max(0, window.innerHeight - rect.height - 24);
 
     return {
-      x: Math.max(-horizontalLimit, Math.min(horizontalLimit, nextX)),
+      x: Math.max(0, Math.min(horizontalLimit, nextX)),
       y: Math.max(0, Math.min(verticalLimit, nextY)),
     };
   }, []);
@@ -163,7 +181,7 @@ export function PlaybookIntentBar({
       moved: false,
     };
 
-    event.currentTarget.setPointerCapture?.(event.pointerId);
+    setPointerCaptureSafely(event.currentTarget, event.pointerId);
   }, [offset.x, offset.y]);
 
   const handleHeaderPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -188,7 +206,7 @@ export function PlaybookIntentBar({
       return;
     }
 
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    releasePointerCaptureSafely(event.currentTarget, event.pointerId);
     dragStateRef.current = null;
     if (!dragState.moved) {
       handleBarClick();
@@ -201,7 +219,7 @@ export function PlaybookIntentBar({
       return;
     }
 
-    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    releasePointerCaptureSafely(event.currentTarget, event.pointerId);
     dragStateRef.current = null;
   }, []);
 
@@ -239,14 +257,28 @@ export function PlaybookIntentBar({
 
   const showHistory = historyOpen && history.length > 0;
 
+  const setContainerNode = useCallback((node: HTMLDivElement | null) => {
+    containerRef.current = node;
+    if (!forwardedRef) return;
+    if (typeof forwardedRef === 'function') {
+      forwardedRef(node);
+      return;
+    }
+    forwardedRef.current = node;
+  }, [forwardedRef]);
+
+  useLayoutEffect(() => {
+    onPositionChange?.(offset);
+  }, [collapsed, offset, onPositionChange]);
+
   return (
     <div
-      ref={containerRef}
-      className="pointer-events-auto absolute left-1/2 top-3 z-20 w-[min(780px,calc(100%-2rem))] -translate-x-1/2"
+      ref={setContainerNode}
+      className="pointer-events-auto absolute left-3 top-3 z-20 w-[min(780px,calc(100%-2rem))]"
       style={{ marginLeft: offset.x, marginTop: offset.y }}
     >
       <div className="max-h-[calc(100vh-1.5rem)] overflow-hidden rounded-2xl border bg-background/95 shadow-xl backdrop-blur">
-        <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+        <div className="flex items-start justify-between gap-3 border-b px-4 py-3">
           <div
             data-testid="intent-bar-drag-handle"
             className="flex shrink-0 cursor-grab select-none items-center self-stretch active:cursor-grabbing"
@@ -276,21 +308,47 @@ export function PlaybookIntentBar({
               </p>
             </div>
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            aria-label={collapsed ? t('intentBar.actions.expand') : t('intentBar.actions.collapse')}
-            onClick={(e) => { e.stopPropagation(); setCollapsed((current) => !current); }}
-          >
-            <ChevronDown className={cn('h-4 w-4 transition-transform', collapsed ? '' : 'rotate-180')} />
-          </Button>
+          <div className="flex shrink-0 items-center gap-2 self-center">
+            {!collapsed ? (
+              <label htmlFor="intent-bar-auto-apply" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Switch id="intent-bar-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
+                <span>{t('intentBar.actions.autoApply')}</span>
+              </label>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              aria-label={collapsed ? t('intentBar.actions.expand') : t('intentBar.actions.collapse')}
+              onClick={(e) => { e.stopPropagation(); setCollapsed((current) => !current); }}
+            >
+              <ChevronDown className={cn('h-4 w-4 transition-transform', collapsed ? '' : 'rotate-180')} />
+            </Button>
+          </div>
         </div>
 
         {!collapsed ? (
           <div className="flex min-h-0 max-h-[calc(100vh-7rem)] flex-col gap-3 p-4">
             <div className="shrink-0 space-y-2">
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant={historyOpen ? 'secondary' : 'outline'}
+                  size="icon"
+                  disabled={history.length === 0}
+                  title={t('intentBar.history.title')}
+                  aria-label={t('intentBar.history.title')}
+                  aria-expanded={historyOpen}
+                  onClick={(e) => { e.stopPropagation(); setHistoryOpen((current) => !current); }}
+                >
+                  <Clock className="h-4 w-4" />
+                </Button>
+                <Button type="button" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
+                  {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {t('intentBar.actions.suggest')}
+                </Button>
+              </div>
               <Textarea
                 value={value}
                 onChange={(event) => onValueChange(event.target.value)}
@@ -305,30 +363,6 @@ export function PlaybookIntentBar({
                 rows={2}
                 className="min-h-[52px] max-h-44 resize-y"
               />
-                <div className="flex items-center justify-between gap-2">
-                  <label htmlFor="intent-bar-auto-apply" className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Switch id="intent-bar-auto-apply" checked={autoApply} onCheckedChange={onAutoApplyChange} aria-label={t('intentBar.actions.autoApply')} />
-                    <span>{t('intentBar.actions.autoApply')}</span>
-                  </label>
-                  <div className="flex items-center justify-end gap-2">
-                  <Button
-                    type="button"
-                    variant={historyOpen ? 'secondary' : 'outline'}
-                  size="icon"
-                  disabled={history.length === 0}
-                  title={t('intentBar.history.title')}
-                  aria-label={t('intentBar.history.title')}
-                  aria-expanded={historyOpen}
-                  onClick={(e) => { e.stopPropagation(); setHistoryOpen((current) => !current); }}
-                >
-                  <Clock className="h-4 w-4" />
-                </Button>
-                  <Button type="button" onClick={handleSuggestClick} disabled={loading || value.trim().length < 3}>
-                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                    {t('intentBar.actions.suggest')}
-                  </Button>
-                  </div>
-                </div>
             </div>
 
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -371,7 +405,7 @@ export function PlaybookIntentBar({
                   </div>
                 </div>
               </div>
-            ) : suggestions.length > 0 ? (
+            ) : suggestions.length > 0 && !autoApply ? (
               <div className="min-h-0 max-h-[20rem] flex-1 overflow-y-auto pr-3">
                 <div className="space-y-2">
                   {suggestions.map((suggestion) => {
@@ -453,4 +487,6 @@ export function PlaybookIntentBar({
       </AlertDialog>
     </div>
   );
-}
+});
+
+PlaybookIntentBar.displayName = 'PlaybookIntentBar';
