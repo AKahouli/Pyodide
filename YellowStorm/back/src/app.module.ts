@@ -13,6 +13,7 @@ import healthConfig from './config/health.config';
 import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
 import conversationConfig from './config/conversation.config';
+import conversationV2Config from './config/conversation-v2.config';
 
 // Global Modules
 import { LoggerModule } from './modules/logger';
@@ -36,6 +37,7 @@ import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
 import { ModelsModule } from './modules/models';
 import { ConversationModule } from './modules/conversation';
+import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.module';
 import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
@@ -54,7 +56,7 @@ import { ProjectModule } from './modules/project';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -84,6 +86,7 @@ import { ProjectModule } from './modules/project';
     WorkspaceModule,
     IndexingModule,
     ConversationModule,
+    ConversationV2Module,
     ModelsModule,
     ToolModule,
     SkillModule,

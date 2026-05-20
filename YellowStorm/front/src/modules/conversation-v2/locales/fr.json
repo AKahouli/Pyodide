@@ -1,0 +1,57 @@
+{
+  "page": {
+    "title": "Conversation V2",
+    "newChat": "Nouvelle conversation",
+    "emptyState": "Démarrer une nouvelle conversation."
+  },
+  "session": {
+    "loading": "Chargement de la session…",
+    "notFound": "Session introuvable.",
+    "errorTitle": "Erreur de flux"
+  },
+  "composer": {
+    "placeholder": "Tapez un message…",
+    "send": "Envoyer"
+  },
+  "conversation": {
+    "emptyTitle": "Envoyez un message pour démarrer",
+    "emptyDescription": "L'agent vous répondra et pourra utiliser des outils et une machine virtuelle pour accomplir votre tâche.",
+    "thinking": "Réflexion"
+  },
+  "tool": {
+    "running": "En cours",
+    "success": "Terminé",
+    "pending": "En attente",
+    "error": "Échec",
+    "openDetails": "Ouvrir les détails de l'outil"
+  },
+  "rightPanel": {
+    "title": "Ordinateur de l'agent",
+    "subtitle": "L'agent utilise",
+    "close": "Fermer le panneau",
+    "empty": "Sélectionnez un outil pour l'inspecter.",
+    "jumpToLive": "Revenir au direct"
+  },
+  "vnc": {
+    "unavailable": "Aucune VM attachée à cette session",
+    "connecting": "Connexion…",
+    "connected": "Connecté",
+    "error": "Échec de la connexion",
+    "takeOver": "Prendre le contrôle",
+    "release": "Relâcher le contrôle"
+  },
+  "tools": {
+    "browser": { "title": "Navigateur", "openInNewTab": "Ouvrir dans un nouvel onglet" },
+    "shell": { "title": "Shell", "copy": "Copier la sortie", "exitCode": "code {{code}}" },
+    "file": { "title": "Fichier", "operation": "Opération" },
+    "search": { "title": "Recherche", "noResults": "Aucun résultat" },
+    "mcp": { "title": "MCP" },
+    "generic": { "title": "Outil" }
+  },
+  "plan": {
+    "title": "Avancement",
+    "completed": "Tâche terminée",
+    "collapse": "Réduire le plan"
+  },
+  "controls": { "stop": "Arrêter", "pause": "Pause", "resume": "Reprendre" }
+}

@@ -22,6 +22,12 @@ export default defineConfig(() => {
     optimizeDeps: {
       include: ['@embedpdf/react-pdf-viewer', '@embedpdf/snippet', '@cyntler/react-doc-viewer'],
       dedupe: ['react', 'react-dom'],
+      esbuildOptions: {
+        target: 'es2022',
+      },
+    },
+    esbuild: {
+      target: 'es2022',
     },
     define: {
       global: {

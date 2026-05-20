@@ -1,0 +1,57 @@
+{
+  "page": {
+    "title": "Conversation V2",
+    "newChat": "New chat",
+    "emptyState": "Start a new conversation."
+  },
+  "session": {
+    "loading": "Loading session…",
+    "notFound": "Session not found.",
+    "errorTitle": "Stream error"
+  },
+  "composer": {
+    "placeholder": "Type a message…",
+    "send": "Send"
+  },
+  "conversation": {
+    "emptyTitle": "Send a message to start",
+    "emptyDescription": "The agent will respond and may use tools and a virtual machine to complete your task.",
+    "thinking": "Thinking"
+  },
+  "tool": {
+    "running": "Running",
+    "success": "Completed",
+    "pending": "Pending",
+    "error": "Failed",
+    "openDetails": "Open tool details"
+  },
+  "rightPanel": {
+    "title": "Yellowstorm computer",
+    "subtitle": "Agent is using",
+    "close": "Close panel",
+    "empty": "Select a tool to inspect.",
+    "jumpToLive": "Jump to live"
+  },
+  "vnc": {
+    "unavailable": "No VM attached to this session",
+    "connecting": "Connecting…",
+    "connected": "Connected",
+    "error": "Connection failed",
+    "takeOver": "Take Over",
+    "release": "Release control"
+  },
+  "tools": {
+    "browser": { "title": "Browser", "openInNewTab": "Open in new tab" },
+    "shell": { "title": "Shell", "copy": "Copy output", "exitCode": "exit {{code}}" },
+    "file": { "title": "File", "operation": "Operation" },
+    "search": { "title": "Search", "noResults": "No results" },
+    "mcp": { "title": "MCP" },
+    "generic": { "title": "Tool" }
+  },
+  "plan": {
+    "title": "Task progress",
+    "completed": "Task completed",
+    "collapse": "Collapse plan"
+  },
+  "controls": { "stop": "Stop", "pause": "Pause", "resume": "Resume" }
+}

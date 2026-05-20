@@ -7,6 +7,7 @@ import { HealthHistory, HealthHistorySchema } from './schemas/health-history.sch
 import { UsageModule } from '../usage';
 import { ModelsModule } from '../models';
 import { ConversationModule } from '../conversation';
+import { ConversationV2Module } from '../conversation-v2/conversation-v2.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { ConversationModule } from '../conversation';
     UsageModule,  // Import to use UsageService
     forwardRef(() => ModelsModule),  // Import to use ModelsService for health checks
     forwardRef(() => ConversationModule),  // Import to use StreamService for gRPC health checks
+    forwardRef(() => ConversationV2Module),  // Import to use ConversationV2GrpcClientService for V2 gRPC health
   ],
   controllers: [HealthController],
   providers: [HealthService, HealthHistoryService],

@@ -1,10 +1,20 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import { BotIcon, MessageSquareIcon } from 'lucide-react';
 import { StarsBackground } from '@/modules/conversation/effects/stars-background';
 import Input from '@/components/ai-elements/input';
 import { Shimmer } from '@/components/ai-elements/shimmer';
-import type { PromptInputMessage } from '@/components/ai-elements/prompt-input';
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  PromptInputProvider,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  type PromptInputMessage,
+} from '@/components/ai-elements/prompt-input';
+import { cn } from '@/lib/utils';
 import {
   useConversationStore,
   useInputDisabled,
@@ -18,8 +28,11 @@ import { useUsage } from '@/modules/usage';
 import { GroupChatButton } from './components/GroupChatButton';
 import { ComposerSuggestionChips } from './components/ComposerSuggestionChips';
 import { PlaybooksCarousel } from '@/modules/playbook/components/playbook-swiper';
- 
+import { conversationV2Api } from '@/modules/conversation-v2/api';
+
+type Mode = 'chat' | 'agent';
 export function NewConversationPage() {
+  const [mode, setMode] = useState<Mode>('chat');
   const createConversation = useConversationStore((s) => s.createConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
   const sendMessage = useConversationStore((s) => s.sendMessage);
@@ -83,6 +96,20 @@ export function NewConversationPage() {
     [removeFile],
   );
 
+  const handleAgentSubmit = async (message: PromptInputMessage) => {
+    const text = message.text?.trim() ?? '';
+    if (!text) return;
+    setIsSending(true);
+    try {
+      const { sessionId } = await conversationV2Api.createSession();
+      navigate(`/conversation-v2/${sessionId}`, { state: { initialMessage: text } });
+    } catch {
+      toast.error(t('toasts.conversation.createError'));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   const handleSubmit = async (message: PromptInputMessage, modelId: string, agentIds?: string[], workspaceIds?: string[]) => {
     if (!message.text?.trim() && !completedFileIds.length) return;
     setIsSending(true);
@@ -140,30 +167,111 @@ export function NewConversationPage() {
           </Shimmer>
         </div>
         <div className='w-full max-w-3xl px-4'>
-          <Input
-            onSubmit={handleSubmit}
-            status={isSending ? 'submitted' : 'ready'}
-            disabled={isSending || inputDisabled || isLimitExceeded}
-            submitDisabled={isUploading || isSending}
-            placeholder={limitPlaceholder}
-            onFilesAdded={handleFilesAdded}
-            onFileRemoved={handleFileRemoved}
-            uploadingFiles={uploadFiles}
-            accept={ACCEPT_EXTENSIONS}
-            maxFiles={5}
-            showWorkspaceSelect={true}
-            belowTextarea={
-              <ComposerSuggestionChips
-                fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}
-              />
-            }
-          />
-          <GroupChatButton />
+          <ModeToggle mode={mode} onChange={setMode} />
+          <div className='mt-3'>
+            {mode === 'chat' ? (
+              <>
+                <Input
+                  onSubmit={handleSubmit}
+                  status={isSending ? 'submitted' : 'ready'}
+                  disabled={isSending || inputDisabled || isLimitExceeded}
+                  submitDisabled={isUploading || isSending}
+                  placeholder={limitPlaceholder}
+                  onFilesAdded={handleFilesAdded}
+                  onFileRemoved={handleFileRemoved}
+                  uploadingFiles={uploadFiles}
+                  accept={ACCEPT_EXTENSIONS}
+                  maxFiles={5}
+                  showWorkspaceSelect={true}
+                  belowTextarea={
+                    <ComposerSuggestionChips
+                      fetchDisabled={inputDisabled || isLimitExceeded || isUploading || isSending}
+                    />
+                  }
+                />
+                <GroupChatButton />
+              </>
+            ) : (
+              <AgentInput onSubmit={handleAgentSubmit} disabled={isSending} />
+            )}
+          </div>
         </div>
         <div className='w-full max-w-7xl px-4'>
           <PlaybooksCarousel />
         </div>
       </div>
     </>
+  );
+}
+
+interface ModeToggleProps {
+  mode: Mode;
+  onChange: (m: Mode) => void;
+}
+
+function ModeToggle({ mode, onChange }: ModeToggleProps) {
+  const { t } = useModuleTranslation('conversation');
+  const options: Array<{ value: Mode; label: string; hint: string; Icon: typeof BotIcon }> = [
+    {
+      value: 'chat',
+      label: t('newConversation.mode.chat'),
+      hint: t('newConversation.mode.chatHint'),
+      Icon: MessageSquareIcon,
+    },
+    {
+      value: 'agent',
+      label: t('newConversation.mode.agent'),
+      hint: t('newConversation.mode.agentHint'),
+      Icon: BotIcon,
+    },
+  ];
+  return (
+    <div className='mx-auto flex w-fit gap-1 rounded-full border bg-card/70 p-1 backdrop-blur-sm'>
+      {options.map(({ value, label, hint, Icon }) => {
+        const active = mode === value;
+        return (
+          <button
+            key={value}
+            type='button'
+            onClick={() => onChange(value)}
+            title={hint}
+            className={cn(
+              'group inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors',
+              active
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Icon className='size-4' />
+            <span>{label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+interface AgentInputProps {
+  onSubmit: (message: PromptInputMessage) => void;
+  disabled: boolean;
+}
+
+function AgentInput({ onSubmit, disabled }: AgentInputProps) {
+  const { t } = useModuleTranslation('conversation');
+  return (
+    <PromptInputProvider>
+      <PromptInput onSubmit={onSubmit}>
+        <PromptInputBody>
+          <PromptInputTextarea
+            placeholder={t('newConversation.agentPlaceholder')}
+            disabled={disabled}
+          />
+        </PromptInputBody>
+        <PromptInputFooter>
+          <div className='flex-1' />
+          <PromptInputSubmit status={disabled ? 'submitted' : 'ready'} />
+        </PromptInputFooter>
+      </PromptInput>
+    </PromptInputProvider>
   );
 }

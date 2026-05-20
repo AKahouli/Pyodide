@@ -5,6 +5,7 @@ import NoMatch from './pages/NoMatch';
 import MaintenancePage from './pages/MaintenancePage';
 import { SharedConversationPage } from './pages/SharedConversationPage';
 import { ConversationPage } from './modules/conversation';
+import { ConversationV2Page, ConversationV2SessionPage, SharedConversationV2Page } from './modules/conversation-v2';
 import { EmailVerificationPage, ResetPasswordPage, ProfileCompletionPage } from './modules/auth';
 import { OAuthCallbackPage } from './modules/auth/components/OAuthCallbackPage';
 import { UpgradePage } from './modules/usage';
@@ -89,6 +90,14 @@ export const router = createHashRouter([
       {
         path: 'conversation/:id',
         element: <ConversationPage />,
+      },
+      {
+        path: 'conversation-v2',
+        element: <ConversationV2Page />,
+      },
+      {
+        path: 'conversation-v2/:sessionId',
+        element: <ConversationV2SessionPage />,
       },
       {
         path: 'apps',
@@ -346,6 +355,12 @@ export const router = createHashRouter([
   {
     path: '/share/:accessToken',
     element: <SharedConversationPage />,
+  },
+
+  // Public v2 share view - accessible by anyone (no auth required)
+  {
+    path: '/share/v2/:token',
+    element: <SharedConversationV2Page />,
   },
 
   // Catch-all for 404
