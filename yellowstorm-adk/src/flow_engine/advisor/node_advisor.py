@@ -1,6 +1,6 @@
 """Node advisor - suggests improvements for flow nodes.
 
-Ported from langgraph_engine/playbook_node_advisor.py.
+Ported from the legacy flow runtime playbook_node_advisor.
 Adapted for iteration awareness.
 """
 

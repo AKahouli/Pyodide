@@ -10,7 +10,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from structlog import get_logger
 
-from src.langgraph_engine.state import (
+from src.flow_engine.legacy.state import (
     ExecutionState,
     StepUpdate,
     StepCallback,
@@ -18,16 +18,16 @@ from src.langgraph_engine.state import (
     AgentConfig,
     EdgeConfig,
 )
-from src.langgraph_engine.checkpointer import get_checkpointer
-from src.langgraph_engine.graph_cache import (
+from src.flow_engine.legacy.checkpointer import get_checkpointer
+from src.flow_engine.legacy.graph_cache import (
     get_or_create_graph,
     store_thread_graph,
     get_thread_graph,
     cleanup_thread_graph,
     cleanup_stale_graphs,
 )
-from src.langgraph_engine.playbook_queue import register_queue, get_queue, remove_queue
-from src.langgraph_engine.port_resolution import validate_port_routing
+from src.flow_engine.legacy.playbook_queue import register_queue, get_queue, remove_queue
+from src.flow_engine.legacy.port_resolution import validate_port_routing
 
 logger = get_logger(__name__)
 
@@ -738,12 +738,12 @@ async def run_single_step_graph(
     Reuses ``DynamicGraphBuilder.build_single_step_graph`` so that
     interrupt/resume logic is identical to the full-workflow path.
     """
-    from src.langgraph_engine.graph_builder import DynamicGraphBuilder
-    from src.langgraph_engine.graph_cache import (
+    from src.flow_engine.legacy.graph_builder import DynamicGraphBuilder
+    from src.flow_engine.legacy.graph_cache import (
         store_thread_graph,
         cleanup_thread_graph,
     )
-    from src.langgraph_engine.step_executor import (
+    from src.flow_engine.legacy.step_executor import (
         _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot,
     )
 
@@ -897,8 +897,8 @@ async def resume_single_step(
 ) -> Dict[str, Any]:
     """Resume an interrupted single-step execution."""
     from langgraph.types import Command
-    from src.langgraph_engine.graph_cache import get_thread_graph, cleanup_thread_graph
-    from src.langgraph_engine.step_executor import (
+    from src.flow_engine.legacy.graph_cache import get_thread_graph, cleanup_thread_graph
+    from src.flow_engine.legacy.step_executor import (
         _extract_interrupt_from_snapshot as extract_step_interrupt_from_snapshot,
     )
 

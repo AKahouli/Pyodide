@@ -2,7 +2,7 @@
   "nodes": [
     {"id": "step-1", "kind": "step", "label": "Input"},
     {"id": "iter-node", "kind": "iterator", "label": "Process Items", "iterator_config": {"collection_path": "inputs.items", "max_items": 0}},
-    {"id": "child-step", "kind": "step", "label": "Process Item"},
+    {"id": "child-step", "kind": "step", "label": "Process Item", "metadata": {"containerConfig": {"parentIteratorId": "iter-node"}}},
     {"id": "step-3", "kind": "step", "label": "Output"}
   ],
   "control_edges": [

@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.langgraph_engine.step_executor import (
+from src.flow_engine.legacy.step_executor import (
     _execute_with_tools,
     _attach_result_text_for_citations,
     _collect_generated_artifacts,
@@ -191,7 +191,7 @@ async def test_replay_tool_calls_resolve_connector_action_key_suffix() -> None:
 async def test_execute_evaluation_task_uses_prompt_registry_and_emits_data_artifact(
     monkeypatch,
 ) -> None:
-    from src.langgraph_engine import step_executor as module
+    from src.flow_engine.legacy import step_executor as module
 
     async def fake_llm_call(
         settings,

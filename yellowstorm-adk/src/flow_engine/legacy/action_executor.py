@@ -22,7 +22,7 @@ from src.flow_engine.runtime.indexing_webhook import (
     register_indexing_future,
     resolve_indexing_webhook,
 )
-from src.langgraph_engine.port_resolution import (
+from src.flow_engine.legacy.port_resolution import (
     build_tool_scope,
     resolve_task_inputs,
     _unique_strings,

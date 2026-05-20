@@ -8,8 +8,8 @@ from datetime import datetime, timedelta
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from structlog import get_logger
 
-from src.langgraph_engine.state import StepCallback, NoopStepCallback
-from src.langgraph_engine.graph_builder import DynamicGraphBuilder
+from src.flow_engine.legacy.state import StepCallback, NoopStepCallback
+from src.flow_engine.legacy.graph_builder import DynamicGraphBuilder
 
 logger = get_logger(__name__)
 

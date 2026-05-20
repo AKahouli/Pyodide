@@ -1,6 +1,6 @@
 """Tool factory - creates tools for playbook flow execution.
 
-Ported and simplified from langgraph_engine/playbook_tool_factory.py.
+Ported and simplified from the legacy flow runtime playbook_tool_factory.
 """
 
 from typing import Any, Dict, List, Optional, Tuple

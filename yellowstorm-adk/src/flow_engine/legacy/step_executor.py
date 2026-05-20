@@ -17,7 +17,7 @@ from typing import Awaitable, Callable, Dict, Any, Optional, List
 from structlog import get_logger
 from src.middleware.correlation import get_user
 
-from src.langgraph_engine.port_resolution import (
+from src.flow_engine.legacy.port_resolution import (
     resolve_task_inputs,
     build_task_prompt,
     build_tool_scope,
@@ -751,7 +751,7 @@ async def execute_step(
     )
 
     if needs_hitl:
-        from src.langgraph_engine.workflow_service import run_single_step_graph
+        from src.flow_engine.legacy.workflow_service import run_single_step_graph
 
         return await run_single_step_graph(
             task=task,
@@ -1162,7 +1162,7 @@ async def resume_step(
     Uses the same graph cache and resume machinery as full-playbook
     workflows instead of maintaining a separate per-step graph.
     """
-    from src.langgraph_engine.workflow_service import resume_single_step
+    from src.flow_engine.legacy.workflow_service import resume_single_step
 
     return await resume_single_step(
         thread_id=thread_id,

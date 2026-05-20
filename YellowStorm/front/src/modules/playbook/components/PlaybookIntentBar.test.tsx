@@ -73,6 +73,29 @@ describe('PlaybookIntentBar', () => {
     expect(screen.getByRole('switch', { name: 'intentBar.actions.autoApply' })).toHaveAttribute('data-state', 'checked');
   });
 
+  it('does not render the helper hint line under the title', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+      />,
+    );
+
+    expect(screen.queryByText('intentBar.canvasHint')).not.toBeInTheDocument();
+    expect(screen.queryByText('intentBar.selectedHint')).not.toBeInTheDocument();
+  });
+
+  it('uses a one-line textarea by default', () => {
+    render(
+      <PlaybookIntentBar
+        {...defaultProps}
+        selectedTask={null}
+      />,
+    );
+
+    expect(screen.getByRole('textbox')).toHaveAttribute('rows', '1');
+  });
+
   it('anchors the assistant in the top left by default', () => {
     const { container } = render(
       <PlaybookIntentBar

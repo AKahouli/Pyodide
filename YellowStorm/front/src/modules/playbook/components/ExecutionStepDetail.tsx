@@ -16,6 +16,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
+import { MessageProvider } from '@/components/ai-elements/message-context';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
 import type { TaskResult, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
@@ -1314,8 +1316,13 @@ export function ExecutionStepDetail({
             ) : (
               <>
                 {selectedStepExecutionText && (
-                  <div className="rounded-lg bg-muted/50 p-4 whitespace-pre-wrap" style={{ fontSize: '11px' }}>
-                    {selectedStepExecutionText}
+                  <div
+                    data-testid="step-result-markdown"
+                    className="rounded-lg bg-muted/50 p-4 text-[14px] [&_*]:text-[14px] [&_*]:!text-[14px] [&_li]:whitespace-pre-wrap [&_p]:whitespace-pre-wrap"
+                  >
+                    <MessageProvider fileViewerDisplayMode="floating">
+                      <AIMessageContent parts={[{ type: 'text', content: selectedStepExecutionText }]} />
+                    </MessageProvider>
                   </div>
                 )}
                 {selectedStepExecution?.components && selectedStepExecution.components.length > 0 && (

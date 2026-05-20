@@ -47,7 +47,7 @@ async def cancel_task(thread_id: str) -> bool:
 
     Returns True if a task was found and cancelled, False otherwise.
     """
-    from src.langgraph_engine.graph_cache import cleanup_thread_graph
+    from src.flow_engine.legacy.graph_cache import cleanup_thread_graph
 
     task = _active_tasks.pop(thread_id, None)
     if task is None:

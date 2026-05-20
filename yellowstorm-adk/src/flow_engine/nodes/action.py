@@ -1,6 +1,6 @@
 """Action executor - deterministic non-LLM task execution.
 
-Ported and simplified from langgraph_engine/action_executor.py.
+Ported and simplified from the legacy flow runtime action_executor.
 Supports index, delete, and read document actions.
 """
 

@@ -9,7 +9,10 @@ import pytest
 from src.flow_engine.builder import compose
 from src.flow_engine.builder.iterator import (
     _build_body_subgraph,
+    _coerce_to_list,
+    _get_parent_iterator_id,
     _resolve_items,
+    _resolve_items_from_bindings,
     compute_iterator_children,
     is_iterator_container,
 )
@@ -50,6 +53,22 @@ class TestIteratorDetection:
         assert iterators[0]["id"] == "iter-node"
 
 
+class TestParentIteratorId:
+    def test_extracts_from_container_config(self):
+        node = {"id": "child", "metadata": {"containerConfig": {"parentIteratorId": "iter-1"}}}
+        assert _get_parent_iterator_id(node) == "iter-1"
+
+    def test_extracts_from_snake_case(self):
+        node = {"id": "child", "metadata": {"container_config": {"parent_iterator_id": "iter-1"}}}
+        assert _get_parent_iterator_id(node) == "iter-1"
+
+    def test_returns_empty_when_no_metadata(self):
+        assert _get_parent_iterator_id({"id": "child"}) == ""
+
+    def test_returns_empty_when_no_container_config(self):
+        assert _get_parent_iterator_id({"id": "child", "metadata": {}}) == ""
+
+
 class TestComputeChildren:
     @pytest.fixture
     def adjacency(self):
@@ -63,10 +82,19 @@ class TestComputeChildren:
 
     def test_children_are_all_reachable(self, adjacency):
         children, exits = compute_iterator_children("iter-node", adjacency, set(adjacency.keys()))
-        # BFS from iter-node picks up child-step and step-3 as body children
         assert sorted(children) == ["child-step", "step-3"]
-        # No exit targets since all reachable nodes are in the body
         assert exits == []
+
+    def test_children_determined_by_parent_iterator_id(self, adjacency):
+        raw_nodes = [
+            {"id": "step-1", "kind": "step"},
+            {"id": "iter-node", "kind": "iterator"},
+            {"id": "child-step", "kind": "step", "metadata": {"containerConfig": {"parentIteratorId": "iter-node"}}},
+            {"id": "step-3", "kind": "step"},
+        ]
+        children, exits = compute_iterator_children("iter-node", adjacency, set(adjacency.keys()), raw_nodes=raw_nodes)
+        assert children == ["child-step"]
+        assert exits == ["step-3"]
 
     def test_no_children_when_no_outgoing(self, adjacency):
         children, exits = compute_iterator_children("step-3", adjacency, set(adjacency.keys()))
@@ -83,10 +111,28 @@ class TestComputeChildren:
         ]
         adj = _build_adjacency(edges, node_ids)
         children, exits = compute_iterator_children("iter", adj, node_ids)
-        # All nodes are reachable from iter — body includes everything
         assert sorted(children) == ["child-a", "child-b", "exit-1", "exit-2"]
-        # Exit targets are only present for nodes outside the reachable set
         assert exits == []
+
+    def test_multiple_exit_targets_with_parent_id(self):
+        node_ids = {"iter", "child-a", "child-b", "exit-1", "exit-2"}
+        edges = [
+            {"source": "iter", "target": "child-a"},
+            {"source": "iter", "target": "child-b"},
+            {"source": "child-a", "target": "exit-1"},
+            {"source": "child-b", "target": "exit-2"},
+        ]
+        adj = _build_adjacency(edges, node_ids)
+        raw_nodes = [
+            {"id": "iter", "kind": "iterator"},
+            {"id": "child-a", "kind": "step", "metadata": {"containerConfig": {"parentIteratorId": "iter"}}},
+            {"id": "child-b", "kind": "step", "metadata": {"containerConfig": {"parentIteratorId": "iter"}}},
+            {"id": "exit-1", "kind": "step"},
+            {"id": "exit-2", "kind": "step"},
+        ]
+        children, exits = compute_iterator_children("iter", adj, node_ids, raw_nodes=raw_nodes)
+        assert sorted(children) == ["child-a", "child-b"]
+        assert sorted(exits) == ["exit-1", "exit-2"]
 
     def test_iterator_with_no_body_children(self):
         node_ids = {"iter", "exit-node"}
@@ -201,8 +247,92 @@ class TestResolveItems:
             "cancelled": False,
         }
         items = _resolve_items(state, "task_outputs.('prev-node', 0)", 0)
-        # Dot-path can't reach tuple keys — expect empty
         assert items == []
+
+
+class TestCoerceToList:
+    def test_json_string_array(self):
+        assert _coerce_to_list('["product a", "product b"]') == ["product a", "product b"]
+
+    def test_json_string_object(self):
+        result = _coerce_to_list('{"key": "value"}')
+        assert result == [{"key": "value"}]
+
+    def test_plain_string_returns_empty(self):
+        assert _coerce_to_list("not-a-list") == []
+
+    def test_list_passthrough(self):
+        assert _coerce_to_list([1, 2, 3]) == [1, 2, 3]
+
+    def test_dict_extracts_single_list_value(self):
+        assert _coerce_to_list({"items": [1, 2]}) == [1, 2]
+
+    def test_none_returns_empty(self):
+        assert _coerce_to_list(None) == []
+
+    def test_scalar_wrapped(self):
+        assert _coerce_to_list(42) == [42]
+
+
+def _make_state(task_outputs=None, inputs=None) -> ExecutionState:
+    return {
+        "execution_id": "e1",
+        "flow_id": "f1",
+        "inputs": inputs or {},
+        "task_outputs": task_outputs or {},
+        "iterations": {},
+        "router_decisions": {},
+        "errors": [],
+        "pending_approval": None,
+        "cancelled": False,
+    }
+
+
+class TestResolveItemsFromBindings:
+    def test_resolves_from_node_output_binding(self):
+        state = _make_state(task_outputs={
+            ("upstream", 0): {
+                "outputs": [
+                    {"output_port_id": "candidate_companies", "artifact_kind": "data", "content": '["product a", "product b"]'},
+                ],
+            },
+        })
+        bindings = [{
+            "id": "b1",
+            "source_kind": "node-output",
+            "source_node": "upstream",
+            "source_port": "candidate_companies",
+            "target_node": "iterator-1",
+            "target_port": "default",
+            "iteration": "current",
+        }]
+        items = _resolve_items_from_bindings("iterator-1", bindings, state, 0)
+        assert items == ["product a", "product b"]
+
+    def test_returns_empty_when_no_bindings_match(self):
+        state = _make_state()
+        items = _resolve_items_from_bindings("iterator-1", [], state, 0)
+        assert items == []
+
+    def test_max_items_caps_binding_result(self):
+        state = _make_state(task_outputs={
+            ("upstream", 0): {
+                "outputs": [
+                    {"output_port_id": "data", "artifact_kind": "data", "content": "[1,2,3,4,5]"},
+                ],
+            },
+        })
+        bindings = [{
+            "id": "b1",
+            "source_kind": "node-output",
+            "source_node": "upstream",
+            "source_port": "data",
+            "target_node": "iter",
+            "target_port": "default",
+            "iteration": "current",
+        }]
+        items = _resolve_items_from_bindings("iter", bindings, state, 2)
+        assert items == [1, 2]
 
 
 class TestComposeWithIterator:
@@ -214,20 +344,17 @@ class TestComposeWithIterator:
     def test_iterator_children_excluded_from_main_graph(self):
         snapshot = load_fixture("iterator.json")
         graph = compose(snapshot)
-        # All reachable nodes from iter-node are body children — excluded from main graph
         assert "child-step" not in graph.nodes
-        assert "step-3" not in graph.nodes
-        # Only pre-iterator node and iterator remain
+        assert "step-3" in graph.nodes
         assert "step-1" in graph.nodes
         assert "iter-node" in graph.nodes
 
     def test_iterator_replaces_body(self):
         snapshot = load_fixture("iterator.json")
         graph = compose(snapshot)
-        # Body nodes are in the subgraph, not the main graph
         assert "iter-node" in graph.nodes
         assert "child-step" not in graph.nodes
-        assert "step-3" not in graph.nodes
+        assert "step-3" in graph.nodes
 
 
 class TestBuildBodySubgraph:
@@ -262,15 +389,12 @@ class TestBuildBodySubgraph:
         assert "child-b" in subgraph.nodes
 
     def test_multi_child_body_nodes_not_in_main_graph(self):
-        """Multi-child body — all reachable nodes are children, none in main graph."""
         snapshot = load_fixture("iterator_multi_child.json")
         graph = compose(snapshot)
         assert graph is not None
         assert "child-a" not in graph.nodes
         assert "child-b" not in graph.nodes
-        # output-step is also reachable via BFS from iter-node, so it's part of body
-        assert "output-step" not in graph.nodes
-        # Only non-iterator, non-child nodes remain
+        assert "output-step" in graph.nodes
         assert "input-step" in graph.nodes
         assert "iter-node" in graph.nodes
 
@@ -419,11 +543,11 @@ async def test_invoke_iterator_child_failure_records_failed_iteration():
     (child-step) raises on the 2nd item.  The iterator's try/except catches it and
     records ``"failed"`` status for that iteration.  Other items continue normally.
 
-    The body subgraph has 2 children per item (child-step, step-3), so call_count
-    increments by 2 per item:
-        item-0: calls 1-2 (child-step, step-3)
-        item-1: calls 3-4 (child-step fails at 3, step-3 never runs)
-        item-2: calls 4-5 (child-step, step-3)
+    The body subgraph has 1 child per item (child-step), so call_count
+    increments by 1 per item:
+        item-0: call 1 (child-step succeeds)
+        item-1: call 2 (child-step fails)
+        item-2: call 3 (child-step succeeds)
     """
     snapshot = load_fixture("iterator.json")
     call_count = 0
@@ -431,7 +555,7 @@ async def test_invoke_iterator_child_failure_records_failed_iteration():
     async def mock_step_fn(node_id, node_config, state, node_inputs=None):
         nonlocal call_count
         call_count += 1
-        if call_count == 3:
+        if call_count == 2:
             raise Exception("Simulated node failure")
         return {"task_outputs": {(node_id, 0): {"output": "ok"}}, "iterations": {node_id: 1}}
 

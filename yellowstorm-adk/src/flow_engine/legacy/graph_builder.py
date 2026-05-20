@@ -18,7 +18,7 @@ from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from structlog import get_logger
 
-from src.langgraph_engine.state import (
+from src.flow_engine.legacy.state import (
     ExecutionState,
     StepCallback,
     StepUpdate,
@@ -26,8 +26,8 @@ from src.langgraph_engine.state import (
     EdgeConfig,
     NoopStepCallback,
 )
-from src.langgraph_engine.checkpointer import get_checkpointer_sync
-from src.langgraph_engine.step_executor import (
+from src.flow_engine.legacy.checkpointer import get_checkpointer_sync
+from src.flow_engine.legacy.step_executor import (
     is_skip_step_response,
     normalize_interrupt_action,
     extract_interrupt_message,
@@ -42,7 +42,7 @@ from src.flow_engine.runtime.artifact_routing import (
     normalize_port_text as _normalize_port_text,
     semantic_match_output_port,
 )
-from src.langgraph_engine.port_resolution import (
+from src.flow_engine.legacy.port_resolution import (
     resolve_task_inputs,
     build_task_prompt,
     build_tool_scope,
@@ -1132,7 +1132,7 @@ class DynamicGraphBuilder:
 
             # === ACTION MODE: bypass agent execution ===
             if execution_mode_value == "action":
-                from src.langgraph_engine.action_executor import execute_action_task
+                from src.flow_engine.legacy.action_executor import execute_action_task
 
                 logger.info(
                     f"[{task_id}] Action mode detected",
@@ -1602,7 +1602,7 @@ class DynamicGraphBuilder:
                     from src.flow_engine.tools.langchain_factory import (
                         create_langchain_tools,
                     )
-                    from src.langgraph_engine.step_executor import (
+                    from src.flow_engine.legacy.step_executor import (
                         _execute_with_tools,
                         _execute_replay_tool_calls,
                     )
@@ -2277,7 +2277,7 @@ class DynamicGraphBuilder:
     ) -> tuple:
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import SystemMessage, HumanMessage
-        from src.langgraph_engine.step_executor import (
+        from src.flow_engine.legacy.step_executor import (
             _extract_usage,
             _append_prompt_trace,
             _content_to_text,

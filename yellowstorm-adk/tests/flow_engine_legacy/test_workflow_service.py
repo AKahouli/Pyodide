@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.langgraph_engine.workflow_service import (
+from src.flow_engine.legacy.workflow_service import (
     _build_resume_state_update,
     _build_task_results,
     resume_playbook,
@@ -15,7 +15,7 @@ from src.langgraph_engine.workflow_service import (
 def _install_fake_tool_factory(monkeypatch, create_langchain_tools) -> None:
     monkeypatch.setitem(
         sys.modules,
-        "src.langgraph_engine.playbook_tool_factory",
+        "src.flow_engine.tools.langchain_factory",
         SimpleNamespace(create_langchain_tools=create_langchain_tools),
     )
 
@@ -54,11 +54,11 @@ async def test_resume_playbook_does_not_reinject_clarification_state(monkeypatch
         return None, {"status": "completed", "tasks": []}
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_thread_graph",
+        "src.flow_engine.legacy.workflow_service.get_thread_graph",
         lambda _thread_id: FakeGraph(),
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",
+        "src.flow_engine.legacy.workflow_service._extract_interrupt_from_snapshot",
         lambda _snapshot, _thread_id: {
             "type": "clarification",
             "task_id": "step_1",
@@ -67,19 +67,19 @@ async def test_resume_playbook_does_not_reinject_clarification_state(monkeypatch
         },
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        "src.flow_engine.legacy.workflow_service._consume_graph_stream",
         fake_consume_graph_stream,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._send_sentinel",
+        "src.flow_engine.legacy.workflow_service._send_sentinel",
         fake_send_sentinel,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.remove_queue",
+        "src.flow_engine.legacy.workflow_service.remove_queue",
         lambda _thread_id: None,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        "src.flow_engine.legacy.workflow_service.cleanup_thread_graph",
         lambda _thread_id: None,
     )
 
@@ -119,23 +119,23 @@ async def test_resume_playbook_rebuilds_graph_when_cache_is_missing(monkeypatch)
         return object()
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_thread_graph",
+        "src.flow_engine.legacy.workflow_service.get_thread_graph",
         lambda _thread_id: None,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_checkpointer",
+        "src.flow_engine.legacy.workflow_service.get_checkpointer",
         fake_get_checkpointer,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_or_create_graph",
+        "src.flow_engine.legacy.workflow_service.get_or_create_graph",
         lambda **_kwargs: {"compiled": FakeGraph()},
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.store_thread_graph",
+        "src.flow_engine.legacy.workflow_service.store_thread_graph",
         lambda _thread_id, _graph: captured.setdefault("stored", True),
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",
+        "src.flow_engine.legacy.workflow_service._extract_interrupt_from_snapshot",
         lambda _snapshot, _thread_id: {
             "type": "approval_request",
             "task_id": "step_1",
@@ -143,19 +143,19 @@ async def test_resume_playbook_rebuilds_graph_when_cache_is_missing(monkeypatch)
         },
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        "src.flow_engine.legacy.workflow_service._consume_graph_stream",
         fake_consume_graph_stream,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._send_sentinel",
+        "src.flow_engine.legacy.workflow_service._send_sentinel",
         fake_send_sentinel,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.remove_queue",
+        "src.flow_engine.legacy.workflow_service.remove_queue",
         lambda _thread_id: None,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        "src.flow_engine.legacy.workflow_service.cleanup_thread_graph",
         lambda _thread_id: None,
     )
 
@@ -187,11 +187,11 @@ async def test_resume_playbook_rejects_stale_interrupt_id(monkeypatch) -> None:
         return FakeGraph()
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._get_or_rebuild_thread_graph",
+        "src.flow_engine.legacy.workflow_service._get_or_rebuild_thread_graph",
         fake_get_or_rebuild,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._extract_interrupt_from_snapshot",
+        "src.flow_engine.legacy.workflow_service._extract_interrupt_from_snapshot",
         lambda _snapshot, _thread_id: {
             "type": "approval_request",
             "task_id": "step_1",
@@ -199,15 +199,15 @@ async def test_resume_playbook_rejects_stale_interrupt_id(monkeypatch) -> None:
         },
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._send_sentinel",
+        "src.flow_engine.legacy.workflow_service._send_sentinel",
         fake_send_sentinel,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.remove_queue",
+        "src.flow_engine.legacy.workflow_service.remove_queue",
         lambda _thread_id: None,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        "src.flow_engine.legacy.workflow_service.cleanup_thread_graph",
         lambda _thread_id: None,
     )
 
@@ -234,7 +234,7 @@ async def test_resume_single_step_returns_completed_result_from_task_state(monke
             return Snapshot()
 
     monkeypatch.setattr(
-        "src.langgraph_engine.graph_cache.get_thread_graph",
+        "src.flow_engine.legacy.graph_cache.get_thread_graph",
         lambda _thread_id: FakeGraph(),
     )
     async def fake_consume_graph_stream(*, graph, graph_input, config, thread_id):
@@ -252,11 +252,11 @@ async def test_resume_single_step_returns_completed_result_from_task_state(monke
         }
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        "src.flow_engine.legacy.workflow_service._consume_graph_stream",
         fake_consume_graph_stream,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        "src.flow_engine.legacy.workflow_service.cleanup_thread_graph",
         lambda _thread_id: None,
     )
 
@@ -284,7 +284,7 @@ async def test_resume_single_step_preserves_suspended_status_when_interrupt_rema
             return Snapshot()
 
     monkeypatch.setattr(
-        "src.langgraph_engine.graph_cache.get_thread_graph",
+        "src.flow_engine.legacy.graph_cache.get_thread_graph",
         lambda _thread_id: FakeGraph(),
     )
     async def fake_consume_graph_stream(*, graph, graph_input, config, thread_id):
@@ -296,11 +296,11 @@ async def test_resume_single_step_preserves_suspended_status_when_interrupt_rema
         }, {"status": "in_progress", "results": {}}
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service._consume_graph_stream",
+        "src.flow_engine.legacy.workflow_service._consume_graph_stream",
         fake_consume_graph_stream,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.cleanup_thread_graph",
+        "src.flow_engine.legacy.workflow_service.cleanup_thread_graph",
         lambda _thread_id: None,
     )
 
@@ -354,10 +354,10 @@ async def test_single_step_clarification_resume_completes_with_real_graph(monkey
         return InMemorySaver()
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_checkpointer",
+        "src.flow_engine.legacy.workflow_service.get_checkpointer",
         fake_get_checkpointer,
     )
-    from src.langgraph_engine.graph_builder import DynamicGraphBuilder
+    from src.flow_engine.legacy.graph_builder import DynamicGraphBuilder
 
     monkeypatch.setattr(
         DynamicGraphBuilder, "_llm_direct_call", staticmethod(fake_direct_call)
@@ -530,23 +530,23 @@ async def test_run_single_step_graph_preserves_node_inputs_by_port(monkeypatch) 
             return {"compiled": FakeCompiled()}
 
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.get_checkpointer",
+        "src.flow_engine.legacy.workflow_service.get_checkpointer",
         fake_get_checkpointer,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.graph_builder.DynamicGraphBuilder",
+        "src.flow_engine.legacy.graph_builder.DynamicGraphBuilder",
         FakeBuilder,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.workflow_service.store_thread_graph",
+        "src.flow_engine.legacy.workflow_service.store_thread_graph",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.graph_cache.store_thread_graph",
+        "src.flow_engine.legacy.graph_cache.store_thread_graph",
         lambda *_args, **_kwargs: None,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.graph_cache.cleanup_thread_graph",
+        "src.flow_engine.legacy.graph_cache.cleanup_thread_graph",
         lambda *_args, **_kwargs: None,
     )
 

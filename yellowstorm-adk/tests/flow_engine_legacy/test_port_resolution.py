@@ -1,6 +1,6 @@
 import pytest
 
-from src.langgraph_engine.port_resolution import (
+from src.flow_engine.legacy.port_resolution import (
     build_task_prompt,
     build_task_prompt_context,
     build_tool_scope,

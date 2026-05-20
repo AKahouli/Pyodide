@@ -13,6 +13,7 @@ wired directly from the iterator in the main graph.
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from typing import Any, Callable, Coroutine
 
@@ -39,25 +40,60 @@ def is_iterator_container(node: dict[str, Any]) -> bool:
     return node.get("kind") == "iterator"
 
 
+def _get_parent_iterator_id(node: dict[str, Any]) -> str:
+    metadata = node.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    container_config = metadata.get("containerConfig") or metadata.get("container_config")
+    if not isinstance(container_config, dict):
+        return ""
+    parent_id = container_config.get("parentIteratorId") or container_config.get("parent_iterator_id")
+    return str(parent_id).strip() if parent_id else ""
+
+
+def _build_parent_map(raw_nodes: list[dict[str, Any]]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for node in raw_nodes:
+        parent_id = _get_parent_iterator_id(node)
+        if parent_id:
+            result[node["id"]] = parent_id
+    return result
+
+
 def compute_iterator_children(
     it_id: str,
     adjacency: dict[str, list[str]],
     node_ids: set[str],
+    raw_nodes: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
     """Return ``(children, exit_targets)`` for an iterator node.
 
-    Children are ALL nodes reachable from the iterator via BFS that are
-    NOT exit targets.  Exit targets are nodes that are reachable from
-    children but are not children themselves (i.e. the first nodes in
-    each chain that fall outside the iterator body subgraph).
+    Body nodes are identified via ``metadata.containerConfig.parentIteratorId``
+    when available (the canonical source from the frontend).  When no node
+    declares a parent iterator ID, falls back to BFS reachability.
 
-    For a linear chain ``iter -> A -> B -> X``, the body is ``[A, B]``
-    and the exit target is ``[X]``.  The body subgraph runs per iteration;
-    the main graph wires ``iter -> X`` directly.
+    For a linear chain ``iter -> A -> B -> X`` where A and B have
+    ``parentIteratorId == iter``, the body is ``[A, B]`` and the exit
+    target is ``[X]``.  The body subgraph runs per iteration; the main
+    graph wires ``iter -> X`` directly.
     """
+    parent_map: dict[str, str] = {}
+    if raw_nodes is not None:
+        parent_map = _build_parent_map(raw_nodes)
+
+    if parent_map:
+        children = sorted(nid for nid, pid in parent_map.items() if pid == it_id)
+        child_set = set(children)
+        exit_targets: list[str] = []
+        for child_id in children:
+            for downstream in adjacency.get(child_id, []):
+                if downstream not in child_set and downstream in node_ids and downstream != it_id:
+                    if downstream not in exit_targets:
+                        exit_targets.append(downstream)
+        return children, exit_targets
+
     direct_targets = adjacency.get(it_id, [])
 
-    # BFS from the iterator to find all reachable nodes
     all_reachable: list[str] = []
     visited: set[str] = {it_id}
     queue: deque[str] = deque(direct_targets)
@@ -73,11 +109,7 @@ def compute_iterator_children(
 
     reachable_set = set(all_reachable)
 
-    # Exit targets are the last nodes in each chain — nodes whose
-    # outbound edges go to nodes NOT in the reachable set (or have
-    # no outbound edges at all) AND are direct targets of the iterator
-    # or reachable through its children.
-    exit_targets: list[str] = []
+    exit_targets = []
     for node in all_reachable:
         downstream = adjacency.get(node, [])
         exits_downstream = [d for d in downstream if d not in reachable_set]
@@ -86,7 +118,6 @@ def compute_iterator_children(
                 if d not in exit_targets and d in node_ids:
                     exit_targets.append(d)
 
-    # Also include direct targets that have no downstream (leaf nodes)
     for t in direct_targets:
         if t in node_ids and not adjacency.get(t, []):
             if t not in exit_targets:
@@ -94,7 +125,6 @@ def compute_iterator_children(
             if t in all_reachable:
                 all_reachable.remove(t)
 
-    # Children are reachable nodes minus exit targets
     exit_set = set(exit_targets)
     children = [c for c in all_reachable if c not in exit_set]
 
@@ -177,6 +207,27 @@ def _build_body_subgraph(
     return compiled
 
 
+def _coerce_to_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+        if isinstance(parsed, list):
+            return parsed
+        return [parsed] if parsed is not None else []
+    if isinstance(value, dict):
+        for v in value.values():
+            if isinstance(v, list):
+                return v
+        return [value]
+    if value is not None:
+        return [value]
+    return []
+
+
 def _resolve_items(
     state: ExecutionState,
     collection_path: str,
@@ -193,10 +244,26 @@ def _resolve_items(
         else:
             return []
 
-    items = current if isinstance(current, list) else []
+    items = _coerce_to_list(current)
     if max_items > 0 and len(items) > max_items:
         items = items[:max_items]
     return items
+
+
+def _resolve_items_from_bindings(
+    node_id: str,
+    data_bindings: list[dict[str, Any]],
+    state: ExecutionState,
+    max_items: int,
+) -> list[Any]:
+    resolved = resolve_node_inputs(node_id, data_bindings, state)
+    for value in resolved.values():
+        items = _coerce_to_list(value)
+        if items:
+            if max_items > 0 and len(items) > max_items:
+                items = items[:max_items]
+            return items
+    return []
 
 
 def add_iterator_edges(
@@ -255,7 +322,7 @@ def _register_iterator_subgraph(
     router_configs: dict[str, dict[str, Any]],
     exit_targets: list[str],
 ) -> None:
-    children, _ = compute_iterator_children(it_id, adjacency, {n["id"] for n in raw_nodes})
+    children, _ = compute_iterator_children(it_id, adjacency, {n["id"] for n in raw_nodes}, raw_nodes=raw_nodes)
     node_lookup = {n["id"]: n for n in raw_nodes}
     it_node = node_lookup.get(it_id, {})
     it_config = it_node.get("iterator_config", {})
@@ -274,7 +341,17 @@ def _register_iterator_subgraph(
         logger.info("[iterator] No children for iterator — items processed inline", iterator_id=it_id)
 
     async def _run_iterator(state: ExecutionState, _it_id: str = it_id) -> dict[str, Any]:
-        items = _resolve_items(state, collection_path, max_items)
+        items = _resolve_items_from_bindings(_it_id, data_bindings, state, max_items)
+        if not items:
+            items = _resolve_items(state, collection_path, max_items)
+        logger.info(
+            "[iterator] Resolved items for iterator",
+            iterator_id=_it_id,
+            item_count=len(items),
+            collection_path=collection_path,
+            binding_count=len([b for b in data_bindings if b.get("target_node") == _it_id]),
+            task_output_keys=list(state.get("task_outputs", {}).keys()),
+        )
         iteration = state["iterations"].get(_it_id, 0)
         child_results: list[dict[str, Any]] = []
 

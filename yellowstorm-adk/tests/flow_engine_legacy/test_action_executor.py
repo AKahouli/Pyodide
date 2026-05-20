@@ -1,6 +1,6 @@
 import pytest
 
-from src.langgraph_engine.action_executor import (
+from src.flow_engine.legacy.action_executor import (
     execute_action_task,
     get_action_document_ids,
     get_action_document_metadata,
@@ -68,7 +68,7 @@ def test_action_executor_selects_only_bound_document_port_files_with_prefixed_id
 @pytest.mark.asyncio
 async def test_execute_action_task_uses_node_inputs_bound_to_document_ports_only(monkeypatch) -> None:
     monkeypatch.setattr(
-        "src.langgraph_engine.action_executor._get_vectorstores_url",
+        "src.flow_engine.legacy.action_executor._get_vectorstores_url",
         lambda: "https://vectorstores.example.com",
     )
     captured_documents = []
@@ -87,11 +87,11 @@ async def test_execute_action_task_uses_node_inputs_bound_to_document_ports_only
         }
 
     monkeypatch.setattr(
-        "src.langgraph_engine.action_executor._action_index_trigger",
+        "src.flow_engine.legacy.action_executor._action_index_trigger",
         _fake_action_index_trigger,
     )
     monkeypatch.setattr(
-        "src.langgraph_engine.action_executor._await_indexing_completions",
+        "src.flow_engine.legacy.action_executor._await_indexing_completions",
         _fake_await_indexing_completions,
     )
 

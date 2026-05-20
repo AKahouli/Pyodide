@@ -66,12 +66,23 @@ def finalize_step_result(
             }
         )
 
-    return {
+    result: dict[str, Any] = {
         "output": text_output,
         "display_text": text_output,
         "artifacts": artifacts,
         "components": normalized_components,
     }
+
+    if text_port and text_output.strip():
+        result["outputs"] = {
+            text_port: {
+                "output_port_id": text_port,
+                "artifact_kind": "text",
+                "content": text_output,
+            }
+        }
+
+    return result
 
 
 def _get_output_ports(output_contract: dict[str, Any] | None) -> list[dict[str, Any]]:

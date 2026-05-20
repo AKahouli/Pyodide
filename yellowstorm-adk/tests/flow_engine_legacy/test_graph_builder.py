@@ -3,8 +3,8 @@ import sys
 from types import SimpleNamespace
 
 import pytest
-import src.langgraph_engine.graph_builder as graph_builder_module
-from src.langgraph_engine.graph_builder import (
+import src.flow_engine.legacy.graph_builder as graph_builder_module
+from src.flow_engine.legacy.graph_builder import (
     DynamicGraphBuilder,
     _extract_artifacts_from_components,
     _build_default_text_artifact,
@@ -20,7 +20,7 @@ from src.langgraph_engine.graph_builder import (
 def _install_fake_tool_factory(monkeypatch, create_langchain_tools) -> None:
     monkeypatch.setitem(
         sys.modules,
-        "src.langgraph_engine.playbook_tool_factory",
+        "src.flow_engine.tools.langchain_factory",
         SimpleNamespace(create_langchain_tools=create_langchain_tools),
     )
 

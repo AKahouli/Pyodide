@@ -62,7 +62,7 @@ def compose(
     iterator_children: set[str] = set()
     iterator_exit_targets: dict[str, list[str]] = {}
     for it_id in iterator_ids:
-        children, exits = compute_iterator_children(it_id, adjacency, node_ids)
+        children, exits = compute_iterator_children(it_id, adjacency, node_ids, raw_nodes=raw_nodes)
         iterator_children.update(children)
         iterator_exit_targets[it_id] = exits
 

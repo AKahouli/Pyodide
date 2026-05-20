@@ -35,16 +35,16 @@ vi.mock('./PlaybookStatusBadge', () => ({
   PlaybookStatusBadge: ({ status }: { status: string }) => <span data-testid="badge">{status}</span>,
 }));
 
-vi.mock('@/components/ai-elements/ai-message-content', () => ({
-  AIMessageContent: ({ parts }: any) => <div data-testid="ai-content">{JSON.stringify(parts)}</div>,
-}));
-
-vi.mock('@/components/ai-elements/message-context', () => ({
-  MessageProvider: ({ children }: any) => <div>{children}</div>,
-}));
-
 vi.mock('@/modules/conversation/utils', () => ({
-  mapComponentsToContentParts: (items: any[]) => items,
+  mapComponentsToContentParts: (items: any[]) => items.map((item) => {
+    if (item?.type === 'text') {
+      return {
+        type: 'text',
+        content: item?.data?.content ?? item?.data?.text ?? '',
+      };
+    }
+    return item;
+  }),
 }));
 
 vi.mock('@/components/ui/tabs', () => ({
@@ -742,6 +742,34 @@ describe('ExecutionStepDetail', () => {
   it('renders plain text output when no components', () => {
     render(<ExecutionStepDetail step={baseStep} />);
     expect(screen.getByText('Result text here')).toBeInTheDocument();
+    expect(screen.getByTestId('step-result-markdown')).toBeInTheDocument();
+  });
+
+  it('renders markdown fallback output via shared message renderer', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          output: '| Product |\n|---|\n| Product A |\n| Product B |',
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('table')).toBeInTheDocument();
+    expect(screen.getByText('Product A')).toBeInTheDocument();
+  });
+
+  it('preserves plain-text line breaks in fallback output styling', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          output: 'Line one\nLine two',
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId('step-result-markdown')).toHaveClass('[&_p]:whitespace-pre-wrap');
   });
 
   it('prefers displayText over raw output json', () => {
@@ -870,7 +898,7 @@ describe('ExecutionStepDetail', () => {
       components: [{ type: 'text', data: { text: 'hello' } }],
     };
     render(<ExecutionStepDetail step={withComponents} />);
-    expect(screen.getByTestId('ai-content')).toBeInTheDocument();
+    expect(screen.getByText('hello')).toBeInTheDocument();
   });
 
   it('renders tool trace when present', async () => {
