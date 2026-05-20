@@ -108,4 +108,22 @@ describe('autoLayoutTasks', () => {
     expect(branchB).toBeTruthy();
     expect(Math.abs(branchB!.positionY - branchA!.positionY)).toBeGreaterThanOrEqual(560);
   });
+
+  it('layouts two connected iterators as separate top-level nodes', () => {
+    const tasks = [
+      makeTask({ id: 'iter-1', taskType: 'iterator', nodeType: 'iterator', positionX: 0, positionY: 0 }),
+      makeTask({ id: 'iter-2', taskType: 'iterator', nodeType: 'iterator', positionX: 0, positionY: 0 }),
+    ];
+    const edges = [makeEdge({ id: 'e1', sourceId: 'iter-1', targetId: 'iter-2' })];
+
+    const result = autoLayoutTasks(tasks, edges);
+
+    expect(result).toHaveLength(2);
+    const iter1 = result.find((t) => t.id === 'iter-1');
+    const iter2 = result.find((t) => t.id === 'iter-2');
+    expect(iter1).toBeTruthy();
+    expect(iter2).toBeTruthy();
+    expect(iter1!.positionX).not.toBeNaN();
+    expect(iter2!.positionX).not.toBeNaN();
+  });
 });

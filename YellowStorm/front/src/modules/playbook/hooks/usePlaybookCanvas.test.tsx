@@ -828,4 +828,35 @@ describe('usePlaybookCanvas', () => {
       ]),
     );
   });
+
+  it('renders two connected top-level iterators as separate container nodes', () => {
+    const nodes = tasksToNodes([
+      makeTask({
+        id: 'iterator-1',
+        taskType: 'iterator',
+        nodeType: 'iterator',
+        title: 'Loop companies',
+        positionX: 50,
+        positionY: 60,
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        iteratorConfig: { source: '{{items}}', mode: 'item', batchSize: 10, itemVariable: 'item', outputVariable: 'items', errorStrategy: 'stop' },
+      }),
+      makeTask({
+        id: 'iterator-2',
+        taskType: 'iterator',
+        nodeType: 'iterator',
+        title: 'Loop leads',
+        positionX: 570,
+        positionY: 60,
+        inputPorts: [{ id: 'items', name: 'Items', artifactKind: 'data', required: false }],
+        outputPorts: [{ id: 'results', name: 'Results', artifactKind: 'data' }],
+        iteratorConfig: { source: '{{items}}', mode: 'item', batchSize: 10, itemVariable: 'item', outputVariable: 'processed_items', errorStrategy: 'stop' },
+      }),
+    ], false);
+
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0]).toMatchObject({ id: 'iterator-1', type: 'playbookIteratorContainer' });
+    expect(nodes[1]).toMatchObject({ id: 'iterator-2', type: 'playbookIteratorContainer' });
+  });
 });

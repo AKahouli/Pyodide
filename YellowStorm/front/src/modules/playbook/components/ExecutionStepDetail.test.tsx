@@ -176,6 +176,30 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText(/Child output/)).toBeInTheDocument();
   });
 
+  it('summarizes python-style iterator payload output instead of showing the raw dump', () => {
+    render(
+      <ExecutionStepDetail
+        step={{
+          ...baseStep,
+          output: null,
+          iteratorIterations: [
+            {
+              index: 0,
+              status: 'completed',
+              itemPreview: 'product a',
+              output: "{('cbd665d0-e3b7-4bac-bb1b-4393de74e116', 0): {'output': '2', 'display_text': '2', 'artifacts': [{'port_id': 'default', 'artifact_kind': 'text', 'content': '2'}], 'components': [], 'outputs': {'default': {'output_port_id': 'default', 'artifact_kind': 'text', 'content': '2'}}, 'node_id': 'cbd665d0-e3b7-4bac-bb1b-4393de74e116', 'iteration': 0}}",
+              childResults: [],
+              artifacts: [],
+            },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText(/cbd665d0-e3b7-4bac-bb1b-4393de74e116/)).not.toBeInTheDocument();
+  });
+
   it('updates the step replay mode selector when the selected task mode changes', () => {
     storeState.currentPlaybook = {
       id: 'p1',

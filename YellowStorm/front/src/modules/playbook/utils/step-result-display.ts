@@ -60,6 +60,54 @@ function summarizeStructuredOutputs(payload: Record<string, unknown>): string | 
   return null;
 }
 
+function unescapeQuotedPayload(value: string): string {
+  return value
+    .replace(/\\n/g, '\n')
+    .replace(/\\r/g, '\r')
+    .replace(/\\t/g, '\t')
+    .replace(/\\"/g, '"')
+    .replace(/\\'/g, "'")
+    .replace(/\\\\/g, '\\');
+}
+
+function collectQuotedFieldValues(value: string, fieldName: string): string[] {
+  const singleQuoted = new RegExp(`['\"]${fieldName}['\"]:\\s*'((?:\\\\'|[^'])*)'`, 'g');
+  const doubleQuoted = new RegExp(`['\"]${fieldName}['\"]:\\s*\"((?:\\\\\"|[^\"])*)\"`, 'g');
+
+  return [...value.matchAll(singleQuoted), ...value.matchAll(doubleQuoted)]
+    .map((match) => unescapeQuotedPayload(match[1]).trim())
+    .filter(Boolean);
+}
+
+function looksLikePythonTaskOutputDump(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{')) return false;
+  if (!trimmed.includes('display_text') && !trimmed.includes('output') && !trimmed.includes('llm_prompt_trace') && !trimmed.includes('tool_trace')) {
+    return false;
+  }
+
+  return trimmed.includes('node_id') || trimmed.includes('artifacts') || trimmed.startsWith('{(');
+}
+
+function summarizePythonStyleOutput(value: string): string | null {
+  if (!looksLikePythonTaskOutputDump(value)) {
+    return null;
+  }
+
+  const displayTextMatches = collectQuotedFieldValues(value, 'display_text');
+  if (displayTextMatches.length > 0) {
+    return [...new Set(displayTextMatches)].join('\n\n');
+  }
+
+  const outputMatches = collectQuotedFieldValues(value, 'output')
+    .filter((match) => !match.startsWith('{('));
+  if (outputMatches.length > 0) {
+    return [...new Set(outputMatches)].join('\n\n');
+  }
+
+  return null;
+}
+
 export function getPreferredStepResultText(result: ResultLike | null | undefined): string | null {
   if (!result) return null;
   if (typeof result.displayText === 'string' && result.displayText.trim()) {
@@ -70,7 +118,7 @@ export function getPreferredStepResultText(result: ResultLike | null | undefined
   }
 
   const parsed = safeParseJson(result.output);
-  if (!parsed) return result.output;
+  if (!parsed) return summarizePythonStyleOutput(result.output) ?? result.output;
 
   const displayText = parsed.display_text ?? parsed.displayText;
   if (typeof displayText === 'string' && displayText.trim()) {

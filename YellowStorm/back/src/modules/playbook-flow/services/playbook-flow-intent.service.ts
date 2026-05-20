@@ -80,6 +80,8 @@ type PlaybookIntentWorkflowChange =
       nodeRef: string | null;
       targetTaskIds?: string[];
       nodeRefs?: string[];
+      sourceOutputPortId?: string | null;
+      targetInputPortId?: string | null;
     };
     task: PlaybookIntentTaskDraft;
   }
@@ -485,7 +487,7 @@ export class PlaybookFlowIntentService {
     return null;
   }
 
-  private normalizeWorkflowAnchor(value: unknown): { mode: 'append' | 'before' | 'after' | 'as_input'; targetTaskId: string | null; nodeRef: string | null; targetTaskIds?: string[]; nodeRefs?: string[] } {
+  private normalizeWorkflowAnchor(value: unknown): { mode: 'append' | 'before' | 'after' | 'as_input'; targetTaskId: string | null; nodeRef: string | null; targetTaskIds?: string[]; nodeRefs?: string[]; sourceOutputPortId?: string | null; targetInputPortId?: string | null } {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const mode = item.mode === 'before' || item.mode === 'after' || item.mode === 'append' || item.mode === 'as_input' ? item.mode : 'append';
     return {
@@ -494,6 +496,8 @@ export class PlaybookFlowIntentService {
       nodeRef: this.normalizeText(item.nodeRef) || null,
       targetTaskIds: this.normalizeTextArray(item.targetTaskIds),
       nodeRefs: this.normalizeTextArray(item.nodeRefs),
+      sourceOutputPortId: this.normalizeText(item.sourceOutputPortId) || null,
+      targetInputPortId: this.normalizeText(item.targetInputPortId) || null,
     };
   }
 
