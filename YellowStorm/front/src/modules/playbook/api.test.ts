@@ -848,6 +848,111 @@ describe('getExecution', () => {
     });
   });
 
+  it('restores iterator iterations from snake_case fields and serialized output payloads', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-iterator',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'iterator-1',
+            status: 'completed',
+            output: JSON.stringify({
+              iterator_iterations: [{
+                index: 0,
+                status: 'completed',
+                item_preview: 'product a',
+                output: 'raw child aggregate',
+                child_results: [{
+                  task_id: 'child-1',
+                  task_title: 'Fetch account',
+                  status: 'completed',
+                  output: 'Child output',
+                  tool_trace: [],
+                  llm_prompt_trace: [],
+                }],
+              }],
+              count: 1,
+            }),
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-iterator');
+
+    expect(execution.taskResults[0].iteratorIterations).toEqual([
+      expect.objectContaining({
+        index: 0,
+        status: 'completed',
+        itemPreview: 'product a',
+        output: 'raw child aggregate',
+        childResults: [
+          expect.objectContaining({
+            taskId: 'child-1',
+            taskTitle: 'Fetch account',
+            status: 'completed',
+            output: 'Child output',
+          }),
+        ],
+      }),
+    ]);
+  });
+
+  it('prefers serialized iterator payloads when the top-level iterator array is empty', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-iterator-empty',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'completed',
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [{
+            taskId: 'iterator-1',
+            status: 'completed',
+            iteratorIterations: [],
+            output: JSON.stringify({
+              iterator_iterations: [{
+                index: 0,
+                status: 'completed',
+                item_preview: 'product a',
+                output: 'raw child aggregate',
+              }],
+              count: 1,
+            }),
+          }],
+          routerDecisions: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-iterator-empty');
+
+    expect(execution.taskResults[0].iteratorIterations).toEqual([
+      expect.objectContaining({
+        index: 0,
+        status: 'completed',
+        itemPreview: 'product a',
+        output: 'raw child aggregate',
+      }),
+    ]);
+  });
+
   it('preserves advisor task and execution fields when loading historical execution data', async () => {
     apiClientMock.get.mockReset();
     apiClientMock.get.mockResolvedValueOnce({

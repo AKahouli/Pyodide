@@ -450,6 +450,65 @@ function computeDurationMs(startedAt: string | null, completedAt: string | null)
   return Math.max(0, end - start);
 }
 
+function safeParseRecord(value: string | null | undefined): Record<string, unknown> | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeIteratorChildResult(raw: Record<string, unknown>): import('./types').IteratorChildResult {
+  return {
+    taskId: toNullableString(raw.taskId ?? raw.task_id) ?? '',
+    taskTitle: toNullableString(raw.taskTitle ?? raw.task_title) ?? '',
+    status: (raw.status as import('./types').StepStatus | undefined) ?? 'pending',
+    output: toNullableString(raw.output),
+    error: toNullableString(raw.error),
+    components: Array.isArray(raw.components) ? raw.components as import('./types').PlaybookComponent[] : [],
+    toolTrace: Array.isArray(raw.toolTrace ?? raw.tool_trace) ? (raw.toolTrace ?? raw.tool_trace) as import('./types').ToolTraceItem[] : [],
+    llmPromptTrace: Array.isArray(raw.llmPromptTrace ?? raw.llm_prompt_trace) ? (raw.llmPromptTrace ?? raw.llm_prompt_trace) as import('./types').LLMPromptTraceItem[] : [],
+    artifacts: normalizeTaskArtifacts(raw.artifacts),
+  };
+}
+
+function normalizeIteratorIterations(raw: Record<string, unknown>): import('./types').IteratorIterationResult[] {
+  const parsedOutput = safeParseRecord(toNullableString(raw.output));
+  const candidate = [
+    raw.iteratorIterations,
+    raw.iterator_iterations,
+    parsedOutput?.iteratorIterations,
+    parsedOutput?.iterator_iterations,
+  ].find((value) => Array.isArray(value) && value.length > 0)
+    ?? [raw.iteratorIterations, raw.iterator_iterations, parsedOutput?.iteratorIterations, parsedOutput?.iterator_iterations]
+      .find(Array.isArray);
+
+  if (!Array.isArray(candidate)) return [];
+
+  return candidate
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry, index) => {
+      const childResults = entry.childResults ?? entry.child_results;
+      return {
+        index: typeof entry.index === 'number' ? entry.index : index,
+        status: (entry.status as import('./types').StepStatus | undefined) ?? 'pending',
+        itemPreview: toNullableString(entry.itemPreview ?? entry.item_preview),
+        output: toNullableString(entry.output),
+        error: toNullableString(entry.error),
+        childResults: Array.isArray(childResults)
+          ? childResults
+              .filter((child): child is Record<string, unknown> => Boolean(child) && typeof child === 'object' && !Array.isArray(child))
+              .map(normalizeIteratorChildResult)
+          : [],
+        artifacts: normalizeTaskArtifacts(entry.artifacts),
+      };
+    });
+}
+
 function deriveExecutionNumber(
   index: number,
   pagination?: PaginatedResponse<PlaybookExecutionSummary>['pagination'],
@@ -512,7 +571,7 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     staleReason: toNullableString(raw.staleReason),
     invalidatedByTaskId: toNullableString(raw.invalidatedByTaskId),
     artifacts: normalizeTaskArtifacts(raw.artifacts),
-    iteratorIterations: Array.isArray(raw.iteratorIterations) ? raw.iteratorIterations : [],
+    iteratorIterations: normalizeIteratorIterations(raw),
   };
 }
 
