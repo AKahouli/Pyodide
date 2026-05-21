@@ -511,6 +511,23 @@ function SourceCell({
 }: SourceCellProps) {
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  if (pickerOpen) {
+    return (
+      <SourcePicker
+        inputPort={inputPort}
+        availableSources={availableSources}
+        sourceNodeOptions={sourceNodeOptions}
+        binding={binding ?? null}
+        allTasks={allTasks}
+        onConnect={onConnectToNodeOutput}
+        onCreateBinding={onCreateBinding}
+        onUpdateBinding={onUpdateBinding}
+        onClose={() => setPickerOpen(false)}
+        t={t}
+      />
+    );
+  }
+
   if (!binding) {
     return (
       <button
@@ -521,23 +538,6 @@ function SourceCell({
         <Link2 className="h-3.5 w-3.5" />
         {t('dataFlow.connectSource')}
       </button>
-    );
-  }
-
-  if (pickerOpen) {
-    return (
-      <SourcePicker
-        inputPort={inputPort}
-        availableSources={availableSources}
-        sourceNodeOptions={sourceNodeOptions}
-        binding={binding}
-        allTasks={allTasks}
-        onConnect={onConnectToNodeOutput}
-        onCreateBinding={onCreateBinding}
-        onUpdateBinding={onUpdateBinding}
-        onClose={() => setPickerOpen(false)}
-        t={t}
-      />
     );
   }
 
@@ -634,7 +634,7 @@ interface SourcePickerProps {
     artifactKind: ArtifactKind;
   }>;
   sourceNodeOptions: PlaybookTask[];
-  binding: DataBinding;
+  binding: DataBinding | null;
   allTasks: PlaybookTask[];
   onConnect: (portId: string, sourceTaskId: string, sourcePortId: string) => void;
   onCreateBinding: (portId: string, sourceKind: DataBindingSourceKind) => void;
@@ -659,55 +659,67 @@ function SourcePicker({
     availableSources.length > 0 ? 'node' : 'other',
   );
   const [constantValue, setConstantValue] = useState(
-    typeof binding.constantValue === 'string'
+    binding && typeof binding.constantValue === 'string'
       ? binding.constantValue
-      : (binding.constantValue as Record<string, unknown>)?.text?.toString() ?? '',
+      : (binding?.constantValue as Record<string, unknown>)?.text?.toString() ?? '',
   );
-  const [expressionValue, setExpressionValue] = useState(binding.expression ?? '');
+  const [expressionValue, setExpressionValue] = useState(binding?.expression ?? '');
   const [pathValue, setPathValue] = useState(
-    binding.sourceKind === 'trigger' ? binding.triggerPath ?? '' : binding.statePath ?? '',
+    binding?.sourceKind === 'trigger' ? binding.triggerPath ?? '' : binding?.statePath ?? '',
   );
 
   const handleConstantSave = () => {
-    const patch: Partial<DataBinding> = {
-      sourceKind: 'constant',
-      constantValue: constantValue ? { text: constantValue } : undefined,
-      sourceNode: undefined,
-      sourcePort: undefined,
-      triggerPath: undefined,
-      statePath: undefined,
-      expression: undefined,
-    };
-    onUpdateBinding(binding.id, patch);
+    if (binding) {
+      const patch: Partial<DataBinding> = {
+        sourceKind: 'constant',
+        constantValue: constantValue ? { text: constantValue } : undefined,
+        sourceNode: undefined,
+        sourcePort: undefined,
+        triggerPath: undefined,
+        statePath: undefined,
+        expression: undefined,
+      };
+      onUpdateBinding(binding.id, patch);
+    } else {
+      onCreateBinding(inputPort.id, 'constant');
+    }
     onClose();
   };
 
   const handleExpressionSave = () => {
-    const patch: Partial<DataBinding> = {
-      sourceKind: 'expression',
-      expression: expressionValue || undefined,
-      sourceNode: undefined,
-      sourcePort: undefined,
-      triggerPath: undefined,
-      statePath: undefined,
-      constantValue: undefined,
-    };
-    onUpdateBinding(binding.id, patch);
+    if (binding) {
+      const patch: Partial<DataBinding> = {
+        sourceKind: 'expression',
+        expression: expressionValue || undefined,
+        sourceNode: undefined,
+        sourcePort: undefined,
+        triggerPath: undefined,
+        statePath: undefined,
+        constantValue: undefined,
+      };
+      onUpdateBinding(binding.id, patch);
+    } else {
+      onCreateBinding(inputPort.id, 'expression');
+    }
     onClose();
   };
 
   const handlePathSave = (kind: 'trigger' | 'state') => {
-    const patch: Partial<DataBinding> = {
-      sourceKind: kind,
-      sourceNode: undefined,
-      sourcePort: undefined,
-      constantValue: undefined,
-      expression: undefined,
-      ...(kind === 'trigger'
-        ? { triggerPath: pathValue || undefined, statePath: undefined }
-        : { statePath: pathValue || undefined, triggerPath: undefined }),
-    };
-    onUpdateBinding(binding.id, patch);
+    if (binding) {
+      const patch: Partial<DataBinding> = {
+        sourceKind: kind,
+        sourceNode: undefined,
+        sourcePort: undefined,
+        constantValue: undefined,
+        expression: undefined,
+        ...(kind === 'trigger'
+          ? { triggerPath: pathValue || undefined, statePath: undefined }
+          : { statePath: pathValue || undefined, triggerPath: undefined }),
+      };
+      onUpdateBinding(binding.id, patch);
+    } else {
+      onCreateBinding(inputPort.id, kind);
+    }
     onClose();
   };
 
@@ -838,7 +850,7 @@ function SourcePicker({
                 onChange={(e) => setPathValue(e.target.value)}
                 placeholder="trigger.path"
                 className="h-8 text-xs"
-                onFocus={() => setPathValue(binding.triggerPath ?? '')}
+                onFocus={() => setPathValue(binding?.triggerPath ?? '')}
               />
               <Button
                 type="button"
@@ -862,7 +874,7 @@ function SourcePicker({
                 onChange={(e) => setPathValue(e.target.value)}
                 placeholder="state.path"
                 className="h-8 text-xs"
-                onFocus={() => setPathValue(binding.statePath ?? '')}
+                onFocus={() => setPathValue(binding?.statePath ?? '')}
               />
               <Button
                 type="button"
