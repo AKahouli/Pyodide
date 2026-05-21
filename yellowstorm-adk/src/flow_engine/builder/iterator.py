@@ -255,8 +255,47 @@ def _resolve_items_from_bindings(
     data_bindings: list[dict[str, Any]],
     state: ExecutionState,
     max_items: int,
+    raw_edges: list[dict[str, Any]] | None = None,
 ) -> list[Any]:
-    resolved = resolve_node_inputs(node_id, data_bindings, state)
+    all_bindings = list(data_bindings)
+    if raw_edges:
+        existing = {
+            (b.get("source_node", ""), b.get("source_port", ""), b.get("target_node", ""), b.get("target_port", ""))
+            for b in all_bindings
+            if b.get("source_kind") == "node-output"
+        }
+        for edge in raw_edges:
+            src = edge.get("source", "")
+            tgt = edge.get("target", "")
+            src_port = edge.get("source_output_port_id") or edge.get("sourceOutputPortId") or ""
+            tgt_port = edge.get("target_input_port_id") or edge.get("targetInputPortId") or ""
+            if src_port and tgt_port and tgt == node_id:
+                key = (src, src_port, tgt, tgt_port)
+                if key not in existing:
+                    synth = {
+                        "id": f"edge-{src}-{src_port}-{tgt}-{tgt_port}",
+                        "source_kind": "node-output",
+                        "source_node": src,
+                        "source_port": src_port,
+                        "target_node": tgt,
+                        "target_port": tgt_port,
+                        "iteration": "current",
+                    }
+                    all_bindings.append(synth)
+                    logger.info(
+                        "[iterator] Synthesized binding from control edge",
+                        node_id=node_id,
+                        source=src,
+                        source_port=src_port,
+                        target_port=tgt_port,
+                    )
+    resolved = resolve_node_inputs(node_id, all_bindings, state)
+    logger.info(
+        "[iterator] Resolved node inputs",
+        node_id=node_id,
+        resolved_ports=list(resolved.keys()),
+        binding_count=len(all_bindings),
+    )
     for value in resolved.values():
         items = _coerce_to_list(value)
         if items:
@@ -341,7 +380,7 @@ def _register_iterator_subgraph(
         logger.info("[iterator] No children for iterator — items processed inline", iterator_id=it_id)
 
     async def _run_iterator(state: ExecutionState, _it_id: str = it_id) -> dict[str, Any]:
-        items = _resolve_items_from_bindings(_it_id, data_bindings, state, max_items)
+        items = _resolve_items_from_bindings(_it_id, data_bindings, state, max_items, raw_edges=raw_edges)
         if not items:
             items = _resolve_items(state, collection_path, max_items)
         logger.info(
@@ -399,6 +438,13 @@ def _register_iterator_subgraph(
             "iterator_iterations": child_results,
             "count": len(child_results),
         }
+
+        logger.info(
+            "[iterator] Iterator finished",
+            iterator_id=_it_id,
+            result_count=len(child_results),
+            result_preview=str(result_payload)[:500],
+        )
 
         return {
             "task_outputs": {(_it_id, iteration): result_payload},

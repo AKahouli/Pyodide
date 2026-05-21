@@ -334,6 +334,50 @@ class TestResolveItemsFromBindings:
         items = _resolve_items_from_bindings("iter", bindings, state, 2)
         assert items == [1, 2]
 
+    def test_synthesizes_binding_from_control_edge(self):
+        state = _make_state(task_outputs={
+            ("upstream", 0): {
+                "outputs": [
+                    {"output_port_id": "lead_list", "artifact_kind": "data", "content": '[{"name":"a"},{"name":"b"}]'},
+                ],
+            },
+        })
+        raw_edges = [{
+            "source": "upstream",
+            "target": "iter",
+            "source_output_port_id": "lead_list",
+            "target_input_port_id": "items",
+        }]
+        items = _resolve_items_from_bindings("iter", [], state, 0, raw_edges=raw_edges)
+        assert len(items) == 2
+        assert items[0] == {"name": "a"}
+
+    def test_no_duplicate_from_edge_and_binding(self):
+        state = _make_state(task_outputs={
+            ("upstream", 0): {
+                "outputs": [
+                    {"output_port_id": "data", "artifact_kind": "data", "content": "[1,2]"},
+                ],
+            },
+        })
+        bindings = [{
+            "id": "b1",
+            "source_kind": "node-output",
+            "source_node": "upstream",
+            "source_port": "data",
+            "target_node": "iter",
+            "target_port": "items",
+            "iteration": "current",
+        }]
+        raw_edges = [{
+            "source": "upstream",
+            "target": "iter",
+            "source_output_port_id": "data",
+            "target_input_port_id": "items",
+        }]
+        items = _resolve_items_from_bindings("iter", bindings, state, 0, raw_edges=raw_edges)
+        assert items == [1, 2]
+
 
 class TestComposeWithIterator:
     def test_compose_iterator_graph(self):

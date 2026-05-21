@@ -23,7 +23,7 @@ import { usePlaybookStore } from '../store';
 import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
 import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
 import { PlaybookHumanApprovalConfigSection } from './PlaybookHumanApprovalConfigSection';
-import { PlaybookDataBindingSection } from './PlaybookDataBindingSection';
+import { PlaybookDataFlowSection } from './PlaybookDataFlowSection';
 import type {
   PlaybookTask,
   ValidatedTaskReplay,
@@ -39,7 +39,6 @@ import type {
   RetryPolicy,
 } from '../types';
 import { useModuleTranslation } from '@/modules/localization';
-import { getPortColor } from '../utils/port-colors';
 import {
   getDefaultIteratorInputPorts,
   getDefaultIteratorOutputPorts,
@@ -800,90 +799,16 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
               )}
 
               {!isEvaluationTask && (
-                <div className="space-y-4">
-                  <EditorSection title={t('nodeEditor.sectionInputs')} defaultOpen resetKey={`${task.id}:inputs`}>
-                    <PlaybookDataBindingSection
-                      targetNodeId={task.id}
-                      inputPortsOverride={draft.inputPorts}
-                      onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
-                      canEditPorts={draft.nodeType !== 'iterator'}
-                    />
-                  </EditorSection>
-
-                  <EditorSection title={t('nodeEditor.sectionOutputs')} defaultOpen resetKey={`${task.id}:outputs-top`}>
-                    <div className="space-y-3">
-                      {draft.nodeType !== 'iterator' && (
-                        <div className="flex justify-end">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 px-2 text-xs"
-                            onClick={() => {
-                              const id = `out-${crypto.randomUUID().slice(0, 8)}`;
-                              updateDraft({ outputPorts: [...draft.outputPorts, { id, name: t('nodeEditor.portDefaultOutput'), artifactKind: 'text' }] });
-                            }}
-                          >
-                            <Plus className="mr-1 h-3.5 w-3.5" />
-                            {t('ports.addOutput')}
-                          </Button>
-                        </div>
-                      )}
-                      {draft.nodeType === 'iterator' && (
-                        <p className="text-xs text-muted-foreground">{t('nodeEditor.iteratorOutputPortHint')}</p>
-                      )}
-                      {draft.outputPorts.length === 0 && (
-                        <p className="text-xs text-muted-foreground">{t('nodeEditor.noOutputPorts')}</p>
-                      )}
-                      {draft.outputPorts.map((port, idx) => (
-                        <div key={port.id} className="flex items-center gap-2 rounded-lg border bg-background p-2">
-                          <div className={`h-3 w-3 shrink-0 rounded-full ${getPortColor(port.artifactKind)}`} />
-                          <input
-                            type="text"
-                            value={port.name}
-                            disabled={draft.nodeType === 'iterator'}
-                            onChange={(e) => {
-                              const updated = [...draft.outputPorts];
-                              updated[idx] = { ...updated[idx], name: e.target.value };
-                              updateDraft({ outputPorts: updated });
-                            }}
-                            className="min-w-0 flex-1 border-b border-transparent bg-transparent text-sm outline-none focus:border-primary"
-                            placeholder={t('ports.portName')}
-                          />
-                          <select
-                            value={port.artifactKind}
-                            disabled={draft.nodeType === 'iterator'}
-                            onChange={(e) => {
-                              const updated = [...draft.outputPorts];
-                              updated[idx] = { ...updated[idx], artifactKind: e.target.value as ArtifactKind };
-                              updateDraft({ outputPorts: updated });
-                            }}
-                            className="h-7 rounded border bg-background px-1 text-xs"
-                          >
-                            {(['text', 'document', 'code', 'image', 'data', 'dashboard'] as const).map((kind) => (
-                              <option key={kind} value={kind}>{t(`artifactKind.${kind}`)}</option>
-                            ))}
-                          </select>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => {
-                              if (draft.nodeType === 'iterator') {
-                                return;
-                              }
-                              updateDraft({ outputPorts: draft.outputPorts.filter((_, i) => i !== idx) });
-                            }}
-                            title={t('ports.removePort')}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </EditorSection>
-                </div>
+                <EditorSection title={t('dataFlow.sectionTitle')} defaultOpen resetKey={`${task.id}:data-flow`}>
+                  <PlaybookDataFlowSection
+                    targetNodeId={task.id}
+                    inputPortsOverride={draft.inputPorts}
+                    outputPortsOverride={draft.outputPorts}
+                    onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
+                    onOutputPortsChange={(outputPorts) => updateDraft({ outputPorts })}
+                    canEditPorts={draft.nodeType !== 'iterator'}
+                  />
+                </EditorSection>
               )}
 
               {isIteratorTask && draft.iteratorConfig && (
