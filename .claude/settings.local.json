@@ -38,8 +38,12 @@
       "Bash(npx ts-node *)",
       "Bash(dir /s /b \"YellowStorm\\\\*.py\")",
       "Bash(findstr /v node_modules)",
-      "mcp__code-review-graph__semantic_search_nodes_tool"
+      "mcp__code-review-graph__semantic_search_nodes_tool",
+      "Bash(npx vite *)",
+      "Bash(echo \"EXIT=$?\")"
     ]
   },
-  "disabledMcpjsonServers": ["code-review-graph"]
+  "disabledMcpjsonServers": [
+    "code-review-graph"
+  ]
 }
