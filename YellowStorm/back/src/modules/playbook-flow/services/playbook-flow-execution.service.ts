@@ -197,7 +197,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       while (true) {
         const queuedCount = await this.executionModel.countDocuments({ ownerId, status: 'queued' });
         const runningCount = await this.queueService.getRunningCount(ownerId);
-        const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
+        const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
         if (queuedCount === 0 || runningCount >= maxConcurrent) {
           break;
         }
@@ -295,7 +295,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       this.assertSingleStepControlDependenciesSupported(flow.nodes, flow.controlEdges, singleStepTaskId);
     }
 
-    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
+    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
     const maxDepth = this.configService.get<number>('playbook-flow.executionQueueMaxDepth', 50);
     const recursionLimit = flow.settings?.recursionLimit || 25;
     const maxParallelism = flow.settings?.maxParallelism || 5;
@@ -1260,7 +1260,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private async drainQueue(ownerId: string): Promise<void> {
-    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 3);
+    const maxConcurrent = this.configService.get<number>('playbook-flow.maxConcurrentPerUser', 10);
     if (!this.isGrpcAvailable) return;
 
     while (true) {
