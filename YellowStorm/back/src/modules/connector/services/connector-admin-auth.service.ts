@@ -430,6 +430,29 @@ ${statusMessage}
     scopes: string[];
     pkceEnabled: boolean;
   }> {
+    if (appKey === 'github') {
+      const clientId = this.configService.get<string>('app.githubClientId', '').trim();
+      const clientSecret = this.configService.get<string>('app.githubClientSecret', '').trim();
+
+      if (!clientId || !clientSecret) {
+        throw new BadRequestException(
+          ErrorCode.CONNECTED_APP_OAUTH_FAILED,
+          'GitHub OAuth is not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in environment variables.',
+        );
+      }
+
+      return {
+        appKey: 'github',
+        authorizationUrl: 'https://github.com/login/oauth/authorize',
+        tokenUrl: 'https://github.com/login/oauth/access_token',
+        revokeUrl: 'https://github.com/login/oauth/access_token',
+        clientId,
+        clientSecret,
+        scopes: ['repo', 'read:org'],
+        pkceEnabled: false,
+      };
+    }
+
     const appDefinition = await this.connectedAppDefinitionService.findByKey(appKey);
 
     return {
@@ -445,7 +468,14 @@ ${statusMessage}
   }
 
   private getRedirectUri(appKey: string): string {
+    if (appKey === 'github') {
+      const githubCallbackUrl = this.configService.get<string>('app.githubCallbackUrl', '').trim();
+      if (githubCallbackUrl) {
+        return githubCallbackUrl;
+      }
+    }
+
     const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
-    return `${this.backendUrl}/${apiPrefix}/v1/admin/connectors/oauth/${appKey}/callback`;
+    return `${this.backendUrl}/${apiPrefix}/v1/connected-apps/${appKey}/callback`;
   }
 }
