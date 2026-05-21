@@ -204,6 +204,8 @@ export function sanitizePlaybookUpdate(data: UpdatePlaybookData): UpdatePlaybook
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
+    expectedUpdatedAt: data.expectedUpdatedAt,
+    clientMutationId: data.clientMutationId,
   };
 }
 
@@ -239,6 +241,8 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
     advisorAutopilotEnabled: data.advisorAutopilotEnabled,
     advisorAutopilotTargetScore: data.advisorAutopilotTargetScore,
     advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns,
+    expectedUpdatedAt: data.expectedUpdatedAt,
+    clientMutationId: data.clientMutationId,
   };
 }
 
@@ -734,6 +738,8 @@ export async function updatePlaybook(
   if (sanitized.advisorAutopilotEnabled !== undefined) body.advisorAutopilotEnabled = sanitized.advisorAutopilotEnabled;
   if (sanitized.advisorAutopilotTargetScore !== undefined) body.advisorAutopilotTargetScore = sanitized.advisorAutopilotTargetScore;
   if (sanitized.advisorAutopilotMaxTurns !== undefined) body.advisorAutopilotMaxTurns = sanitized.advisorAutopilotMaxTurns;
+  if (sanitized.expectedUpdatedAt !== undefined) body.expectedUpdatedAt = sanitized.expectedUpdatedAt;
+  if (sanitized.clientMutationId !== undefined) body.clientMutationId = sanitized.clientMutationId;
 
   if (data.settings) body.settings = data.settings;
 

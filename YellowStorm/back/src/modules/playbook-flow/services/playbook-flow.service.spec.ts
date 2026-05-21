@@ -1,5 +1,5 @@
 import { PlaybookFlowService } from './playbook-flow.service';
-import { BadRequestException } from '../../exceptions/exceptions/http.exceptions';
+import { BadRequestException, ConflictException } from '../../exceptions/exceptions/http.exceptions';
 
 describe('PlaybookFlowService', () => {
   it('persists control-edge port ids on create', async () => {
@@ -504,6 +504,90 @@ describe('PlaybookFlowService', () => {
     } as any)).rejects.toThrow(validationError);
 
     expect(existing.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale suggestion saves when expectedUpdatedAt is older than the stored flow', async () => {
+    const existing = {
+      ownerId: 'owner-1',
+      name: 'Flow',
+      description: 'Description',
+      triggerConfig: undefined,
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: ['workspace-1'],
+      updatedAt: new Date('2025-01-01T00:00:10.000Z'),
+      save: jest.fn(),
+    };
+    const flowModel = {
+      findById: jest.fn().mockResolvedValue(existing),
+    };
+    const validatorService = { validate: jest.fn() };
+
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      validatorService as any,
+      {} as any,
+    );
+
+    await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
+      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+    } as any)).rejects.toBeInstanceOf(ConflictException);
+
+    expect(existing.save).not.toHaveBeenCalled();
+  });
+
+  it('allows suggestion saves when expectedUpdatedAt matches the stored flow', async () => {
+    const updatedAt = new Date('2025-01-01T00:00:10.000Z');
+    const existing = {
+      ownerId: 'owner-1',
+      name: 'Flow',
+      description: 'Description',
+      triggerConfig: undefined,
+      settings: { recursionLimit: 25, maxParallelism: 5 },
+      nodes: [],
+      controlEdges: [],
+      dataBindings: [],
+      workspaces: ['workspace-1'],
+      updatedAt,
+      save: jest.fn().mockResolvedValue({
+        toJSON: () => ({
+          id: '507f1f77bcf86cd799439011',
+          ownerId: 'owner-1',
+          schemaVersion: 1,
+          name: 'Flow',
+          description: 'Description',
+          settings: { recursionLimit: 25, maxParallelism: 5 },
+          nodes: [],
+          controlEdges: [],
+          dataBindings: [],
+          workspaces: ['workspace-1'],
+          updatedAt,
+          createdAt: updatedAt,
+        }),
+      }),
+    };
+    const flowModel = {
+      findById: jest.fn().mockResolvedValue(existing),
+    };
+    const validatorService = { validate: jest.fn() };
+
+    const service = new PlaybookFlowService(
+      flowModel as any,
+      {} as any,
+      validatorService as any,
+      {} as any,
+    );
+
+    await expect(service.update('507f1f77bcf86cd799439011', 'owner-1', {
+      expectedUpdatedAt: '2025-01-01T00:00:10.000Z',
+      clientMutationId: 'intent-abc123',
+      name: 'Flow',
+    } as any)).resolves.toBeTruthy();
+
+    expect(existing.save).toHaveBeenCalled();
   });
 
   it('validates updateNodesAndEdges before saving AI-generated changes', async () => {

@@ -137,6 +137,37 @@ describe('PlaybookFlowValidatorService', () => {
     }).toThrow('Target port target-node.prompt has multiple data bindings');
   });
 
+  it('rejects duplicate control edges for the same logical route', () => {
+    expect(() => {
+      service.validate(buildNodes(), [
+        {
+          id: 'edge-1',
+          kind: 'sequential',
+          source: 'source-node',
+          target: 'target-node',
+          sourceOutputPortId: 'summary',
+          targetInputPortId: 'prompt',
+        },
+        {
+          id: 'edge-2',
+          kind: 'sequential',
+          source: 'source-node',
+          target: 'target-node',
+          sourceOutputPortId: 'summary',
+          targetInputPortId: 'prompt',
+        },
+      ] as any, [{
+        id: 'binding-1',
+        targetNode: 'target-node',
+        targetPort: 'prompt',
+        sourceKind: 'node-output',
+        sourceNode: 'source-node',
+        sourcePort: 'summary',
+        iteration: 'current',
+      }] as any);
+    }).toThrow('Duplicate control edge route: source-node -> target-node');
+  });
+
   it('rejects incompatible source and target artifact kinds', () => {
     const nodes = buildNodes();
     nodes[0].output.ports[0].type = 'document';

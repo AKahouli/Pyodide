@@ -26,6 +26,7 @@ export class PlaybookFlowValidatorService {
     const errors: ValidationError[] = [];
 
     errors.push(...this.checkUniqueNodeIds(nodes));
+    errors.push(...this.checkDuplicateControlEdges(controlEdges));
     errors.push(...this.checkEdgeEndpoints(controlEdges, nodes));
     errors.push(...this.checkConditionalEdgeSources(controlEdges, nodes));
     errors.push(...this.checkRouterLabelCoverage(nodes, controlEdges, options));
@@ -58,6 +59,35 @@ export class PlaybookFlowValidatorService {
       }
       ids.add(node.id);
     }
+    return errors;
+  }
+
+  private checkDuplicateControlEdges(edges: ControlEdge[]): ValidationError[] {
+    const seenEdgeIds = new Set<string>();
+    const seenRoutes = new Set<string>();
+    const errors: ValidationError[] = [];
+
+    for (const edge of edges) {
+      if (seenEdgeIds.has(edge.id)) {
+        errors.push({ rule: 2, message: `Duplicate edge id: ${edge.id}` });
+      }
+      seenEdgeIds.add(edge.id);
+
+      // The runtime treats this tuple as one logical route, so duplicates here are accidental fan-out.
+      const routeKey = [
+        edge.kind,
+        edge.source,
+        edge.target,
+        edge.routerLabel || '',
+        edge.sourceOutputPortId || '',
+        edge.targetInputPortId || '',
+      ].join(':');
+      if (seenRoutes.has(routeKey)) {
+        errors.push({ rule: 2, message: `Duplicate control edge route: ${edge.source} -> ${edge.target}` });
+      }
+      seenRoutes.add(routeKey);
+    }
+
     return errors;
   }
 

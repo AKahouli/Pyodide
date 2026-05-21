@@ -167,6 +167,26 @@ export class PlaybookFlowService {
       throw new ForbiddenException(ErrorCode.FORBIDDEN, 'You do not have access to this flow');
     }
 
+    if (dto.expectedUpdatedAt !== undefined) {
+      const expectedUpdatedAt = Date.parse(dto.expectedUpdatedAt);
+      const existingUpdatedAt = (existing as { updatedAt?: Date }).updatedAt;
+      if (Number.isNaN(expectedUpdatedAt)) {
+        throw new BadRequestException(ErrorCode.BAD_REQUEST, 'Invalid expectedUpdatedAt');
+      }
+
+      // Suggestion-generated saves should fail loudly when another tab or user already changed the playbook.
+      if (existingUpdatedAt instanceof Date && existingUpdatedAt.getTime() !== expectedUpdatedAt) {
+        throw new ConflictException(
+          ErrorCode.CONFLICT,
+          'Playbook changed since this suggestion was generated. Refresh and retry the suggestion.',
+        );
+      }
+    }
+
+    if (dto.clientMutationId) {
+      this.logger.debug(`Saving playbook mutation ${dto.clientMutationId} for flow ${flowId}`);
+    }
+
     if (dto.name !== undefined) existing.name = dto.name;
     if (dto.description !== undefined) existing.description = dto.description;
     if (dto.triggerConfig !== undefined) existing.triggerConfig = dto.triggerConfig as any;

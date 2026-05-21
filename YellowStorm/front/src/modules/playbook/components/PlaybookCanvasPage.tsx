@@ -85,6 +85,11 @@ import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
+import {
+  createIntentSuggestionApplicationKey,
+  createIntentSuggestionBindingId,
+  createIntentSuggestionNodeId,
+} from '../utils/intent-application-key';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
 import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding } from '../types';
@@ -470,6 +475,7 @@ function PlaybookCanvasInner() {
   } = usePlaybookCanvas(triggerNodeActions);
 
   const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave();
+  const saveCurrentPlaybook = usePlaybookStore((state) => state.saveCurrentPlaybook);
 
   const [editingTask, setEditingTask] = useState<PlaybookTask | null>(null);
   const [dataBindingsVisible, setDataBindingsVisible] = useState(false);
@@ -1617,8 +1623,14 @@ function PlaybookCanvasInner() {
     scheduleChangeFeedbackCleanup();
   }, [reactFlow, scheduleChangeFeedbackCleanup]);
 
-  const handleApplyIntentSuggestion = useCallback((suggestion: PlaybookIntentSuggestion, options?: { replaceAll?: boolean }) => {
+  const handleApplyIntentSuggestion = useCallback((
+    suggestion: PlaybookIntentSuggestion,
+    options?: { replaceAll?: boolean; expectedUpdatedAt?: string },
+  ) => {
     if (!playbook) return;
+
+    const suggestionApplicationKey = createIntentSuggestionApplicationKey(playbook.id, suggestion);
+    const suggestionBaseUpdatedAt = options?.expectedUpdatedAt ?? playbook.updatedAt;
 
     const resolveAssignedAgentId = (agentSlug?: string | null): string | null => {
       if (!agentSlug) {
@@ -1676,6 +1688,7 @@ function PlaybookCanvasInner() {
 
 
     const createIntentTask = (
+      taskId: string,
       title: string,
       description: string,
       agentSlug: string | null | undefined,
@@ -1694,7 +1707,7 @@ function PlaybookCanvasInner() {
       const isIterator = matchedNodeType === 'iterator';
 
       return {
-        id: crypto.randomUUID(),
+        id: taskId,
         title,
         description,
         assignedAgentId: matchedTemplate?.executionMode === 'agent'
@@ -1829,6 +1842,7 @@ function PlaybookCanvasInner() {
     };
 
     const applyCreate = (
+      logicalNodeKey: string,
       taskTitle: string,
       taskDescription: string,
       agentSlug: string | null | undefined,
@@ -1849,8 +1863,17 @@ function PlaybookCanvasInner() {
       const anchorTaskIds = resolveAnchorTaskIds(targetTaskId, nodeRef, targetTaskIds, nodeRefs);
       const anchorTasks = anchorTaskIds.map((id) => nextTasks.find((task) => task.id === id)).filter((task): task is PlaybookTask => Boolean(task));
       const anchorTask = hasExplicitAnchors ? (anchorTasks[0] || null) : null;
+      const deterministicNodeId = createIntentSuggestionNodeId(suggestionApplicationKey, logicalNodeKey);
+      const existingTask = nextTasks.find((task) => task.id === deterministicNodeId) || null;
+      if (existingTask) {
+        if (newNodeRef) {
+          createdNodeRefs.set(newNodeRef, existingTask.id);
+        }
+        return true;
+      }
+
       if (hasExplicitAnchors && anchorTasks.length === 0) {
-        const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, null, nextTasks.length);
+        const newTask = createIntentTask(deterministicNodeId, taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, null, nextTasks.length);
         nextTasks = [...nextTasks, newTask];
         changedNodeIds.add(newTask.id);
         if (newNodeRef) {
@@ -1859,7 +1882,7 @@ function PlaybookCanvasInner() {
         return true;
       }
 
-      const newTask = createIntentTask(taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, anchorTask, nextTasks.length);
+      const newTask = createIntentTask(deterministicNodeId, taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, anchorTask, nextTasks.length);
       nextTasks = [...nextTasks, newTask];
       changedNodeIds.add(newTask.id);
       if (newNodeRef) {
@@ -1870,13 +1893,25 @@ function PlaybookCanvasInner() {
         const iteratorChildRefs = new Map<string, string>();
 
         iteratorBody.steps.forEach((step: NonNullable<PlaybookIntentTaskDraft['iteratorBody']>['steps'][number], index: number) => {
-          const childTask = createIntentTask(step.title, step.description, step.agentSlug, step.templateType, step.inputPorts, step.outputPorts, newTask, nextTasks.length + index + 1);
+          const childTask = createIntentTask(
+            createIntentSuggestionNodeId(suggestionApplicationKey, `${logicalNodeKey}:iterator:${step.nodeRef}`),
+            step.title,
+            step.description,
+            step.agentSlug,
+            step.templateType,
+            step.inputPorts,
+            step.outputPorts,
+            newTask,
+            nextTasks.length + index + 1,
+          );
           const childPosition = getIteratorBodyChildPosition(newTask.positionX, newTask.positionY, index, iteratorBody.steps.length);
           childTask.positionX = childPosition.x;
           childTask.positionY = childPosition.y;
-          childTask.containerConfig = { parentIteratorId: newTask.id };
-          nextTasks = [...nextTasks, childTask];
-          changedNodeIds.add(childTask.id);
+          if (!nextTasks.some((task) => task.id === childTask.id)) {
+            childTask.containerConfig = { parentIteratorId: newTask.id };
+            nextTasks = [...nextTasks, childTask];
+            changedNodeIds.add(childTask.id);
+          }
           iteratorChildRefs.set(step.nodeRef, childTask.id);
         });
 
@@ -2069,7 +2104,15 @@ function PlaybookCanvasInner() {
       nextDataBindings = [
         ...nextDataBindings,
         {
-          id: `db-${crypto.randomUUID().slice(0, 8)}`,
+          // Suggestion-created bindings reuse the same id so retries overwrite instead of fan out.
+          id: createIntentSuggestionBindingId(
+            suggestionApplicationKey,
+            resolvedTargetId,
+            targetPort,
+            resolvedSourceId,
+            sourcePort,
+            iteration,
+          ),
           targetNode: resolvedTargetId,
           targetPort,
           sourceKind,
@@ -2280,6 +2323,10 @@ function PlaybookCanvasInner() {
         }
         deleteTaskAndBridgeEdges(targetTask.id);
         commitGraph(nextTasks, nextEdges, nextDataBindings);
+        void saveCurrentPlaybook({
+          expectedUpdatedAt: suggestionBaseUpdatedAt,
+          clientMutationId: suggestionApplicationKey,
+        });
         return;
       }
       if (change.type === 'update_node') {
@@ -2296,11 +2343,32 @@ function PlaybookCanvasInner() {
         } : task);
         changedNodeIds.add(targetTask.id);
         commitGraph(nextTasks, nextEdges, nextDataBindings);
+        void saveCurrentPlaybook({
+          expectedUpdatedAt: suggestionBaseUpdatedAt,
+          clientMutationId: suggestionApplicationKey,
+        });
         return;
       }
       if (!change.task) return;
-      applyCreate(change.task.title, change.task.description, change.task.agentSlug, change.task.templateType, change.task.inputPorts, change.task.outputPorts, change.task.iteratorBody, change.anchorMode, change.targetTaskId, null, null);
+      applyCreate(
+        'single-change',
+        change.task.title,
+        change.task.description,
+        change.task.agentSlug,
+        change.task.templateType,
+        change.task.inputPorts,
+        change.task.outputPorts,
+        change.task.iteratorBody,
+        change.anchorMode,
+        change.targetTaskId,
+        null,
+        null,
+      );
       commitGraph(nextTasks, nextEdges, nextDataBindings);
+      void saveCurrentPlaybook({
+        expectedUpdatedAt: suggestionBaseUpdatedAt,
+        clientMutationId: suggestionApplicationKey,
+      });
       return;
     }
 
@@ -2314,6 +2382,7 @@ function PlaybookCanvasInner() {
     for (const change of orderedChanges) {
       if (change.type === 'create_node') {
         applyCreate(
+          change.nodeRef,
           change.task.title,
           change.task.description,
           change.task.agentSlug,
@@ -2391,7 +2460,11 @@ function PlaybookCanvasInner() {
 
     reconcileRequiredNodeOutputBindings();
     commitGraph(nextTasks, nextEdges, nextDataBindings);
-  }, [captureSnapshot, createProgrammaticEdge, defaultAgents, edges, focusChangedArea, playbook, selectStep, selectedStepId, setEdges, setNodes, t, updateDataBindings, updateEdges, updateTasks]);
+    void saveCurrentPlaybook({
+      expectedUpdatedAt: suggestionBaseUpdatedAt,
+      clientMutationId: suggestionApplicationKey,
+    });
+  }, [captureSnapshot, createProgrammaticEdge, defaultAgents, edges, focusChangedArea, playbook, saveCurrentPlaybook, selectStep, selectedStepId, setEdges, setNodes, t, updateDataBindings, updateEdges, updateTasks]);
 
   const canvasNodes = useMemo(() => liveNodes.map((node) => ({
     ...node,
@@ -2444,7 +2517,7 @@ function PlaybookCanvasInner() {
 
   const handleSubmitIntent = useCallback(async () => {
     const normalizedIntent = intentValue.trim();
-    if (!id || normalizedIntent.length < 3) {
+    if (!id || !playbook || normalizedIntent.length < 3) {
       return;
     }
 
@@ -2454,6 +2527,12 @@ function PlaybookCanvasInner() {
 
     if (selectedStepId && !resolvedSelectedTaskId) {
       selectStep(null);
+    }
+
+    let expectedUpdatedAt = playbook.updatedAt;
+    if (isDirty) {
+      await saveNow();
+      expectedUpdatedAt = usePlaybookStore.getState().currentPlaybook?.updatedAt || expectedUpdatedAt;
     }
 
     setIntentLoading(true);
@@ -2475,7 +2554,7 @@ function PlaybookCanvasInner() {
       }, null);
       if (intentAutoApply && topSuggestion && topSuggestion.confidence >= AUTO_APPLY_MIN_CONFIDENCE) {
         addIntentSuggestionHistoryEntry(id, playbook?.name ?? '', topSuggestion, normalizedIntent);
-        handleApplyIntentSuggestion(topSuggestion);
+        handleApplyIntentSuggestion(topSuggestion, { expectedUpdatedAt });
         setLastIntentSuggestions([]);
         setIntentSuggestions([]);
       } else {
@@ -2489,7 +2568,7 @@ function PlaybookCanvasInner() {
     } finally {
       setIntentLoading(false);
     }
-  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, nodeTemplates, playbook, playbook?.tasks, requestPlaybookIntent, selectStep, selectedStepId, t]);
+  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, isDirty, nodeTemplates, playbook, playbook?.tasks, requestPlaybookIntent, saveNow, selectStep, selectedStepId, t]);
 
   useEffect(() => () => {
     if (typeof window === 'undefined') {

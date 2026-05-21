@@ -514,6 +514,36 @@ describe('updatePlaybook', () => {
     });
   });
 
+  it('passes suggestion save metadata through the patch payload', async () => {
+    apiClientMock.patch.mockReset();
+    apiClientMock.patch.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'playbook-1',
+          name: 'Playbook',
+          description: 'Description',
+          nodes: [],
+          controlEdges: [],
+          dataBindings: [],
+          triggers: [],
+          workspaces: [],
+        },
+      },
+    });
+
+    await updatePlaybook('playbook-1', {
+      name: 'Playbook',
+      description: 'Description',
+      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+      clientMutationId: 'intent-abc123',
+    });
+
+    expect(apiClientMock.patch).toHaveBeenCalledWith('/playbooks/playbook-1', expect.objectContaining({
+      expectedUpdatedAt: '2025-01-01T00:00:00.000Z',
+      clientMutationId: 'intent-abc123',
+    }));
+  });
+
   it('preserves router and human approval configs when saving flow nodes', async () => {
     apiClientMock.patch.mockReset();
     apiClientMock.patch.mockResolvedValueOnce({

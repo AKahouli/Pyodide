@@ -1163,7 +1163,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       setDirty: (dirty: boolean) => set({ isDirty: dirty }),
 
-      saveCurrentPlaybook: async () => {
+      saveCurrentPlaybook: async (options) => {
         const { currentPlaybook, isSaving } = get();
         if (isSaving) return;
         if (!currentPlaybook) return;
@@ -1182,6 +1182,8 @@ export const usePlaybookStore = create<PlaybookStore>()(
           advisorAutopilotEnabled: currentPlaybook.advisorAutopilotEnabled,
           advisorAutopilotTargetScore: currentPlaybook.advisorAutopilotTargetScore ?? undefined,
           advisorAutopilotMaxTurns: currentPlaybook.advisorAutopilotMaxTurns ?? undefined,
+          expectedUpdatedAt: options?.expectedUpdatedAt,
+          clientMutationId: options?.clientMutationId,
         });
       },
 

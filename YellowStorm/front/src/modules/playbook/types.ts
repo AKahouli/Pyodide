@@ -1422,6 +1422,8 @@ export interface UpdatePlaybookData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedUpdatedAt?: string;
+  clientMutationId?: string;
 }
 
 export interface ExecutePlaybookData {
@@ -1615,7 +1617,7 @@ export interface PlaybookActions {
   updateDataBindings: (dataBindings: DataBinding[]) => void;
   updateWorkspaces: (workspaces: string[]) => void;
   setDirty: (dirty: boolean) => void;
-  saveCurrentPlaybook: () => Promise<void>;
+  saveCurrentPlaybook: (options?: SavePlaybookOptions) => Promise<void>;
 
   // Execution
   executePlaybook: (id: string, data?: ExecutePlaybookData) => Promise<string>;
@@ -2021,4 +2023,11 @@ export interface UpdateFlowData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  expectedUpdatedAt?: string;
+  clientMutationId?: string;
+}
+
+export interface SavePlaybookOptions {
+  expectedUpdatedAt?: string;
+  clientMutationId?: string;
 }
