@@ -16,21 +16,10 @@ import {
   AdminConnectorOAuthState,
   AdminConnectorOAuthStateDocument,
 } from '../schemas/admin-connector-oauth-state.schema';
+import { ConnectedAppDefinitionService } from '../../connected-app/services/connected-app-definition.service';
 
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
-const GITHUB_APP_KEY = 'github';
-
-type AdminGithubOAuthConfig = {
-  appKey: typeof GITHUB_APP_KEY;
-  authorizationUrl: string;
-  tokenUrl: string;
-  revokeUrl?: string;
-  clientId: string;
-  clientSecret: string;
-  scopes: string[];
-  pkceEnabled: boolean;
-};
 
 @Injectable()
 export class ConnectorAdminAuthService {
@@ -45,6 +34,7 @@ export class ConnectorAdminAuthService {
     private readonly cryptoService: CryptoService,
     private readonly configService: ConfigService,
     private readonly logger: LoggerService,
+    private readonly connectedAppDefinitionService: ConnectedAppDefinitionService,
   ) {
     this.logger.setContext(ConnectorAdminAuthService.name);
     this.frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:5173');
@@ -52,7 +42,7 @@ export class ConnectorAdminAuthService {
   }
 
   async buildAuthorizationUrl(userId: string, appKey: string): Promise<string> {
-    const appConfig = this.getOAuthConfig(appKey);
+    const appConfig = await this.getOAuthConfig(appKey);
     const state = crypto.randomBytes(32).toString('hex');
 
     let codeVerifier: string | undefined;
@@ -115,7 +105,7 @@ export class ConnectorAdminAuthService {
       );
     }
 
-    const appConfig = this.getOAuthConfig(appKey);
+    const appConfig = await this.getOAuthConfig(appKey);
     const redirectUri = this.getRedirectUri(appKey);
     const tokenResponse = await this.exchangeCodeForTokens(
       appConfig.tokenUrl,
@@ -219,7 +209,7 @@ export class ConnectorAdminAuthService {
     }
 
     try {
-      const appConfig = this.getOAuthConfig(appKey);
+      const appConfig = await this.getOAuthConfig(appKey);
       if (appConfig.revokeUrl && record.accessToken) {
         const token = this.cryptoService.decrypt(record.accessToken);
         await this.revokeTokenAtProvider(appConfig.revokeUrl, token);
@@ -294,7 +284,7 @@ ${statusMessage}
       );
     }
 
-    const appConfig = this.getOAuthConfig(appKey);
+    const appConfig = await this.getOAuthConfig(appKey);
 
     const response = await fetch(appConfig.tokenUrl, {
       method: 'POST',
@@ -430,43 +420,31 @@ ${statusMessage}
     return crypto.createHash('sha256').update(codeVerifier).digest('base64url');
   }
 
-  private getOAuthConfig(appKey: string): AdminGithubOAuthConfig {
-    if (appKey !== GITHUB_APP_KEY) {
-      throw new NotFoundException(
-        ErrorCode.CONNECTED_APP_NOT_FOUND,
-        `Admin connector OAuth is not configured for '${appKey}'`,
-      );
-    }
-
-    const clientId = this.configService.get<string>('app.githubClientId', '').trim();
-    const clientSecret = this.configService.get<string>('app.githubClientSecret', '').trim();
-
-    if (!clientId || !clientSecret) {
-      throw new BadRequestException(
-        ErrorCode.CONNECTED_APP_OAUTH_FAILED,
-        'GitHub OAuth is not configured on the server',
-      );
-    }
+  private async getOAuthConfig(appKey: string): Promise<{
+    appKey: string;
+    authorizationUrl: string;
+    tokenUrl: string;
+    revokeUrl?: string;
+    clientId: string;
+    clientSecret: string;
+    scopes: string[];
+    pkceEnabled: boolean;
+  }> {
+    const appDefinition = await this.connectedAppDefinitionService.findByKey(appKey);
 
     return {
-      appKey: GITHUB_APP_KEY,
-      authorizationUrl: 'https://github.com/login/oauth/authorize',
-      tokenUrl: 'https://github.com/login/oauth/access_token',
-      clientId,
-      clientSecret,
-      scopes: ['repo', 'read:org'],
-      pkceEnabled: false,
+      appKey: appDefinition.appKey,
+      authorizationUrl: appDefinition.authorizationUrl,
+      tokenUrl: appDefinition.tokenUrl,
+      revokeUrl: appDefinition.revokeUrl,
+      clientId: appDefinition.clientId,
+      clientSecret: appDefinition.clientSecret,
+      scopes: appDefinition.scopes,
+      pkceEnabled: appDefinition.pkceEnabled,
     };
   }
 
   private getRedirectUri(appKey: string): string {
-    if (appKey === GITHUB_APP_KEY) {
-      const githubCallbackUrl = this.configService.get<string>('app.githubCallbackUrl', '').trim();
-      if (githubCallbackUrl) {
-        return githubCallbackUrl;
-      }
-    }
-
     const apiPrefix = this.configService.get<string>('app.apiPrefix', 'api');
     return `${this.backendUrl}/${apiPrefix}/v1/admin/connectors/oauth/${appKey}/callback`;
   }
