@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 
-import { useClassifierStore, useSelectedWorkspace } from '../store';
+import { useClassifierStore } from '../store';
 import type { ClassifierFile, ClassifierFolder } from '../types';
 
 const ITEM_MIME = 'application/x-classifier-item';
@@ -30,9 +30,6 @@ function hasItemPayload(dt: DataTransfer): boolean {
   return Array.from(dt.types).includes(ITEM_MIME);
 }
 
-function isOsFileDrag(dt: DataTransfer): boolean {
-  return Array.from(dt.types).includes('Files');
-}
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { EditFolderDialog } from './EditFolderDialog';
@@ -55,7 +52,7 @@ function getFileIcon(mime: string) {
 }
 
 export function ClassifierPage() {
-  const selectedWorkspace = useSelectedWorkspace();
+  const selectedWorkspaceId = useClassifierStore((s) => s.selectedWorkspaceId);
   const folders = useClassifierStore((s) => s.folders);
   const files = useClassifierStore((s) => s.files);
   const currentFolderId = useClassifierStore((s) => s.currentFolderId);
@@ -65,17 +62,23 @@ export function ClassifierPage() {
   const deleteFolder = useClassifierStore((s) => s.deleteFolder);
   const moveFolderAction = useClassifierStore((s) => s.moveFolder);
   const setFileFolder = useClassifierStore((s) => s.setFileFolder);
-  const removeFile = useClassifierStore((s) => s.removeFile);
-  const addFiles = useClassifierStore((s) => s.addFiles);
+  const uploadFiles = useClassifierStore((s) => s.uploadFiles);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editFolder, setEditFolder] = useState<ClassifierFolder | null>(null);
   const [moveFolderTarget, setMoveFolderTarget] = useState<ClassifierFolder | null>(null);
   const [mapFile, setMapFile] = useState<ClassifierFile | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handlePickFiles = useCallback(
+    (list: FileList | null) => {
+      if (!list || list.length === 0) return;
+      void uploadFiles(Array.from(list));
+    },
+    [uploadFiles],
+  );
 
   // Visible folders & files based on workspace + current folder + search
   const breadcrumbs = useMemo(() => {
@@ -90,40 +93,22 @@ export function ClassifierPage() {
   }, [folders, currentFolderId]);
 
   const visibleFolders = useMemo(() => {
-    if (!selectedWorkspace) return [];
+    if (!selectedWorkspaceId) return [];
     const q = search.trim().toLowerCase();
     return folders
-      .filter((f) => f.workspaceId === selectedWorkspace.id && f.parentId === currentFolderId)
+      .filter((f) => f.workspaceId === selectedWorkspaceId && f.parentId === currentFolderId)
       .filter((f) => !q || f.name.toLowerCase().includes(q) || f.description.toLowerCase().includes(q))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [folders, selectedWorkspace, currentFolderId, search]);
+  }, [folders, selectedWorkspaceId, currentFolderId, search]);
 
   const visibleFiles = useMemo(() => {
-    if (!selectedWorkspace) return [];
+    if (!selectedWorkspaceId) return [];
     const q = search.trim().toLowerCase();
     return files
-      .filter((f) => f.workspaceId === selectedWorkspace.id)
+      .filter((f) => f.workspaceId === selectedWorkspaceId)
       .filter((f) => (currentFolderId ? f.folderId === currentFolderId : f.folderId === null))
       .filter((f) => !q || f.name.toLowerCase().includes(q));
-  }, [files, selectedWorkspace, currentFolderId, search]);
-
-  const handleFiles = useCallback(
-    (list: FileList | null) => {
-      if (!list || list.length === 0) return;
-      addFiles(Array.from(list));
-    },
-    [addFiles],
-  );
-
-  const handleDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      setDragOver(false);
-      if (!selectedWorkspace) return;
-      handleFiles(e.dataTransfer.files);
-    },
-    [handleFiles, selectedWorkspace],
-  );
+  }, [files, selectedWorkspaceId, currentFolderId, search]);
 
   const handleDropOnFolder = useCallback(
     (targetFolder: ClassifierFolder, payload: DragPayload) => {
@@ -152,7 +137,7 @@ export function ClassifierPage() {
     [moveFolderAction, setFileFolder],
   );
 
-  if (!selectedWorkspace) {
+  if (!selectedWorkspaceId) {
     return <EmptyWorkspaceState />;
   }
 
@@ -195,7 +180,16 @@ export function ClassifierPage() {
               <Upload className='h-4 w-4' />
               Ajouter des fichiers
             </Button>
-            <input ref={fileInputRef} type='file' multiple hidden onChange={(e) => handleFiles(e.target.files)} />
+            <input
+              ref={fileInputRef}
+              type='file'
+              multiple
+              hidden
+              onChange={(e) => {
+                handlePickFiles(e.target.files);
+                e.target.value = '';
+              }}
+            />
             <Separator orientation='vertical' className='h-6' />
             <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>
               <Sparkles className='h-4 w-4' />
@@ -226,29 +220,13 @@ export function ClassifierPage() {
 
       {/* Content */}
       <ScrollArea className='flex-1'>
-        <div
-          className='mx-auto w-full max-w-7xl px-6 py-6'
-          onDragOver={(e) => {
-            if (!isOsFileDrag(e.dataTransfer)) return;
-            e.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
-            if (!isOsFileDrag(e.dataTransfer)) return;
-            handleDrop(e);
-          }}>
-          {dragOver && (
-            <div className='pointer-events-none mb-6 flex items-center justify-center rounded-2xl border-2 border-dashed border-primary/50 bg-primary/5 py-12 text-primary'>
-              <div className='flex items-center gap-2 text-sm font-medium'>
-                <Upload className='h-5 w-5' />
-                Déposez vos fichiers ici pour les ajouter
-              </div>
-            </div>
-          )}
-
+        <div className='mx-auto w-full max-w-7xl px-6 py-6'>
           {visibleFolders.length === 0 && visibleFiles.length === 0 ? (
-            <EmptyFolderState hasSearch={!!search} onCreateFolder={() => setCreateOpen(true)} onUploadFiles={() => fileInputRef.current?.click()} />
+            <EmptyFolderState
+              hasSearch={!!search}
+              onCreateFolder={() => setCreateOpen(true)}
+              onUploadFiles={() => fileInputRef.current?.click()}
+            />
           ) : (
             <div className='space-y-8'>
               {visibleFolders.length > 0 && (
@@ -257,7 +235,7 @@ export function ClassifierPage() {
                   <div className='grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3'>
                     {visibleFolders.map((folder) => {
                       const childCount = folders.filter((f) => f.parentId === folder.id).length;
-                      const fileCount = files.filter((f) => f.workspaceId === selectedWorkspace.id && f.folderId === folder.id).length;
+                      const fileCount = files.filter((f) => f.workspaceId === selectedWorkspaceId && f.folderId === folder.id).length;
                       return <FolderCard key={folder.id} folder={folder} childCount={childCount} fileCount={fileCount} onOpen={() => navigateToFolder(folder.id)} onEdit={() => setEditFolder(folder)} onMove={() => setMoveFolderTarget(folder)} onDelete={() => deleteFolder(folder.id)} onDropItem={(payload) => handleDropOnFolder(folder, payload)} />;
                     })}
                   </div>
@@ -269,7 +247,7 @@ export function ClassifierPage() {
                   <SectionHeader title='Fichiers' count={visibleFiles.length} icon={<FileIcon className='h-3.5 w-3.5' />} />
                   <div className='space-y-1'>
                     {visibleFiles.map((file) => (
-                      <FileRow key={file.id} file={file} onMove={() => setMapFile(file)} onRemove={() => removeFile(file.id)} />
+                      <FileRow key={file.id} file={file} onMove={() => setMapFile(file)} />
                     ))}
                   </div>
                 </section>
@@ -406,7 +384,7 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
   );
 }
 
-function FileRow({ file, onMove, onRemove }: { file: ClassifierFile; onMove: () => void; onRemove: () => void }) {
+function FileRow({ file, onMove }: { file: ClassifierFile; onMove: () => void }) {
   const Icon = getFileIcon(file.mimeType);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -436,17 +414,21 @@ function FileRow({ file, onMove, onRemove }: { file: ClassifierFile; onMove: () 
           <DropdownMenuItem onClick={onMove}>
             <ArrowRight className='mr-2 h-4 w-4' /> Déplacer dans…
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem className='text-destructive focus:text-destructive' onClick={onRemove}>
-            <Trash2 className='mr-2 h-4 w-4' /> Supprimer
-          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
   );
 }
 
-function EmptyFolderState({ hasSearch, onCreateFolder, onUploadFiles }: { hasSearch: boolean; onCreateFolder: () => void; onUploadFiles: () => void }) {
+function EmptyFolderState({
+  hasSearch,
+  onCreateFolder,
+  onUploadFiles,
+}: {
+  hasSearch: boolean;
+  onCreateFolder: () => void;
+  onUploadFiles: () => void;
+}) {
   if (hasSearch) {
     return (
       <div className='flex flex-col items-center justify-center py-24 text-center'>
@@ -465,7 +447,9 @@ function EmptyFolderState({ hasSearch, onCreateFolder, onUploadFiles }: { hasSea
         <Folder className='h-7 w-7' />
       </div>
       <h3 className='text-base font-semibold'>Cet emplacement est vide</h3>
-      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>Créez un dossier pour structurer votre classification ou ajoutez des fichiers à organiser.</p>
+      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>
+        Créez un dossier pour structurer votre classification ou ajoutez des fichiers à classer.
+      </p>
       <div className='mt-5 flex items-center gap-2'>
         <Button variant='outline' onClick={onCreateFolder} className='gap-1.5'>
           <FolderPlus className='h-4 w-4' />

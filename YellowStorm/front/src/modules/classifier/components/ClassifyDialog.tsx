@@ -20,6 +20,11 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
+import {
+  usePlaybooks,
+  usePlaybookStore,
+  usePlaybooksLoading,
+} from '@/modules/playbook/store';
 import { useClassifierStore } from '../store';
 
 type Props = {
@@ -27,27 +32,38 @@ type Props = {
   onOpenChange: (open: boolean) => void;
 };
 
-const PLAYBOOK_OPTIONS = [
-  { value: 'auto-classify-v1', label: 'Auto-classifier · Standard' },
-  { value: 'auto-classify-v2', label: 'Auto-classifier · Smart RAG' },
-  { value: 'auto-classify-legal', label: 'Spécialisé Legal & Conformité' },
-];
-
 export function ClassifyDialog({ open, onOpenChange }: Props) {
   const runClassification = useClassifierStore((s) => s.runClassification);
+  const runningClassification = useClassifierStore((s) => s.runningClassification);
   const lastRun = useClassifierStore((s) => s.lastRun);
   const files = useClassifierStore((s) => s.files);
   const folders = useClassifierStore((s) => s.folders);
   const workspaceId = useClassifierStore((s) => s.selectedWorkspaceId);
 
+  const playbooks = usePlaybooks();
+  const playbooksLoading = usePlaybooksLoading();
+  const fetchPlaybooks = usePlaybookStore((s) => s.fetchPlaybooks);
+
   const wsFiles = files.filter((f) => f.workspaceId === workspaceId);
   const wsFolders = folders.filter((f) => f.workspaceId === workspaceId);
   const unmapped = wsFiles.filter((f) => !f.folderId).length;
 
-  const [playbook, setPlaybook] = useState('auto-classify-v2');
+  const [playbookId, setPlaybookId] = useState<string>('');
   const [overwrite, setOverwrite] = useState(false);
   const [hint, setHint] = useState('');
   const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    if (open && playbooks.length === 0 && !playbooksLoading) {
+      void fetchPlaybooks();
+    }
+  }, [open, playbooks.length, playbooksLoading, fetchPlaybooks]);
+
+  useEffect(() => {
+    if (open && !playbookId && playbooks.length > 0) {
+      setPlaybookId(playbooks[0].id);
+    }
+  }, [open, playbookId, playbooks]);
 
   useEffect(() => {
     if (!open) {
@@ -55,22 +71,23 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
     }
   }, [open]);
 
+  const status = lastRun?.status;
+  const running = runningClassification || status === 'queued' || status === 'running';
+
   useEffect(() => {
-    if (lastRun?.status !== 'running') return;
+    if (!running) return;
     const interval = setInterval(() => {
       setProgress((p) => Math.min(95, p + 7));
     }, 120);
     return () => clearInterval(interval);
-  }, [lastRun?.status]);
+  }, [running]);
 
   useEffect(() => {
-    if (lastRun?.status === 'success') {
-      setProgress(100);
-    }
-  }, [lastRun?.status]);
+    if (status === 'success') setProgress(100);
+  }, [status]);
 
-  const running = lastRun?.status === 'running';
-  const done = lastRun?.status === 'success' && progress === 100;
+  const done = status === 'success' && progress === 100;
+  const failed = status === 'failed';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -89,12 +106,12 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
           </div>
         </DialogHeader>
 
-        {!running && !done && (
+        {!running && !done && !failed && (
           <div className='space-y-4 py-2'>
             <div className='grid grid-cols-3 gap-2'>
               <Stat label='Fichiers' value={wsFiles.length} />
               <Stat label='Dossiers' value={wsFolders.length} />
-              <Stat label='Non mappés' value={unmapped} accent={unmapped > 0} />
+              <Stat label='Non classés' value={unmapped} accent={unmapped > 0} />
             </div>
 
             <div className='space-y-2'>
@@ -104,14 +121,21 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
                   Playbook
                 </span>
               </Label>
-              <Select value={playbook} onValueChange={setPlaybook}>
+              <Select value={playbookId} onValueChange={setPlaybookId} disabled={playbooksLoading}>
                 <SelectTrigger id='playbook'>
-                  <SelectValue />
+                  <SelectValue
+                    placeholder={playbooksLoading ? 'Chargement…' : 'Sélectionner un playbook'}
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  {PLAYBOOK_OPTIONS.map((p) => (
-                    <SelectItem key={p.value} value={p.value}>
-                      {p.label}
+                  {playbooks.length === 0 && !playbooksLoading && (
+                    <div className='px-2 py-3 text-xs text-muted-foreground'>
+                      Aucun playbook disponible.
+                    </div>
+                  )}
+                  {playbooks.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -131,7 +155,7 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
 
             <div className='flex items-center justify-between rounded-md border p-3'>
               <div>
-                <p className='text-sm font-medium'>Reclasser les fichiers déjà mappés</p>
+                <p className='text-sm font-medium'>Reclasser les fichiers déjà classés</p>
                 <p className='text-xs text-muted-foreground'>
                   Si désactivé, seuls les fichiers sans dossier sont traités.
                 </p>
@@ -166,17 +190,36 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
           </div>
         )}
 
+        {failed && (
+          <div className='py-6 space-y-3'>
+            <p className='text-sm font-medium text-destructive'>La classification a échoué.</p>
+            {lastRun?.error && (
+              <p className='text-xs text-muted-foreground'>{lastRun.error}</p>
+            )}
+          </div>
+        )}
+
         <DialogFooter>
-          {!running && !done && (
+          {!running && !done && !failed && (
             <>
               <Button variant='ghost' onClick={() => onOpenChange(false)}>
                 Annuler
               </Button>
               <Button
                 onClick={() => {
-                  void runClassification(playbook);
+                  if (!playbookId) return;
+                  void runClassification({
+                    playbookId,
+                    hint: hint.trim() || undefined,
+                    overwrite,
+                  });
                 }}
-                disabled={wsFiles.length === 0 || wsFolders.length === 0}
+                disabled={
+                  !playbookId ||
+                  wsFiles.length === 0 ||
+                  wsFolders.length === 0 ||
+                  (!overwrite && unmapped === 0)
+                }
                 className='gap-2'
               >
                 <Sparkles className='h-4 w-4' />
@@ -189,7 +232,7 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
               Veuillez patienter…
             </Button>
           )}
-          {done && <Button onClick={() => onOpenChange(false)}>Fermer</Button>}
+          {(done || failed) && <Button onClick={() => onOpenChange(false)}>Fermer</Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

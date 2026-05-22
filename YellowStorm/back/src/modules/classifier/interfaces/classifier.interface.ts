@@ -1,4 +1,4 @@
-export interface ClassifierFolder {
+export interface IClassifierFolderResponse {
   id: string;
   workspaceId: string;
   parentId: string | null;
@@ -11,30 +11,28 @@ export interface ClassifierFolder {
   updatedAt: string;
 }
 
-export type AssignmentSource = 'manual' | 'playbook' | null;
-
-export interface ClassifierFile {
-  id: string;
+export interface IClassifierFileResponse {
+  id: string; // documentId
   workspaceId: string;
   name: string;
   mimeType: string;
   size: number;
   uploadedAt: string | null;
   folderId: string | null;
-  assignmentSource: AssignmentSource;
+  assignmentSource: 'manual' | 'playbook' | null;
 }
 
-export type ClassificationRunStatus =
+export type ClassificationRunStatusValue =
   | 'queued'
   | 'running'
   | 'success'
   | 'failed'
   | 'cancelled';
 
-export interface ClassificationRun {
+export interface IClassificationRunResponse {
   id: string;
   workspaceId: string;
-  status: ClassificationRunStatus;
+  status: ClassificationRunStatusValue;
   playbookId: string;
   playbookExecutionId: string | null;
   hint: string | null;
@@ -47,27 +45,4 @@ export interface ClassificationRun {
   triggeredBy: string;
   createdAt: string;
   updatedAt: string;
-}
-
-export interface CreateFolderInput {
-  name: string;
-  description: string;
-  parentId?: string | null;
-}
-
-export interface UpdateFolderInput {
-  name?: string;
-  description?: string;
-}
-
-export interface StartRunInput {
-  playbookId: string;
-  hint?: string;
-  overwrite?: boolean;
-}
-
-export interface ListFilesQuery {
-  folderId?: string;
-  unclassified?: boolean;
-  search?: string;
 }

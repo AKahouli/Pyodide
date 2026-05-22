@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Check, ChevronsUpDown, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,8 +15,9 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
-import { useClassifierStore, useClassifierWorkspaces, useSelectedWorkspace } from '../store';
-import type { ClassifierWorkspace } from '../types';
+import { useWorkspaces, useWorkspaceStore, useWorkspaceLoading } from '@/modules/workspace';
+import type { Workspace } from '@/modules/workspace';
+import { useClassifierStore } from '../store';
 
 type Props = {
   triggerClassName?: string;
@@ -25,9 +26,28 @@ type Props = {
 
 export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props) {
   const [open, setOpen] = useState(false);
-  const workspaces = useClassifierWorkspaces();
-  const selected = useSelectedWorkspace();
+  const workspaces = useWorkspaces();
+  const { isLoadingWorkspaces } = useWorkspaceLoading();
+  const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
+
+  const selectedId = useClassifierStore((s) => s.selectedWorkspaceId);
   const selectWorkspace = useClassifierStore((s) => s.selectWorkspace);
+
+  useEffect(() => {
+    if (workspaces.length === 0 && !isLoadingWorkspaces) {
+      fetchWorkspaces(1);
+    }
+  }, [workspaces.length, isLoadingWorkspaces, fetchWorkspaces]);
+
+  const selected = useMemo(
+    () => (selectedId ? workspaces.find((w) => w.id === selectedId) ?? null : null),
+    [workspaces, selectedId],
+  );
+
+  const handleSelect = (id: string) => {
+    setOpen(false);
+    void selectWorkspace(id);
+  };
 
   if (variant === 'hero') {
     return (
@@ -58,12 +78,10 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
           </PopoverTrigger>
           <PopoverContent className='w-[var(--radix-popover-trigger-width)] p-0' align='start'>
             <WorkspaceList
-              selectedId={selected?.id ?? null}
-              onSelect={(id) => {
-                selectWorkspace(id);
-                setOpen(false);
-              }}
               workspaces={workspaces}
+              selectedId={selectedId}
+              isLoading={isLoadingWorkspaces}
+              onSelect={handleSelect}
             />
           </PopoverContent>
         </Popover>
@@ -87,12 +105,10 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
       </PopoverTrigger>
       <PopoverContent className='w-72 p-0' align='start'>
         <WorkspaceList
-          selectedId={selected?.id ?? null}
-          onSelect={(id) => {
-            selectWorkspace(id);
-            setOpen(false);
-          }}
           workspaces={workspaces}
+          selectedId={selectedId}
+          isLoading={isLoadingWorkspaces}
+          onSelect={handleSelect}
         />
       </PopoverContent>
     </Popover>
@@ -102,28 +118,38 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
 function WorkspaceList({
   workspaces,
   selectedId,
+  isLoading,
   onSelect,
 }: {
-  workspaces: ClassifierWorkspace[];
+  workspaces: Workspace[];
   selectedId: string | null;
+  isLoading: boolean;
   onSelect: (id: string) => void;
 }) {
   return (
     <Command>
       <CommandInput placeholder='Rechercher un workspace…' />
       <CommandList>
-        <CommandEmpty>Aucun workspace trouvé.</CommandEmpty>
-        <CommandGroup heading='Workspaces'>
-          {workspaces.map((w) => {
-            const isSelected = selectedId === w.id;
-            return (
-              <CommandItem key={w.id} value={w.name} onSelect={() => onSelect(w.id)} className='gap-2'>
-                <span className='flex-1 truncate'>{w.name}</span>
-                {isSelected && <Check className='h-4 w-4 text-primary' />}
-              </CommandItem>
-            );
-          })}
-        </CommandGroup>
+        {isLoading ? (
+          <div className='flex items-center justify-center py-6 text-xs text-muted-foreground'>
+            Chargement…
+          </div>
+        ) : (
+          <>
+            <CommandEmpty>Aucun workspace trouvé.</CommandEmpty>
+            <CommandGroup heading='Workspaces'>
+              {workspaces.map((w) => {
+                const isSelected = selectedId === w.id;
+                return (
+                  <CommandItem key={w.id} value={w.name} onSelect={() => onSelect(w.id)} className='gap-2'>
+                    <span className='flex-1 truncate'>{w.name}</span>
+                    {isSelected && <Check className='h-4 w-4 text-primary' />}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </>
+        )}
       </CommandList>
     </Command>
   );
