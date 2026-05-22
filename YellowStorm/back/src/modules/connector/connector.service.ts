@@ -11,6 +11,8 @@ import {
   Connector,
   ConnectorDocument,
   ConnectorAction,
+  ConnectorDynamicHeader,
+  DynamicHeaderSource,
 } from './schemas/connector.schema';
 import { IConnectorResponse, IMcpInspectResult } from './interfaces/connector.interface';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
@@ -41,6 +43,7 @@ export class ConnectorService {
 
     const actions = this.normalizeConnectorActions(dto.actions);
     const sanitizedMcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
+    const dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
 
     const connector = await this.connectorModel.create({
       slug: dto.slug,
@@ -56,6 +59,7 @@ export class ConnectorService {
       mcpTransportType: dto.mcpTransportType ?? 'streamable_http',
       mcpServerUrl: dto.mcpServerUrl ?? '',
       mcpServerConfig: sanitizedMcpServerConfig,
+      dynamicHeaders,
       actions,
       referencedSkillIds: (dto.referencedSkillIds ?? []).map((id) => new Types.ObjectId(id)),
       isActive: dto.isActive ?? true,
@@ -157,6 +161,9 @@ export class ConnectorService {
     }
     if (dto.mcpServerConfig) {
       (updateData as Record<string, unknown>).mcpServerConfig = this.sanitizeMcpServerConfig(dto.mcpServerConfig);
+    }
+    if (dto.dynamicHeaders) {
+      (updateData as Record<string, unknown>).dynamicHeaders = this.normalizeDynamicHeaders(dto.dynamicHeaders);
     }
 
     const updated = await this.connectorModel
@@ -466,6 +473,24 @@ export class ConnectorService {
     );
   }
 
+  private normalizeDynamicHeaders(
+    dynamicHeaders?: Array<{ headerName: string; source: string; enabled?: boolean }>,
+  ): ConnectorDynamicHeader[] {
+    const allowed = new Set<string>(Object.values(DynamicHeaderSource));
+    return (dynamicHeaders ?? [])
+      .map((row) => ({
+        headerName: (row.headerName || '').trim(),
+        source: row.source,
+        enabled: row.enabled ?? true,
+      }))
+      .filter((row) => row.headerName.length > 0 && allowed.has(row.source))
+      .map((row) => ({
+        headerName: this.truncateValue(row.headerName, 128),
+        source: row.source as DynamicHeaderSource,
+        enabled: row.enabled,
+      })) as ConnectorDynamicHeader[];
+  }
+
   private normalizeConnectorActions(actions?: Array<{
     key: string;
     label: string;
@@ -510,6 +535,11 @@ export class ConnectorService {
       mcpTransportType: doc.mcpTransportType,
       mcpServerUrl: doc.mcpServerUrl,
       mcpServerConfig: doc.mcpServerConfig ?? {},
+      dynamicHeaders: (doc.dynamicHeaders ?? []).map((h: any) => ({
+        headerName: h.headerName,
+        source: h.source,
+        enabled: h.enabled ?? true,
+      })),
       actions: (doc.actions ?? []).map((a: any) => ({
         key: a.key,
         label: a.label,

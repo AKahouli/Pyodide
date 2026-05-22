@@ -19,8 +19,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { ConnectorResponse, ConnectorActionResponse, SkillResponse, McpToolDefinition } from '../../types';
-import type { ConnectorFormValues } from './connector-form-schema';
+import type {
+  ConnectorResponse,
+  ConnectorActionResponse,
+  ConnectorDynamicHeader,
+  ConnectorDynamicHeaderSource,
+  SkillResponse,
+  McpToolDefinition,
+} from '../../types';
+import type { ConnectorFormValues, DynamicHeaderRow } from './connector-form-schema';
 import { defaultConnectorFormValues } from './connector-form-schema';
 import { buildMcpServerConfig, parseMcpServerConfig } from './mcp-server-config';
 import { Loader2, Plus, TestTube2, Trash2, Github, X } from 'lucide-react';
@@ -53,6 +60,41 @@ const RUNTIME_AUTH_STRATEGIES = [
   { value: 'custom_headers', label: 'Custom headers' },
   { value: 'env_vars', label: 'Environment variables' },
 ];
+
+const DYNAMIC_HEADER_SOURCES: Array<{ value: ConnectorDynamicHeaderSource; label: string }> = [
+  { value: 'user_id', label: 'User ID' },
+  { value: 'user_email', label: 'User email' },
+  { value: 'user_first_name', label: 'User first name' },
+  { value: 'user_last_name', label: 'User last name' },
+  { value: 'user_full_name', label: 'User full name' },
+];
+
+function createDynamicHeaderRow(
+  headerName = '',
+  source: ConnectorDynamicHeaderSource = 'user_id',
+  enabled = true,
+): DynamicHeaderRow {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    headerName,
+    source,
+    enabled,
+  };
+}
+
+function dynamicHeadersToRows(headers?: ConnectorDynamicHeader[]): DynamicHeaderRow[] {
+  return (headers || []).map((h) => createDynamicHeaderRow(h.headerName, h.source, h.enabled !== false));
+}
+
+function dynamicRowsToPayload(rows: DynamicHeaderRow[]): ConnectorDynamicHeader[] {
+  return rows
+    .map((row) => ({
+      headerName: row.headerName.trim(),
+      source: row.source,
+      enabled: row.enabled,
+    }))
+    .filter((row) => row.headerName.length > 0);
+}
 
 const CONNECTOR_ACTION_KEY_MAX_LENGTH = 128;
 const CONNECTOR_ACTION_LABEL_MAX_LENGTH = 128;
@@ -205,6 +247,7 @@ export function CreateEditConnectorDialog({
           mcpServerUrl: connector.mcpServerUrl || '',
           githubPatToken: parsedServerConfig.githubPatToken,
           mcpServerConfig: parsedServerConfig.serverConfigText,
+          dynamicHeaders: dynamicHeadersToRows(connector.dynamicHeaders),
           actions: connector.actions || [],
           actionsJson: connector.actions ? JSON.stringify(connector.actions, null, 2) : '',
           referencedSkillIds: connector.referencedSkillIds || [],
@@ -440,6 +483,29 @@ export function CreateEditConnectorDialog({
     }));
   };
 
+  const updateDynamicHeader = <K extends keyof DynamicHeaderRow>(rowId: string, property: K, value: DynamicHeaderRow[K]) => {
+    setForm((current) => ({
+      ...current,
+      dynamicHeaders: current.dynamicHeaders.map((row) =>
+        row.id === rowId ? { ...row, [property]: value } : row,
+      ),
+    }));
+  };
+
+  const addDynamicHeader = () => {
+    setForm((current) => ({
+      ...current,
+      dynamicHeaders: [...current.dynamicHeaders, createDynamicHeaderRow()],
+    }));
+  };
+
+  const removeDynamicHeader = (rowId: string) => {
+    setForm((current) => ({
+      ...current,
+      dynamicHeaders: current.dynamicHeaders.filter((row) => row.id !== rowId),
+    }));
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='max-w-2xl max-h-[85vh] overflow-y-auto'>
@@ -618,6 +684,63 @@ export function CreateEditConnectorDialog({
           <div>
             <Label>{t('connectors.form.fields.serverConfig.label')}</Label>
             <Textarea placeholder={t('connectors.form.fields.serverConfig.placeholder')} value={form.mcpServerConfig} onChange={(e) => setForm({ ...form, mcpServerConfig: e.target.value })} rows={3} className='font-mono text-xs' />
+          </div>
+
+          <div className='grid gap-3 rounded-md border p-4'>
+            <div className='flex items-center justify-between'>
+              <div>
+                <Label>Dynamic headers</Label>
+                <p className='text-sm text-muted-foreground'>
+                  Headers automatically filled at runtime from the calling user (e.g. X-User-Id → user_id).
+                </p>
+              </div>
+              <Button type='button' variant='outline' size='sm' onClick={addDynamicHeader}>
+                <Plus className='mr-2 h-4 w-4' />
+                Add header
+              </Button>
+            </div>
+            {form.dynamicHeaders.length === 0 ? (
+              <p className='text-sm text-muted-foreground'>No dynamic headers configured.</p>
+            ) : (
+              form.dynamicHeaders.map((row) => (
+                <div key={row.id} className='grid grid-cols-[1fr_1fr_auto_auto] items-center gap-2'>
+                  <Input
+                    placeholder='Header name (e.g. X-User-Id)'
+                    value={row.headerName}
+                    onChange={(e) => updateDynamicHeader(row.id, 'headerName', e.target.value)}
+                  />
+                  <Select
+                    value={row.source}
+                    onValueChange={(value) =>
+                      updateDynamicHeader(row.id, 'source', value as ConnectorDynamicHeaderSource)
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder='Source' />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DYNAMIC_HEADER_SOURCES.map((source) => (
+                        <SelectItem key={source.value} value={source.value}>
+                          {source.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Switch
+                    checked={row.enabled}
+                    onCheckedChange={(checked) => updateDynamicHeader(row.id, 'enabled', checked)}
+                  />
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='icon'
+                    onClick={() => removeDynamicHeader(row.id)}
+                  >
+                    <Trash2 className='h-4 w-4' />
+                  </Button>
+                </div>
+              ))
+            )}
           </div>
 
           <div className='rounded-lg border bg-muted/20 p-4 space-y-4'>
