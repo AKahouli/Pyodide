@@ -26,3 +26,4 @@ export * from './api';
 
 // Components
 export { ConnectedAppButton } from './components/ConnectedAppButton';
+export { AppKeySelect } from './components/AppKeySelect';

@@ -68,9 +68,18 @@ export class ConnectedAppOAuthService {
       client_id: appConfig.clientId,
       response_type: 'code',
       redirect_uri: redirectUri,
-      scope: appConfig.scopes.join(' '),
       state,
     });
+
+    // Add scopes if provided
+    if (appConfig.scopes && appConfig.scopes.length > 0) {
+      params.set('scope', appConfig.scopes.join(' '));
+    }
+
+    // Notion-specific parameter
+    if (appConfig.appKey === 'notion') {
+      params.set('owner', 'user');
+    }
 
     if (codeChallenge) {
       params.set('code_challenge', codeChallenge);
@@ -78,6 +87,10 @@ export class ConnectedAppOAuthService {
     }
 
     let authUrl = appConfig.authorizationUrl;
+    // Remove any existing query parameters from the authorization URL
+    const urlObj = new URL(authUrl);
+    authUrl = `${urlObj.origin}${urlObj.pathname}`;
+
     if (appConfig.tenantId) {
       authUrl = authUrl.replace('{tenant}', appConfig.tenantId);
     }

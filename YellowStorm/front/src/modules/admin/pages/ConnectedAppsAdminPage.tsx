@@ -12,6 +12,7 @@ import {
   Pencil,
   Trash2,
   Search,
+  ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -48,10 +49,19 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import { useModuleTranslation } from '@/modules/localization';
 import { usePermissions } from '../hooks/usePermissions';
+import { getOAuthPresets } from '@/modules/connected-app/api';
+import { AppKeySelect } from '@/modules/connected-app/components/AppKeySelect';
 
 // Types
 
@@ -126,6 +136,7 @@ export function ConnectedAppsAdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [apps, setApps] = useState<ConnectedAppAdmin[]>([]);
   const [search, setSearch] = useState('');
+  const [presets, setPresets] = useState<Array<{ key: string; displayName: string; appKey: string }>>([]);
 
   // Dialog states
   const [showFormDialog, setShowFormDialog] = useState(false);
@@ -154,7 +165,17 @@ export function ConnectedAppsAdminPage() {
 
   useEffect(() => {
     fetchApps();
+    fetchPresets();
   }, [fetchApps]);
+
+  const fetchPresets = useCallback(async () => {
+    try {
+      const presetsData = await getOAuthPresets();
+      setPresets(presetsData);
+    } catch (err) {
+      console.error('Failed to fetch presets:', err);
+    }
+  }, []);
 
   // Client-side filtering
   const filteredApps = useMemo(() => {
@@ -214,22 +235,28 @@ export function ConnectedAppsAdminPage() {
 
     if (!isEdit) {
       payload.appKey = formData.appKey;
+      // For create, always include required secret fields
+      payload.clientId = formData.clientId;
+      payload.clientSecret = formData.clientSecret;
+      if (formData.tenantId) {
+        payload.tenantId = formData.tenantId;
+      }
+    } else {
+      // For edit, only include secret fields if they were changed from the masked value
+      if (formData.clientId !== MASKED_VALUE) {
+        payload.clientId = formData.clientId;
+      }
+      if (formData.clientSecret !== MASKED_VALUE) {
+        payload.clientSecret = formData.clientSecret;
+      }
+      if (formData.tenantId && formData.tenantId !== MASKED_VALUE) {
+        payload.tenantId = formData.tenantId;
+      }
     }
 
     if (formData.description) payload.description = formData.description;
     if (formData.iconKey) payload.iconKey = formData.iconKey;
     if (formData.revokeUrl) payload.revokeUrl = formData.revokeUrl;
-
-    // Only send secret fields if they were changed from the masked value
-    if (formData.clientId !== MASKED_VALUE) {
-      payload.clientId = formData.clientId;
-    }
-    if (formData.clientSecret !== MASKED_VALUE) {
-      payload.clientSecret = formData.clientSecret;
-    }
-    if (formData.tenantId && formData.tenantId !== MASKED_VALUE) {
-      payload.tenantId = formData.tenantId;
-    }
 
     return payload;
   };
@@ -512,13 +539,15 @@ export function ConnectedAppsAdminPage() {
             {!editingApp && (
               <div className="space-y-2">
                 <Label htmlFor="appKey">{tApp('admin.fields.appKey')}</Label>
-                <Input
+                <AppKeySelect
                   id="appKey"
-                  placeholder="e.g., google-drive, microsoft"
                   value={formData.appKey}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, appKey: e.target.value }))
+                  onChange={(value) =>
+                    setFormData((prev) => ({ ...prev, appKey: value }))
                   }
+                  presets={presets}
+                  existingAppKeys={apps.map((a) => a.appKey)}
+                  placeholder="Select or enter app key..."
                 />
                 <p className="text-xs text-muted-foreground">
                   Lowercase letters, numbers, and hyphens only. Cannot be changed after creation.
