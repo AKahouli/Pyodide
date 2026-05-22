@@ -196,6 +196,18 @@ export enum ErrorCode {
   PROJECT_ALREADY_EXISTS = 'ERR_2701',
   PROJECT_FORBIDDEN = 'ERR_2702',
 
+  // Classifier errors (2800-2899)
+  CLASSIFIER_FOLDER_NOT_FOUND = 'ERR_2800',
+  CLASSIFIER_FOLDER_NAME_EXISTS = 'ERR_2801',
+  CLASSIFIER_FOLDER_FORBIDDEN = 'ERR_2802',
+  CLASSIFIER_FOLDER_CYCLE = 'ERR_2803',
+  CLASSIFIER_FOLDER_INVALID_PARENT = 'ERR_2804',
+  CLASSIFIER_FILE_NOT_FOUND = 'ERR_2810',
+  CLASSIFIER_FILE_FORBIDDEN = 'ERR_2811',
+  CLASSIFIER_RUN_NOT_FOUND = 'ERR_2820',
+  CLASSIFIER_RUN_FORBIDDEN = 'ERR_2821',
+  CLASSIFIER_RUN_PLAYBOOK_INVALID = 'ERR_2822',
+
   // Auth Provider errors (2600-2699)
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
   AUTH_PROVIDER_ALREADY_EXISTS = 'ERR_2601',
@@ -385,6 +397,17 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.PROJECT_NOT_FOUND]: 'Project not found.',
   [ErrorCode.PROJECT_ALREADY_EXISTS]: 'A project with this name already exists.',
   [ErrorCode.PROJECT_FORBIDDEN]: 'You do not have access to this project.',
+
+  [ErrorCode.CLASSIFIER_FOLDER_NOT_FOUND]: 'Classifier folder not found.',
+  [ErrorCode.CLASSIFIER_FOLDER_NAME_EXISTS]: 'A folder with this name already exists at this location.',
+  [ErrorCode.CLASSIFIER_FOLDER_FORBIDDEN]: 'You do not have access to this classifier folder.',
+  [ErrorCode.CLASSIFIER_FOLDER_CYCLE]: 'Cannot move a folder into itself or one of its descendants.',
+  [ErrorCode.CLASSIFIER_FOLDER_INVALID_PARENT]: 'Invalid parent folder.',
+  [ErrorCode.CLASSIFIER_FILE_NOT_FOUND]: 'File not found in this workspace.',
+  [ErrorCode.CLASSIFIER_FILE_FORBIDDEN]: 'You do not have access to this file.',
+  [ErrorCode.CLASSIFIER_RUN_NOT_FOUND]: 'Classification run not found.',
+  [ErrorCode.CLASSIFIER_RUN_FORBIDDEN]: 'You do not have access to this classification run.',
+  [ErrorCode.CLASSIFIER_RUN_PLAYBOOK_INVALID]: 'The selected playbook is invalid or not accessible.',
 
   [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',

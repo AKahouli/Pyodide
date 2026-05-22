@@ -36,6 +36,9 @@ const AgentHubPage = React.lazy(() =>
 const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
 );
+const ClassifierPage = React.lazy(() =>
+  import("./modules/classifier").then((m) => ({ default: m.ClassifierPage }))
+);
 import {
   AdminGuard,
   AdminLayout,
@@ -160,6 +163,14 @@ export const router = createHashRouter([
         element: (
           <Suspense fallback={null}>
             <ProjectPage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'classifier',
+        element: (
+          <Suspense fallback={null}>
+            <ClassifierPage />
           </Suspense>
         ),
       },

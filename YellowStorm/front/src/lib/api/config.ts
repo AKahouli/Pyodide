@@ -316,6 +316,16 @@ export const API_ENDPOINTS = {
     create: '/projects',
     byId: (id: string) => `/projects/${id}`,
   },
+  classifier: {
+    folders: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/folders`,
+    folderById: (id: string) => `/classifier/folders/${id}`,
+    folderMove: (id: string) => `/classifier/folders/${id}/move`,
+    files: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/files`,
+    fileFolder: (workspaceId: string, documentId: string) =>
+      `/classifier/workspaces/${workspaceId}/files/${documentId}/folder`,
+    runs: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/runs`,
+    runById: (id: string) => `/classifier/runs/${id}`,
+  },
   evaluation: {
     datasets: '/evaluation/datasets',
     datasetById: (id: string) => `/evaluation/datasets/${id}`,

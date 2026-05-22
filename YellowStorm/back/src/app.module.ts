@@ -49,6 +49,7 @@ import { AuthProviderModule } from './modules/auth-provider/auth-provider.module
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
 import { ConnectorModule } from './modules/connector/connector.module';
 import { ProjectModule } from './modules/project';
+import { ClassifierModule } from './modules/classifier';
 
 @Module({
   imports: [
@@ -98,6 +99,7 @@ import { ProjectModule } from './modules/project';
     ConnectedAppModule,
     ConnectorModule,
     ProjectModule,
+    ClassifierModule,
     HealthModule,
     EvaluationModule,
   ],
