@@ -1,3 +1,9 @@
+export interface ConnectorDynamicHeaderConfig {
+  headerName: string;
+  source: string;
+  enabled?: boolean;
+}
+
 export interface ConnectorAuthService {
   resolveRuntimeAuth(
     userId: string,
@@ -9,4 +15,9 @@ export interface ConnectorAuthService {
       credentialId?: string;
     },
   ): Promise<{ headers: Record<string, string>; env: Record<string, string> }>;
+
+  resolveDynamicHeaders(
+    userId: string,
+    dynamicHeaders: ConnectorDynamicHeaderConfig[],
+  ): Promise<Record<string, string>>;
 }

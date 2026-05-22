@@ -19,6 +19,7 @@ import { ConnectorController } from './connector.controller';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
 import { WorkspaceModule } from '../workspace/workspace.module';
+import { UserModule } from '../user/user.module';
 import { LoggerModule } from '../logger';
 import { CryptoService } from '@common/services/crypto.service';
 import { ConnectorAdminAuthService } from './services/connector-admin-auth.service';
@@ -35,6 +36,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     AuthorizationModule,
     ConnectedAppModule,
     WorkspaceModule,
+    UserModule,
     LoggerModule,
   ],
   controllers: [AdminConnectorController, AdminConnectorAuthCallbackController, ConnectorController],

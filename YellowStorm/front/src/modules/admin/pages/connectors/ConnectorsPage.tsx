@@ -92,6 +92,13 @@ export function ConnectorsPage() {
         mcpTransportType: data.mcpTransportType || undefined,
         mcpServerUrl: data.mcpServerUrl || undefined,
         mcpServerConfig: typeof data.mcpServerConfig === 'string' ? (data.mcpServerConfig.trim() ? JSON.parse(data.mcpServerConfig) : undefined) : (data.mcpServerConfig || undefined),
+        dynamicHeaders: data.dynamicHeaders
+          .map((row) => ({
+            headerName: row.headerName.trim(),
+            source: row.source,
+            enabled: row.enabled,
+          }))
+          .filter((row) => row.headerName.length > 0),
         actions: parsedActions,
         referencedSkillIds: data.referencedSkillIds.length > 0 ? data.referencedSkillIds : undefined,
         isActive: data.isActive,

@@ -739,6 +739,21 @@ export class AgentService {
               });
             }
           }
+
+          if (connector?.dynamicHeaders?.length) {
+            try {
+              const dynamic = await this.connectorAuthService.resolveDynamicHeaders(
+                userId,
+                connector.dynamicHeaders,
+              );
+              binding.auth_headers = { ...binding.auth_headers, ...dynamic };
+            } catch (err) {
+              this.logger.warn('Failed to resolve dynamic headers for conversation', {
+                connector_id: binding.connector_id,
+                error: (err as Error).message,
+              });
+            }
+          }
         }
       }
 

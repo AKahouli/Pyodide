@@ -11,7 +11,23 @@ import {
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, McpTransportType } from '../schemas/connector.schema';
+import { ConnectorActionSafety, ConnectorAuthSourceType, ConnectorAuthType, DynamicHeaderSource, McpTransportType } from '../schemas/connector.schema';
+
+export class ConnectorDynamicHeaderDto {
+  @ApiProperty({ description: 'HTTP header name to inject, e.g. X-User-Id' })
+  @IsString()
+  @MaxLength(128)
+  headerName!: string;
+
+  @ApiProperty({ enum: DynamicHeaderSource, description: 'Source value resolved per user at runtime' })
+  @IsEnum(DynamicHeaderSource)
+  source!: DynamicHeaderSource;
+
+  @ApiPropertyOptional({ description: 'Whether the dynamic header is enabled', default: true })
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+}
 
 export class ConnectorActionDto {
   @ApiProperty({ description: 'Action key, e.g. list_files' })
@@ -133,6 +149,16 @@ export class CreateConnectorDto {
   @IsOptional()
   @IsObject()
   mcpServerConfig?: Record<string, unknown>;
+
+  @ApiPropertyOptional({
+    description: 'Dynamic per-user headers (e.g. X-User-Id mapped to the calling user)',
+    type: [ConnectorDynamicHeaderDto],
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ConnectorDynamicHeaderDto)
+  dynamicHeaders?: ConnectorDynamicHeaderDto[];
 
   @ApiPropertyOptional({ description: 'Connector actions', type: [ConnectorActionDto] })
   @IsOptional()
