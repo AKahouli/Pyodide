@@ -76,3 +76,22 @@ export interface FlowExecutionAdvisorTaskResponse {
     judgeHistory: FlowExecutionJudgeHistoryEntry[];
   };
 }
+
+export type AdvisorRemediationCategory = 'structure' | 'prompt' | 'contract' | 'handoff' | 'tooling' | 'evidence' | 'outputFormat';
+
+export interface AdvisorRemediationItem {
+  id: string;
+  category: AdvisorRemediationCategory;
+  scope: 'task' | 'playbook';
+  targetTaskId: string | null;
+  title: string;
+  description: string;
+  rationale?: string;
+  editable: boolean;
+  defaultSelected: boolean;
+  source: {
+    kind: string;
+    field: string;
+    index: number;
+  };
+}

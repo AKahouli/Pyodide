@@ -21,11 +21,21 @@ export interface TraceReplayEvent {
 
 export interface ValidateTaskReplayDto {
   preserveOutputFormat?: boolean;
+  replayConfig?: {
+    replayOutputFormat?: boolean;
+    replayToolTrace?: boolean;
+    replayReasoningChain?: boolean;
+  };
 }
 
 export interface UpdateReplayFormatGuideDto {
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string;
+  replayConfig?: {
+    replayOutputFormat?: boolean;
+    replayToolTrace?: boolean;
+    replayReasoningChain?: boolean;
+  };
 }
 
 @Injectable()
@@ -71,6 +81,7 @@ export class PlaybookFlowReplayService {
             output: tr.output,
             displayText: tr.displayText,
             toolTrace: tr.toolTrace ?? [],
+            reasoningChain: (tr as any).reasoningChain ?? [],
             llmPromptTrace: tr.llmPromptTrace ?? [],
             usage,
             ...flattenUsage({ usage }),
@@ -153,6 +164,7 @@ export class PlaybookFlowReplayService {
       status: FlowReplayValidationStatus.ACTIVE,
       referenceOutput: typeof taskResult.output === 'string' ? taskResult.output : JSON.stringify(taskResult.output ?? ''),
       toolCalls: taskResult.toolTrace ?? [],
+      reasoningChain: (taskResult as any).reasoningChain ?? [],
       llmPromptTrace: taskResult.llmPromptTrace ?? [],
       referenceUsage: taskResult.usage ?? null,
       referenceSemanticMatch: taskResult.semanticMatch ?? null,
@@ -162,6 +174,11 @@ export class PlaybookFlowReplayService {
       isStale: false,
       staleReasons: [],
       preserveOutputFormat: dto?.preserveOutputFormat ?? false,
+      replayConfig: {
+        replayOutputFormat: dto?.replayConfig?.replayOutputFormat ?? false,
+        replayToolTrace: dto?.replayConfig?.replayToolTrace ?? false,
+        replayReasoningChain: dto?.replayConfig?.replayReasoningChain ?? false,
+      },
     }]);
 
     if (lastReplay) {
@@ -201,7 +218,15 @@ export class PlaybookFlowReplayService {
   ): Promise<FlowValidatedReplayDocument> {
     const updated = await this.replayModel.findOneAndUpdate(
       { _id: replayId, flowId, taskId },
-      { $set: { outputFormatGuide: dto.outputFormatGuide, preserveOutputFormat: dto.preserveOutputFormat } },
+      {
+        $set: {
+          outputFormatGuide: dto.outputFormatGuide,
+          preserveOutputFormat: dto.preserveOutputFormat,
+          ...(dto.replayConfig?.replayOutputFormat != null ? { 'replayConfig.replayOutputFormat': dto.replayConfig.replayOutputFormat } : {}),
+          ...(dto.replayConfig?.replayToolTrace != null ? { 'replayConfig.replayToolTrace': dto.replayConfig.replayToolTrace } : {}),
+          ...(dto.replayConfig?.replayReasoningChain != null ? { 'replayConfig.replayReasoningChain': dto.replayConfig.replayReasoningChain } : {}),
+        },
+      },
       { new: true },
     );
     if (!updated) throw new NotFoundException('Replay not found');

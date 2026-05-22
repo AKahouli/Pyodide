@@ -83,7 +83,10 @@ import { PlaybookFlowStreamEventsService } from './services/playbook-flow-stream
 import { PlaybookFlowIntentService } from './services/playbook-flow-intent.service';
 import { PlaybookFlowStreamAuthGuard } from './guards/playbook-flow-stream-auth.guard';
 import { PlaybookFlowObservabilityService } from './services/observability/playbook-flow-observability.service';
+import { PlaybookFlowPublicReasoningParserService } from './services/observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './services/observability/playbook-flow-trace-redaction.service';
+import { PlaybookFlowReplayArtifactService } from './services/playbook-flow-replay-artifact.service';
+import { PlaybookFlowReplayPromptService } from './services/playbook-flow-replay-prompt.service';
 
 @Module({
   imports: [
@@ -168,7 +171,10 @@ import { PlaybookFlowTraceRedactionService } from './services/observability/play
     PlaybookFlowIntentService,
     PlaybookFlowStreamAuthGuard,
     PlaybookFlowObservabilityService,
+    PlaybookFlowPublicReasoningParserService,
     PlaybookFlowTraceRedactionService,
+    PlaybookFlowReplayArtifactService,
+    PlaybookFlowReplayPromptService,
   ],
   exports: [
     PlaybookFlowService,

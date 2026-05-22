@@ -6,6 +6,7 @@ import {
   FlowToolTraceItem,
   FlowUsageSummary,
 } from '../interfaces/playbook-flow-observability.interface';
+import { PublicReasoningTraceItem } from '../interfaces/playbook-flow-reasoning.interface';
 import { flattenUsage } from '../services/observability/playbook-flow-observability.mapper';
 
 export function taskResultsToTimeline(results: FlowTaskResult[]): IFlowTaskResultResponse[] {
@@ -25,6 +26,7 @@ export function taskResultsToTimeline(results: FlowTaskResult[]): IFlowTaskResul
       startedAt: r.startedAt,
       endedAt: r.endedAt,
       toolTrace: r.toolTrace as unknown as FlowToolTraceItem[] | undefined,
+      reasoningChain: (r.reasoningChain as unknown as PublicReasoningTraceItem[] | undefined) ?? [],
       llmPromptTrace: r.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] | undefined,
       usage: r.usage as unknown as FlowUsageSummary | null | undefined,
       ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),

@@ -29,6 +29,7 @@ describe('PlaybookFlowService', () => {
       ...doc,
       save: jest.fn().mockResolvedValue(savedFlow),
     }));
+    (flowModel as any).exists = jest.fn().mockResolvedValue(null);
 
     const validatorService = { validate: jest.fn() };
     const service = new PlaybookFlowService(
@@ -98,6 +99,7 @@ describe('PlaybookFlowService', () => {
       ...doc,
       save: jest.fn().mockResolvedValue(savedFlow),
     }));
+    (flowModel as any).exists = jest.fn().mockResolvedValue(null);
 
     const validatorService = { validate: jest.fn() };
     const service = new PlaybookFlowService(
@@ -144,6 +146,7 @@ describe('PlaybookFlowService', () => {
       ...doc,
       save: jest.fn().mockResolvedValue(savedFlow),
     }));
+    (flowModel as any).exists = jest.fn().mockResolvedValue(null);
     const validatorService = { validate: jest.fn() };
     const service = new PlaybookFlowService(
       flowModel as any,

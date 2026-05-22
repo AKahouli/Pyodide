@@ -10,6 +10,7 @@ import {
 } from './playbook-flow-execution.service';
 
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
+import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 
 function createExecutionServiceForTests(overrides?: {
@@ -76,7 +77,10 @@ function createExecutionServiceForTests(overrides?: {
     emitInterrupt: jest.fn(),
     ...overrides?.streamEvents,
   };
-  const observabilityService = new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService());
+  const observabilityService = new PlaybookFlowObservabilityService(
+    new PlaybookFlowTraceRedactionService(),
+    new PlaybookFlowPublicReasoningParserService(),
+  );
 
   const service = new PlaybookFlowExecutionService(
     executionModel as any,
@@ -92,6 +96,8 @@ function createExecutionServiceForTests(overrides?: {
     streamEvents as any,
     observabilityService as any,
     {} as any,
+    { resolveReplayArtifacts: async () => new Map() } as any,
+    { buildReplayPromptSection: () => '' } as any,
   );
 
   return {
@@ -417,8 +423,13 @@ describe('single-step execution safety', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
-      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
       {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
     );
 
     (service as any).executionModel.find = jest.fn().mockReturnValue({
@@ -504,8 +515,13 @@ describe('single-step execution safety', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
-      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
       {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
     );
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);
 
@@ -684,8 +700,13 @@ describe('single-step execution safety', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
-      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
       {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
     );
 
     (service as any).executionModel.find = jest.fn().mockReturnValue({
@@ -795,8 +816,13 @@ describe('single-step execution safety', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
-      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
       {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
     );
 
     (service as any).executionModel.find = jest.fn().mockReturnValue({
@@ -871,12 +897,12 @@ describe('service terminal handling', () => {
       event_type: 'NodeCompleted',
       node_id: 'step-1',
       iteration: 0,
-      payload: {
-        output: 'Executive summary',
-        display_text: 'Executive summary',
-        artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
-        components: [{ type: 'text', data: { content: 'Executive summary' } }],
-      },
+        payload: {
+          output: 'Executive summary\n---PUBLIC_REASONING_TRACE_JSON---\n[{"id":"step_1","type":"observation","label":"Identify","description":"Picked the answer."}]',
+          display_text: 'Executive summary\n---PUBLIC_REASONING_TRACE_JSON---\n[{"id":"step_1","type":"observation","label":"Identify","description":"Picked the answer."}]',
+          artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
+          components: [{ type: 'text', data: { content: 'Executive summary' } }],
+        },
     });
 
     expect(taskResultModel.updateOne).toHaveBeenCalledWith(
@@ -886,6 +912,7 @@ describe('service terminal handling', () => {
           status: 'completed',
           output: 'Executive summary',
           displayText: 'Executive summary',
+          reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
           artifacts: [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
           components: [{ type: 'text', data: { content: 'Executive summary' } }],
         }),
@@ -900,7 +927,38 @@ describe('service terminal handling', () => {
       0,
       [{ port_id: 'report', artifact_kind: 'document', filename: 'report.pdf', url: 'https://example.com/report.pdf' }],
       [{ type: 'text', data: { content: 'Executive summary' } }],
-      expect.any(Object),
+      expect.objectContaining({
+        reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
+      }),
+    );
+  });
+
+  it('does not fail task completion when public reasoning JSON is malformed', async () => {
+    const { service, taskResultModel } = createExecutionServiceForTests();
+    taskResultModel.updateOne.mockResolvedValue(undefined);
+
+    await (service as any).handleRunEvent('exec-1', {
+      event_type: 'NodeCompleted',
+      node_id: 'step-1',
+      iteration: 0,
+      payload: {
+        output: 'Executive summary\n---PUBLIC_REASONING_TRACE_JSON---\n{',
+      },
+    });
+
+    expect(taskResultModel.updateOne).toHaveBeenCalledWith(
+      { executionId: 'exec-1', taskId: 'step-1', iteration: 0 },
+      expect.objectContaining({
+        $set: expect.objectContaining({
+          status: 'completed',
+          output: 'Executive summary',
+          reasoningChain: [],
+          traceMetadata: expect.objectContaining({
+            publicReasoning: expect.objectContaining({ parseError: 'invalid_json' }),
+          }),
+        }),
+      }),
+      { upsert: true },
     );
   });
 
@@ -1039,8 +1097,13 @@ describe('service terminal handling', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
-      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
       {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
     );
 
     await expect(service.start('flow-1', 'owner-1', {}, 'idem-1')).rejects.toThrow('link failed');
@@ -1093,8 +1156,13 @@ describe('service terminal handling', () => {
       { validate: jest.fn() } as any,
       { buildGrpcAgentsForPlaybook: jest.fn() } as any,
       { cacheOwner: jest.fn(), emitExecutionQueued: jest.fn() } as any,
-      new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+      new PlaybookFlowObservabilityService(
+        new PlaybookFlowTraceRedactionService(),
+        new PlaybookFlowPublicReasoningParserService(),
+      ) as any,
       {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
     );
     idempotencyService.reserve.mockResolvedValue({ type: 'reserved' });
     jest.spyOn(service as any, 'drainQueue').mockResolvedValue(undefined);

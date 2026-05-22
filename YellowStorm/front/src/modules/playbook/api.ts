@@ -250,6 +250,7 @@ function sanitizeValidateReplayData(data: ValidateTaskReplayData): ValidateTaskR
   return {
     executionId: data.executionId,
     preserveOutputFormat: Boolean(data.preserveOutputFormat),
+    ...(data.replayConfig ? { replayConfig: data.replayConfig } : {}),
   };
 }
 
@@ -475,6 +476,7 @@ function normalizeIteratorChildResult(raw: Record<string, unknown>): import('./t
     error: toNullableString(raw.error),
     components: Array.isArray(raw.components) ? raw.components as import('./types').PlaybookComponent[] : [],
     toolTrace: Array.isArray(raw.toolTrace ?? raw.tool_trace) ? (raw.toolTrace ?? raw.tool_trace) as import('./types').ToolTraceItem[] : [],
+    reasoningChain: Array.isArray(raw.reasoningChain ?? raw.reasoning_chain) ? (raw.reasoningChain ?? raw.reasoning_chain) as import('./types').PublicReasoningTraceItem[] : [],
     llmPromptTrace: Array.isArray(raw.llmPromptTrace ?? raw.llm_prompt_trace) ? (raw.llmPromptTrace ?? raw.llm_prompt_trace) as import('./types').LLMPromptTraceItem[] : [],
     artifacts: normalizeTaskArtifacts(raw.artifacts),
   };
@@ -541,6 +543,7 @@ function normalizeTaskResult(raw: any, index: number): import('./types').TaskRes
     completedAt,
     components: Array.isArray(raw.components) ? raw.components : [],
     toolTrace: Array.isArray(raw.toolTrace) ? raw.toolTrace : [],
+    reasoningChain: Array.isArray(raw.reasoningChain) ? raw.reasoningChain : [],
     llmPromptTrace: Array.isArray(raw.llmPromptTrace) ? raw.llmPromptTrace : [],
     inputTokens: toNullableNumber(raw.inputTokens),
     outputTokens: toNullableNumber(raw.outputTokens),

@@ -129,6 +129,7 @@ export class PlaybookFlowStreamEventsService {
     components?: Array<Record<string, unknown>>,
     observability?: {
       toolTrace?: unknown[];
+      reasoningChain?: unknown[];
       llmPromptTrace?: unknown[];
       inputTokens?: number | null;
       outputTokens?: number | null;
@@ -153,6 +154,7 @@ export class PlaybookFlowStreamEventsService {
     if (artifacts !== undefined) data.artifacts = artifacts;
     if (components !== undefined) data.components = components;
     if (observability?.toolTrace !== undefined) data.toolTrace = observability.toolTrace;
+    if (observability?.reasoningChain !== undefined) data.reasoningChain = observability.reasoningChain;
     if (observability?.llmPromptTrace !== undefined) data.llmPromptTrace = observability.llmPromptTrace;
     if (observability?.inputTokens !== undefined) data.inputTokens = observability.inputTokens;
     if (observability?.outputTokens !== undefined) data.outputTokens = observability.outputTokens;

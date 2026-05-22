@@ -20,11 +20,11 @@ export class PlaybookFlowReplayController {
     @CurrentUser('_id') userId: string,
     @Param('id') flowId: string,
     @Param('taskId') taskId: string,
-    @Body() body: { executionId: string; iteration?: number; preserveOutputFormat?: boolean },
+    @Body() body: { executionId: string; iteration?: number; preserveOutputFormat?: boolean; replayConfig?: { replayOutputFormat?: boolean; replayToolTrace?: boolean; replayReasoningChain?: boolean } },
   ) {
     return this.replayService.validateTaskReplay(
       userId, flowId, taskId, body.iteration ?? 0, body.executionId,
-      { preserveOutputFormat: body.preserveOutputFormat },
+      { preserveOutputFormat: body.preserveOutputFormat, replayConfig: body.replayConfig },
     );
   }
 
@@ -56,7 +56,7 @@ export class PlaybookFlowReplayController {
     @Param('id') flowId: string,
     @Param('taskId') taskId: string,
     @Param('replayId') replayId: string,
-    @Body() dto: { preserveOutputFormat?: boolean; outputFormatGuide?: string },
+    @Body() dto: { preserveOutputFormat?: boolean; outputFormatGuide?: string; replayConfig?: { replayOutputFormat?: boolean; replayToolTrace?: boolean; replayReasoningChain?: boolean } },
   ) {
     return this.replayService.updateTaskReplayFormatGuide(flowId, taskId, replayId, dto);
   }

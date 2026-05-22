@@ -1,6 +1,10 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
-import { FlowTaskSemanticMatch, FlowTaskUsage } from './playbook-flow-task-result.schema';
+import {
+  FlowTaskPublicReasoningTraceItem,
+  FlowTaskSemanticMatch,
+  FlowTaskUsage,
+} from './playbook-flow-task-result.schema';
 
 export type FlowValidatedReplayDocument = HydratedDocument<FlowValidatedReplay>;
 
@@ -66,6 +70,18 @@ export class FlowReplayStaleness {
   reasons!: string[];
 }
 
+@Schema({ _id: false })
+export class FlowReplayConfig {
+  @Prop({ required: false, type: Boolean, default: false })
+  replayOutputFormat!: boolean;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  replayToolTrace!: boolean;
+
+  @Prop({ required: false, type: Boolean, default: false })
+  replayReasoningChain!: boolean;
+}
+
 @Schema({ timestamps: true, collection: 'playbook_flow_validated_replays' })
 export class FlowValidatedReplay {
   @Prop({ required: true, type: String, index: true })
@@ -113,6 +129,9 @@ export class FlowValidatedReplay {
   @Prop({ required: false, type: [SchemaFactory.createForClass(FlowReplayToolCall)], default: [] })
   toolCalls!: FlowReplayToolCall[];
 
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskPublicReasoningTraceItem)], default: [] })
+  reasoningChain!: FlowTaskPublicReasoningTraceItem[];
+
   @Prop({ required: false, type: String })
   referenceOutput?: string;
 
@@ -154,6 +173,9 @@ export class FlowValidatedReplay {
 
   @Prop({ required: false, type: String })
   label?: string;
+
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplayConfig), default: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false } })
+  replayConfig!: FlowReplayConfig;
 }
 
 export const FlowValidatedReplaySchema = SchemaFactory.createForClass(FlowValidatedReplay);

@@ -40,6 +40,8 @@ import {
 import { ControlEdge, DataBinding, FlowNode } from '../schemas/playbook-flow.schema';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
+import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
+import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
 import {
   flattenUsage,
 } from './observability/playbook-flow-observability.mapper';
@@ -50,6 +52,7 @@ import {
   FlowSemanticMatchSummary,
   FlowCompletedResultPayload,
 } from '../interfaces/playbook-flow-observability.interface';
+import { PublicReasoningTraceItem } from '../interfaces/playbook-flow-reasoning.interface';
 
 export function toGrpcValue(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) {
@@ -175,6 +178,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly observabilityService: PlaybookFlowObservabilityService,
     @Inject(forwardRef(() => PlaybookFlowExecutionAdvisorService))
     private readonly advisorService: PlaybookFlowExecutionAdvisorService,
+    private readonly replayArtifactService: PlaybookFlowReplayArtifactService,
+    private readonly replayPromptService: PlaybookFlowReplayPromptService,
   ) {}
 
   onModuleInit() {
@@ -543,7 +548,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   }
 
   private mapTaskResultToSeedPayload(result: Record<string, unknown>): FlowCompletedResultPayload {
-      const displayText = typeof result.displayText === 'string' ? result.displayText : undefined;
+    const displayText = typeof result.displayText === 'string' ? result.displayText : undefined;
     const rawOutput = result.output;
     const output = typeof rawOutput === 'string'
       ? rawOutput
@@ -576,6 +581,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       ...(Array.isArray(result.artifacts) ? { artifacts: result.artifacts as Array<Record<string, unknown>> } : {}),
       ...(Array.isArray(result.components) ? { components: result.components as Array<Record<string, unknown>> } : {}),
       ...(Array.isArray(result.toolTrace) ? { toolTrace: result.toolTrace as unknown as FlowToolTraceItem[] } : {}),
+      ...(Array.isArray(result.reasoningChain) ? { reasoningChain: result.reasoningChain as PublicReasoningTraceItem[] } : {}),
       ...(Array.isArray(result.llmPromptTrace) ? { llmPromptTrace: result.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] } : {}),
       ...(result.usage ? { usage: result.usage as FlowUsageSummary } : {}),
       ...(result.semanticMatch ? { semanticMatch: result.semanticMatch as FlowSemanticMatchSummary } : {}),
@@ -647,6 +653,20 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           },
         };
       });
+
+      const taskNodeIds = enrichedNodes
+        .filter((n: any) => n.kind === 'task' || n.kind === 'iterator')
+        .map((n: any) => n.id);
+      const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, taskNodeIds);
+
+      for (const node of enrichedNodes) {
+        const artifacts = replayArtifacts.get(node.id);
+        if (!artifacts) continue;
+        const replayPrompt = this.replayPromptService.buildReplayPromptSection(artifacts);
+        if (replayPrompt) {
+          node.metadata = { ...node.metadata, replay_instructions: replayPrompt };
+        }
+      }
 
       const startResult = await this.executionModel.updateOne(
         { _id: executionId, status: 'running' },
@@ -1026,6 +1046,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             artifacts: resultPayload.artifacts,
             components: resultPayload.components,
             toolTrace: resultPayload.toolTrace,
+            reasoningChain: resultPayload.reasoningChain ?? [],
             llmPromptTrace: resultPayload.llmPromptTrace,
             usage: resultPayload.usage,
             semanticMatch: resultPayload.semanticMatch,
@@ -1236,6 +1257,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           startedAt: r.startedAt,
           endedAt: r.endedAt,
           toolTrace: r.toolTrace as unknown as FlowToolTraceItem[] | undefined,
+          reasoningChain: ((r as any).reasoningChain as PublicReasoningTraceItem[] | undefined) ?? [],
           llmPromptTrace: r.llmPromptTrace as unknown as FlowLlmPromptTraceItem[] | undefined,
           usage: r.usage as unknown as FlowUsageSummary | null | undefined,
           ...flattenUsage({ usage: r.usage as unknown as FlowUsageSummary | null | undefined }),

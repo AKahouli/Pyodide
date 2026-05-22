@@ -177,6 +177,9 @@ async def run_step(
     sandbox_prompt_note = build_sandbox_prompt_note(tool_scope, tool_names)
     if sandbox_prompt_note:
         user_msg = f"{user_msg}\n\nSandbox Files:\n{sandbox_prompt_note}"
+    replay_instructions = str(metadata.get("replay_instructions") or "")
+    if replay_instructions:
+        user_msg = f"{user_msg}\n\n{replay_instructions}"
     trace_collector = TraceCollector()
     trace_collector.record_prompt("initial_request", model_id, f"[system] {system_prompt}\n\n[user] {user_msg}")
 
@@ -286,6 +289,7 @@ async def run_step(
         result_payload.update({
             "node_id": node_id,
             "iteration": iteration,
+            "raw_llm_output": full_output,
         })
         result_payload.update(trace_collector.build_payload())
         writer({

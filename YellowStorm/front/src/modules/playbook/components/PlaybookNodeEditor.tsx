@@ -309,6 +309,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const [editingReplay, setEditingReplay] = useState<ValidatedTaskReplay | null>(null);
   const [formatGuideDraft, setFormatGuideDraft] = useState('');
   const [preserveFormatDraft, setPreserveFormatDraft] = useState(false);
+  const [replayConfigDraft, setReplayConfigDraft] = useState({ replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false });
   const [savingFormatGuide, setSavingFormatGuide] = useState(false);
   const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
   const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
@@ -510,6 +511,11 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     setEditingReplay(replay);
     setPreserveFormatDraft(Boolean(replay.preserveOutputFormat));
     setFormatGuideDraft(replay.outputFormatGuide || '');
+    setReplayConfigDraft({
+      replayOutputFormat: replay.replayConfig?.replayOutputFormat ?? false,
+      replayToolTrace: replay.replayConfig?.replayToolTrace ?? false,
+      replayReasoningChain: replay.replayConfig?.replayReasoningChain ?? false,
+    });
   };
 
   const handleSaveFormatGuide = async () => {
@@ -519,6 +525,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
       const updatedReplay = await updateTaskReplayFormatGuide(playbookId, task.id, editingReplay.id, {
         preserveOutputFormat: preserveFormatDraft,
         outputFormatGuide: formatGuideDraft,
+        replayConfig: replayConfigDraft,
       });
       setReplays((prev) => prev.map((item) => (item.id === updatedReplay.id ? updatedReplay : item)));
       setEditingReplay(updatedReplay);
@@ -1133,6 +1140,15 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                                 {t('nodeEditor.replayGuideFailed')}
                               </Badge>
                             )}
+                            {replay.replayConfig?.replayReasoningChain && (
+                              <Badge variant="outline" className="border-violet-600/30 text-violet-700">{t('nodeEditor.replayConfigReasoningChain')}</Badge>
+                            )}
+                            {replay.replayConfig?.replayToolTrace && (
+                              <Badge variant="outline" className="border-amber-600/30 text-amber-700">{t('nodeEditor.replayConfigToolTrace')}</Badge>
+                            )}
+                            {replay.replayConfig?.replayOutputFormat && (
+                              <Badge variant="outline" className="border-emerald-600/30 text-emerald-700">{t('nodeEditor.replayConfigOutputFormat')}</Badge>
+                            )}
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1276,6 +1292,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
           setEditingReplay(null);
           setFormatGuideDraft('');
           setPreserveFormatDraft(false);
+          setReplayConfigDraft({ replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false });
         }
       }}>
         <DialogContent className="max-w-2xl">
@@ -1294,6 +1311,30 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 </div>
               </div>
               <Switch checked={preserveFormatDraft} onCheckedChange={setPreserveFormatDraft} />
+            </div>
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-muted-foreground">{t('nodeEditor.replayConfigSectionTitle')}</div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <div>
+                  <div className="text-sm font-medium">{t('nodeEditor.replayConfigOutputFormat')}</div>
+                  <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigOutputFormatHint')}</div>
+                </div>
+                <Switch checked={replayConfigDraft.replayOutputFormat} onCheckedChange={(v) => setReplayConfigDraft((prev) => ({ ...prev, replayOutputFormat: v }))} />
+              </div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <div>
+                  <div className="text-sm font-medium">{t('nodeEditor.replayConfigToolTrace')}</div>
+                  <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigToolTraceHint')}</div>
+                </div>
+                <Switch checked={replayConfigDraft.replayToolTrace} onCheckedChange={(v) => setReplayConfigDraft((prev) => ({ ...prev, replayToolTrace: v }))} />
+              </div>
+              <div className="flex items-center justify-between rounded-md border p-3">
+                <div>
+                  <div className="text-sm font-medium">{t('nodeEditor.replayConfigReasoningChain')}</div>
+                  <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigReasoningChainHint')}</div>
+                </div>
+                <Switch checked={replayConfigDraft.replayReasoningChain} onCheckedChange={(v) => setReplayConfigDraft((prev) => ({ ...prev, replayReasoningChain: v }))} />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>{t('nodeEditor.formatGuideLabel')}</Label>
@@ -1330,6 +1371,7 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                 setEditingReplay(null);
                 setFormatGuideDraft('');
                 setPreserveFormatDraft(false);
+                setReplayConfigDraft({ replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false });
               }}
               disabled={savingFormatGuide}
             >

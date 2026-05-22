@@ -1,11 +1,12 @@
 import { PlaybookFlowExecutionService } from './playbook-flow-execution.service';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
+import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
 
 function mockExecutionModel(overrides?: Record<string, any>) {
   const base = {
     updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 1 }) })),
-    findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) })),
+    findById: jest.fn(() => ({ lean: jest.fn().mockReturnValue({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1' }) }) })),
     findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     findByIdAndDelete: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
     countDocuments: jest.fn().mockResolvedValue(0),
@@ -59,6 +60,7 @@ async function createE2EService(
 
   const taskResultModel = {
     updateOne: jest.fn(),
+    updateMany: jest.fn(),
     deleteMany: jest.fn(),
     findOne: jest.fn(() => ({ sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue(null) })),
   };
@@ -140,6 +142,7 @@ async function createE2EService(
     emitInterrupt: jest.fn(),
     cacheOwner: jest.fn(),
     emitExecutionQueued: jest.fn(),
+    emitExecutionCancelled: jest.fn(),
   };
 
   const service = new PlaybookFlowExecutionService(
@@ -154,7 +157,13 @@ async function createE2EService(
     validatorService as any,
     agentService as any,
     streamEvents as any,
-    new PlaybookFlowObservabilityService(new PlaybookFlowTraceRedactionService()) as any,
+    new PlaybookFlowObservabilityService(
+      new PlaybookFlowTraceRedactionService(),
+      new PlaybookFlowPublicReasoningParserService(),
+    ) as any,
+    {} as any,
+    { resolveReplayArtifacts: async () => new Map() } as any,
+    { buildReplayPromptSection: () => '' } as any,
   );
 
   (service as any).isGrpcAvailable = true;
@@ -202,7 +211,7 @@ describe('E2E: Linear Flow — 3 steps with ExecutionCompleted', () => {
     expect(runArgs.snapshot).toBeDefined();
     expect(runArgs.input_context).toBeDefined();
 
-    expect(ctx.streamEvents.emitExecutionStart).toHaveBeenCalledWith('exec-e2e', 'flow-1', 'owner-1');
+    expect(ctx.streamEvents.emitExecutionStart).toHaveBeenCalledWith('exec-e2e', 'flow-1', 'owner-1', expect.objectContaining({ executionMode: 'live' }));
     expect(ctx.streamEvents.emitStepStart).toHaveBeenCalledTimes(3);
     expect(ctx.streamEvents.emitStepComplete).toHaveBeenCalledTimes(3);
     expect(ctx.streamEvents.emitExecutionComplete).toHaveBeenCalledWith('exec-e2e', 'completed');

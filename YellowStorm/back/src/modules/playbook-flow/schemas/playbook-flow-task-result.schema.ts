@@ -41,6 +41,24 @@ export class FlowTaskLlmPromptTraceItem {
 }
 
 @Schema({ _id: false })
+export class FlowTaskPublicReasoningTraceItem {
+  @Prop({ required: true, type: String })
+  id!: string;
+
+  @Prop({ required: true, type: String })
+  type!: string;
+
+  @Prop({ required: true, type: String })
+  label!: string;
+
+  @Prop({ required: true, type: String })
+  description!: string;
+
+  @Prop({ required: false, type: Number, default: null })
+  confidence?: number | null;
+}
+
+@Schema({ _id: false })
 export class FlowTaskUsage {
   @Prop({ required: false, type: Number, default: null })
   inputTokens?: number | null;
@@ -230,6 +248,9 @@ export class FlowTaskResult {
 
   @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskToolTraceItem)], default: [] })
   toolTrace?: FlowTaskToolTraceItem[];
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskPublicReasoningTraceItem)], default: [] })
+  reasoningChain?: FlowTaskPublicReasoningTraceItem[];
 
   @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskLlmPromptTraceItem)], default: [] })
   llmPromptTrace?: FlowTaskLlmPromptTraceItem[];

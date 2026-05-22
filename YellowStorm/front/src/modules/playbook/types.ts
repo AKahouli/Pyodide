@@ -748,6 +748,14 @@ export interface CloneShareResult {
   failed: { email: string; reason: string }[];
 }
 
+export interface PublicReasoningTraceItem {
+  id: string;
+  type: string;
+  label: string;
+  description: string;
+  confidence?: number | null;
+}
+
 export interface ToolTraceItem {
   callIndex: number;
   toolName: string;
@@ -795,6 +803,7 @@ export interface StepExecutionHistoryEntry {
   completedAt: string | null;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   inputTokens?: number | null;
   outputTokens?: number | null;
@@ -811,6 +820,7 @@ export interface IteratorChildResult {
   error?: string | null;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   artifacts?: TaskArtifact[];
 }
@@ -840,6 +850,7 @@ export interface TaskResult {
   completedAt: string | null;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   inputTokens?: number | null;
   outputTokens?: number | null;
@@ -1062,6 +1073,7 @@ export interface ValidatedTaskReplay {
   formatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   formatGuideError?: string | null;
   llmPromptTrace?: LLMPromptTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   referenceUsage?: {
     inputTokens?: number | null;
     outputTokens?: number | null;
@@ -1075,6 +1087,11 @@ export interface ValidatedTaskReplay {
   isStale?: boolean;
   staleReasons?: string[];
   label?: string | null;
+  replayConfig?: {
+    replayOutputFormat: boolean;
+    replayToolTrace: boolean;
+    replayReasoningChain: boolean;
+  };
   createdAt: string;
   updatedAt: string;
 }
@@ -1236,6 +1253,7 @@ export interface PlaybookStepCompleteEvent {
   durationMs?: number;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   inputTokens?: number;
   outputTokens?: number;
@@ -1282,6 +1300,7 @@ export interface PlaybookIteratorChildStepCompleteEvent {
   durationMs?: number;
   components?: PlaybookComponent[];
   toolTrace?: ToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: LLMPromptTraceItem[];
   artifacts?: TaskArtifact[];
 }
@@ -1443,11 +1462,21 @@ export interface ExecutePlaybookData {
 export interface ValidateTaskReplayData {
   executionId: string;
   preserveOutputFormat?: boolean;
+  replayConfig?: {
+    replayOutputFormat?: boolean;
+    replayToolTrace?: boolean;
+    replayReasoningChain?: boolean;
+  };
 }
 
 export interface UpdateTaskReplayFormatData {
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string;
+  replayConfig?: {
+    replayOutputFormat?: boolean;
+    replayToolTrace?: boolean;
+    replayReasoningChain?: boolean;
+  };
 }
 
 export interface GrabOutputFormatTemplateData {
@@ -1645,7 +1674,7 @@ export interface PlaybookActions {
     playbookId: string,
     taskId: string,
     executionId: string,
-    options?: { preserveOutputFormat?: boolean },
+    options?: { preserveOutputFormat?: boolean; replayConfig?: { replayOutputFormat?: boolean; replayToolTrace?: boolean; replayReasoningChain?: boolean } },
   ) => Promise<ValidatedTaskReplay>;
   updateTaskReplayFormatGuide: (
     playbookId: string,

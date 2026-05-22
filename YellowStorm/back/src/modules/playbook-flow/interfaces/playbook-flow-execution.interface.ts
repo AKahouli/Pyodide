@@ -5,6 +5,7 @@ import {
   FlowToolTraceItem,
   FlowUsageSummary,
 } from './playbook-flow-observability.interface';
+import { PublicReasoningTraceItem } from './playbook-flow-reasoning.interface';
 import type { FlowExecutionJudgeHistoryEntry, FlowExecutionJudgeResult } from './playbook-flow-execution-advisor.interface';
 import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
@@ -58,6 +59,7 @@ export interface IFlowTaskResultResponse {
   startedAt?: Date;
   endedAt?: Date;
   toolTrace?: FlowToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: FlowLlmPromptTraceItem[];
   usage?: FlowUsageSummary | null;
   inputTokens?: number | null;

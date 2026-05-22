@@ -17,6 +17,9 @@ import type {
   FlowExecutionAdvisorEvaluationResult,
   FlowExecutionAdvisorTaskResponse,
   FlowExecutionJudgeHistoryEntry,
+  FlowExecutionJudgeResult,
+  AdvisorRemediationItem,
+  AdvisorRemediationCategory,
 } from '../../interfaces/playbook-flow-execution-advisor.interface';
 import type { RunFlowExecutionAdvisorDto } from '../../dto/run-flow-execution-advisor.dto';
 import type { AdvisorScoringMode, FlowNode } from '../../schemas/playbook-flow.schema';
@@ -37,6 +40,62 @@ export class PlaybookFlowExecutionAdvisorService {
     private readonly heuristicEvaluator: PlaybookFlowHeuristicAdvisorEvaluatorService,
     private readonly llmEvaluator: PlaybookFlowLlmAdvisorEvaluatorService,
   ) {}
+
+  async getRemediations(executionId: string, ownerId: string, taskId?: string): Promise<AdvisorRemediationItem[]> {
+    const execution = await this.executionModel.findById(executionId).lean().exec();
+    if (!execution || String(execution.ownerId) !== String(ownerId)) {
+      throw new NotFoundException(ErrorCode.PLAYBOOK_FLOW_EXECUTION_NOT_FOUND, 'Execution not found');
+    }
+
+    const filter: Record<string, unknown> = { executionId };
+    if (taskId) filter.taskId = taskId;
+
+    const taskResults = await this.taskResultModel.find(filter).lean().exec();
+    const items: AdvisorRemediationItem[] = [];
+
+    for (const tr of taskResults) {
+      const judgeResult = (tr as any).judgeResult as FlowExecutionJudgeResult | null | undefined;
+      if (!judgeResult) continue;
+
+      const scope = taskId ? 'task' as const : 'playbook' as const;
+      const targetTaskId = taskId ?? null;
+
+      const fieldMappings: Array<{ key: keyof FlowExecutionJudgeResult; category: AdvisorRemediationCategory; defaultSelected: boolean }> = [
+        { key: 'missingFacts', category: 'structure', defaultSelected: true },
+        { key: 'incoherences', category: 'prompt', defaultSelected: true },
+        { key: 'unsupportedClaims', category: 'contract', defaultSelected: true },
+        { key: 'handoffRisks', category: 'handoff', defaultSelected: true },
+        { key: 'toolSelectionIssues', category: 'tooling', defaultSelected: true },
+        { key: 'missingToolCalls', category: 'tooling', defaultSelected: true },
+        { key: 'redundantToolCalls', category: 'tooling', defaultSelected: false },
+        { key: 'toolOutputUseIssues', category: 'tooling', defaultSelected: true },
+        { key: 'toolSequencingIssues', category: 'tooling', defaultSelected: true },
+        { key: 'toolUsageStrengths', category: 'evidence', defaultSelected: false },
+        { key: 'rewriteHints', category: 'prompt', defaultSelected: true },
+      ];
+
+      for (const { key, category, defaultSelected } of fieldMappings) {
+        const entries = judgeResult[key];
+        if (!Array.isArray(entries)) continue;
+        entries.forEach((description: string, index: number) => {
+          items.push({
+            id: `${tr.taskId}-${category}-${index}`,
+            category,
+            scope,
+            targetTaskId,
+            title: description.length > 80 ? description.slice(0, 80) + '...' : description,
+            description,
+            rationale: undefined,
+            editable: true,
+            defaultSelected,
+            source: { kind: 'judge_result', field: category, index },
+          });
+        });
+      }
+    }
+
+    return items;
+  }
 
   async runTaskEvaluation(
     executionId: string,

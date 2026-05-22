@@ -391,6 +391,7 @@ function buildCurrentStepExecution(step: TaskResult) {
     completedAt: step.completedAt,
     components: step.components || [],
     toolTrace: step.toolTrace || [],
+    reasoningChain: step.reasoningChain || [],
     llmPromptTrace: step.llmPromptTrace || [],
     inputTokens: step.inputTokens ?? null,
     outputTokens: step.outputTokens ?? null,
@@ -2062,6 +2063,38 @@ export function ExecutionStepDetail({
                 ) : (
                   <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
                     {t('detail.toolTrace.empty')}
+                  </div>
+                )}
+              </CollapsibleContent>
+            </Collapsible>
+
+            <Collapsible defaultOpen={false} className="rounded-lg border bg-background p-4">
+              <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 text-left">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">{t('detail.reasoning.title')}</div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+                {step.reasoningChain && step.reasoningChain.length > 0 ? (
+                  <div className="space-y-3">
+                    {step.reasoningChain.map((item, index) => (
+                      <div key={item.id || `reasoning-${index}`} className="rounded-lg border bg-muted/30 p-4">
+                        <div className="mb-2 flex items-center gap-2 text-sm">
+                          <span className="font-medium">{index + 1}.</span>
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{item.type}</span>
+                          <span className="font-medium">{item.label}</span>
+                          {item.confidence != null && (
+                            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                              {Math.round(item.confidence * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-sm text-muted-foreground whitespace-pre-wrap">{item.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border bg-muted/20 p-4 text-sm text-muted-foreground">
+                    {t('detail.reasoning.empty')}
                   </div>
                 )}
               </CollapsibleContent>

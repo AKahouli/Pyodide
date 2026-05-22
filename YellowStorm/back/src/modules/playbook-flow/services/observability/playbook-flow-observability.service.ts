@@ -10,6 +10,7 @@ import {
   mapTraceMetadata,
   mapUsage,
 } from './playbook-flow-observability.mapper';
+import { PlaybookFlowPublicReasoningParserService } from './playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './playbook-flow-trace-redaction.service';
 
 @Injectable()
@@ -18,6 +19,7 @@ export class PlaybookFlowObservabilityService {
 
   constructor(
     private readonly traceRedactionService: PlaybookFlowTraceRedactionService,
+    private readonly publicReasoningParser: PlaybookFlowPublicReasoningParserService,
   ) {}
 
   extractCompletedResultPayload(
@@ -25,20 +27,29 @@ export class PlaybookFlowObservabilityService {
     context: { executionId: string; taskId: string },
   ): FlowCompletedResultPayload {
     const cleanOutput = payload.output ?? payload;
-    const displayText = typeof payload.display_text === 'string'
+    const rawDisplayText = typeof payload.display_text === 'string'
       ? payload.display_text
       : typeof payload.displayText === 'string'
         ? payload.displayText
         : typeof cleanOutput === 'string'
           ? cleanOutput
           : undefined;
-    const output = typeof cleanOutput === 'string'
+    const rawLlmOutput = typeof payload.raw_llm_output === 'string' ? payload.raw_llm_output : null;
+    const rawOutput = typeof cleanOutput === 'string'
       ? cleanOutput
-      : typeof displayText === 'string' && displayText
-        ? displayText
+      : typeof rawDisplayText === 'string' && rawDisplayText
+        ? rawDisplayText
         : cleanOutput && typeof cleanOutput === 'object'
           ? JSON.stringify(cleanOutput)
           : String(cleanOutput ?? '');
+    const reasoningSource = rawLlmOutput ?? rawOutput;
+    const publicReasoning = this.publicReasoningParser.parse(reasoningSource, context);
+    const outputText = rawLlmOutput
+      ? this.publicReasoningParser.parse(rawOutput, context).output
+      : publicReasoning.output;
+    const displayText = rawDisplayText === rawOutput
+      ? outputText
+      : this.sanitizeDisplayText(rawDisplayText, context);
     const artifacts = Array.isArray(payload.artifacts)
       ? payload.artifacts as Array<Record<string, unknown>>
       : undefined;
@@ -60,16 +71,24 @@ export class PlaybookFlowObservabilityService {
     this.warnOnInvalidObservabilityPayload(payload, context, toolTrace.length, llmPromptTrace.length);
 
     return {
-      output,
+      output: outputText,
       displayText,
       outputs,
       artifacts,
       components,
       toolTrace,
+      reasoningChain: publicReasoning.reasoningChain,
       llmPromptTrace,
       usage,
       semanticMatch,
-      traceMetadata,
+      traceMetadata: {
+        ...(traceMetadata ?? {}),
+        publicReasoning: {
+          markerFound: publicReasoning.markerFound,
+          parseError: publicReasoning.parseError,
+          itemCount: publicReasoning.reasoningChain.length,
+        },
+      },
     };
   }
 
@@ -77,6 +96,7 @@ export class PlaybookFlowObservabilityService {
     return {
       ...flattenUsage(payload),
       toolTrace: payload.toolTrace,
+      reasoningChain: payload.reasoningChain ?? [],
       llmPromptTrace: payload.llmPromptTrace,
       semanticMatch: payload.semanticMatch ?? null,
       traceMetadata: payload.traceMetadata ?? {},
@@ -95,5 +115,16 @@ export class PlaybookFlowObservabilityService {
     if (payload.llm_prompt_trace != null && promptTraceCount === 0) {
       this.logger.warn(`Dropped invalid llm_prompt_trace payload for execution ${context.executionId} task ${context.taskId}`);
     }
+  }
+
+  private sanitizeDisplayText(
+    displayText: string | undefined,
+    context: { executionId: string; taskId: string },
+  ): string | undefined {
+    if (typeof displayText !== 'string') {
+      return undefined;
+    }
+
+    return this.publicReasoningParser.parse(displayText, context).output;
   }
 }

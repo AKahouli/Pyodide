@@ -458,6 +458,7 @@ function mergeIteratorChildTaskResult(
     error?: string | null;
     components?: PlaybookExecution['taskResults'][number]['components'];
     toolTrace?: PlaybookExecution['taskResults'][number]['toolTrace'];
+    reasoningChain?: PlaybookExecution['taskResults'][number]['reasoningChain'];
     llmPromptTrace?: PlaybookExecution['taskResults'][number]['llmPromptTrace'];
     artifacts?: PlaybookExecution['taskResults'][number]['artifacts'];
   },
@@ -506,6 +507,7 @@ function mergeIteratorChildTaskResult(
       error: data.error ?? existingChild?.error ?? null,
       components: data.components ?? existingChild?.components,
       toolTrace: data.toolTrace ?? existingChild?.toolTrace,
+      reasoningChain: data.reasoningChain ?? existingChild?.reasoningChain,
       llmPromptTrace: data.llmPromptTrace ?? existingChild?.llmPromptTrace,
       artifacts: data.artifacts ?? existingChild?.artifacts,
     };
@@ -1391,6 +1393,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           const replay = await api.validateTaskReplay(playbookId, taskId, {
             executionId,
             preserveOutputFormat: options?.preserveOutputFormat || false,
+            ...(options?.replayConfig ? { replayConfig: options.replayConfig } : {}),
           });
           set((state) => ({
             currentPlaybook: state.currentPlaybook?.id === playbookId
@@ -2490,6 +2493,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 completedAt: new Date().toISOString(),
                 artifacts: data.artifacts ? api.normalizeTaskArtifacts(data.artifacts) : tr.artifacts,
                 toolTrace: data.toolTrace ?? [],
+                reasoningChain: data.reasoningChain ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
                 inputTokens: data.inputTokens ?? null,
                 outputTokens: data.outputTokens ?? null,
@@ -2530,6 +2534,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                 completedAt: new Date().toISOString(),
                 components: data.components || undefined,
                 toolTrace: data.toolTrace ?? [],
+                reasoningChain: data.reasoningChain ?? [],
                 llmPromptTrace: data.llmPromptTrace ?? [],
                 inputTokens: data.inputTokens ?? null,
                 outputTokens: data.outputTokens ?? null,
@@ -2636,6 +2641,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
             error: data.error ?? null,
             components: data.components,
             toolTrace: data.toolTrace,
+            reasoningChain: data.reasoningChain,
             llmPromptTrace: data.llmPromptTrace,
             artifacts: data.artifacts,
           });

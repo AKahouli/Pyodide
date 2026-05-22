@@ -94,6 +94,7 @@ describe('PlaybookFlowReplayService', () => {
         {
           taskId: 'step-1', iteration: 0, status: 'completed', startedAt: t1, endedAt: t2, output: 'hello',
           displayText: 'hello', toolTrace: [{ toolName: 'search' }], llmPromptTrace: [{ stage: 'initial_request' }],
+          reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
           usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
           semanticMatch: { matchScore: 0.9 }, traceMetadata: { collected: true },
         },
@@ -114,6 +115,7 @@ describe('PlaybookFlowReplayService', () => {
         output: 'hello',
         displayText: 'hello',
         toolTrace: [{ toolName: 'search' }],
+        reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
         llmPromptTrace: [{ stage: 'initial_request' }],
         inputTokens: 1,
         outputTokens: 2,
@@ -222,6 +224,7 @@ describe('PlaybookFlowReplayService', () => {
         executionId: 'exec-1', taskId: 'step-1', iteration: 0,
         output: 'original output',
         toolTrace: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: 'ok' }],
+        reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
         llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Hello' }],
         usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
         semanticMatch: { matchScore: 0.9 },
@@ -241,6 +244,7 @@ describe('PlaybookFlowReplayService', () => {
       expect(result.status).toBe(FlowReplayValidationStatus.ACTIVE);
       expect(replayModel.create).toHaveBeenCalledWith([expect.objectContaining({
         toolCalls: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: 'ok' }],
+        reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
         llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Hello' }],
         referenceUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
         referenceSemanticMatch: { matchScore: 0.9 },
@@ -248,6 +252,25 @@ describe('PlaybookFlowReplayService', () => {
         isStale: false,
         staleReasons: [],
       })]);
+    });
+
+    it('defaults missing reasoningChain to an empty array', async () => {
+      const { service, executionModel, taskResultModel, replayModel } = createReplayServiceForTests();
+
+      executionModel.findOne.mockReturnValue(makeFindOneChain({
+        id: 'exec-1', ownerId: 'user-1', status: 'completed',
+      }));
+
+      taskResultModel.findOne.mockReturnValue(makeFindOneChain({
+        executionId: 'exec-1', taskId: 'step-1', iteration: 0, output: 'original output',
+      }));
+
+      replayModel.findOne.mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }) });
+      replayModel.create.mockResolvedValue([{ validationVersion: 1, status: FlowReplayValidationStatus.ACTIVE }]);
+
+      await service.validateTaskReplay('user-1', 'flow-1', 'step-1', 0, 'exec-1');
+
+      expect(replayModel.create).toHaveBeenCalledWith([expect.objectContaining({ reasoningChain: [] })]);
     });
 
     it('throws NotFoundException when execution not found', async () => {

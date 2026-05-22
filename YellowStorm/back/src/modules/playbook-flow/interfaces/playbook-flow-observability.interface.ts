@@ -1,3 +1,5 @@
+import { PublicReasoningTraceItem } from './playbook-flow-reasoning.interface';
+
 export interface FlowToolTraceItem {
   callIndex: number;
   toolName: string;
@@ -40,6 +42,7 @@ export interface FlowCompletedResultPayload {
   artifacts?: Array<Record<string, unknown>>;
   components?: Array<Record<string, unknown>>;
   toolTrace?: FlowToolTraceItem[];
+  reasoningChain?: PublicReasoningTraceItem[];
   llmPromptTrace?: FlowLlmPromptTraceItem[];
   usage?: FlowUsageSummary | null;
   semanticMatch?: FlowSemanticMatchSummary | null;

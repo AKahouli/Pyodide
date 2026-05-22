@@ -944,6 +944,41 @@ describe('ExecutionStepDetail', () => {
     expect(screen.getByText('top hits')).toBeInTheDocument();
   });
 
+  it('renders reasoning chain when present', async () => {
+    const withReasoning: TaskResult = {
+      ...baseStep,
+      reasoningChain: [
+        {
+          id: 'r1',
+          type: 'analysis',
+          label: 'Risk Assessment',
+          description: 'Evaluated operational risk factors based on document search results.',
+          confidence: 0.87,
+        },
+        {
+          id: 'r2',
+          type: 'decision',
+          label: 'Final Verdict',
+          description: 'Determined the overall risk level is acceptable.',
+          confidence: null,
+        },
+      ],
+    };
+    render(<ExecutionStepDetail step={withReasoning} />);
+    await userEvent.click(screen.getByText('detail.reasoning.title'));
+    expect(screen.getByText('Risk Assessment')).toBeInTheDocument();
+    expect(screen.getByText('Evaluated operational risk factors based on document search results.')).toBeInTheDocument();
+    expect(screen.getByText('87%')).toBeInTheDocument();
+    expect(screen.getByText('Final Verdict')).toBeInTheDocument();
+    expect(screen.queryByText('detail.reasoning.empty')).not.toBeInTheDocument();
+  });
+
+  it('shows reasoning empty state when chain is absent', async () => {
+    render(<ExecutionStepDetail step={baseStep} />);
+    await userEvent.click(screen.getByText('detail.reasoning.title'));
+    expect(screen.getByText('detail.reasoning.empty')).toBeInTheDocument();
+  });
+
   it('renders semantic match including evidence consistency in evaluation tab', () => {
     const withSemanticMatch: TaskResult = {
       ...baseStep,

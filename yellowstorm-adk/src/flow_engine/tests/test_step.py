@@ -65,6 +65,8 @@ class TestStepPrompt:
         assert 'Output Contract:\n{\n  "raw": "Return JSON"' in prompt
         assert "Iteration:\n2" in prompt
         assert "Complete this node using only the resolved input data and declared output contract." in prompt
+        assert "---PUBLIC_REASONING_TRACE_JSON---" in prompt
+        assert "Reasoning Trace:" in prompt
 
     def test_build_prompt_omits_duplicate_trigger_context(self):
         prompt = build_step_prompt(

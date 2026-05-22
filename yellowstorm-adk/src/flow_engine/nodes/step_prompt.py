@@ -48,6 +48,17 @@ def build_step_prompt(
         "Instructions:",
         "Complete this node using only the resolved input data and declared output contract.",
     ])
+    lines.extend([
+        "",
+        "Reasoning Trace:",
+        "After your final answer, append a reasoning trace block on a new line using this exact format:",
+        "---PUBLIC_REASONING_TRACE_JSON---",
+        "Followed by a JSON array of objects with keys: id (string), type (string), label (string), description (string), confidence (number 0-1, optional).",
+        "Each item represents one step of your reasoning process.",
+        "Example:",
+        "---PUBLIC_REASONING_TRACE_JSON---",
+        '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',
+    ])
     if require_structured_output:
         ports = output_contract.get("ports") if isinstance(output_contract, dict) else []
         response_schema = {
