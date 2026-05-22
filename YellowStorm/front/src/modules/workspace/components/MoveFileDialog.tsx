@@ -1,35 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowRight, ChevronRight, Folder, FolderOpen, Home } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { useClassifierStore } from '../store';
-import type { ClassifierFile, ClassifierFolder } from '../types';
+
+import { useWorkspaceStore } from '../store';
+import type { WorkspaceFile, WorkspaceFolder } from '../types';
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  file: ClassifierFile | null;
+  file: WorkspaceFile | null;
 };
 
 export function MoveFileDialog({ open, onOpenChange, file }: Props) {
-  const folders = useClassifierStore((s) => s.folders);
-  const setFileFolder = useClassifierStore((s) => s.setFileFolder);
-  const workspaceId = useClassifierStore((s) => s.selectedWorkspaceId);
+  const folders = useWorkspaceStore((s) => s.pageFolders);
+  const setFileFolderAssignment = useWorkspaceStore((s) => s.setFileFolderAssignment);
+  const workspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
 
   const [pickerFolderId, setPickerFolderId] = useState<string | null>(null);
 
   useEffect(() => {
     if (open && file) {
-      // Start the picker at the parent of the file's current folder
       const current = file.folderId
         ? folders.find((f) => f.id === file.folderId) ?? null
         : null;
@@ -43,9 +36,9 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
   );
 
   const breadcrumbs = useMemo(() => {
-    if (!pickerFolderId) return [] as ClassifierFolder[];
-    const chain: ClassifierFolder[] = [];
-    let cursor: ClassifierFolder | undefined = wsFolders.find((f) => f.id === pickerFolderId);
+    if (!pickerFolderId) return [] as WorkspaceFolder[];
+    const chain: WorkspaceFolder[] = [];
+    let cursor: WorkspaceFolder | undefined = wsFolders.find((f) => f.id === pickerFolderId);
     while (cursor) {
       chain.unshift(cursor);
       cursor = cursor.parentId ? wsFolders.find((f) => f.id === cursor!.parentId) : undefined;
@@ -79,7 +72,6 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
           </div>
         </DialogHeader>
 
-        {/* Current destination summary */}
         <div className='flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm'>
           {currentFolder ? (
             <FolderOpen className='h-4 w-4 shrink-0 text-primary' />
@@ -92,7 +84,6 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
           </span>
         </div>
 
-        {/* Breadcrumb */}
         <div className='flex items-center gap-1 flex-wrap text-sm'>
           <BreadcrumbButton
             isActive={pickerFolderId === null}
@@ -117,7 +108,6 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
           })}
         </div>
 
-        {/* Subfolder list — navigate into folders */}
         <div className='border rounded-md'>
           <ScrollArea className='h-64'>
             <div className='p-1'>
@@ -168,7 +158,7 @@ export function MoveFileDialog({ open, onOpenChange, file }: Props) {
             disabled={isAlreadyHere}
             onClick={() => {
               if (!file) return;
-              setFileFolder(file.id, pickerFolderId);
+              void setFileFolderAssignment(file.id, pickerFolderId);
               onOpenChange(false);
             }}
           >

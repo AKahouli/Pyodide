@@ -1,9 +1,11 @@
 /**
  * Workspace Button Component
- * Sidebar button with 3-dot menu for quick actions
+ * Sidebar entry that navigates to the workspace page.
+ * 3-dot menu keeps quick access to create workspace / template modals.
  */
 
 import { memo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Layers, MoreHorizontal, Plus, FileText } from 'lucide-react';
 import { SidebarMenuButton, SidebarMenuItem, SidebarMenuAction } from '@/components/ui/sidebar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -14,13 +16,13 @@ import { useWorkspaceStoreTranslator } from '../hooks/useWorkspaceStoreTranslato
 export const WorkspaceButton = memo(function WorkspaceButton() {
   const { t } = useModuleTranslation('workspace');
   useWorkspaceStoreTranslator();
-  const openModal = useWorkspaceStore((state) => state.openModal);
+  const navigate = useNavigate();
   const openCreateModal = useWorkspaceStore((state) => state.openCreateModal);
   const openCreateTemplateModal = useWorkspaceStore((state) => state.openCreateTemplateModal);
 
   return (
     <SidebarMenuItem>
-      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={openModal}>
+      <SidebarMenuButton tooltip={t('button.tooltip')} onClick={() => navigate('/workspace')}>
         <Layers />
         <span>{t('button.label')}</span>
       </SidebarMenuButton>

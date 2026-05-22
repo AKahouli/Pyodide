@@ -2,12 +2,12 @@ import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
   ClassificationRun,
-  ClassifierFile,
-  ClassifierFolder,
-  CreateFolderInput,
-  ListFilesQuery,
-  StartRunInput,
-  UpdateFolderInput,
+  CreateWorkspaceFolderInput,
+  ListWorkspaceFilesQuery,
+  StartClassificationRunInput,
+  UpdateWorkspaceFolderInput,
+  WorkspaceFile,
+  WorkspaceFolder,
 } from './types';
 
 interface PaginatedRuns {
@@ -22,8 +22,8 @@ interface PaginatedRuns {
 
 // ───────── Folders ─────────
 
-export async function listFolders(workspaceId: string): Promise<ClassifierFolder[]> {
-  const response = await apiClient.get<ApiResponse<ClassifierFolder[]>>(
+export async function listFolders(workspaceId: string): Promise<WorkspaceFolder[]> {
+  const response = await apiClient.get<ApiResponse<WorkspaceFolder[]>>(
     API_ENDPOINTS.classifier.folders(workspaceId),
   );
   return response.data.data;
@@ -31,9 +31,9 @@ export async function listFolders(workspaceId: string): Promise<ClassifierFolder
 
 export async function createFolder(
   workspaceId: string,
-  input: CreateFolderInput,
-): Promise<ClassifierFolder> {
-  const response = await apiClient.post<ApiResponse<ClassifierFolder>>(
+  input: CreateWorkspaceFolderInput,
+): Promise<WorkspaceFolder> {
+  const response = await apiClient.post<ApiResponse<WorkspaceFolder>>(
     API_ENDPOINTS.classifier.folders(workspaceId),
     {
       name: input.name,
@@ -44,8 +44,8 @@ export async function createFolder(
   return response.data.data;
 }
 
-export async function getFolder(folderId: string): Promise<ClassifierFolder> {
-  const response = await apiClient.get<ApiResponse<ClassifierFolder>>(
+export async function getFolder(folderId: string): Promise<WorkspaceFolder> {
+  const response = await apiClient.get<ApiResponse<WorkspaceFolder>>(
     API_ENDPOINTS.classifier.folderById(folderId),
   );
   return response.data.data;
@@ -53,9 +53,9 @@ export async function getFolder(folderId: string): Promise<ClassifierFolder> {
 
 export async function updateFolder(
   folderId: string,
-  input: UpdateFolderInput,
-): Promise<ClassifierFolder> {
-  const response = await apiClient.patch<ApiResponse<ClassifierFolder>>(
+  input: UpdateWorkspaceFolderInput,
+): Promise<WorkspaceFolder> {
+  const response = await apiClient.patch<ApiResponse<WorkspaceFolder>>(
     API_ENDPOINTS.classifier.folderById(folderId),
     input,
   );
@@ -65,8 +65,8 @@ export async function updateFolder(
 export async function moveFolder(
   folderId: string,
   parentId: string | null,
-): Promise<ClassifierFolder> {
-  const response = await apiClient.post<ApiResponse<ClassifierFolder>>(
+): Promise<WorkspaceFolder> {
+  const response = await apiClient.post<ApiResponse<WorkspaceFolder>>(
     API_ENDPOINTS.classifier.folderMove(folderId),
     { parentId },
   );
@@ -81,13 +81,13 @@ export async function deleteFolder(folderId: string): Promise<void> {
 
 export async function listFiles(
   workspaceId: string,
-  query: ListFilesQuery = {},
-): Promise<ClassifierFile[]> {
+  query: ListWorkspaceFilesQuery = {},
+): Promise<WorkspaceFile[]> {
   const params: Record<string, string> = {};
   if (query.folderId) params.folderId = query.folderId;
   if (query.unclassified) params.unclassified = 'true';
   if (query.search) params.search = query.search;
-  const response = await apiClient.get<ApiResponse<ClassifierFile[]>>(
+  const response = await apiClient.get<ApiResponse<WorkspaceFile[]>>(
     API_ENDPOINTS.classifier.files(workspaceId),
     { params: Object.keys(params).length ? params : undefined },
   );
@@ -98,8 +98,8 @@ export async function assignFileToFolder(
   workspaceId: string,
   documentId: string,
   folderId: string | null,
-): Promise<ClassifierFile> {
-  const response = await apiClient.put<ApiResponse<ClassifierFile>>(
+): Promise<WorkspaceFile> {
+  const response = await apiClient.put<ApiResponse<WorkspaceFile>>(
     API_ENDPOINTS.classifier.fileFolder(workspaceId, documentId),
     { folderId },
   );
@@ -110,7 +110,7 @@ export async function assignFileToFolder(
 
 export async function startRun(
   workspaceId: string,
-  input: StartRunInput,
+  input: StartClassificationRunInput,
 ): Promise<ClassificationRun> {
   const response = await apiClient.post<ApiResponse<ClassificationRun>>(
     API_ENDPOINTS.classifier.runs(workspaceId),

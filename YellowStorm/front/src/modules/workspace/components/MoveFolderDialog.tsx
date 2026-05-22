@@ -1,29 +1,25 @@
 import { useMemo, useState, useEffect } from 'react';
 import { Folder, FolderTree, Home, Move } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { useClassifierStore } from '../store';
-import type { ClassifierFolder } from '../types';
+
+import { useWorkspaceStore } from '../store';
+import type { WorkspaceFolder } from '../types';
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  folder: ClassifierFolder | null;
+  folder: WorkspaceFolder | null;
 };
 
+type TreeNode = WorkspaceFolder & { children: TreeNode[] };
+
 export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
-  const moveFolder = useClassifierStore((s) => s.moveFolder);
-  const folders = useClassifierStore((s) => s.folders);
-  const workspaceId = useClassifierStore((s) => s.selectedWorkspaceId);
+  const movePageFolder = useWorkspaceStore((s) => s.movePageFolder);
+  const folders = useWorkspaceStore((s) => s.pageFolders);
+  const workspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
 
   const [target, setTarget] = useState<string | null>(null);
 
@@ -47,13 +43,12 @@ export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
     return blocked;
   }, [folder, folders]);
 
-  const tree = useMemo(() => {
+  const tree = useMemo<TreeNode[]>(() => {
     if (!workspaceId) return [];
     const wsFolders = folders.filter((f) => f.workspaceId === workspaceId);
-    type Node = ClassifierFolder & { children: Node[] };
-    const byId = new Map<string, Node>();
+    const byId = new Map<string, TreeNode>();
     wsFolders.forEach((f) => byId.set(f.id, { ...f, children: [] }));
-    const roots: Node[] = [];
+    const roots: TreeNode[] = [];
     wsFolders.forEach((f) => {
       const node = byId.get(f.id)!;
       if (f.parentId && byId.has(f.parentId)) {
@@ -65,7 +60,7 @@ export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
     return roots;
   }, [folders, workspaceId]);
 
-  const renderNode = (node: ClassifierFolder & { children: any[] }, depth = 0) => {
+  const renderNode = (node: TreeNode, depth = 0) => {
     const disabled = invalidIds.has(node.id);
     const selected = target === node.id;
     return (
@@ -85,7 +80,7 @@ export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
           <Folder className='h-4 w-4 shrink-0' />
           <span className='truncate'>{node.name}</span>
         </button>
-        {node.children.map((child: any) => renderNode(child, depth + 1))}
+        {node.children.map((child) => renderNode(child, depth + 1))}
       </div>
     );
   };
@@ -141,7 +136,7 @@ export function MoveFolderDialog({ open, onOpenChange, folder }: Props) {
           <Button
             onClick={() => {
               if (!folder) return;
-              moveFolder(folder.id, target);
+              void movePageFolder(folder.id, target);
               onOpenChange(false);
             }}
           >

@@ -35,7 +35,6 @@ import {
 import { WorkspaceButton } from '@/modules/workspace';
 import { AgentButton } from '@/modules/agent';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
-import { ClassifierButton } from '@/modules/classifier';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AdminButton } from '@/modules/admin';
 import { useModuleTranslation } from '@/modules/localization';
@@ -238,8 +237,6 @@ export const AppSidebar = memo(function AppSidebar() {
             <AgentButton />
 
             <PlaybookButton />
-
-            <ClassifierButton />
 
             <ConnectedAppButton />
 

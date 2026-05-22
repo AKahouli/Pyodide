@@ -2,12 +2,12 @@ import { useCallback, useRef, useState } from 'react';
 import { Upload } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-import { ACCEPT_EXTENSIONS, formatFileSize, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD } from '@/modules/workspace';
 
-import { useClassifierStore } from '../store';
+import { useWorkspaceStore } from '../store';
+import { ACCEPT_EXTENSIONS, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize } from '../utils';
 
-export function ClassifierUploadDropZone() {
-  const uploadFiles = useClassifierStore((s) => s.uploadFiles);
+export function WorkspaceUploadDropZone() {
+  const uploadPageFiles = useWorkspaceStore((s) => s.uploadPageFiles);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -15,9 +15,9 @@ export function ClassifierUploadDropZone() {
   const pushFiles = useCallback(
     (list: FileList | null) => {
       if (!list || list.length === 0) return;
-      void uploadFiles(Array.from(list));
+      void uploadPageFiles(Array.from(list));
     },
-    [uploadFiles],
+    [uploadPageFiles],
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {

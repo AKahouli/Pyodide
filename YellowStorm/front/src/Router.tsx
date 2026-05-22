@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react';
-import { createHashRouter } from 'react-router-dom';
+import { createHashRouter, Navigate } from 'react-router-dom';
 
 import NoMatch from './pages/NoMatch';
 import MaintenancePage from './pages/MaintenancePage';
@@ -36,8 +36,8 @@ const AgentHubPage = React.lazy(() =>
 const ProjectPage = React.lazy(() =>
   import("./modules/project").then((m) => ({ default: m.ProjectPage }))
 );
-const ClassifierPage = React.lazy(() =>
-  import("./modules/classifier").then((m) => ({ default: m.ClassifierPage }))
+const WorkspacePage = React.lazy(() =>
+  import("./modules/workspace").then((m) => ({ default: m.WorkspacePage }))
 );
 import {
   AdminGuard,
@@ -167,12 +167,24 @@ export const router = createHashRouter([
         ),
       },
       {
-        path: 'classifier',
+        path: 'workspace',
         element: (
           <Suspense fallback={null}>
-            <ClassifierPage />
+            <WorkspacePage />
           </Suspense>
         ),
+      },
+      {
+        path: 'workspace/:id',
+        element: (
+          <Suspense fallback={null}>
+            <WorkspacePage />
+          </Suspense>
+        ),
+      },
+      {
+        path: 'classifier',
+        element: <Navigate to='/workspace' replace />,
       },
     ],
   },
