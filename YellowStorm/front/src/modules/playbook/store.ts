@@ -52,6 +52,7 @@ import type {
   IntentSuggestionHistoryEntry,
   PlaybookIntentSuggestion,
   PlaybookResourceReference,
+  PlaybookDefinitionExport,
 } from './types';
 import * as api from './api';
 import { autoLayoutTasks } from './utils/auto-layout';
@@ -871,6 +872,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
             'statusCode' in err &&
             (err.statusCode === 401 || err.statusCode === 403)
           ) {
+            return;
+          }
+          if (
+            err && typeof err === 'object' && 'code' in err
+            && (err as { code: string }).code === 'ERR_2533'
+          ) {
+            const dedupedName = `${data.name} (Imported)`;
+            set((state) => ({
+              currentPlaybook: state.currentPlaybook?.id === id
+                ? { ...state.currentPlaybook, name: dedupedName }
+                : state.currentPlaybook,
+            }));
+            toast.error(tPlaybook('store.errors.duplicateName', 'A playbook with this name already exists. Renamed to "{{name}}".', { name: dedupedName }));
             return;
           }
           const msg = err instanceof Error ? err.message : tPlaybook('store.errors.updateFailed', 'Failed to save');
@@ -1808,6 +1822,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
         } catch (err) {
           handleApiError(err);
           throw err;
+        }
+      },
+
+      refreshOutputFormatStatus: async (playbookId, taskId) => {
+        try {
+          const template = await api.getOutputFormatTemplate(playbookId, taskId);
+          if (!template) return;
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasOutputFormatTemplate: template.status === 'active',
+                      activeOutputFormatTemplateId: template.status === 'active' ? template.id : task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: template.status === 'active' ? template.templateVersion : task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: template.generationStatus,
+                      activeOutputFormatError: template.generationError || null,
+                      isCapturingOutputFormat: template.generationStatus === 'pending',
+                    }
+                    : task,
+                ),
+              }
+              : state.currentPlaybook,
+          }));
+        } catch {
+          // silent — polling will retry
         }
       },
 
@@ -4189,6 +4232,37 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       openPortInspection: (inspection) => set({ portInspection: inspection }),
       closePortInspection: () => set({ portInspection: null }),
+
+      importPlaybookDefinition: (definition: PlaybookDefinitionExport) => {
+        const { currentPlaybook } = get();
+        if (!currentPlaybook) return;
+        get().captureSnapshot();
+        set((state) => ({
+          currentPlaybook: state.currentPlaybook
+            ? {
+                ...state.currentPlaybook,
+                name: definition.name,
+                description: definition.description,
+                tasks: definition.tasks,
+                edges: definition.edges,
+                nodes: definition.nodes,
+                controlEdges: definition.controlEdges,
+                dataBindings: definition.dataBindings,
+                settings: definition.settings ?? state.currentPlaybook.settings,
+                designSettings: definition.designSettings ?? state.currentPlaybook.designSettings,
+                reflectionEnabled: definition.reflectionEnabled ?? state.currentPlaybook.reflectionEnabled,
+                advisorScoringMode: definition.advisorScoringMode ?? state.currentPlaybook.advisorScoringMode,
+                advisorAutopilotEnabled: definition.advisorAutopilotEnabled ?? state.currentPlaybook.advisorAutopilotEnabled,
+                advisorAutopilotTargetScore: definition.advisorAutopilotTargetScore ?? state.currentPlaybook.advisorAutopilotTargetScore,
+                advisorAutopilotMaxTurns: definition.advisorAutopilotMaxTurns ?? state.currentPlaybook.advisorAutopilotMaxTurns,
+              }
+            : null,
+          isDirty: true,
+          dirtyVersion: state.dirtyVersion + 1,
+          canvasSyncVersion: state.canvasSyncVersion + 1,
+        }));
+        toast.success(tPlaybook('store.toasts.imported', 'Playbook definition imported'));
+      },
 
       // ===== Cleanup =====
 

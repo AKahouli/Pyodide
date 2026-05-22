@@ -92,14 +92,17 @@ import {
 } from '../utils/intent-application-key';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding } from '../types';
+import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
 import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
 import { PlaybookFlowSettingsDrawer } from './PlaybookFlowSettingsDrawer';
-import { showError } from '@/lib/notifications';
+import { PlaybookImportWarningModal } from './PlaybookImportWarningModal';
+import { exportPlaybookDefinition } from '../utils/playbookExport';
+import { readPlaybookDefinitionFile, PlaybookImportError } from '../utils/playbookImport';
+import { showError, toast } from '@/lib/notifications';
 
 function PlaybookTriggersSheet(props: React.ComponentProps<typeof PlaybookScheduleSheet>) {
   return <PlaybookScheduleSheet {...props} />;
@@ -354,7 +357,7 @@ export function buildCanvasStepStatusMap(
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useModuleTranslation('playbook');
   const { setOpen: setGlobalSidebarOpen } = useSidebar();
 
@@ -390,6 +393,7 @@ function PlaybookCanvasInner() {
   const undo = usePlaybookStore((s) => s.undo);
   const redo = usePlaybookStore((s) => s.redo);
   const fetchOutputFormatTemplate = usePlaybookStore((s) => s.fetchOutputFormatTemplate);
+  const refreshOutputFormatStatus = usePlaybookStore((s) => s.refreshOutputFormatStatus);
   const updateOutputFormatTemplate = usePlaybookStore((s) => s.updateOutputFormatTemplate);
   const deleteOutputFormatTemplate = usePlaybookStore((s) => s.deleteOutputFormatTemplate);
   const updateWorkspaces = usePlaybookStore((s) => s.updateWorkspaces);
@@ -513,6 +517,10 @@ function PlaybookCanvasInner() {
   const [triggersSheetOpen, setTriggersSheetOpen] = useState(false);
   const [executionPanelCollapsed, setExecutionPanelCollapsed] = useState(true);
   const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
+  const [importWarningOpen, setImportWarningOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<PlaybookDefinitionExport | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement>(null);
+  const importPlaybookDefinition = usePlaybookStore((s) => s.importPlaybookDefinition);
   const [intentBarCollapsed, setIntentBarCollapsed] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(true);
   const requestPlaybookIntent = usePlaybookStore((s) => s.requestPlaybookIntent);
@@ -526,6 +534,7 @@ function PlaybookCanvasInner() {
   const [intentLoading, setIntentLoading] = useState(false);
   const [intentError, setIntentError] = useState('');
   const [intentAutoApply, setIntentAutoApply] = useState(true);
+  const autoIntentRef = useRef<string | null>(null);
   const [recentlyChangedNodeIds, setRecentlyChangedNodeIds] = useState<string[]>([]);
   const [recentlyChangedEdgeIds, setRecentlyChangedEdgeIds] = useState<string[]>([]);
   const [highlightDismissArmed, setHighlightDismissArmed] = useState(false);
@@ -561,6 +570,14 @@ function PlaybookCanvasInner() {
       setTriggersSheetOpen(true);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const intent = searchParams.get('intent');
+    if (!intent || intent.trim().length < 3 || isGeneratingRoute) return;
+    autoIntentRef.current = intent.trim();
+    setIntentValue(intent.trim());
+    setSearchParams((prev) => { prev.delete('intent'); return prev; }, { replace: true });
+  }, []);
 
   useEffect(() => {
     if (!evaluationDialogOpen || !id || isGeneratingRoute) return;
@@ -678,6 +695,26 @@ function PlaybookCanvasInner() {
     fetchExecutions,
     pageMode,
   ]);
+
+  const hasPendingOutputFormat = Boolean(playbook?.tasks.some(
+    (t) => t.isCapturingOutputFormat || t.activeOutputFormatStatus === 'pending',
+  ));
+
+  useEffect(() => {
+    if (!id || !hasPendingOutputFormat) return;
+
+    const pendingTaskIds = playbook!.tasks
+      .filter((t) => t.isCapturingOutputFormat || t.activeOutputFormatStatus === 'pending')
+      .map((t) => t.id);
+
+    const intervalId = window.setInterval(() => {
+      for (const taskId of pendingTaskIds) {
+        void refreshOutputFormatStatus(id, taskId);
+      }
+    }, 3000);
+
+    return () => window.clearInterval(intervalId);
+  }, [id, hasPendingOutputFormat, playbook, refreshOutputFormatStatus]);
 
   // When generation completes, redirect to the real playbook URL
   useEffect(() => {
@@ -2570,6 +2607,13 @@ function PlaybookCanvasInner() {
     }
   }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, isDirty, nodeTemplates, playbook, playbook?.tasks, requestPlaybookIntent, saveNow, selectStep, selectedStepId, t]);
 
+  useEffect(() => {
+    if (!autoIntentRef.current) return;
+    if (!playbook || !id || isGeneratingRoute || playbookLoading || playbook.id !== id) return;
+    autoIntentRef.current = null;
+    handleSubmitIntent();
+  }, [playbook, playbookLoading, id, isGeneratingRoute, handleSubmitIntent]);
+
   useEffect(() => () => {
     if (typeof window === 'undefined') {
       return;
@@ -2658,6 +2702,41 @@ function PlaybookCanvasInner() {
     setNodes(tasksToNodes(layoutedTasks));
     updateTasks(layoutedTasks);
   }, [playbook, updateTasks, setNodes, captureSnapshot]);
+
+  const handleExportPlaybook = useCallback(() => {
+    if (!playbook) return;
+    exportPlaybookDefinition(playbook);
+  }, [playbook]);
+
+  const handleImportFileSelect = useCallback(async () => {
+    if (!importFileInputRef.current) return;
+    const input = importFileInputRef.current;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    try {
+      const definition = await readPlaybookDefinitionFile(file);
+      setPendingImport(definition);
+      setImportWarningOpen(true);
+    } catch (err) {
+      const message = err instanceof PlaybookImportError
+        ? err.message
+        : t('import.readError');
+      toast.error(message);
+    }
+  }, [t]);
+
+  const handleImportConfirm = useCallback(() => {
+    if (!pendingImport) return;
+    importPlaybookDefinition(pendingImport);
+    setPendingImport(null);
+    setImportWarningOpen(false);
+  }, [pendingImport, importPlaybookDefinition]);
+
+  const handleImportCancel = useCallback(() => {
+    setPendingImport(null);
+    setImportWarningOpen(false);
+  }, []);
 
   const clearAllTasks = useCallback(() => {
     if (!playbook || playbook.tasks.length === 0) return;
@@ -2979,6 +3058,8 @@ function PlaybookCanvasInner() {
               });
             }}
             onOpenFlowSettings={() => setFlowSettingsOpen(true)}
+            onExport={handleExportPlaybook}
+            onImport={() => importFileInputRef.current?.click()}
           />
         </div>
       </div>
@@ -3007,6 +3088,21 @@ function PlaybookCanvasInner() {
           }}
         />
       )}
+
+      <input
+        ref={importFileInputRef}
+        type="file"
+        accept=".json"
+        className="hidden"
+        onChange={() => void handleImportFileSelect()}
+      />
+      <PlaybookImportWarningModal
+        open={importWarningOpen}
+        onOpenChange={(open) => { if (!open) handleImportCancel(); }}
+        onConfirm={handleImportConfirm}
+        importedName={pendingImport?.name ?? ''}
+        isDirty={isDirty}
+      />
 
       {/* Main content area with optional workspace explorer */}
       <TooltipProvider delayDuration={300}>

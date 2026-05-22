@@ -317,7 +317,7 @@ Skip when:
 
 Use after implementation when:
 - UI, layout, styling, routing, forms, browser runtime, responsive behavior, accessibility, or visible interaction changed.
-
+- when you don't support image, must always Use `frontend-qa` for testing through browser
 Skip when:
 - Frontend files changed but no visible runtime behavior changed, such as type-only edits or dead code cleanup.
 

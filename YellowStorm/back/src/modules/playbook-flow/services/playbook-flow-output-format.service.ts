@@ -12,12 +12,14 @@ import {
 } from '../schemas/playbook-flow-output-format.schema';
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
+import { PlaybookFlowStreamGatewayService } from './playbook-flow-stream-gateway.service';
 import { pLimit } from '../utils/p-limit';
 
 const OUTPUT_FORMAT_GUIDE_SYSTEM_PROMPT = `You are tasked with extracting and reproducing only the output structure and formatting from a given result.
 Preserve exact structural organization, section order, hierarchy, markdown formatting (headings, tables, bullets, paragraphs).
 Keep column structures and labels but leave cell values empty. Remove all factual content, values, numbers, sources, and conclusions.
-Produce a clean, reusable markdown template with structure only, no content.`;
+Produce a clean, reusable markdown template with structure only, no content.
+`;
 
 @Injectable()
 export class PlaybookFlowOutputFormatService {
@@ -29,6 +31,7 @@ export class PlaybookFlowOutputFormatService {
     @InjectModel(FlowTaskResult.name) private readonly taskResultModel: Model<FlowTaskResultDocument>,
     private readonly modelsService: ModelsService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
+    private readonly streamGateway: PlaybookFlowStreamGatewayService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowOutputFormatService'); }
 
@@ -125,6 +128,19 @@ export class PlaybookFlowOutputFormatService {
       template.generationStatus = OutputFormatGenerationStatus.FAILED;
       template.generationError = (err as Error).message;
       await template.save();
+    }
+
+    const userId = template.createdBy?.toString();
+    const flowId = template.flowId?.toString();
+    if (userId && flowId) {
+      this.streamGateway.sendToUser(userId, {
+        type: 'playbook_output_format_template_updated',
+        data: {
+          playbookId: flowId,
+          taskId: template.nodeId,
+          template: this.mapToResponse(template),
+        },
+      });
     }
   }
 

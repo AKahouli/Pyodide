@@ -38,6 +38,33 @@ export class PlaybookFlowService {
     }
   }
 
+  private async resolveUniqueName(ownerId: string, baseName: string): Promise<string> {
+    const existing = await this.flowModel.exists({ ownerId, name: baseName });
+    if (!existing) return baseName;
+
+    const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^${escapeRegex(baseName)} \\((\\d+)\\)$`);
+
+    const duplicates = await this.flowModel
+      .find({ ownerId, name: pattern })
+      .select('name')
+      .lean();
+
+    let maxSeq = 1;
+    for (const doc of duplicates) {
+      const match = doc.name.match(pattern);
+      if (match?.[1]) {
+        maxSeq = Math.max(maxSeq, parseInt(match[1], 10));
+      }
+    }
+
+    const suffix = ` (${maxSeq + 1})`;
+    const truncatedBase = baseName.length > 100 - suffix.length
+      ? baseName.slice(0, 100 - suffix.length)
+      : baseName;
+    return `${truncatedBase}${suffix}`;
+  }
+
   constructor(
     @InjectModel(Flow.name) private readonly flowModel: Model<FlowDocument>,
     @InjectModel(FlowExecution.name) private readonly executionModel: Model<FlowExecutionDocument>,
@@ -55,10 +82,12 @@ export class PlaybookFlowService {
 
     this.validatorService.validate(nodes as any, controlEdges as any, dataBindings as any, { allowDraftRouters: true });
 
+    const resolvedName = await this.resolveUniqueName(ownerId, dto.name);
+
     const flow = new this.flowModel({
       ownerId,
       schemaVersion: 1,
-      name: dto.name,
+      name: resolvedName,
       description: dto.description,
       triggerConfig: dto.triggerConfig,
       settings: dto.settings || { recursionLimit: 25, maxParallelism: 5 },
@@ -239,7 +268,15 @@ export class PlaybookFlowService {
       { allowDraftRouters: true },
     );
 
-    const saved = await existing.save();
+    const saved = await existing.save().catch((err: any) => {
+      if (err.code === 11000) {
+        throw new ConflictException(
+          ErrorCode.PLAYBOOK_FLOW_DUPLICATE_NAME,
+          `A playbook named "${existing.name}" already exists.`,
+        );
+      }
+      throw err;
+    });
     const raw = saved.toJSON() as unknown as IFlowResponse;
     raw.activeReplays = {};
     return raw;

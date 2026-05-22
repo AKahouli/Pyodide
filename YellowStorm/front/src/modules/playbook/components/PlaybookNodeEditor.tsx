@@ -433,16 +433,17 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     return () => { cancelled = true; };
   }, [open, task, playbookId, fetchEvaluationExecutions, draft.nodeType]);
 
+  const hasPendingFormatGuide = replays.some((replay) => replay.preserveOutputFormat && replay.formatGuideStatus === 'pending');
+
   useEffect(() => {
-    if (!open || !task || !playbookId) return;
-    if (!replays.some((replay) => replay.preserveOutputFormat && replay.formatGuideStatus === 'pending')) return;
+    if (!open || !task || !playbookId || !hasPendingFormatGuide) return;
 
     const intervalId = window.setInterval(() => {
       void fetchTaskReplays(playbookId, task.id).then(setReplays).catch(() => undefined);
     }, 2000);
 
     return () => window.clearInterval(intervalId);
-  }, [open, playbookId, task, replays, fetchTaskReplays]);
+  }, [open, playbookId, task, hasPendingFormatGuide, fetchTaskReplays]);
 
   const handleNotifyToggle = useCallback((checked: boolean) => {
     updateDraft({ notifyOnComplete: checked });
@@ -593,84 +594,85 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
               <div className="space-y-4">
               <EditorSection title={t('nodeEditor.sectionIdentity')} defaultOpen resetKey={`${task.id}:identity`}>
                 <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>{t('nodeEditor.stepTitle')}</Label>
-                    <Input
-                      value={draft.title}
-                      onChange={(e) => updateDraft({ title: e.target.value })}
-                      placeholder={t('nodeEditor.stepTitlePlaceholder')}
-                      maxLength={200}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>{t('nodeEditor.nodeType')}</Label>
-                    <select
-                      value={draft.nodeType}
-                      onChange={(e) => {
-                        const nextType = e.target.value as PlaybookNodeType;
-                        const patch: Partial<EditorDraft> = { nodeType: nextType };
-                        if (nextType === 'evaluation') {
-                          patch.executionMode = 'agent';
-                          patch.iteratorConfig = null;
-                          patch.routerConfig = null;
-                          patch.humanApprovalConfig = null;
-                        } else if (nextType === 'action') {
-                          patch.executionMode = 'action';
-                          patch.assignedAgentId = null;
-                          patch.iteratorConfig = null;
-                          patch.routerConfig = null;
-                          patch.humanApprovalConfig = null;
-                        } else if (nextType === 'iterator') {
-                          patch.executionMode = 'agent';
-                          patch.assignedAgentId = null;
-                          patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
-                          patch.inputPorts = getDefaultIteratorInputPorts();
-                          patch.outputPorts = getDefaultIteratorOutputPorts();
-                          patch.routerConfig = null;
-                          patch.humanApprovalConfig = null;
-                          patch.retryPolicy = null;
-                          patch.modelId = null;
-                        } else if (nextType === 'router') {
-                          patch.executionMode = 'agent';
-                          patch.assignedAgentId = null;
-                          patch.routerConfig = draft.routerConfig ?? { ...DEFAULT_ROUTER_CONFIG, outputLabels: [...DEFAULT_ROUTER_CONFIG.outputLabels] };
-                          patch.outputPorts = draft.routerConfig?.outputLabels.map((label) => ({
-                            id: label,
-                            name: label,
-                            artifactKind: 'text' as ArtifactKind,
-                          })) ?? DEFAULT_ROUTER_CONFIG.outputLabels.map((label) => ({
-                            id: label,
-                            name: label,
-                            artifactKind: 'text' as ArtifactKind,
-                          }));
-                          patch.iteratorConfig = null;
-                          patch.humanApprovalConfig = null;
-                          patch.retryPolicy = null;
-                          patch.modelId = null;
-                        } else if (nextType === 'human_approval') {
-                          patch.executionMode = 'agent';
-                          patch.assignedAgentId = null;
-                          patch.humanApprovalConfig = draft.humanApprovalConfig ?? { ...DEFAULT_HUMAN_APPROVAL_CONFIG };
-                          patch.iteratorConfig = null;
-                          patch.routerConfig = null;
-                          patch.retryPolicy = null;
-                          patch.modelId = null;
-                        } else {
-                          patch.executionMode = 'agent';
-                          patch.iteratorConfig = null;
-                        }
-                        updateDraft(patch);
-                      }}
-                      className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    >
-                      <option value="agent">{t('nodeEditor.nodeTypeAgent')}</option>
-                      <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
-                      <option value="iterator">{t('nodeEditor.nodeTypeIterator')}</option>
-                      <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
-                      <option value="router">{t('nodeEditor.nodeTypeRouter')}</option>
-                      <option value="human_approval">{t('nodeEditor.nodeTypeHumanApproval')}</option>
-                    </select>
+                  <div className="grid grid-cols-[1fr_180px] gap-3">
+                    <div className="space-y-2">
+                      <Label>{t('nodeEditor.stepTitle')}</Label>
+                      <Input
+                        value={draft.title}
+                        onChange={(e) => updateDraft({ title: e.target.value })}
+                        placeholder={t('nodeEditor.stepTitlePlaceholder')}
+                        maxLength={200}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>{t('nodeEditor.nodeType')}</Label>
+                      <select
+                        value={draft.nodeType}
+                        onChange={(e) => {
+                          const nextType = e.target.value as PlaybookNodeType;
+                          const patch: Partial<EditorDraft> = { nodeType: nextType };
+                          if (nextType === 'evaluation') {
+                            patch.executionMode = 'agent';
+                            patch.iteratorConfig = null;
+                            patch.routerConfig = null;
+                            patch.humanApprovalConfig = null;
+                          } else if (nextType === 'action') {
+                            patch.executionMode = 'action';
+                            patch.assignedAgentId = null;
+                            patch.iteratorConfig = null;
+                            patch.routerConfig = null;
+                            patch.humanApprovalConfig = null;
+                          } else if (nextType === 'iterator') {
+                            patch.executionMode = 'agent';
+                            patch.assignedAgentId = null;
+                            patch.iteratorConfig = draft.iteratorConfig ?? { ...DEFAULT_ITERATOR_CONFIG };
+                            patch.inputPorts = getDefaultIteratorInputPorts();
+                            patch.outputPorts = getDefaultIteratorOutputPorts();
+                            patch.routerConfig = null;
+                            patch.humanApprovalConfig = null;
+                            patch.retryPolicy = null;
+                            patch.modelId = null;
+                          } else if (nextType === 'router') {
+                            patch.executionMode = 'agent';
+                            patch.assignedAgentId = null;
+                            patch.routerConfig = draft.routerConfig ?? { ...DEFAULT_ROUTER_CONFIG, outputLabels: [...DEFAULT_ROUTER_CONFIG.outputLabels] };
+                            patch.outputPorts = draft.routerConfig?.outputLabels.map((label) => ({
+                              id: label,
+                              name: label,
+                              artifactKind: 'text' as ArtifactKind,
+                            })) ?? DEFAULT_ROUTER_CONFIG.outputLabels.map((label) => ({
+                              id: label,
+                              name: label,
+                              artifactKind: 'text' as ArtifactKind,
+                            }));
+                            patch.iteratorConfig = null;
+                            patch.humanApprovalConfig = null;
+                            patch.retryPolicy = null;
+                            patch.modelId = null;
+                          } else if (nextType === 'human_approval') {
+                            patch.executionMode = 'agent';
+                            patch.assignedAgentId = null;
+                            patch.humanApprovalConfig = draft.humanApprovalConfig ?? { ...DEFAULT_HUMAN_APPROVAL_CONFIG };
+                            patch.iteratorConfig = null;
+                            patch.routerConfig = null;
+                            patch.retryPolicy = null;
+                            patch.modelId = null;
+                          } else {
+                            patch.executionMode = 'agent';
+                            patch.iteratorConfig = null;
+                          }
+                          updateDraft(patch);
+                        }}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="agent">{t('nodeEditor.nodeTypeAgent')}</option>
+                        <option value="action">{t('nodeEditor.nodeTypeAction')}</option>
+                        <option value="iterator">{t('nodeEditor.nodeTypeIterator')}</option>
+                        <option value="evaluation">{t('nodeEditor.nodeTypeEvaluation')}</option>
+                        <option value="router">{t('nodeEditor.nodeTypeRouter')}</option>
+                        <option value="human_approval">{t('nodeEditor.nodeTypeHumanApproval')}</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
               </EditorSection>
@@ -703,6 +705,37 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                         {draft.selectedAction === 'read' && t('nodeEditor.actionHint.read')}
                       </p>
                     </div>
+                  ) : (draft.nodeType === 'agent' || draft.nodeType === 'evaluation') && isStepLikeNodeType(draft.nodeType) ? (
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.agent')}</Label>
+                        <SearchableSelect
+                          options={agentOptions}
+                          value={draft.assignedAgentId || ''}
+                          onValueChange={(v) => updateDraft({ assignedAgentId: v })}
+                          placeholder={t('nodeEditor.selectAgent')}
+                          searchPlaceholder={t('nodeEditor.searchAgent')}
+                          emptyText={t('nodeEditor.noAgentFound')}
+                        />
+                        {!draft.assignedAgentId && (
+                          <p className="text-xs text-destructive">{t('nodeEditor.agentRequired')}</p>
+                        )}
+                        {draft.nodeType === 'evaluation' && (
+                          <p className="text-xs text-muted-foreground">{t('nodeEditor.evaluationAgentHint')}</p>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        <Label>{t('nodeEditor.model')}</Label>
+                        <SearchableSelect
+                          options={modelOptions}
+                          value={draft.modelId || ''}
+                          onValueChange={(v) => updateDraft({ modelId: v || null })}
+                          placeholder={t('nodeEditor.selectModel')}
+                          searchPlaceholder={t('nodeEditor.searchModel')}
+                          emptyText={t('nodeEditor.noModelFound')}
+                        />
+                      </div>
+                    </div>
                   ) : draft.nodeType === 'agent' || draft.nodeType === 'evaluation' ? (
                     <div className="space-y-2">
                       <Label>{t('nodeEditor.agent')}</Label>
@@ -723,46 +756,47 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                     </div>
                   ) : null}
 
-                  {isStepLikeNodeType(draft.nodeType) && (
-                    <div className="space-y-2">
-                      <Label>{t('nodeEditor.model')}</Label>
-                      <SearchableSelect
-                        options={modelOptions}
-                        value={draft.modelId || ''}
-                        onValueChange={(v) => updateDraft({ modelId: v || null })}
-                        placeholder={t('nodeEditor.selectModel')}
-                        searchPlaceholder={t('nodeEditor.searchModel')}
-                        emptyText={t('nodeEditor.noModelFound')}
-                      />
-                    </div>
-                  )}
-
                   <div className="space-y-2">
                     <Label>{t('nodeEditor.description')}</Label>
                     <Textarea
                       value={draft.description}
                       onChange={(e) => updateDraft({ description: e.target.value })}
                       placeholder={t('nodeEditor.descriptionPlaceholder')}
-                      rows={8}
+                      rows={2}
                       maxLength={20000}
+                      className="resize-y"
                     />
                   </div>
-
-                  {!isEvaluationTask && (
-                    <div className="space-y-2">
-                      <Label>{t('nodeEditor.expectedResult')}</Label>
-                      <Textarea
-                        value={draft.expectedResult ?? ''}
-                        onChange={(e) => updateDraft({ expectedResult: e.target.value || null })}
-                        placeholder={t('nodeEditor.expectedResultPlaceholder')}
-                        rows={4}
-                        maxLength={10000}
-                      />
-                      <p className="text-xs text-muted-foreground">{t('nodeEditor.expectedResultHint')}</p>
-                    </div>
-                  )}
                 </div>
               </EditorSection>
+
+              {!isEvaluationTask && (
+                <EditorSection title={t('nodeEditor.expectedResult')} resetKey={`${task.id}:expected-result`}>
+                  <div className="space-y-2">
+                    <Textarea
+                      value={draft.expectedResult ?? ''}
+                      onChange={(e) => updateDraft({ expectedResult: e.target.value || null })}
+                      placeholder={t('nodeEditor.expectedResultPlaceholder')}
+                      rows={4}
+                      maxLength={10000}
+                    />
+                    <p className="text-xs text-muted-foreground">{t('nodeEditor.expectedResultHint')}</p>
+                  </div>
+                </EditorSection>
+              )}
+
+              {!isEvaluationTask && (
+                <EditorSection title={t('dataFlow.sectionTitle')} defaultOpen resetKey={`${task.id}:data-flow`}>
+                  <PlaybookDataFlowSection
+                    targetNodeId={task.id}
+                    inputPortsOverride={draft.inputPorts}
+                    outputPortsOverride={draft.outputPorts}
+                    onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
+                    onOutputPortsChange={(outputPorts) => updateDraft({ outputPorts })}
+                    canEditPorts={draft.nodeType !== 'iterator'}
+                  />
+                </EditorSection>
+              )}
 
               {isStepLikeNodeType(draft.nodeType) && (
                 <EditorSection title={t('nodeEditor.retryPolicy')} resetKey={`${task.id}:retry`}>
@@ -795,19 +829,6 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
                       </div>
                     </div>
                   </div>
-                </EditorSection>
-              )}
-
-              {!isEvaluationTask && (
-                <EditorSection title={t('dataFlow.sectionTitle')} defaultOpen resetKey={`${task.id}:data-flow`}>
-                  <PlaybookDataFlowSection
-                    targetNodeId={task.id}
-                    inputPortsOverride={draft.inputPorts}
-                    outputPortsOverride={draft.outputPorts}
-                    onInputPortsChange={(inputPorts) => updateDraft({ inputPorts })}
-                    onOutputPortsChange={(outputPorts) => updateDraft({ outputPorts })}
-                    canEditPorts={draft.nodeType !== 'iterator'}
-                  />
                 </EditorSection>
               )}
 

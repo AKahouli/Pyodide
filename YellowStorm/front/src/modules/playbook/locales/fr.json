@@ -1224,5 +1224,15 @@
   "dataFlow.constantValue": "Constante",
   "dataFlow.constantPlaceholder": "Saisissez une valeur...",
   "dataFlow.apply": "Appliquer",
-  "dataFlow.unknownSource": "Source inconnue"
+  "dataFlow.unknownSource": "Source inconnue",
+  "toolbar.import": "Importer la définition du playbook",
+  "toolbar.export": "Exporter la définition du playbook",
+  "import.warningTitle": "Importer la définition du playbook ?",
+  "import.warningDescription": "Cela remplacera la définition actuelle du playbook par « {{name}} ». Vous pouvez annuler cette action avec Ctrl+Z.",
+  "import.unsavedWarning": "Vous avez des modifications non enregistrées qui seront perdues. Envisagez d'exporter votre playbook actuel au préalable.",
+  "import.confirm": "Importer et remplacer",
+  "import.cancel": "Annuler",
+  "import.readError": "Échec de la lecture du fichier playbook.",
+  "store.toasts.imported": "Définition du playbook importée",
+  "store.errors.duplicateName": "Un playbook avec ce nom existe déjà. Renommé en « {{name}} »."
 }

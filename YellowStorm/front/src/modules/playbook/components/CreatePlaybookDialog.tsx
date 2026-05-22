@@ -102,7 +102,6 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
   const promptTextareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   const createPlaybook = usePlaybookStore((s) => s.createPlaybook);
-  const generatePlaybook = usePlaybookStore((s) => s.generatePlaybook);
   const navigate = useNavigate();
   const { t } = useModuleTranslation('playbook');
 
@@ -167,23 +166,26 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
     }
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     const resolvedName = autoName.trim() || deriveAutoName(autoPrompt);
 
     if (resolvedName.length < 2 || !autoPrompt.trim() || autoPrompt.length < 10 || autoWorkspaces.length === 0) return;
-    const data: GeneratePlaybookData = {
-      name: resolvedName,
-      prompt: autoPrompt.trim(),
-      workspaces: autoWorkspaces.length > 0 ? autoWorkspaces : undefined,
-    };
-    onOpenChange(false);
-    navigate('/playbooks/generating');
-    generatePlaybook(data).then(() => {
+
+    setIsCreating(true);
+    try {
+      const playbook = await createPlaybook({
+        name: resolvedName,
+        description: autoPrompt.trim(),
+        workspaces: autoWorkspaces.length > 0 ? autoWorkspaces : undefined,
+      });
+      onOpenChange(false);
       resetForm();
-    }).catch((err) => {
+      navigate(`/playbooks/${playbook.id}?intent=${encodeURIComponent(autoPrompt.trim())}`);
+    } catch (err) {
       handleApiError(err);
-      navigate('/playbooks');
-    });
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   const handleRewritePrompt = async () => {
@@ -407,7 +409,7 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                           rows={3}
                           className="min-h-[83px] resize-y border-0 bg-transparent px-0 py-0 text-base leading-7 text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-0 sm:text-[18px]"
                           onKeyDown={(e) => {
-                            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isAutoValid) {
+                            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && isAutoValid && !isCreating) {
                               e.preventDefault();
                               handleGenerate();
                             }
@@ -448,9 +450,9 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                             size="icon"
                             className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border-2 border-blue-400/70 bg-primary text-primary-foreground shadow-sm transition hover:bg-primary/90 hover:border-blue-300 disabled:bg-slate-300 disabled:text-slate-500 dark:disabled:bg-slate-700 dark:disabled:text-slate-400 before:pointer-events-none before:absolute before:inset-0 before:rounded-full before:border before:border-blue-400/70 before:opacity-50 before:content-[''] before:animate-[pulse_4s_ease-in-out_infinite]"
                             onClick={handleGenerate}
-                            disabled={!isAutoValid}
+                            disabled={!isAutoValid || isCreating}
                           >
-                            <ArrowUp className="h-4 w-4" />
+                            {isCreating ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <ArrowUp className="h-4 w-4" />}
                           </Button>
                         </div>
                       </div>
@@ -497,8 +499,8 @@ export function CreatePlaybookDialog({ open, onOpenChange, retryData }: Props) {
                           <Label className="text-sm">{t('workspace.label')}</Label>
                           <p className="text-xs leading-5 text-muted-foreground">{t('create.autoWorkspaceHint')}</p>
                         </div>
-                        <Button type="button" onClick={handleGenerate} disabled={!isAutoValid} className="hidden rounded-full bg-primary px-5 text-primary-foreground hover:bg-primary/90 sm:inline-flex">
-                          {t('create.generate')}
+                        <Button type="button" onClick={handleGenerate} disabled={!isAutoValid || isCreating} className="hidden rounded-full bg-primary px-5 text-primary-foreground hover:bg-primary/90 sm:inline-flex">
+                          {isCreating ? t('common.creating') : t('create.generate')}
                         </Button>
                       </div>
                       <PlaybookWorkspaceSelect value={autoWorkspaces} onChange={setAutoWorkspaces} />

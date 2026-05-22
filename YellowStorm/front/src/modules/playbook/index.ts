@@ -30,6 +30,7 @@ export type {
   DataBindingSourceKind,
   CreateFlowData,
   UpdateFlowData,
+  PlaybookDefinitionExport,
 } from './types';
 export {
   getFlows,

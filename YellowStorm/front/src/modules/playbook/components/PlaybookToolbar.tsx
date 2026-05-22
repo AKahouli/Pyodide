@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle } from 'lucide-react';
+import { Play, Save, Check, Loader2, History, Settings2, Square, AlertTriangle, Download, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -41,6 +41,8 @@ interface Props {
   onDesignSettingsChange?: (settings: Partial<PlaybookDesignSettings>) => void;
   /** Opens flow settings drawer (canvas header area). */
   onOpenFlowSettings?: () => void;
+  onExport?: () => void;
+  onImport?: () => void;
 }
 
 export function PlaybookToolbar({
@@ -69,6 +71,8 @@ export function PlaybookToolbar({
   designSettings,
   onDesignSettingsChange,
   onOpenFlowSettings,
+  onExport,
+  onImport,
 }: Props) {
   const { t } = useModuleTranslation('playbook');
   const showExecutionsAction = pageMode === 'run' || hasExecutionContext;
@@ -193,6 +197,16 @@ export function PlaybookToolbar({
           )}
         </PopoverContent>
       </Popover>
+      {onImport && (
+        <Button variant="outline" size="sm" className="px-2" title={t('toolbar.import')} onClick={onImport}>
+          <Upload className="h-4 w-4" />
+        </Button>
+      )}
+      {onExport && (
+        <Button variant="outline" size="sm" className="px-2" title={t('toolbar.export')} onClick={onExport}>
+          <Download className="h-4 w-4" />
+        </Button>
+      )}
       <Button
         variant={isDirty ? 'outline' : 'ghost'}
         size="sm"

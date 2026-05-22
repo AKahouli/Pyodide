@@ -1672,6 +1672,7 @@ export interface PlaybookActions {
     data: GrabOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
   fetchOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<OutputFormatTemplate | null>;
+  refreshOutputFormatStatus: (playbookId: string, taskId: string) => Promise<void>;
   updateOutputFormatTemplate: (
     playbookId: string,
     taskId: string,
@@ -1806,6 +1807,9 @@ export interface PlaybookActions {
   // Port inspection
   openPortInspection: (inspection: PortInspection) => void;
   closePortInspection: () => void;
+
+  // Import/Export
+  importPlaybookDefinition: (definition: PlaybookDefinitionExport) => void;
 }
 
 export type PlaybookStore = PlaybookState & PlaybookActions;
@@ -2030,4 +2034,25 @@ export interface UpdateFlowData {
 export interface SavePlaybookOptions {
   expectedUpdatedAt?: string;
   clientMutationId?: string;
+}
+
+export const PLAYBOOK_DEFINITION_VERSION = 1;
+
+export interface PlaybookDefinitionExport {
+  version: typeof PLAYBOOK_DEFINITION_VERSION;
+  exportedAt: string;
+  name: string;
+  description: string;
+  tasks: PlaybookTask[];
+  edges: PlaybookEdge[];
+  nodes?: FlowNode[];
+  controlEdges?: ControlEdge[];
+  dataBindings?: DataBinding[];
+  settings?: FlowSettings;
+  designSettings?: PlaybookDesignSettings;
+  reflectionEnabled?: boolean;
+  advisorScoringMode?: AdvisorScoringMode;
+  advisorAutopilotEnabled?: boolean;
+  advisorAutopilotTargetScore?: number | null;
+  advisorAutopilotMaxTurns?: number | null;
 }

@@ -1228,5 +1228,15 @@
   "dataFlow.constantValue": "Constant",
   "dataFlow.constantPlaceholder": "Enter a value...",
   "dataFlow.apply": "Apply",
-  "dataFlow.unknownSource": "Unknown source"
+  "dataFlow.unknownSource": "Unknown source",
+  "toolbar.import": "Import playbook definition",
+  "toolbar.export": "Export playbook definition",
+  "import.warningTitle": "Import playbook definition?",
+  "import.warningDescription": "This will replace the current playbook definition with \"{{name}}\". You can undo this action with Ctrl+Z.",
+  "import.unsavedWarning": "You have unsaved changes that will be lost. Consider exporting your current playbook first.",
+  "import.confirm": "Import and Replace",
+  "import.cancel": "Cancel",
+  "import.readError": "Failed to read playbook file.",
+  "store.toasts.imported": "Playbook definition imported",
+  "store.errors.duplicateName": "A playbook with this name already exists. Renamed to \"{{name}}\"."
 }
