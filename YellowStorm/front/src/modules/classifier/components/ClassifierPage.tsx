@@ -36,6 +36,7 @@ import { EditFolderDialog } from './EditFolderDialog';
 import { MoveFolderDialog } from './MoveFolderDialog';
 import { MoveFileDialog } from './MoveFileDialog';
 import { ClassifyDialog } from './ClassifyDialog';
+import { ClassifierUploadDropZone } from './ClassifierUploadDropZone';
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return '0 B';
@@ -220,13 +221,10 @@ export function ClassifierPage() {
 
       {/* Content */}
       <ScrollArea className='flex-1'>
-        <div className='mx-auto w-full max-w-7xl px-6 py-6'>
+        <div className='mx-auto w-full max-w-7xl px-6 py-6 space-y-6'>
+          <ClassifierUploadDropZone />
           {visibleFolders.length === 0 && visibleFiles.length === 0 ? (
-            <EmptyFolderState
-              hasSearch={!!search}
-              onCreateFolder={() => setCreateOpen(true)}
-              onUploadFiles={() => fileInputRef.current?.click()}
-            />
+            <EmptyFolderState hasSearch={!!search} onCreateFolder={() => setCreateOpen(true)} onUploadFiles={() => fileInputRef.current?.click()} />
           ) : (
             <div className='space-y-8'>
               {visibleFolders.length > 0 && (
@@ -344,7 +342,7 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
             </div>
             <div className='min-w-0 flex-1'>
               <div className='font-semibold leading-tight truncate'>{folder.name}</div>
-              <div className='mt-1 text-xs text-muted-foreground line-clamp-2 min-h-[2rem]'>{folder.description || 'Sans description'}</div>
+              <div className='mt-1 text-xs text-muted-foreground line-clamp-2 min-h-8'>{folder.description || 'Sans description'}</div>
             </div>
           </div>
         </button>
@@ -420,15 +418,7 @@ function FileRow({ file, onMove }: { file: ClassifierFile; onMove: () => void })
   );
 }
 
-function EmptyFolderState({
-  hasSearch,
-  onCreateFolder,
-  onUploadFiles,
-}: {
-  hasSearch: boolean;
-  onCreateFolder: () => void;
-  onUploadFiles: () => void;
-}) {
+function EmptyFolderState({ hasSearch, onCreateFolder, onUploadFiles }: { hasSearch: boolean; onCreateFolder: () => void; onUploadFiles: () => void }) {
   if (hasSearch) {
     return (
       <div className='flex flex-col items-center justify-center py-24 text-center'>
@@ -447,9 +437,7 @@ function EmptyFolderState({
         <Folder className='h-7 w-7' />
       </div>
       <h3 className='text-base font-semibold'>Cet emplacement est vide</h3>
-      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>
-        Créez un dossier pour structurer votre classification ou ajoutez des fichiers à classer.
-      </p>
+      <p className='mt-1 max-w-sm text-sm text-muted-foreground'>Créez un dossier pour structurer votre classification ou ajoutez des fichiers à classer.</p>
       <div className='mt-5 flex items-center gap-2'>
         <Button variant='outline' onClick={onCreateFolder} className='gap-1.5'>
           <FolderPlus className='h-4 w-4' />
