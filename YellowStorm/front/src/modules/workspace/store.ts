@@ -8,7 +8,8 @@ import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
 import * as workspaceApi from './api';
-import { DEFAULT_PAGE_LIMIT } from './utils';
+import * as pageApi from './page-api';
+import { DEFAULT_PAGE_LIMIT, validateFiles } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
@@ -34,6 +35,12 @@ import type {
   WorkspaceTab,
   SharedWorkspaceResponse,
   UserSearchResult,
+  WorkspaceFile,
+  WorkspaceFolder,
+  ClassificationRun,
+  CreateWorkspaceFolderInput,
+  UpdateWorkspaceFolderInput,
+  StartClassificationRunInput,
 } from './types';
 
 /**
@@ -149,6 +156,17 @@ interface WorkspaceState {
   uploadQueue: UploadQueueItem[];
   isUploading: boolean;
   uploadSessionId: string | null;
+
+  // ===== Workspace Page (folders + files + classification runs) =====
+  pageCurrentFolderId: string | null;
+  pageSearch: string;
+  pageFolders: WorkspaceFolder[];
+  pageFiles: WorkspaceFile[];
+  pageWorkspaceLoadedFor: string | null;
+  loadingPageFolders: boolean;
+  loadingPageFiles: boolean;
+  lastClassificationRun: ClassificationRun | null;
+  isRunningClassification: boolean;
 }
 
 interface WorkspaceActions {
@@ -240,6 +258,20 @@ interface WorkspaceActions {
   updateSharePermission: (workspaceId: string, shareId: string, permission: WorkspacePermission) => Promise<void>;
   revokeShare: (workspaceId: string, shareId: string) => Promise<void>;
   searchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>;
+
+  // ===== Workspace Page actions =====
+  selectPageWorkspace: (workspaceId: string | null) => Promise<void>;
+  navigateToPageFolder: (folderId: string | null) => void;
+  setPageSearch: (value: string) => void;
+  refreshPageData: () => Promise<void>;
+  createPageFolder: (input: CreateWorkspaceFolderInput) => Promise<WorkspaceFolder | null>;
+  updatePageFolder: (id: string, input: UpdateWorkspaceFolderInput) => Promise<void>;
+  deletePageFolder: (id: string) => Promise<void>;
+  movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
+  setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
+  uploadPageFiles: (files: File[]) => Promise<void>;
+  runClassification: (input: StartClassificationRunInput) => Promise<void>;
+  pollClassificationRun: (runId: string) => Promise<void>;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -305,6 +337,17 @@ const initialState: WorkspaceState = {
   uploadQueue: [],
   isUploading: false,
   uploadSessionId: null,
+
+  // Workspace page
+  pageCurrentFolderId: null,
+  pageSearch: '',
+  pageFolders: [],
+  pageFiles: [],
+  pageWorkspaceLoadedFor: null,
+  loadingPageFolders: false,
+  loadingPageFiles: false,
+  lastClassificationRun: null,
+  isRunningClassification: false,
 };
 
 // ===== Store =====
@@ -429,16 +472,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             isLoadingWorkspaces: false,
           });
 
-          const { selectedWorkspaceId } = get();
-          // Auto-select first workspace (personal) when no workspace is selected
-          // This ensures the personal workspace is selected by default when modal opens
-          if (!selectedWorkspaceId && allWorkspaces.length > 0) {
-            get()
-              .selectWorkspace(allWorkspaces[0].id)
-              .catch((err) => {
-                console.error('Failed to auto-select workspace', err);
-              });
-          }
         } catch (err) {
           const fallback = tError('fetchWorkspaces', 'Failed to fetch workspaces');
           const message = err instanceof Error ? err.message : fallback;
@@ -1593,6 +1626,173 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
 
       searchUsers: async (query, limit = 10) => {
         return workspaceApi.searchUsers(query, limit);
+      },
+
+      // ===== Workspace Page actions =====
+
+      selectPageWorkspace: async (workspaceId) => {
+        const previous = get().selectedWorkspaceId;
+        set({
+          pageCurrentFolderId: null,
+          pageSearch: '',
+          pageFolders: workspaceId !== previous ? [] : get().pageFolders,
+          pageFiles: workspaceId !== previous ? [] : get().pageFiles,
+          pageWorkspaceLoadedFor: workspaceId !== previous ? null : get().pageWorkspaceLoadedFor,
+          lastClassificationRun: null,
+        });
+        if (workspaceId) {
+          if (workspaceId !== previous) {
+            await get().selectWorkspace(workspaceId);
+          }
+          await get().refreshPageData();
+        } else {
+          set({
+            selectedWorkspaceId: null,
+            selectedWorkspace: null,
+          });
+        }
+      },
+
+      navigateToPageFolder: (folderId) => set({ pageCurrentFolderId: folderId }),
+
+      setPageSearch: (value) => set({ pageSearch: value }),
+
+      refreshPageData: async () => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        set({ loadingPageFolders: true, loadingPageFiles: true });
+        try {
+          const [folders, files] = await Promise.all([
+            pageApi.listFolders(workspaceId),
+            pageApi.listFiles(workspaceId),
+          ]);
+          set({
+            pageFolders: folders,
+            pageFiles: files,
+            pageWorkspaceLoadedFor: workspaceId,
+            loadingPageFolders: false,
+            loadingPageFiles: false,
+          });
+        } catch (err) {
+          set({ loadingPageFolders: false, loadingPageFiles: false });
+          toast.error(getApiErrorMessage(err, 'Impossible de charger le workspace'));
+        }
+      },
+
+      createPageFolder: async (input) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return null;
+        try {
+          const folder = await pageApi.createFolder(workspaceId, input);
+          set((s) => ({ pageFolders: [folder, ...s.pageFolders] }));
+          return folder;
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la création du dossier'));
+          return null;
+        }
+      },
+
+      updatePageFolder: async (folderId, input) => {
+        try {
+          const updated = await pageApi.updateFolder(folderId, input);
+          set((s) => ({
+            pageFolders: s.pageFolders.map((f) => (f.id === folderId ? updated : f)),
+          }));
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la mise à jour du dossier'));
+        }
+      },
+
+      deletePageFolder: async (folderId) => {
+        try {
+          await pageApi.deleteFolder(folderId);
+          await get().refreshPageData();
+          if (get().pageCurrentFolderId === folderId) {
+            set({ pageCurrentFolderId: null });
+          }
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la suppression du dossier'));
+        }
+      },
+
+      movePageFolder: async (folderId, newParentId) => {
+        const previous = get().pageFolders;
+        set((s) => ({
+          pageFolders: s.pageFolders.map((f) =>
+            f.id === folderId ? { ...f, parentId: newParentId } : f,
+          ),
+        }));
+        try {
+          const updated = await pageApi.moveFolder(folderId, newParentId);
+          set((s) => ({
+            pageFolders: s.pageFolders.map((f) => (f.id === folderId ? updated : f)),
+          }));
+        } catch (err) {
+          set({ pageFolders: previous });
+          toast.error(getApiErrorMessage(err, 'Échec du déplacement du dossier'));
+        }
+      },
+
+      setFileFolderAssignment: async (fileId, folderId) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        const previous = get().pageFiles;
+        set((s) => ({
+          pageFiles: s.pageFiles.map((f) => (f.id === fileId ? { ...f, folderId } : f)),
+        }));
+        try {
+          const updated = await pageApi.assignFileToFolder(workspaceId, fileId, folderId);
+          set((s) => ({
+            pageFiles: s.pageFiles.map((f) => (f.id === fileId ? updated : f)),
+          }));
+        } catch (err) {
+          set({ pageFiles: previous });
+          toast.error(getApiErrorMessage(err, 'Échec du déplacement du fichier'));
+        }
+      },
+
+      uploadPageFiles: async (files) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId || files.length === 0) return;
+
+        const { validFiles } = validateFiles(files);
+        if (validFiles.length === 0) return;
+
+        get().addFilesToQueue(validFiles, workspaceId);
+        try {
+          await get().startUpload();
+          toast.success(
+            validFiles.length === 1
+              ? 'Fichier ajouté'
+              : `${validFiles.length} fichiers ajoutés`,
+          );
+          await get().refreshPageData();
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, "Échec de l'upload"));
+        }
+      },
+
+      runClassification: async ({ playbookId, hint, overwrite }) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        set({ isRunningClassification: true });
+        try {
+          const run = await pageApi.startRun(workspaceId, { playbookId, hint, overwrite });
+          set({ lastClassificationRun: run, isRunningClassification: false });
+          await get().refreshPageData();
+        } catch (err) {
+          set({ isRunningClassification: false });
+          toast.error(getApiErrorMessage(err, 'Échec du lancement de la classification'));
+        }
+      },
+
+      pollClassificationRun: async (runId) => {
+        try {
+          const run = await pageApi.getRun(runId);
+          set({ lastClassificationRun: run });
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la récupération du run'));
+        }
       },
     }),
     { name: 'workspace-store' },

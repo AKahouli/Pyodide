@@ -2,7 +2,6 @@ import { RouterProvider } from 'react-router-dom';
 import { CombinedProvider } from './providers/CombinedProvider';
 import { SettingsModal } from './modules/profile';
 import {
-  WorkspaceModal,
   CreateWorkspaceModal,
   CreateTemplateModal,
   WorkspaceSettingsModal,
@@ -24,7 +23,6 @@ export default function App() {
     <CombinedProvider>
       <RouterProvider router={router} />
       <SettingsModal />
-      <WorkspaceModal />
       <CreateWorkspaceModal />
       <CreateTemplateModal />
       <WorkspaceSettingsModal />

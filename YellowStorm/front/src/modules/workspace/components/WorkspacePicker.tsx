@@ -1,23 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Check, ChevronsUpDown, Layers } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { cn } from '@/lib/utils';
-import { useWorkspaces, useWorkspaceStore, useWorkspaceLoading } from '@/modules/workspace';
-import type { Workspace } from '@/modules/workspace';
-import { useClassifierStore } from '../store';
+
+import { useWorkspaces } from '../store';
+import { useWorkspaceStore, useWorkspaceLoading } from '../store';
+import type { Workspace } from '../types';
 
 type Props = {
   triggerClassName?: string;
@@ -26,12 +17,12 @@ type Props = {
 
 export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props) {
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
   const workspaces = useWorkspaces();
   const { isLoadingWorkspaces } = useWorkspaceLoading();
   const fetchWorkspaces = useWorkspaceStore((s) => s.fetchWorkspaces);
 
-  const selectedId = useClassifierStore((s) => s.selectedWorkspaceId);
-  const selectWorkspace = useClassifierStore((s) => s.selectWorkspace);
+  const selectedId = useWorkspaceStore((s) => s.selectedWorkspaceId);
 
   useEffect(() => {
     if (workspaces.length === 0 && !isLoadingWorkspaces) {
@@ -46,7 +37,7 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
 
   const handleSelect = (id: string) => {
     setOpen(false);
-    void selectWorkspace(id);
+    navigate(`/workspace/${id}`);
   };
 
   if (variant === 'hero') {
@@ -92,10 +83,7 @@ export function WorkspacePicker({ triggerClassName, variant = 'compact' }: Props
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button
-          variant='outline'
-          className={cn('h-9 gap-2 max-w-[260px]', triggerClassName)}
-        >
+        <Button variant='outline' className={cn('h-9 gap-2 max-w-[260px]', triggerClassName)}>
           <Layers className='h-4 w-4 shrink-0 text-muted-foreground' />
           <span className='truncate text-sm'>
             {selected ? selected.name : 'Sélectionner un workspace'}

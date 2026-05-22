@@ -1,31 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Sparkles, Loader2, CheckCircle2, Workflow } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Progress } from '@/components/ui/progress';
-import {
-  usePlaybooks,
-  usePlaybookStore,
-  usePlaybooksLoading,
-} from '@/modules/playbook/store';
-import { useClassifierStore } from '../store';
+import { usePlaybooks, usePlaybookStore, usePlaybooksLoading } from '@/modules/playbook/store';
+
+import { useWorkspaceStore } from '../store';
 
 type Props = {
   open: boolean;
@@ -33,12 +17,12 @@ type Props = {
 };
 
 export function ClassifyDialog({ open, onOpenChange }: Props) {
-  const runClassification = useClassifierStore((s) => s.runClassification);
-  const runningClassification = useClassifierStore((s) => s.runningClassification);
-  const lastRun = useClassifierStore((s) => s.lastRun);
-  const files = useClassifierStore((s) => s.files);
-  const folders = useClassifierStore((s) => s.folders);
-  const workspaceId = useClassifierStore((s) => s.selectedWorkspaceId);
+  const runClassification = useWorkspaceStore((s) => s.runClassification);
+  const isRunningClassification = useWorkspaceStore((s) => s.isRunningClassification);
+  const lastRun = useWorkspaceStore((s) => s.lastClassificationRun);
+  const files = useWorkspaceStore((s) => s.pageFiles);
+  const folders = useWorkspaceStore((s) => s.pageFolders);
+  const workspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
 
   const playbooks = usePlaybooks();
   const playbooksLoading = usePlaybooksLoading();
@@ -72,7 +56,7 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
   }, [open]);
 
   const status = lastRun?.status;
-  const running = runningClassification || status === 'queued' || status === 'running';
+  const running = isRunningClassification || status === 'queued' || status === 'running';
 
   useEffect(() => {
     if (!running) return;

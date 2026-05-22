@@ -97,16 +97,6 @@ export interface WorkspaceDocument {
 
 // ===== Folder Types =====
 
-export interface WorkspaceFolder {
-  id: string;
-  folderName: string;
-  parentId?: string;
-  createdAt: string;
-  isExpanded?: boolean;
-  isFolder: true;
-  children: (WorkspaceDocument | WorkspaceFolder)[];
-}
-
 export interface CreateFolderData {
   name: string;
   parentId?: string;
@@ -114,6 +104,82 @@ export interface CreateFolderData {
 
 export interface RenameFolderData {
   name: string;
+}
+
+// ===== Workspace Page (folders/files/classification) =====
+
+export interface WorkspaceFolder {
+  id: string;
+  workspaceId: string;
+  parentId: string | null;
+  name: string;
+  description: string;
+  createdBy: string;
+  childCount: number;
+  fileCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AssignmentSource = 'manual' | 'playbook' | null;
+
+export interface WorkspaceFile {
+  id: string;
+  workspaceId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string | null;
+  folderId: string | null;
+  assignmentSource: AssignmentSource;
+}
+
+export type ClassificationRunStatus =
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'cancelled';
+
+export interface ClassificationRun {
+  id: string;
+  workspaceId: string;
+  status: ClassificationRunStatus;
+  playbookId: string;
+  playbookExecutionId: string | null;
+  hint: string | null;
+  overwrite: boolean;
+  totalFiles: number;
+  classifiedFiles: number;
+  error: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  triggeredBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWorkspaceFolderInput {
+  name: string;
+  description: string;
+  parentId?: string | null;
+}
+
+export interface UpdateWorkspaceFolderInput {
+  name?: string;
+  description?: string;
+}
+
+export interface StartClassificationRunInput {
+  playbookId: string;
+  hint?: string;
+  overwrite?: boolean;
+}
+
+export interface ListWorkspaceFilesQuery {
+  folderId?: string;
+  unclassified?: boolean;
+  search?: string;
 }
 
 export interface DocumentQueryParams {

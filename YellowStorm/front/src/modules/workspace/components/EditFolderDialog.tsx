@@ -1,28 +1,22 @@
 import { useEffect, useState } from 'react';
 import { Pencil } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { useClassifierStore } from '../store';
-import type { ClassifierFolder } from '../types';
+
+import { useWorkspaceStore } from '../store';
+import type { WorkspaceFolder } from '../types';
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  folder: ClassifierFolder | null;
+  folder: WorkspaceFolder | null;
 };
 
 export function EditFolderDialog({ open, onOpenChange, folder }: Props) {
-  const updateFolder = useClassifierStore((s) => s.updateFolder);
+  const updatePageFolder = useWorkspaceStore((s) => s.updatePageFolder);
 
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
@@ -75,7 +69,7 @@ export function EditFolderDialog({ open, onOpenChange, folder }: Props) {
           <Button
             onClick={() => {
               if (!folder || !canSubmit) return;
-              updateFolder(folder.id, { name, description });
+              void updatePageFolder(folder.id, { name, description });
               onOpenChange(false);
             }}
             disabled={!canSubmit}
