@@ -13,13 +13,10 @@ import {
 import { BadRequestException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
 import { PlaybookFlowStreamGatewayService } from './playbook-flow-stream-gateway.service';
+import { PlaybookFlowPromptTemplateService } from './playbook-flow-prompt-template.service';
 import { pLimit } from '../utils/p-limit';
 
-const OUTPUT_FORMAT_GUIDE_SYSTEM_PROMPT = `You are tasked with extracting and reproducing only the output structure and formatting from a given result.
-Preserve exact structural organization, section order, hierarchy, markdown formatting (headings, tables, bullets, paragraphs).
-Keep column structures and labels but leave cell values empty. Remove all factual content, values, numbers, sources, and conclusions.
-Produce a clean, reusable markdown template with structure only, no content.
-`;
+const FALLBACK_OUTPUT_FORMAT_GUIDE_SYSTEM_PROMPT = 'You are tasked with extracting and reproducing only the output structure and formatting from a given result.\nPreserve exact structural organization, section order, hierarchy, markdown formatting (headings, tables, bullets, paragraphs).\nKeep column structures and labels but leave cell values empty. Remove all factual content, values, numbers, sources, and conclusions.\nProduce a clean, reusable markdown template with structure only, no content.';
 
 @Injectable()
 export class PlaybookFlowOutputFormatService {
@@ -32,6 +29,7 @@ export class PlaybookFlowOutputFormatService {
     private readonly modelsService: ModelsService,
     private readonly liteLLMConnectionService: LiteLLMConnectionService,
     private readonly streamGateway: PlaybookFlowStreamGatewayService,
+    private readonly promptTemplateService: PlaybookFlowPromptTemplateService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowOutputFormatService'); }
 
@@ -152,11 +150,16 @@ export class PlaybookFlowOutputFormatService {
     const model = defaultModel?.id || defaultModel?.litellmModel || '';
     if (!model) return this.getFallbackGuide(sourceOutput);
 
+    const promptTemplate = await this.promptTemplateService.findByKey('output_format.guide');
+    const systemPrompt = promptTemplate?.enabled && promptTemplate.systemTemplate?.trim()
+      ? promptTemplate.systemTemplate.trim()
+      : FALLBACK_OUTPUT_FORMAT_GUIDE_SYSTEM_PROMPT;
+
     try {
       const response = await httpClient.post('/v1/chat/completions', {
         model, temperature: 0,
         messages: [
-          { role: 'system', content: OUTPUT_FORMAT_GUIDE_SYSTEM_PROMPT },
+          { role: 'system', content: systemPrompt },
           { role: 'user', content: `<result_to_describe>\n${sourceOutput}\n</result_to_describe>` },
         ],
       }, { timeout: 30000 });

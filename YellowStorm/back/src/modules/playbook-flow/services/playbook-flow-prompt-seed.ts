@@ -213,6 +213,13 @@ Must always consider all the workflow structure (including edges) before evaluat
     enabled: true, isBuiltIn: true, version: 1,
   },
   {
+    key: 'task.output_ports.structured_response', title: 'Task structured output ports', category: 'task',
+    description: 'Instruction block for structured final response output ports with JSON schema.',
+    systemTemplate: '',
+    userTemplate: 'Return JSON only with this exact shape:\n{\n  \"display_text\": \"user-visible final answer\",\n  \"outputs\": [\n    {\n      \"output_port_id\": \"declared-port-id\",\n      \"artifact_kind\": \"text|code|document|image|data|dashboard\",\n      \"content\": \"artifact payload\"\n    }\n  ]\n}\n\nRules:\n- `display_text` is the final user-visible answer.\n- Use only declared `output_port_id` values.\n- Every output object must include `artifact_kind`; it must match the declared port kind.\n- Every output object must use `content` for its payload.\n- For text/code outputs, `content` is the final downstream string.\n- For data outputs, `content` is the structured JSON payload.\n- For file outputs, `content` is an object like {\"filename\": \"report.pdf\", \"file_path\": \"optional exact file path\"}.\n- For file outputs, reference only files you actually generated.\n- Do not use top-level `data`, `filename`, `file_path`, or `filePath`.\n- If no routed output should be produced for a port, omit it.\n- Must never add or remove attributes, respect strictly the JSON structure specified above. Return JSON only and no markdown fences.',
+    enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
     key: 'task.clarification', title: 'Clarification prompt', category: 'task',
     description: 'Fallback clarification prompt.',
     systemTemplate: 'Review the task. If you need clarification, respond with one clear question. If clear, respond "CLEAR".',
@@ -315,5 +322,23 @@ Actionable outcome:
     systemTemplate: 'You optimize a single playbook step in place. Preserve workflow graph and step id. Improve contract, wording, actionability. Return strict JSON only.',
     userTemplate: 'Original playbook: {{playbookJson}}\nSelected task: {{taskJson}}\nJudge summary: {{judgeSummaryJson}}\nReturn optimized task JSON.',
     enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'output_format.guide', title: 'Output format guide extraction', category: 'output_format',
+    description: 'System prompt for extracting output structure and formatting from a task result into a reusable template.',
+    systemTemplate: 'You are tasked with extracting and reproducing only the output structure and formatting from a given result.\nPreserve exact structural organization, section order, hierarchy, markdown formatting (headings, tables, bullets, paragraphs).\nKeep column structures and labels but leave cell values empty. Remove all factual content, values, numbers, sources, and conclusions.\nProduce a clean, reusable markdown template with structure only, no content.',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'step.fallback_system', title: 'Step fallback system prompt', category: 'task',
+    description: 'Fallback system prompt for new engine step nodes when no agent prompt is configured.',
+    systemTemplate: 'You are executing the step: {{stepLabel}}. Respond concisely.',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
+  },
+  {
+    key: 'playbook.generation_new', title: 'Playbook generation (new engine)', category: 'design',
+    description: 'System prompt for the new engine playbook generation endpoint.',
+    systemTemplate: 'You are an expert playbook architect.\nProduce a valid, actionable workflow as a FlowSnapshot.\nUse only the provided agents. Do not invent agent names or tool names.',
+    userTemplate: '', enabled: true, isBuiltIn: true, version: 1,
   },
 ];

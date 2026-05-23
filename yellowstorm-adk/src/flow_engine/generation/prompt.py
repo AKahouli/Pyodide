@@ -66,6 +66,14 @@ def build_generation_prompt(
         "Use only the provided agents. Do not invent agent names or tool names.",
     ]
 
+    prompt_registry = load_prompt_registry(prompt_overrides)
+    resolved_system = resolve_prompt_template(
+        prompt_registry,
+        "playbook.generation_new",
+        field="systemTemplate",
+        fallback="\n".join(sys_lines),
+    )
+
     if existing_playbook:
         sys_lines.append("Modify the existing workflow to match the user's request.")
 
@@ -85,7 +93,7 @@ def build_generation_prompt(
         user_lines.append(f"\nExisting workflow: {existing_playbook}")
 
     return {
-        "system_prompt": "\n".join(sys_lines),
+        "system_prompt": resolved_system,
         "user_prompt": "\n".join(user_lines),
     }
 

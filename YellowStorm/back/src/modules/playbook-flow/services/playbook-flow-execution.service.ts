@@ -660,14 +660,17 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId').lean().exec();
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
       const nodesEligibleForReplay = singleStepTargetId
-        ? taskNodeIds.filter((nid: string) => nid !== singleStepTargetId)
+        ? [singleStepTargetId]
         : taskNodeIds;
+      this.logger.warn(`[REPLAY-DEBUG] executionId=${executionId} flowId=${flowId} taskNodeIds=${JSON.stringify(taskNodeIds)} singleStepTargetId=${singleStepTargetId} nodesEligible=${JSON.stringify(nodesEligibleForReplay)}`);
       const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, nodesEligibleForReplay);
+      this.logger.warn(`[REPLAY-DEBUG] resolvedArtifacts size=${replayArtifacts.size} keys=${JSON.stringify([...replayArtifacts.keys()])}`);
 
       for (const node of enrichedNodes) {
         const artifacts = replayArtifacts.get(node.id);
         if (!artifacts) continue;
         const replayPrompt = this.replayPromptService.buildReplayPromptSection(artifacts);
+        this.logger.warn(`[REPLAY-DEBUG] node=${node.id} promptLen=${replayPrompt?.length ?? 0} prompt=${replayPrompt?.substring(0, 100)}`);
         if (replayPrompt) {
           node.metadata = { ...node.metadata, replay_instructions: replayPrompt };
         }
@@ -826,6 +829,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           }),
         })),
       };
+
+      const firstNodeMeta = request.snapshot?.nodes?.[0]?.metadata as any;
+      this.logger.warn(`[REPLAY-DEBUG] grpcRequest node0 metadata keys=${JSON.stringify(firstNodeMeta ? Object.keys(firstNodeMeta.fields || firstNodeMeta) : 'no-meta')} has_replay=${!!(firstNodeMeta?.fields?.replay_instructions || firstNodeMeta?.replay_instructions)}`);
 
     const call = this.playbookFlowClient.Run(request);
     let finalized = false;
