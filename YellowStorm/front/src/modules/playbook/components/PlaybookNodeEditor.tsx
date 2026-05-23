@@ -13,6 +13,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/ui/searchable-select';
 import { ChevronDown, Loader2, Plus, Trash2 } from 'lucide-react';
@@ -246,6 +254,7 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const fetchModels = useModelsStore((s) => s.fetchModels);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const activateTaskReplay = usePlaybookStore((s) => s.activateTaskReplay);
+  const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
@@ -329,6 +338,10 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
   const hasInitializedDraftRef = useRef(hasInitializedDraft);
   hasInitializedDraftRef.current = hasInitializedDraft;
   const replayDialogRef = useRef<ReplayBaselineSettingsDialogHandle | null>(null);
+  const originalDraftRef = useRef<EditorDraft | null>(null);
+  const originalCapturedRef = useRef(false);
+  const [replayStaleDialogOpen, setReplayStaleDialogOpen] = useState(false);
+  const [removingStaleReplay, setRemovingStaleReplay] = useState(false);
 
   useImperativeHandle(ref, () => ({
     flushSave: () => {
@@ -353,7 +366,9 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
 
   useEffect(() => {
     if (task) {
-      setDraft(buildDraftFromTask(task, t));
+      const built = buildDraftFromTask(task, t);
+      setDraft(built);
+      originalDraftRef.current = built;
       setEmailInput('');
       setEmailError('');
       setHasInitializedDraft(false);
@@ -517,8 +532,6 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     setEditingReplay((prev) => (prev?.id === removedReplayId ? null : prev));
   }, []);
 
-  if (!task) return null;
-
   const handleActivateReplay = async (replayId: string) => {
     if (!playbookId || !task) return;
     setActivatingReplayId(replayId);
@@ -579,12 +592,58 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
     }
   };
 
+  const hasStaleMakingChanges = useCallback((): boolean => {
+    const orig = originalDraftRef.current;
+    if (!orig) return false;
+    const d = draftRef.current;
+    return (
+      d.description !== orig.description ||
+      d.assignedAgentId !== orig.assignedAgentId ||
+      d.nodeType !== orig.nodeType ||
+      d.executionMode !== orig.executionMode
+    );
+  }, []);
+
+  const flushAndClose = useCallback(() => {
+    const currentTask = taskRef.current;
+    if (currentTask && hasInitializedDraftRef.current) {
+      onSave(currentTask.id, draftToSavePayload(draftRef.current));
+    }
+    void replayDialogRef.current?.flushSave();
+    onOpenChange(false);
+  }, [onSave, onOpenChange]);
+
+  const handleRemoveStaleReplay = useCallback(async () => {
+    const currentTask = taskRef.current;
+    if (!playbookId || !currentTask?.activeReplayId) return;
+    setRemovingStaleReplay(true);
+    try {
+      await deleteTaskReplay(playbookId, currentTask.id, currentTask.activeReplayId);
+    } finally {
+      setRemovingStaleReplay(false);
+      setReplayStaleDialogOpen(false);
+      flushAndClose();
+    }
+  }, [playbookId, deleteTaskReplay, flushAndClose]);
+
+  if (!task) return null;
+
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={open} onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          const currentTask = taskRef.current;
+          if (currentTask?.hasValidatedReplay && hasStaleMakingChanges()) {
+            setReplayStaleDialogOpen(true);
+            return;
+          }
+          flushAndClose();
+        } else {
+          onOpenChange(nextOpen);
+        }
+      }}>
         <DialogContent
           className="flex h-[88vh] w-[96vw] max-w-7xl flex-col gap-0 overflow-hidden border-border bg-background p-0 shadow-[0_28px_90px_-44px_rgba(15,23,42,0.35)]"
-          onInteractOutside={(e) => e.preventDefault()}
         >
           <DialogHeader className="border-b px-6 py-4 pr-14">
             <div className="flex items-start justify-between gap-4">
@@ -1357,6 +1416,25 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog open={replayStaleDialogOpen} onOpenChange={setReplayStaleDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('nodeEditor.replayStaleDialogTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('nodeEditor.replayStaleDialogDescription')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <Button variant="outline" onClick={() => { setReplayStaleDialogOpen(false); flushAndClose(); }}>
+              {t('nodeEditor.replayStaleKeep')}
+            </Button>
+            <Button variant="destructive" onClick={handleRemoveStaleReplay} disabled={removingStaleReplay}>
+              {removingStaleReplay && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {t('nodeEditor.replayStaleRemove')}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 });

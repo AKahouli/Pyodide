@@ -494,6 +494,9 @@ function PlaybookCanvasInner() {
     repackIteratorChildren,
     setNodes,
     setEdges,
+    copySelection,
+    cutSelection,
+    pasteClipboard,
   } = usePlaybookCanvas(triggerNodeActions);
 
   const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave();
@@ -794,10 +797,34 @@ function PlaybookCanvasInner() {
         e.preventDefault();
         if (canRedo) redo();
       }
+
+      const activeEl = document.activeElement;
+      const isEditing = activeEl instanceof HTMLInputElement
+        || activeEl instanceof HTMLTextAreaElement
+        || activeEl instanceof HTMLSelectElement
+        || (activeEl instanceof HTMLElement && activeEl.isContentEditable);
+      if (isEditing) return;
+
+      const canvasEl = canvasChromeRef.current;
+      const inCanvas = canvasEl && activeEl && canvasEl.contains(activeEl);
+      if (!inCanvas) return;
+
+      if (isMeta && e.key === 'c') {
+        e.preventDefault();
+        void copySelection();
+      }
+      if (isMeta && e.key === 'x') {
+        e.preventDefault();
+        void cutSelection();
+      }
+      if (isMeta && e.key === 'v') {
+        e.preventDefault();
+        void pasteClipboard();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [canUndo, canRedo, undo, redo]);
+  }, [canUndo, canRedo, undo, redo, copySelection, cutSelection, pasteClipboard]);
 
   // Refresh usage indicator when execution ends, generation or design completes
   const prevIsGenerating = useRef(isGenerating);
@@ -1601,6 +1628,10 @@ function PlaybookCanvasInner() {
       canResumeFromStep,
       canSkipStep,
       canSaveBaseline,
+      onCopySelection: () => { void copySelection(); },
+      onCutSelection: () => { void cutSelection(); },
+      onPasteClipboard: () => { void pasteClipboard(); },
+      hasSelection: nodes.some((n) => n.selected && n.id !== '__trigger__'),
     }),
     [
       handleEditNode,
@@ -1617,6 +1648,10 @@ function PlaybookCanvasInner() {
       canResumeFromStep,
       canSkipStep,
       canSaveBaseline,
+      copySelection,
+      cutSelection,
+      pasteClipboard,
+      nodes,
     ],
   );
 
@@ -3385,6 +3420,10 @@ function PlaybookCanvasInner() {
                   designerOpen={designerOpen}
                   onRemoveAllTasks={handleRemoveAllTasks}
                   taskCount={playbook.tasks.length}
+                  onCopySelection={() => { void copySelection(); }}
+                  onCutSelection={() => { void cutSelection(); }}
+                  onPasteClipboard={() => { void pasteClipboard(); }}
+                  hasSelection={nodes.some((n) => n.selected && n.id !== '__trigger__')}
                   waitingForHumanInput={Boolean(waitingForHumanInput)}
                   interruptType={currentExecution?.playbookId === id
                     ? ((currentExecution?.interruptPayload?.type ?? null) as InterruptType | null)

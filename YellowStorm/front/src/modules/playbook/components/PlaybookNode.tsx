@@ -1,6 +1,6 @@
 import { createContext, useContext, useMemo, useState, useCallback, useEffect } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles } from 'lucide-react';
+import { Bot, Copy, Trash2, Play, Loader2, SkipForward, Power, PlayCircle, Pencil, FileText, Cable, X, Sparkles, Scissors, ClipboardPaste } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -95,6 +95,10 @@ export interface NodeContextMenuActions {
   canResumeFromStep: (nodeId: string) => boolean;
   canSkipStep: (nodeId: string) => boolean;
   canSaveBaseline: (nodeId: string) => boolean;
+  onCopySelection?: () => void;
+  onCutSelection?: () => void;
+  onPasteClipboard?: () => void;
+  hasSelection?: boolean;
 }
 
 export interface ConnectorDropPayload {
@@ -1048,6 +1052,19 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <ContextMenuItem onClick={() => actions?.onToggleEnabled(id)}>
           <Power className="h-4 w-4" />
           {isEnabled ? t('node.disable') : t('node.enable')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem disabled={!actions?.hasSelection} onClick={() => actions?.onCopySelection?.()}>
+          <Copy className="h-4 w-4" />
+          {t('clipboard.menuCopy')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.hasSelection} onClick={() => actions?.onCutSelection?.()}>
+          <Scissors className="h-4 w-4" />
+          {t('clipboard.menuCut')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => actions?.onPasteClipboard?.()}>
+          <ClipboardPaste className="h-4 w-4" />
+          {t('clipboard.menuPaste')}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => actions?.onDelete(id)}>

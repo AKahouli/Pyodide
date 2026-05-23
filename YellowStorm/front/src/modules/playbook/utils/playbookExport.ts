@@ -4,7 +4,7 @@ import type {
 } from '../types';
 import { PLAYBOOK_DEFINITION_VERSION } from '../types';
 
-const RUNTIME_TASK_FIELDS = new Set([
+export const RUNTIME_TASK_FIELDS = new Set([
   'hasValidatedReplay',
   'activeReplayId',
   'activeReplayVersion',

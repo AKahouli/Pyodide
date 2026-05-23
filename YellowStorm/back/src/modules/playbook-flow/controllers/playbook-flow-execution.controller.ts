@@ -32,6 +32,8 @@ export class PlaybookFlowExecutionController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     const singleStepTaskId: string | undefined = body.singleStepTaskId;
+    const executionMode: string | undefined = body.executionMode;
+    const stepExecutionModes: Record<string, string> | undefined = body.stepExecutionModes;
     const advisorAutopilotEnabled: boolean | undefined = body.advisorAutopilotEnabled;
     const advisorAutopilotTargetScore: number | undefined = body.advisorAutopilotTargetScore;
     const advisorAutopilotMaxTurns: number | undefined = body.advisorAutopilotMaxTurns;
@@ -40,6 +42,7 @@ export class PlaybookFlowExecutionController {
     const execution = await this.executionService.start(
       flowId, userId, body.inputContext, idempotencyKey, singleStepTaskId,
       advisorAutopilotEnabled, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, reflectionEnabled, advisorScoringMode,
+      executionMode, stepExecutionModes,
     );
     return { executionId: (execution as any).id ?? (execution as any)._id?.toString() };
   }

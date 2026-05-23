@@ -1,10 +1,11 @@
 import { useEffect, useContext } from 'react';
 import { type NodeProps, Handle, Position, useUpdateNodeInternals } from '@xyflow/react';
-import { GitBranch, Trash2, Copy, Pencil, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { GitBranch, Trash2, Copy, Pencil, CheckCircle2, AlertTriangle, Scissors, ClipboardPaste } from 'lucide-react';
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { Button } from '@/components/ui/button';
@@ -208,6 +209,20 @@ export function RouterNode({ id, data: rawData, selected }: NodeProps) {
           <Copy className="h-4 w-4" />
           {t('nodeContextMenu.clone')}
         </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem disabled={!actions?.hasSelection} onClick={() => actions?.onCopySelection?.()}>
+          <Copy className="h-4 w-4" />
+          {t('clipboard.menuCopy')}
+        </ContextMenuItem>
+        <ContextMenuItem disabled={!actions?.hasSelection} onClick={() => actions?.onCutSelection?.()}>
+          <Scissors className="h-4 w-4" />
+          {t('clipboard.menuCut')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => actions?.onPasteClipboard?.()}>
+          <ClipboardPaste className="h-4 w-4" />
+          {t('clipboard.menuPaste')}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
         <ContextMenuItem className="text-destructive focus:text-destructive" onClick={() => actions?.onDelete?.(id)}>
           <Trash2 className="h-4 w-4" />
           {t('nodeContextMenu.delete')}

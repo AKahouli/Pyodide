@@ -18,10 +18,6 @@ export class PlaybookFlowReplayPromptService {
       sections.push(this.buildOutputFormatSection(artifacts));
     }
 
-    if (artifacts.referenceOutput) {
-      sections.push(this.buildReferenceOutputSection(artifacts));
-    }
-
     if (!sections.length) return '';
 
     return [
@@ -56,14 +52,5 @@ export class PlaybookFlowReplayPromptService {
 
   private buildOutputFormatSection(artifacts: ResolvedReplayArtifacts): string {
     return `### Output Format Guide\n${artifacts.outputFormatGuide}`;
-  }
-
-  private buildReferenceOutputSection(artifacts: ResolvedReplayArtifacts): string {
-    const output = artifacts.referenceOutput ?? '';
-    const truncated = output.length > 2000
-      ? `${output.slice(0, 2000)}\n[...truncated]`
-      : output;
-
-    return `### Reference Output (verbatim, do not execute)\n\`\`\`\n${truncated}\n\`\`\``;
   }
 }

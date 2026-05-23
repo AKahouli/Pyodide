@@ -824,6 +824,8 @@ export async function executePlaybook(
 ): Promise<{ executionId: string }> {
   const payload: Record<string, unknown> = {};
   if (data?.singleStepTaskId) payload.singleStepTaskId = data.singleStepTaskId;
+  if (data?.executionMode) payload.executionMode = data.executionMode;
+  if (data?.stepExecutionModes && Object.keys(data.stepExecutionModes).length > 0) payload.stepExecutionModes = data.stepExecutionModes;
   if (data?.advisorAutopilotEnabled !== undefined) payload.advisorAutopilotEnabled = data.advisorAutopilotEnabled;
   if (data?.advisorAutopilotTargetScore !== undefined) payload.advisorAutopilotTargetScore = data.advisorAutopilotTargetScore;
   if (data?.advisorAutopilotMaxTurns !== undefined) payload.advisorAutopilotMaxTurns = data.advisorAutopilotMaxTurns;

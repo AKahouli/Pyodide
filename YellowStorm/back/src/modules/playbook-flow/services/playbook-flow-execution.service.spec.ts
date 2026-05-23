@@ -305,6 +305,7 @@ describe('callGrpcRun router config serialization', () => {
       snapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
           metadata: toGrpcStruct({
+            execution_mode: 'live',
             assignedAgentId: 'agent-1',
             agent_name: 'Research agent',
             agent_description: 'Find and summarize',

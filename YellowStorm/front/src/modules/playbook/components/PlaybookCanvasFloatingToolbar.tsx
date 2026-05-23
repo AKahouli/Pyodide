@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useId, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent, RefObject } from 'react';
-import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap } from 'lucide-react';
+import { ChevronDown, GripVertical, LayoutGrid, Plus, Redo2, Undo2, Cable, FolderOpen, PanelLeftClose, PanelLeftOpen, Loader2, Download, Wand2, Trash2, GitBranch, Hand, DatabaseZap, Copy, Scissors, ClipboardPaste } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -42,6 +42,10 @@ interface Props {
   dataBindingsVisible?: boolean;
   onRemoveAllTasks?: () => void;
   taskCount?: number;
+  onCopySelection?: () => void;
+  onCutSelection?: () => void;
+  onPasteClipboard?: () => void;
+  hasSelection?: boolean;
   waitingForHumanInput?: boolean;
   interruptType?: InterruptType | null;
   collapsed?: boolean;
@@ -90,6 +94,10 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
   dataBindingsVisible = false,
   onRemoveAllTasks,
   taskCount = 0,
+  onCopySelection,
+  onCutSelection,
+  onPasteClipboard,
+  hasSelection = false,
   waitingForHumanInput = false,
   interruptType = null,
   collapsed: collapsedProp,
@@ -402,6 +410,30 @@ export const PlaybookCanvasFloatingToolbar = forwardRef<PlaybookCanvasFloatingTo
       onClick: onRemoveAllTasks,
       disabled: taskCount === 0,
       hidden: !onRemoveAllTasks,
+    },
+    {
+      key: 'copy',
+      label: t('toolbar.copy'),
+      icon: Copy,
+      onClick: onCopySelection,
+      disabled: disabled || !hasSelection,
+      hidden: !onCopySelection,
+    },
+    {
+      key: 'cut',
+      label: t('toolbar.cut'),
+      icon: Scissors,
+      onClick: onCutSelection,
+      disabled: disabled || !hasSelection,
+      hidden: !onCutSelection,
+    },
+    {
+      key: 'paste',
+      label: t('toolbar.paste'),
+      icon: ClipboardPaste,
+      onClick: onPasteClipboard,
+      disabled,
+      hidden: !onPasteClipboard,
     },
   ];
 

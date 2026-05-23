@@ -32,17 +32,8 @@ describe('PlaybookFlowReplayPromptService', () => {
     expect(result).toBe('');
   });
 
-  it('returns prompt with reference output when present', () => {
-    const result = service.buildReplayPromptSection(makeArtifacts({ referenceOutput: 'Baseline answer here.' }));
-    expect(result).toContain('## Validated Replay Baseline');
-    expect(result).toContain('### Reference Output (verbatim, do not execute)');
-    expect(result).toContain('Baseline answer here.');
-    expect(result).toContain('Replay version 1');
-  });
-
   it('includes reasoning chain when toggle is active', () => {
     const artifacts = makeArtifacts({
-      referenceOutput: 'output',
       reasoningChain: [
         { id: 'r1', type: 'analysis', label: 'Risk Check', description: 'Evaluated risk factors.', confidence: 0.9 },
         { id: 'r2', type: 'decision', label: 'Verdict', description: 'Decided to proceed.', confidence: null },
@@ -60,7 +51,6 @@ describe('PlaybookFlowReplayPromptService', () => {
 
   it('includes tool calls when toggle is active', () => {
     const artifacts = makeArtifacts({
-      referenceOutput: 'output',
       toolCalls: [
         { callIndex: 1, toolName: 'perform_document_search', args: {}, outputSummary: 'hits' },
         { callIndex: 2, toolName: 'calculate', args: {}, outputSummary: '42' },
@@ -76,7 +66,6 @@ describe('PlaybookFlowReplayPromptService', () => {
 
   it('includes output format guide when toggle is active', () => {
     const artifacts = makeArtifacts({
-      referenceOutput: 'output',
       outputFormatGuide: 'Return JSON with fields: summary, confidence.',
       replayConfig: { replayOutputFormat: true, replayToolTrace: false, replayReasoningChain: false },
     });
@@ -86,17 +75,8 @@ describe('PlaybookFlowReplayPromptService', () => {
     expect(result).toContain('Return JSON with fields: summary, confidence.');
   });
 
-  it('truncates reference output over 2000 chars', () => {
-    const longOutput = 'x'.repeat(2500);
-    const result = service.buildReplayPromptSection(makeArtifacts({ referenceOutput: longOutput }));
-    expect(result).toContain('do not execute');
-    expect(result).toContain('[...truncated]');
-    expect(result).not.toContain('x'.repeat(2500));
-  });
-
   it('includes all sections when all toggles are active', () => {
     const artifacts = makeArtifacts({
-      referenceOutput: 'output',
       outputFormatGuide: 'format guide',
       toolCalls: [{ callIndex: 1, toolName: 'search', args: {}, outputSummary: 'hits' }],
       reasoningChain: [{ id: 'r1', type: 'obs', label: 'L1', description: 'D1' }],
@@ -107,12 +87,11 @@ describe('PlaybookFlowReplayPromptService', () => {
     expect(result).toContain('### Baseline Reasoning Chain');
     expect(result).toContain('### Baseline Tool Calls');
     expect(result).toContain('### Output Format Guide');
-    expect(result).toContain('### Reference Output (verbatim, do not execute)');
+    expect(result).not.toContain('### Reference Output');
   });
 
   it('skips reasoning section when chain is empty even if toggle is active', () => {
     const artifacts = makeArtifacts({
-      referenceOutput: 'output',
       reasoningChain: [],
       replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
     });

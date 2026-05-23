@@ -261,6 +261,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     advisorAutopilotMaxTurns?: number,
     reflectionEnabled?: boolean,
     advisorScoringMode?: AdvisorScoringMode,
+    executionMode?: string,
+    stepExecutionModes?: Record<string, string>,
   ): Promise<IFlowExecutionResponse> {
     const flow = await this.flowService.findOne(flowId, ownerId);
 
@@ -374,6 +376,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       reflectionEnabled: enabledReflection,
       advisorScoringMode: resolvedAdvisorScoringMode,
       seededTaskOutputs,
+      executionMode: executionMode || 'live',
+      stepExecutionModes: stepExecutionModes || {},
     });
 
     const saved = await execution.save();
@@ -657,20 +661,25 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const taskNodeIds = enrichedNodes
         .filter((n: any) => n.kind === 'step' || n.kind === 'iterator')
         .map((n: any) => n.id);
-      const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId').lean().exec();
+      const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId executionMode stepExecutionModes').lean().exec();
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
+      const globalExecMode = executionMeta?.executionMode || 'live';
+      const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
       const nodesEligibleForReplay = singleStepTargetId
         ? [singleStepTargetId]
         : taskNodeIds;
-      this.logger.warn(`[REPLAY-DEBUG] executionId=${executionId} flowId=${flowId} taskNodeIds=${JSON.stringify(taskNodeIds)} singleStepTargetId=${singleStepTargetId} nodesEligible=${JSON.stringify(nodesEligibleForReplay)}`);
       const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, nodesEligibleForReplay);
-      this.logger.warn(`[REPLAY-DEBUG] resolvedArtifacts size=${replayArtifacts.size} keys=${JSON.stringify([...replayArtifacts.keys()])}`);
 
+      const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       for (const node of enrichedNodes) {
-        const artifacts = replayArtifacts.get(node.id);
+        const taskId = node.id;
+        const stepMode = stepModes[taskId] || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
+        const isReplayMode = REPLAY_MODES.has(stepMode);
+        node.metadata = { ...node.metadata, execution_mode: stepMode };
+        if (!isReplayMode) continue;
+        const artifacts = replayArtifacts.get(taskId);
         if (!artifacts) continue;
         const replayPrompt = this.replayPromptService.buildReplayPromptSection(artifacts);
-        this.logger.warn(`[REPLAY-DEBUG] node=${node.id} promptLen=${replayPrompt?.length ?? 0} prompt=${replayPrompt?.substring(0, 100)}`);
         if (replayPrompt) {
           node.metadata = { ...node.metadata, replay_instructions: replayPrompt };
         }
@@ -690,11 +699,12 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
       const executionStartState = await this.executionModel.findById(
         executionId,
-        'singleStepTaskId advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode',
+        'singleStepTaskId advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes',
       ).lean().exec();
 
+      const effectiveExecutionMode = (executionStartState?.executionMode || 'live') as 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
       this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId, {
-        executionMode: 'live',
+        executionMode: effectiveExecutionMode,
         reflectionEnabled: executionStartState?.reflectionEnabled,
         advisorScoringMode: executionStartState?.advisorScoringMode,
         advisorAutopilotEnabled: executionStartState?.advisorAutopilotEnabled,

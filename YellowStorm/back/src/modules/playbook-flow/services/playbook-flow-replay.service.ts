@@ -146,7 +146,7 @@ export class PlaybookFlowReplayService {
     if (!taskResult) throw new NotFoundException('Task result not found');
 
     const lastReplay = await this.replayModel
-      .findOne({ flowId, taskId, status: FlowReplayValidationStatus.ACTIVE })
+      .findOne({ flowId, taskId })
       .sort({ validationVersion: -1 })
       .lean();
 

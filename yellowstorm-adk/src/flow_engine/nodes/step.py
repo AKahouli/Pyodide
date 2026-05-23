@@ -178,8 +178,8 @@ async def run_step(
     if sandbox_prompt_note:
         user_msg = f"{user_msg}\n\nSandbox Files:\n{sandbox_prompt_note}"
     replay_instructions = str(metadata.get("replay_instructions") or "")
-    logger.warn("[REPLAY-DEBUG-PY] metadata_keys=%s has_replay=%s replay_len=%d", list(metadata.keys()), bool(replay_instructions), len(replay_instructions))
-    if replay_instructions:
+    execution_mode = str(metadata.get("execution_mode") or "live")
+    if replay_instructions and execution_mode in ("replay_strict", "replay_flex", "replay_adaptive"):
         user_msg = f"{user_msg}\n\n{replay_instructions}"
     trace_collector = TraceCollector()
     trace_collector.record_prompt("initial_request", model_id, f"[system] {system_prompt}\n\n[user] {user_msg}")

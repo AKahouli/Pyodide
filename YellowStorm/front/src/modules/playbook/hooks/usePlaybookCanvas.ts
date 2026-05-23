@@ -16,7 +16,7 @@ import {
   applyEdgeChanges,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
-import { showWarning } from '@/lib/notifications';
+import { showWarning, showInfo, showSuccess } from '@/lib/notifications';
 import { useModuleTranslation } from '@/modules/localization';
 import {
   tasksToNodes,
@@ -32,6 +32,16 @@ import {
 import { wouldCreateCycle } from './helpers/cycle-router-validator';
 import type { DataBinding, PlaybookTask, PlaybookNodeData } from '../types';
 import { getEffectiveNodeType } from '../utils/node-type';
+import {
+  buildClipboardPayload,
+  writeClipboard,
+  readClipboard,
+  remapClipboardPayload,
+  removeCutSourceItems,
+  checkPasteCompatibility,
+} from '../utils/playbookClipboard';
+import * as playbookApi from '../api';
+import { useAgentStore } from '@/modules/agent/store';
 
 function deferStoreUpdate(fn: () => void) {
   setTimeout(fn, 0);
@@ -63,6 +73,13 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const dataBindingsRef = useRef<DataBinding[]>(playbook?.dataBindings ?? []);
   const syncedKeyRef = useRef<string | null>(null);
   const triggerPosRef = useRef({ x: 40, y: 160 });
+  const pasteCountRef = useRef(0);
+
+  const getSelectedTaskNodes = useCallback((): Node[] => {
+    return nodesRef.current.filter(
+      (n) => n.selected && n.id !== TRIGGER_NODE_ID && n.type !== 'playbookTrigger',
+    );
+  }, []);
 
   const syncEdges = useCallback((nextEdges: Edge[]) => {
     updateEdges(flowEdgesToPlaybookEdges(nextEdges));
@@ -443,6 +460,165 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     [captureSnapshot, playbook?.automatedTriggerType, updateTasks],
   );
 
+  const copySelection = useCallback(async (): Promise<number> => {
+    const selectedNodes = getSelectedTaskNodes();
+    if (selectedNodes.length === 0 || !playbook) return 0;
+
+    const selectedTaskIds = new Set(selectedNodes.map((n) => n.id));
+    const allTasks = nodesToTasks(nodesRef.current);
+    const allPlaybookEdges = playbook.edges ?? [];
+    const allDataBindings = playbook.dataBindings ?? [];
+
+    const payload = buildClipboardPayload({
+      tasks: allTasks,
+      allEdges: allPlaybookEdges,
+      allDataBindings,
+      selectedTaskIds,
+      sourcePlaybookId: playbook.id,
+      sourcePlaybookName: playbook.name,
+      operation: 'copy',
+    });
+
+    await writeClipboard(payload);
+    pasteCountRef.current = 0;
+    showInfo(t('clipboard.copied', { count: payload.tasks.length }));
+    return payload.tasks.length;
+  }, [getSelectedTaskNodes, playbook, t]);
+
+  const cutSelection = useCallback(async (): Promise<number> => {
+    const selectedNodes = getSelectedTaskNodes();
+    if (selectedNodes.length === 0 || !playbook) return 0;
+
+    const selectedTaskIds = new Set(selectedNodes.map((n) => n.id));
+    const allTasks = nodesToTasks(nodesRef.current);
+    const allPlaybookEdges = playbook.edges ?? [];
+    const allDataBindings = playbook.dataBindings ?? [];
+
+    const payload = buildClipboardPayload({
+      tasks: allTasks,
+      allEdges: allPlaybookEdges,
+      allDataBindings,
+      selectedTaskIds,
+      sourcePlaybookId: playbook.id,
+      sourcePlaybookName: playbook.name,
+      operation: 'cut',
+    });
+
+    await writeClipboard(payload);
+    pasteCountRef.current = 0;
+    showInfo(t('clipboard.cut', { count: payload.tasks.length }));
+    return payload.tasks.length;
+  }, [getSelectedTaskNodes, playbook, t]);
+
+  const pasteClipboard = useCallback(async (viewportCenter?: { x: number; y: number } | null): Promise<string[]> => {
+    if (!playbook) return [];
+
+    const payload = await readClipboard();
+    if (!payload || payload.tasks.length === 0) {
+      showWarning(t('clipboard.empty'));
+      return [];
+    }
+
+    const result = remapClipboardPayload(payload, {
+      pasteCount: pasteCountRef.current,
+      viewportCenter: viewportCenter ?? null,
+    });
+
+    pasteCountRef.current += 1;
+
+    const currentTasks = nodesToTasks(nodesRef.current);
+    const mergedTasks = [...currentTasks, ...result.tasks];
+
+    const currentEdges = playbook.edges ?? [];
+    const mergedEdges = [...currentEdges, ...result.edges];
+
+    const currentBindings = playbook.dataBindings ?? [];
+    const mergedBindings = [...currentBindings, ...result.dataBindings];
+
+    captureSnapshot();
+
+    setNodes((nds) => {
+      const rebuilt = buildNodes(mergedTasks, playbook.automatedTriggerType === 'mail');
+      const selected = rebuilt.map((n) =>
+        result.pastedTaskIds.includes(n.id) ? { ...n, selected: true } : { ...n, selected: false },
+      );
+      deferStoreUpdate(() => updateTasks(nodesToTasks(selected)));
+      return selected;
+    });
+
+    const newFlowEdges = playbookEdgesToFlowEdges(mergedEdges, mergedTasks);
+    setEdges(newFlowEdges);
+    edgesRef.current = newFlowEdges;
+    deferStoreUpdate(() => syncEdges(newFlowEdges));
+
+    dataBindingsRef.current = mergedBindings;
+    deferStoreUpdate(() => syncDataBindings(mergedBindings));
+
+    if (payload.operation === 'cut' && payload.sourcePlaybookId === playbook.id) {
+      const sourceIds = new Set(payload.sourceTaskIds);
+      setNodes((nds) => {
+        const withoutSource = nds.filter((n) => !sourceIds.has(n.id));
+        deferStoreUpdate(() => updateTasks(nodesToTasks(withoutSource)));
+        return withoutSource;
+      });
+      setEdges((eds) => {
+        const withoutSource = eds.filter(
+          (e) => !sourceIds.has(e.source) && !sourceIds.has(e.target),
+        );
+        edgesRef.current = withoutSource;
+        deferStoreUpdate(() => syncEdges(withoutSource));
+        return withoutSource;
+      });
+      const cleanedBindings = dataBindingsRef.current.filter(
+        (binding) => !sourceIds.has(binding.targetNode) && !(binding.sourceNode && sourceIds.has(binding.sourceNode)),
+      );
+      dataBindingsRef.current = cleanedBindings;
+      deferStoreUpdate(() => syncDataBindings(cleanedBindings));
+    }
+
+    if (payload.operation === 'cut' && payload.sourcePlaybookId !== playbook.id) {
+      try {
+        const sourcePlaybook = await playbookApi.getPlaybook(payload.sourcePlaybookId);
+        const cleaned = removeCutSourceItems(
+          {
+            tasks: sourcePlaybook.tasks ?? [],
+            edges: sourcePlaybook.edges ?? [],
+            dataBindings: sourcePlaybook.dataBindings ?? [],
+          },
+          payload.sourceTaskIds,
+        );
+        await playbookApi.updatePlaybook(payload.sourcePlaybookId, {
+          tasks: cleaned.tasks,
+          edges: cleaned.edges,
+          dataBindings: cleaned.dataBindings,
+          expectedUpdatedAt: sourcePlaybook.updatedAt,
+        });
+      } catch {
+        showWarning(t('clipboard.crossPlaybookCleanupFailed', { name: payload.sourcePlaybookName ?? payload.sourcePlaybookId }));
+      }
+    }
+
+    selectStep(result.pastedTaskIds.length === 1 ? result.pastedTaskIds[0] : null);
+    showSuccess(t('clipboard.pasted', { count: result.tasks.length }));
+
+    const { agents } = useAgentStore.getState();
+    const context = {
+      agentIds: agents.length > 0 ? new Set(agents.map((a) => a.id)) : null,
+      workspaceIds: new Set(playbook.workspaces ?? []),
+      connectorIds: null as Set<string> | null,
+    };
+    const warnings = checkPasteCompatibility(result.tasks, context);
+    if (warnings.length > 0) {
+      showWarning(t('clipboard.compatibilityWarnings', {
+        agentCount: warnings.filter((w) => w.kind === 'agent').length,
+        workspaceCount: warnings.filter((w) => w.kind === 'workspace').length,
+        connectorCount: warnings.filter((w) => w.kind === 'connector').length,
+      }));
+    }
+
+    return result.pastedTaskIds;
+  }, [captureSnapshot, getSelectedTaskNodes, playbook, selectStep, syncDataBindings, syncEdges, t, updateTasks]);
+
   return {
     nodes,
     edges,
@@ -457,6 +633,9 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     repackIteratorChildren,
     setNodes,
     setEdges,
+    copySelection,
+    cutSelection,
+    pasteClipboard,
     triggerActions: playbook?.id ? triggerActions : undefined,
   };
 }

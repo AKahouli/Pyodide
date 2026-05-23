@@ -759,6 +759,8 @@ describe('executePlaybook', () => {
     });
 
     expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-1': 'replay_flex' },
       reflectionEnabled: true,
       advisorAutopilotEnabled: true,
       advisorAutopilotTargetScore: 92,
@@ -784,6 +786,8 @@ describe('executePlaybook', () => {
 
     expect(apiClientMock.post).toHaveBeenCalledWith('/playbooks/playbook-1/executions', {
       singleStepTaskId: 'task-7',
+      executionMode: 'live',
+      stepExecutionModes: { 'task-7': 'replay_strict' },
     });
   });
 });

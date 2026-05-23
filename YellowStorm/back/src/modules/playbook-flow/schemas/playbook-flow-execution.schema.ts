@@ -99,6 +99,12 @@ export class FlowExecution {
   @Prop({ required: false, type: [SeededTaskOutput], default: [] })
   seededTaskOutputs?: SeededTaskOutput[];
 
+  @Prop({ required: false, type: String, enum: ['live', 'inherit', 'replay_strict', 'replay_flex', 'replay_adaptive'], default: 'live' })
+  executionMode?: string;
+
+  @Prop({ required: false, type: Object, default: {} })
+  stepExecutionModes?: Record<string, string>;
+
   createdAt?: Date;
 
   updatedAt?: Date;
