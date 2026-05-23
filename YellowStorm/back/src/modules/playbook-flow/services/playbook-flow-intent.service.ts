@@ -15,6 +15,15 @@ type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizatio
 
 type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
 
+interface IntentWorkflowValidationContext {
+  existingTaskIds: Set<string>;
+  existingTaskTitles: Map<string, string>;
+  existingTaskAgents: Map<string, string | null>;
+  inputPortsByTaskId: Map<string, Map<string, string>>;
+  outputPortsByTaskId: Map<string, Map<string, string>>;
+  existingBindingTargets: Set<string>;
+}
+
 interface PlaybookIntentTaskDraft {
   title: string;
   description: string;
@@ -121,6 +130,9 @@ type PlaybookIntentWorkflowChange =
     targetTaskId: string | null;
     targetNodeRef: string | null;
     targetPort: string;
+    sourceTaskId?: string | null;
+    sourceNodeRef?: string | null;
+    sourcePort?: string | null;
   };
 
 interface PlaybookIntentWorkflowPlanSuggestion {
@@ -234,16 +246,55 @@ export class PlaybookFlowIntentService {
       ],
     }, { timeout: 45000 });
 
+    const validationContext = this.buildValidationContext(flow);
+
     return {
       suggestions: this.normalizeSuggestions(
         this.extractChatCompletionText(response.data),
         dto,
         selectedNode?.id || null,
         effectiveSettings.intentNormalizationLimits,
+        validationContext,
       ),
       model,
       settings: effectiveSettings,
     };
+  }
+
+  private buildValidationContext(flow: any): IntentWorkflowValidationContext {
+    const nodes: Array<{ id: string; label?: string; metadata?: { agentSlug?: string }; input?: { ports?: Array<{ id: string; type?: string }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const bindings: Array<{ targetNode: string; targetPort: string }> = flow.dataBindings || [];
+
+    const existingTaskIds = new Set<string>();
+    const existingTaskTitles = new Map<string, string>();
+    const existingTaskAgents = new Map<string, string | null>();
+    const inputPortsByTaskId = new Map<string, Map<string, string>>();
+    const outputPortsByTaskId = new Map<string, Map<string, string>>();
+    const existingBindingTargets = new Set<string>();
+
+    for (const node of nodes) {
+      existingTaskIds.add(node.id);
+      existingTaskTitles.set(node.id, (node.label || '').trim().toLowerCase().replace(/\s+/g, ' '));
+      existingTaskAgents.set(node.id, node.metadata?.agentSlug || null);
+
+      const inputMap = new Map<string, string>();
+      for (const p of node.input?.ports || []) {
+        if (p.id && p.type) inputMap.set(p.id, p.type);
+      }
+      inputPortsByTaskId.set(node.id, inputMap);
+
+      const outputMap = new Map<string, string>();
+      for (const p of node.output?.ports || []) {
+        if (p.id && p.type) outputMap.set(p.id, p.type);
+      }
+      outputPortsByTaskId.set(node.id, outputMap);
+    }
+
+    for (const b of bindings) {
+      existingBindingTargets.add(`${b.targetNode}:${b.targetPort}`);
+    }
+
+    return { existingTaskIds, existingTaskTitles, existingTaskAgents, inputPortsByTaskId, outputPortsByTaskId, existingBindingTargets };
   }
 
   private buildWorkflowSummary(flow: any, selectedNodeId: string | null) {
@@ -259,8 +310,8 @@ export class PlaybookFlowIntentService {
         id: node.id,
         title: node.label || node.id,
         description: node.description || '',
-        inputPorts: (node.input?.ports || []).map((p) => ({ id: p.id, type: p.type, required: p.required === true })),
-        outputPorts: (node.output?.ports || []).map((p) => ({ id: p.id, type: p.type })),
+        inputPorts: (node.input?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type, required: p.required === true })),
+        outputPorts: (node.output?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type })),
       })),
       edges: edges.map((edge) => ({
         sourceId: edge.source,
@@ -293,8 +344,8 @@ export class PlaybookFlowIntentService {
     const downstreamIds = edges.filter((e) => e.source === selectedNodeId).map((e) => e.target);
 
     return {
-      upstream: nodes.filter((n) => upstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', outputPorts: (n.output?.ports || []).map((p) => ({ id: p.id, type: p.type })) })),
-      downstream: nodes.filter((n) => downstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', inputPorts: (n.input?.ports || []).map((p) => ({ id: p.id, type: p.type, required: p.required === true })) })),
+      upstream: nodes.filter((n) => upstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', outputPorts: (n.output?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type })) })),
+      downstream: nodes.filter((n) => downstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', inputPorts: (n.input?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type, required: p.required === true })) })),
       incomingBindings: bindings.filter((b) => b.targetNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, sourceNode: b.sourceNode || null, sourcePort: b.sourcePort || null, targetPort: b.targetPort })),
       outgoingBindings: bindings.filter((b) => b.sourceNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, targetNode: b.targetNode, targetPort: b.targetPort, sourcePort: b.sourcePort || null })),
     };
@@ -319,13 +370,14 @@ export class PlaybookFlowIntentService {
     dto: RequestPlaybookFlowIntentDto,
     selectedNodeId: string | null,
     limits: IntentNormalizationLimits,
+    validationContext: IntentWorkflowValidationContext,
   ): PlaybookIntentSuggestion[] {
     try {
       const parsed = JSON.parse(raw || '{}') as { suggestions?: Array<Record<string, unknown>> };
       const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
       const normalized = suggestions
         .slice(0, 6)
-        .map((item, index) => this.normalizeSuggestion(item, index, selectedNodeId, limits))
+        .map((item, index) => this.normalizeSuggestion(item, index, selectedNodeId, limits, validationContext))
         .filter((item): item is PlaybookIntentSuggestion => item !== null);
 
       return [this.createFallbackSuggestion(dto, selectedNodeId), ...normalized];
@@ -339,9 +391,10 @@ export class PlaybookFlowIntentService {
     index: number,
     selectedNodeId: string | null,
     limits: IntentNormalizationLimits,
+    validationContext: IntentWorkflowValidationContext,
   ): PlaybookIntentSuggestion | null {
     if (item.kind === 'workflow_plan' || Array.isArray(item.changes) || this.looksLikeWorkflowPlanImpact(item.impact)) {
-      return this.normalizeWorkflowPlanSuggestion(item, index, limits);
+      return this.normalizeWorkflowPlanSuggestion(item, index, limits, validationContext);
     }
 
     const label = this.normalizeText(item.label) || this.normalizeText(item.title);
@@ -400,18 +453,36 @@ export class PlaybookFlowIntentService {
     item: Record<string, unknown>,
     index: number,
     limits: IntentNormalizationLimits,
+    ctx: IntentWorkflowValidationContext,
   ): PlaybookIntentWorkflowPlanSuggestion | null {
     const label = this.normalizeText(item.label) || this.normalizeText(item.title);
     if (!label || !Array.isArray(item.changes)) {
       return null;
     }
 
-    const changes = item.changes
+    const rawChanges = item.changes
       .slice(0, limits.maxWorkflowPlanChanges)
       .map((change) => this.normalizeWorkflowChange(change, limits))
       .filter((change): change is PlaybookIntentWorkflowChange => change !== null);
 
-    if (changes.length === 0) {
+    const createdNodeRefs = new Set<string>();
+    const deletedTaskIds = new Set<string>();
+    const acceptedChanges: PlaybookIntentWorkflowChange[] = [];
+
+    for (const change of rawChanges) {
+      const validated = this.validateWorkflowChange(change, ctx, createdNodeRefs, deletedTaskIds);
+      if (validated) {
+        acceptedChanges.push(validated);
+        if (validated.type === 'create_node') {
+          createdNodeRefs.add(validated.nodeRef);
+        }
+        if (validated.type === 'delete_node') {
+          deletedTaskIds.add(validated.targetTaskId);
+        }
+      }
+    }
+
+    if (acceptedChanges.length === 0) {
       return null;
     }
 
@@ -422,10 +493,135 @@ export class PlaybookFlowIntentService {
       summary: this.normalizeText(item.summary) || '',
       reason: this.normalizeText(item.reason) || '',
       confidence: this.normalizeConfidence(item.confidence),
-      impact: this.normalizeWorkflowImpact(item.impact, changes),
-      changes,
+      impact: this.normalizeWorkflowImpact(item.impact, acceptedChanges),
+      changes: acceptedChanges,
       isDirectIntentFallback: false,
     };
+  }
+
+  private normalizeComparableTitle(value: string): string {
+    return value.trim().toLowerCase().replace(/\s+/g, ' ');
+  }
+
+  private validateWorkflowChange(
+    change: PlaybookIntentWorkflowChange,
+    ctx: IntentWorkflowValidationContext,
+    createdNodeRefs: Set<string>,
+    deletedTaskIds: Set<string>,
+  ): PlaybookIntentWorkflowChange | null {
+    if (change.type === 'create_node') {
+      if (createdNodeRefs.has(change.nodeRef)) {
+        return null;
+      }
+
+      const newTitle = this.normalizeComparableTitle(change.task.title);
+      const newAgent = change.task.agentSlug || null;
+      for (const [taskId, existingTitle] of ctx.existingTaskTitles) {
+        if (existingTitle === newTitle) {
+          const existingAgent = ctx.existingTaskAgents.get(taskId);
+          if (existingAgent === newAgent) {
+            return null;
+          }
+        }
+      }
+
+      return change;
+    }
+
+    if (change.type === 'update_node') {
+      if (!ctx.existingTaskIds.has(change.targetTaskId)) {
+        return null;
+      }
+      return change;
+    }
+
+    if (change.type === 'delete_node') {
+      if (!ctx.existingTaskIds.has(change.targetTaskId)) {
+        return null;
+      }
+      return change;
+    }
+
+    if (change.type === 'create_edge' || change.type === 'delete_edge') {
+      const sourceValid = this.resolveTaskRef(change.sourceTaskId, change.sourceNodeRef, ctx.existingTaskIds, createdNodeRefs);
+      const targetValid = this.resolveTaskRef(change.targetTaskId, change.targetNodeRef, ctx.existingTaskIds, createdNodeRefs);
+      if (!sourceValid || !targetValid) {
+        return null;
+      }
+
+      if (change.type === 'create_edge') {
+        if (change.sourceTaskId && deletedTaskIds.has(change.sourceTaskId)) {
+          return null;
+        }
+        if (change.targetTaskId && deletedTaskIds.has(change.targetTaskId)) {
+          return null;
+        }
+      }
+
+      return change;
+    }
+
+    if (change.type === 'create_data_binding') {
+      const sourceValid = this.resolveTaskRef(change.sourceTaskId, change.sourceNodeRef, ctx.existingTaskIds, createdNodeRefs);
+      const targetValid = this.resolveTaskRef(change.targetTaskId, change.targetNodeRef, ctx.existingTaskIds, createdNodeRefs);
+      if (!sourceValid || !targetValid) {
+        return null;
+      }
+
+      if (change.sourceTaskId && ctx.existingTaskIds.has(change.sourceTaskId)) {
+        const outputPorts = ctx.outputPortsByTaskId.get(change.sourceTaskId);
+        if (outputPorts && change.sourcePort && !outputPorts.has(change.sourcePort)) {
+          return null;
+        }
+      }
+
+      if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
+        const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
+        if (inputPorts && change.targetPort && !inputPorts.has(change.targetPort)) {
+          return null;
+        }
+      }
+
+      if (
+        change.sourceTaskId && ctx.existingTaskIds.has(change.sourceTaskId)
+        && change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)
+        && change.sourcePort && change.targetPort
+      ) {
+        const sourceKind = ctx.outputPortsByTaskId.get(change.sourceTaskId)?.get(change.sourcePort);
+        const targetKind = ctx.inputPortsByTaskId.get(change.targetTaskId)?.get(change.targetPort);
+        if (sourceKind && targetKind && sourceKind !== targetKind) {
+          return null;
+        }
+      }
+
+      return change;
+    }
+
+    if (change.type === 'delete_data_binding') {
+      if (change.targetTaskId && !ctx.existingTaskIds.has(change.targetTaskId)) {
+        return null;
+      }
+      if (change.targetTaskId && ctx.existingTaskIds.has(change.targetTaskId)) {
+        const inputPorts = ctx.inputPortsByTaskId.get(change.targetTaskId);
+        if (inputPorts && !inputPorts.has(change.targetPort)) {
+          return null;
+        }
+      }
+      return change;
+    }
+
+    return null;
+  }
+
+  private resolveTaskRef(
+    taskId: string | null,
+    nodeRef: string | null,
+    existingTaskIds: Set<string>,
+    createdNodeRefs: Set<string>,
+  ): boolean {
+    if (taskId) return existingTaskIds.has(taskId);
+    if (nodeRef) return createdNodeRefs.has(nodeRef);
+    return false;
   }
 
   private normalizeWorkflowChange(value: unknown, limits: IntentNormalizationLimits): PlaybookIntentWorkflowChange | null {
@@ -455,7 +651,7 @@ export class PlaybookFlowIntentService {
     }
 
     if (item.type === 'update_node') {
-      const targetTaskId = this.normalizeText(item.targetTaskId) || this.normalizeText(item.nodeRef);
+      const targetTaskId = this.normalizeText(item.targetTaskId);
       const task = this.normalizePartialTaskDraft(
         item.task,
         this.normalizeText(item.taskTitle),
@@ -469,7 +665,7 @@ export class PlaybookFlowIntentService {
     }
 
     if (item.type === 'delete_node') {
-      const targetTaskId = this.normalizeText(item.targetTaskId) || this.normalizeText(item.nodeRef);
+      const targetTaskId = this.normalizeText(item.targetTaskId);
       return targetTaskId ? { type: 'delete_node', targetTaskId } : null;
     }
 
@@ -527,11 +723,17 @@ export class PlaybookFlowIntentService {
       if (!targetPort || !(targetTaskId || targetNodeRef)) {
         return null;
       }
+      const sourceTaskId = this.normalizeText(item.sourceTaskId);
+      const sourceNodeRef = this.normalizeText(item.sourceNodeRef);
+      const sourcePort = this.normalizeText(item.sourcePort);
       return {
         type: 'delete_data_binding',
         targetTaskId: targetTaskId || null,
         targetNodeRef: targetNodeRef || null,
         targetPort,
+        ...(sourceTaskId ? { sourceTaskId: sourceTaskId || null } : {}),
+        ...(sourceNodeRef ? { sourceNodeRef: sourceNodeRef || null } : {}),
+        ...(sourcePort ? { sourcePort: sourcePort || null } : {}),
       };
     }
 

@@ -162,6 +162,12 @@ ref,
 
   const handleSave = () => void performSave().then(() => onOpenChange(false));
 
+  const handleOpenOutputFormatEditor = async () => {
+    if (!onOpenOutputFormatEditor || !canEditReplay || !currentReplay) return;
+    await performSave();
+    await onOpenOutputFormatEditor(task.id);
+  };
+
   const handleRemove = async () => {
     if (!activeReplayId || !canEditReplay) return;
     setIsRemoving(true);
@@ -230,7 +236,7 @@ ref,
                           variant="ghost"
                           size="sm"
                           className="h-8 px-0"
-                          onClick={() => void onOpenOutputFormatEditor(task.id)}
+                          onClick={() => void handleOpenOutputFormatEditor()}
                           disabled={isBusy || !canEditReplay}
                         >
                           {t('baselineBadge.editOutputFormatTemplate')}

@@ -1918,13 +1918,22 @@ function PlaybookCanvasInner() {
     let nextDataBindings = options?.replaceAll ? [] : [...(playbook.dataBindings ?? [])];
     const createdNodeRefs = new Map<string, string>();
     let deletedBounds: { x: number; y: number; width: number; height: number } | null = null;
+    const applicationWarnings: string[] = [];
 
     const resolveTaskReference = (reference: string | null | undefined) => {
       if (!reference) return null;
+      const mapped = createdNodeRefs.get(reference);
+      if (mapped !== undefined) {
+        if (mapped === '') {
+          applicationWarnings.push(`Skipped reference to unresolved anchor nodeRef="${reference}"`);
+          return null;
+        }
+        return mapped;
+      }
       if (nextTasks.some((task) => task.id === reference)) {
         return reference;
       }
-      return createdNodeRefs.get(reference) || null;
+      return null;
     };
 
     const resolveAnchorTask = (targetTaskId: string | null, nodeRef: string | null) => {
@@ -1975,13 +1984,10 @@ function PlaybookCanvasInner() {
       }
 
       if (hasExplicitAnchors && anchorTasks.length === 0) {
-        const newTask = createIntentTask(deterministicNodeId, taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, null, nextTasks.length);
-        nextTasks = [...nextTasks, newTask];
-        changedNodeIds.add(newTask.id);
         if (newNodeRef) {
-          createdNodeRefs.set(newNodeRef, newTask.id);
+          createdNodeRefs.set(newNodeRef, '');
         }
-        return true;
+        return false;
       }
 
       const newTask = createIntentTask(deterministicNodeId, taskTitle, taskDescription, agentSlug, templateType, inputPorts, outputPorts, anchorTask, nextTasks.length);
@@ -2301,6 +2307,27 @@ function PlaybookCanvasInner() {
       });
     };
 
+    const findUnboundRequiredInputs = (): Array<{ taskId: string; portId: string }> => {
+      const unbound: Array<{ taskId: string; portId: string }> = [];
+      for (const task of nextTasks) {
+        if (!changedNodeIds.has(task.id)) continue;
+        for (const port of task.inputPorts || []) {
+          if (!port.required) continue;
+          const hasBinding = nextDataBindings.some((b) => b.targetNode === task.id && b.targetPort === port.id);
+          if (hasBinding) continue;
+          const hasIncomingEdge = nextEdges.some((edge) => {
+            const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
+            const isConditional = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+            return !isConditional && edge.target === task.id && (edgeData.targetInputPortId || edge.targetHandle || 'default') === port.id;
+          });
+          if (!hasIncomingEdge) {
+            unbound.push({ taskId: task.id, portId: port.id });
+          }
+        }
+      }
+      return unbound;
+    };
+
     const applyDataBindingChange = (
       type: 'create_data_binding' | 'delete_data_binding',
       targetTaskId: string | null,
@@ -2316,9 +2343,16 @@ function PlaybookCanvasInner() {
       if (!resolvedTargetId || !targetPort) return;
 
       if (type === 'delete_data_binding') {
-        nextDataBindings = nextDataBindings.filter(
-          (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
-        );
+        const resolvedSourceId = resolveTaskReference(sourceTaskId ?? null) || resolveTaskReference(sourceNodeRef ?? null);
+        if (resolvedSourceId && sourcePort) {
+          nextDataBindings = nextDataBindings.filter(
+            (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort && b.sourceKind === 'node-output' && b.sourceNode === resolvedSourceId && b.sourcePort === sourcePort),
+          );
+        } else {
+          nextDataBindings = nextDataBindings.filter(
+            (b) => !(b.targetNode === resolvedTargetId && b.targetPort === targetPort),
+          );
+        }
         return;
       }
 
@@ -2466,6 +2500,13 @@ function PlaybookCanvasInner() {
         null,
         null,
       );
+      reconcileRequiredNodeOutputBindings();
+
+      const unboundInputs = findUnboundRequiredInputs();
+      if (unboundInputs.length > 0) {
+        console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
+      }
+
       commitGraph(nextTasks, nextEdges, nextDataBindings);
       void saveCurrentPlaybook({
         expectedUpdatedAt: suggestionBaseUpdatedAt,
@@ -2538,6 +2579,10 @@ function PlaybookCanvasInner() {
           change.targetTaskId,
           change.targetNodeRef,
           change.targetPort,
+          undefined,
+          change.sourceTaskId ?? undefined,
+          change.sourceNodeRef ?? undefined,
+          change.sourcePort ?? undefined,
         );
         continue;
       }
@@ -2561,6 +2606,24 @@ function PlaybookCanvasInner() {
     }
 
     reconcileRequiredNodeOutputBindings();
+
+    const tasksChanged = changedNodeIds.size > 0 || changedEdgeIds.size > 0;
+    const graphChanged = nextTasks.length !== (options?.replaceAll ? 0 : playbook.tasks.length) || nextEdges.length !== (options?.replaceAll ? 0 : edges.length) || nextDataBindings.length !== (options?.replaceAll ? 0 : (playbook.dataBindings ?? []).length);
+    if (!tasksChanged && !graphChanged) {
+      showError('No valid changes to apply from this suggestion');
+      setIntentSuggestions([]);
+      return;
+    }
+
+    if (applicationWarnings.length > 0) {
+      console.warn('[IntentApply] Warnings:', applicationWarnings);
+    }
+
+    const unboundInputs = findUnboundRequiredInputs();
+    if (unboundInputs.length > 0) {
+      console.warn('[IntentApply] Unbound required inputs on newly created tasks:', unboundInputs);
+    }
+
     commitGraph(nextTasks, nextEdges, nextDataBindings);
     void saveCurrentPlaybook({
       expectedUpdatedAt: suggestionBaseUpdatedAt,

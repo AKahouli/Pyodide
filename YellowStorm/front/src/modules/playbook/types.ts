@@ -227,6 +227,11 @@ export interface PlaybookTask {
   activeReplayFormatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   activeReplayFormatGuideError?: string | null;
   activeReplayLabel?: string | null;
+  activeReplayReplayConfig?: {
+    replayOutputFormat: boolean;
+    replayToolTrace: boolean;
+    replayReasoningChain: boolean;
+  };
   hasOutputFormatTemplate?: boolean;
   activeOutputFormatTemplateId?: string | null;
   activeOutputFormatTemplateVersion?: number | null;
@@ -444,6 +449,9 @@ export type PlaybookIntentWorkflowChange =
       targetTaskId: string | null;
       targetNodeRef: string | null;
       targetPort: string;
+      sourceTaskId?: string | null;
+      sourceNodeRef?: string | null;
+      sourcePort?: string | null;
     };
 
 export interface PlaybookIntentWorkflowImpact {

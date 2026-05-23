@@ -1733,6 +1733,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
                       activeReplayPreserveOutputFormat: replay.preserveOutputFormat || false,
                       activeReplayFormatGuideStatus: replay.formatGuideStatus || 'disabled',
                       activeReplayFormatGuideError: replay.formatGuideError || null,
+                      activeReplayReplayConfig: replay.replayConfig || { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true },
                       hasOutputFormatTemplate: task.hasOutputFormatTemplate,
                       activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
                       activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,

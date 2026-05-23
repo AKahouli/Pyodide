@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReplayBaselineSettingsDialog } from './ReplayBaselineSettingsDialog';
 import type { PlaybookTask, ValidatedTaskReplay } from '../types';
 
@@ -8,6 +8,10 @@ const fetchTaskReplays = vi.fn();
 const updateTaskReplayFormatGuide = vi.fn();
 const renameTaskReplay = vi.fn();
 const deleteTaskReplay = vi.fn();
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
@@ -152,8 +156,25 @@ describe('ReplayBaselineSettingsDialog', () => {
     });
   });
 
-  it('opens the output format editor when replay output format is enabled', async () => {
-    fetchTaskReplays.mockResolvedValue([replay]);
+  it('saves replay output format before opening the output format editor', async () => {
+    const replayWithOutputFormatDisabled: ValidatedTaskReplay = {
+      ...replay,
+      replayConfig: {
+        replayOutputFormat: false,
+        replayToolTrace: false,
+        replayReasoningChain: true,
+      },
+    };
+
+    fetchTaskReplays.mockResolvedValue([replayWithOutputFormatDisabled]);
+    updateTaskReplayFormatGuide.mockResolvedValue({
+      ...replayWithOutputFormatDisabled,
+      replayConfig: {
+        replayOutputFormat: true,
+        replayToolTrace: false,
+        replayReasoningChain: true,
+      },
+    });
     const onOpenOutputFormatEditor = vi.fn();
 
     render(
@@ -162,15 +183,25 @@ describe('ReplayBaselineSettingsDialog', () => {
         onOpenChange={vi.fn()}
         playbookId="playbook-1"
         task={task}
-        replay={replay}
-        replayId={replay.id}
+        replay={replayWithOutputFormatDisabled}
+        replayId={replayWithOutputFormatDisabled.id}
         onOpenOutputFormatEditor={onOpenOutputFormatEditor}
       />,
     );
 
+    const replayConfigSwitches = await screen.findAllByRole('button', { name: '' });
+    fireEvent.click(replayConfigSwitches[0]);
     fireEvent.click(await screen.findByRole('button', { name: 'baselineBadge.editOutputFormatTemplate' }));
 
     await waitFor(() => {
+      expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', {
+        outputFormatGuide: 'Current guide',
+        replayConfig: {
+          replayOutputFormat: true,
+          replayToolTrace: false,
+          replayReasoningChain: true,
+        },
+      });
       expect(onOpenOutputFormatEditor).toHaveBeenCalledWith('task-1');
     });
   });

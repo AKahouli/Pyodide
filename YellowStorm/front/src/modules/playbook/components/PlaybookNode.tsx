@@ -455,7 +455,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         isStale: currentTask.activeReplayIsStale,
         staleReasons: currentTask.activeReplayStaleReasons,
         label: currentTask.activeReplayLabel ?? null,
-        replayConfig: {
+        replayConfig: currentTask.activeReplayReplayConfig ?? {
           replayOutputFormat: false,
           replayToolTrace: false,
           replayReasoningChain: true,
