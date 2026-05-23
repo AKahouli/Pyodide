@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type KeyboardEvent, type ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, forwardRef, useImperativeHandle, type KeyboardEvent, type ReactNode } from 'react';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -24,6 +24,7 @@ import { PlaybookIteratorConfigFields } from './PlaybookIteratorConfigFields';
 import { PlaybookRouterConfigSection } from './PlaybookRouterConfigSection';
 import { PlaybookHumanApprovalConfigSection } from './PlaybookHumanApprovalConfigSection';
 import { PlaybookDataFlowSection } from './PlaybookDataFlowSection';
+import { ReplayBaselineSettingsDialog, type ReplayBaselineSettingsDialogHandle } from './ReplayBaselineSettingsDialog';
 import type {
   PlaybookTask,
   ValidatedTaskReplay,
@@ -222,6 +223,10 @@ function isStepLikeNodeType(nodeType: PlaybookNodeType): boolean {
   return nodeType === 'agent' || nodeType === 'action' || nodeType === 'evaluation';
 }
 
+export interface PlaybookNodeEditorHandle {
+  flushSave: () => void;
+}
+
 interface Props {
   playbookId: string | null;
   task: PlaybookTask | null;
@@ -229,18 +234,18 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (taskId: string, data: Partial<PlaybookTask>) => void;
+  onOpenOutputFormatEditor?: (taskId: string) => Promise<void> | void;
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave }: Props) {
+export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOpenChange, onSave, onOpenOutputFormatEditor }, ref) {
   const agents = useAgents();
   const fetchAgents = useAgentStore((s) => s.fetchAgents);
   const models = useModels();
   const fetchModels = useModelsStore((s) => s.fetchModels);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const activateTaskReplay = usePlaybookStore((s) => s.activateTaskReplay);
-  const updateTaskReplayFormatGuide = usePlaybookStore((s) => s.updateTaskReplayFormatGuide);
   const fetchEvaluationBaseline = usePlaybookStore((s) => s.fetchEvaluationBaseline);
   const fetchEvaluationExecutions = usePlaybookStore((s) => s.fetchEvaluationExecutions);
   const createEvaluationBaselineFromExecution = usePlaybookStore((s) => s.createEvaluationBaselineFromExecution);
@@ -307,10 +312,6 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const [replaysLoading, setReplaysLoading] = useState(false);
   const [activatingReplayId, setActivatingReplayId] = useState<string | null>(null);
   const [editingReplay, setEditingReplay] = useState<ValidatedTaskReplay | null>(null);
-  const [formatGuideDraft, setFormatGuideDraft] = useState('');
-  const [preserveFormatDraft, setPreserveFormatDraft] = useState(false);
-  const [replayConfigDraft, setReplayConfigDraft] = useState({ replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false });
-  const [savingFormatGuide, setSavingFormatGuide] = useState(false);
   const [hasInitializedDraft, setHasInitializedDraft] = useState(false);
   const [evaluationBaselineMeta, setEvaluationBaselineMeta] = useState<{ id: string; sourceExecutionId: string; createdAt: string } | null>(null);
   const [evaluationExecutions, setEvaluationExecutions] = useState<Array<{ id: string; executionId: string; createdAt: string; score?: number | null; verdict?: 'pass' | 'warning' | 'fail' | null }>>([]);
@@ -321,6 +322,23 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
   const [viewBaselineDialogOpen, setViewBaselineDialogOpen] = useState(false);
   const [advancedEvaluationOpen, setAdvancedEvaluationOpen] = useState(false);
   const lastSuggestionSignatureRef = useRef('');
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const taskRef = useRef(task);
+  taskRef.current = task;
+  const hasInitializedDraftRef = useRef(hasInitializedDraft);
+  hasInitializedDraftRef.current = hasInitializedDraft;
+  const replayDialogRef = useRef<ReplayBaselineSettingsDialogHandle | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    flushSave: () => {
+      const currentTask = taskRef.current;
+      if (currentTask && hasInitializedDraftRef.current) {
+        onSave(currentTask.id, draftToSavePayload(draftRef.current));
+      }
+      void replayDialogRef.current?.flushSave();
+    },
+  }), [onSave]);
 
   const isEvaluationTask = draft.nodeType === 'evaluation';
   const isIteratorTask = draft.nodeType === 'iterator';
@@ -489,6 +507,16 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
     if (emailInput.trim()) addEmail(emailInput);
   }, [emailInput, addEmail]);
 
+  const handleReplayUpdated = useCallback((updatedReplay: ValidatedTaskReplay) => {
+    setReplays((prev) => prev.map((item) => (item.id === updatedReplay.id ? updatedReplay : item)));
+    setEditingReplay(updatedReplay);
+  }, []);
+
+  const handleReplayRemoved = useCallback((removedReplayId: string) => {
+    setReplays((prev) => prev.filter((item) => item.id !== removedReplayId));
+    setEditingReplay((prev) => (prev?.id === removedReplayId ? null : prev));
+  }, []);
+
   if (!task) return null;
 
   const handleActivateReplay = async (replayId: string) => {
@@ -509,29 +537,6 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
 
   const openFormatGuideEditor = (replay: ValidatedTaskReplay) => {
     setEditingReplay(replay);
-    setPreserveFormatDraft(Boolean(replay.preserveOutputFormat));
-    setFormatGuideDraft(replay.outputFormatGuide || '');
-    setReplayConfigDraft({
-      replayOutputFormat: replay.replayConfig?.replayOutputFormat ?? false,
-      replayToolTrace: replay.replayConfig?.replayToolTrace ?? false,
-      replayReasoningChain: replay.replayConfig?.replayReasoningChain ?? false,
-    });
-  };
-
-  const handleSaveFormatGuide = async () => {
-    if (!playbookId || !task || !editingReplay) return;
-    setSavingFormatGuide(true);
-    try {
-      const updatedReplay = await updateTaskReplayFormatGuide(playbookId, task.id, editingReplay.id, {
-        preserveOutputFormat: preserveFormatDraft,
-        outputFormatGuide: formatGuideDraft,
-        replayConfig: replayConfigDraft,
-      });
-      setReplays((prev) => prev.map((item) => (item.id === updatedReplay.id ? updatedReplay : item)));
-      setEditingReplay(updatedReplay);
-    } finally {
-      setSavingFormatGuide(false);
-    }
   };
 
   const handleCreateBaselineFromSelectedExecution = async () => {
@@ -1287,102 +1292,22 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
       </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editingReplay} onOpenChange={(open) => {
-        if (!open) {
-          setEditingReplay(null);
-          setFormatGuideDraft('');
-          setPreserveFormatDraft(false);
-          setReplayConfigDraft({ replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false });
-        }
-      }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>{t('nodeEditor.formatGuideTitle')}</DialogTitle>
-            <DialogDescription>
-              {t('nodeEditor.formatGuideDescription')}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-center justify-between rounded-md border p-3">
-              <div>
-                <div className="text-sm font-medium">{t('nodeEditor.formatGuidePreserve')}</div>
-                <div className="text-xs text-muted-foreground">
-                  {t('nodeEditor.formatGuidePreserveHint')}
-                </div>
-              </div>
-              <Switch checked={preserveFormatDraft} onCheckedChange={setPreserveFormatDraft} />
-            </div>
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-muted-foreground">{t('nodeEditor.replayConfigSectionTitle')}</div>
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <div>
-                  <div className="text-sm font-medium">{t('nodeEditor.replayConfigOutputFormat')}</div>
-                  <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigOutputFormatHint')}</div>
-                </div>
-                <Switch checked={replayConfigDraft.replayOutputFormat} onCheckedChange={(v) => setReplayConfigDraft((prev) => ({ ...prev, replayOutputFormat: v }))} />
-              </div>
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <div>
-                  <div className="text-sm font-medium">{t('nodeEditor.replayConfigToolTrace')}</div>
-                  <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigToolTraceHint')}</div>
-                </div>
-                <Switch checked={replayConfigDraft.replayToolTrace} onCheckedChange={(v) => setReplayConfigDraft((prev) => ({ ...prev, replayToolTrace: v }))} />
-              </div>
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <div>
-                  <div className="text-sm font-medium">{t('nodeEditor.replayConfigReasoningChain')}</div>
-                  <div className="text-xs text-muted-foreground">{t('nodeEditor.replayConfigReasoningChainHint')}</div>
-                </div>
-                <Switch checked={replayConfigDraft.replayReasoningChain} onCheckedChange={(v) => setReplayConfigDraft((prev) => ({ ...prev, replayReasoningChain: v }))} />
-              </div>
-            </div>
-            <div className="space-y-2">
-              <Label>{t('nodeEditor.formatGuideLabel')}</Label>
-              {editingReplay?.preserveOutputFormat && editingReplay.formatGuideStatus === 'pending' && (
-                <div className="rounded-md border border-sky-500/30 bg-sky-500/5 p-3 text-xs text-sky-800">
-                  {t('nodeEditor.formatGuidePending')}
-                </div>
-              )}
-              {editingReplay?.formatGuideStatus === 'failed' && (
-                <div className="rounded-md border border-red-500/30 bg-red-500/5 p-3 text-xs text-red-800">
-                  {t('nodeEditor.formatGuideFailed')}{editingReplay.formatGuideError ? `: ${editingReplay.formatGuideError}` : '.'}
-                </div>
-              )}
-              <Textarea
-                value={formatGuideDraft}
-                onChange={(e) => setFormatGuideDraft(e.target.value)}
-                rows={10}
-                placeholder={t('nodeEditor.formatGuidePlaceholder')}
-              />
-            </div>
-            {editingReplay?.referenceOutput && (
-              <div className="space-y-2">
-                <Label>{t('nodeEditor.formatGuideReference')}</Label>
-                <div className="max-h-52 overflow-auto rounded-md border bg-muted/20 p-3 text-xs whitespace-pre-wrap">
-                  {editingReplay.referenceOutput}
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setEditingReplay(null);
-                setFormatGuideDraft('');
-                setPreserveFormatDraft(false);
-                setReplayConfigDraft({ replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false });
-              }}
-              disabled={savingFormatGuide}
-            >
-              {t('common.cancel')}
-            </Button>
-            <Button onClick={() => void handleSaveFormatGuide()} disabled={savingFormatGuide}>
-              {savingFormatGuide ? `${t('common.save')}...` : t('nodeEditor.formatGuideSave')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {playbookId && task && editingReplay && (
+        <ReplayBaselineSettingsDialog
+          ref={replayDialogRef}
+          open={!!editingReplay}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setEditingReplay(null);
+          }}
+          playbookId={playbookId}
+          task={task}
+          replay={editingReplay}
+          replayId={editingReplay.id}
+          onOpenOutputFormatEditor={onOpenOutputFormatEditor}
+          onReplayUpdated={handleReplayUpdated}
+          onReplayRemoved={handleReplayRemoved}
+        />
+      )}
 
       <Dialog open={baselineExecutionDialogOpen} onOpenChange={setBaselineExecutionDialogOpen}>
         <DialogContent>
@@ -1434,4 +1359,4 @@ export function PlaybookNodeEditor({ playbookId, task, allTasks = [], open, onOp
       </Dialog>
     </>
   );
-}
+});

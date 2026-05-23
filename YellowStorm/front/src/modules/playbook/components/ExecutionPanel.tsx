@@ -25,7 +25,7 @@ import {
   useIsExecuting,
 } from '../store';
 import { useModuleTranslation } from '@/modules/localization';
-import type { PlaybookPageMode } from '../types';
+import type { AdvisorIntentApplyRequest, PlaybookPageMode } from '../types';
 
 function delay(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -210,9 +210,16 @@ interface ExecutionPanelProps {
   pageMode?: PlaybookPageMode;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onCollapse?: () => void;
+  onApplyAdvisorIntent?: (request: AdvisorIntentApplyRequest) => Promise<void>;
 }
 
-export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputFormatEditor, onCollapse }: ExecutionPanelProps) {
+export function ExecutionPanel({
+  playbookId,
+  pageMode = 'run',
+  onOpenOutputFormatEditor,
+  onCollapse,
+  onApplyAdvisorIntent,
+}: ExecutionPanelProps) {
   const { t } = useModuleTranslation('playbook');
   const currentExecution = useCurrentExecution();
   const latestExecution = useLatestExecutionForPlaybook(playbookId);
@@ -566,6 +573,7 @@ export function ExecutionPanel({ playbookId, pageMode = 'run', onOpenOutputForma
           step={selectedResult}
           execution={execution}
           pageMode={pageMode}
+          onApplyAdvisorIntent={onApplyAdvisorIntent}
           iterationIndex={selectedIterationIndex}
           onSelectIteration={handleSelectStep}
           onRequestRunAdvisorEvaluation={(taskId, iteration) => {

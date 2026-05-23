@@ -177,7 +177,7 @@ export class PlaybookFlowReplayService {
       replayConfig: {
         replayOutputFormat: dto?.replayConfig?.replayOutputFormat ?? false,
         replayToolTrace: dto?.replayConfig?.replayToolTrace ?? false,
-        replayReasoningChain: dto?.replayConfig?.replayReasoningChain ?? false,
+        replayReasoningChain: dto?.replayConfig?.replayReasoningChain ?? true,
       },
     }]);
 
@@ -248,9 +248,12 @@ export class PlaybookFlowReplayService {
     return updated;
   }
 
-  async deleteTaskReplay(flowId: string, taskId: string, replayId: string): Promise<void> {
-    const result = await this.replayModel.deleteOne({ _id: replayId, flowId, taskId });
-    if (result.deletedCount === 0) throw new NotFoundException('Replay not found');
+  async deleteTaskReplay(flowId: string, taskId: string, replayId: string): Promise<{ removed: boolean; wasActive: boolean }> {
+    const existing = await this.replayModel.findOne({ _id: replayId, flowId, taskId }).lean();
+    if (!existing) return { removed: false, wasActive: false };
+    const wasActive = existing.status === FlowReplayValidationStatus.ACTIVE;
+    await this.replayModel.deleteOne({ _id: replayId });
+    return { removed: true, wasActive };
   }
 
   async getActiveReplay(flowId: string, taskId: string): Promise<FlowValidatedReplayDocument | null> {

@@ -1,5 +1,6 @@
 import sys
 import types
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -35,6 +36,7 @@ sys.modules.setdefault("src.config.settings", fake_settings)
 
 from src.flow_engine.nodes.step import run_step
 from src.flow_engine.nodes.step_prompt import build_step_prompt
+from src.flow_engine.nodes.step_result import finalize_step_result
 
 
 @pytest.fixture
@@ -67,6 +69,7 @@ class TestStepPrompt:
         assert "Complete this node using only the resolved input data and declared output contract." in prompt
         assert "---PUBLIC_REASONING_TRACE_JSON---" in prompt
         assert "Reasoning Trace:" in prompt
+        assert "reasoning_trace" not in prompt
 
     def test_build_prompt_omits_duplicate_trigger_context(self):
         prompt = build_step_prompt(
@@ -96,6 +99,8 @@ class TestStepPrompt:
         assert '"display_text": "user-visible final answer"' in prompt
         assert '"output_port_id": "summary"' in prompt
         assert '"output_port_id": "report"' in prompt
+        assert "reasoning_trace" in prompt
+        assert "---PUBLIC_REASONING_TRACE_JSON---" not in prompt
 
 
 def test_build_prompt_sandbox_note_can_be_appended() -> None:
@@ -113,6 +118,44 @@ def test_build_prompt_sandbox_note_can_be_appended() -> None:
 
     assert "Sandbox Files:" in prompt
     assert "CV_Kevin_Diallo.pdf" in prompt
+
+
+class TestStepResultReasoningTrace:
+    def test_structured_response_extracts_reasoning_trace(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": [
+                {"output_port_id": "summary", "artifact_kind": "text", "content": "done"},
+                {"output_port_id": "report", "artifact_kind": "document", "content": {"url": "https://example.com/file.pdf"}},
+            ],
+            "reasoning_trace": [
+                {"id": "s1", "type": "observation", "label": "Read", "description": "Read the brief.", "confidence": 0.9},
+                {"id": "s2", "type": "analysis", "label": "Synthesized", "description": "Combined inputs."},
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "summary", "type": "text"}, {"id": "report", "type": "document"}]},
+            response,
+        )
+        assert result["output"] == "Summary"
+        assert result["reasoning_trace"] == [
+            {"id": "s1", "type": "observation", "label": "Read", "description": "Read the brief.", "confidence": 0.9},
+            {"id": "s2", "type": "analysis", "label": "Synthesized", "description": "Combined inputs."},
+        ]
+
+    def test_structured_response_omits_reasoning_trace_when_absent(self):
+        response = json.dumps({
+            "display_text": "Summary",
+            "outputs": [
+                {"output_port_id": "summary", "artifact_kind": "text", "content": "done"},
+                {"output_port_id": "report", "artifact_kind": "document", "content": {"url": "https://example.com/f.pdf"}},
+            ],
+        })
+        result = finalize_step_result(
+            {"ports": [{"id": "summary", "type": "text"}, {"id": "report", "type": "document"}]},
+            response,
+        )
+        assert "reasoning_trace" not in result
 
 
 class _CalculatorArgs(BaseModel):

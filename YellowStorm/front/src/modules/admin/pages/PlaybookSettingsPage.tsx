@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Save, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select,
@@ -16,6 +17,24 @@ import { getAdminPlaybookSettings, getAllModels, updateAdminPlaybookSettings } f
 import type { AdminModelResponse, AdminPlaybookSettings } from '../types';
 
 const GLOBAL_DEFAULT_MODEL = '__global_default__';
+
+const DEFAULT_INTENT_NORMALIZATION_LIMITS = {
+  maxWorkflowPlanChanges: 8,
+  maxInputPorts: 4,
+  maxOutputPorts: 4,
+  maxIteratorBodySteps: 12,
+  maxIteratorBodyEdges: 24,
+};
+
+const LIMIT_FIELD_CONFIG = [
+  { key: 'maxWorkflowPlanChanges', min: 1, max: 50 },
+  { key: 'maxInputPorts', min: 1, max: 20 },
+  { key: 'maxOutputPorts', min: 1, max: 20 },
+  { key: 'maxIteratorBodySteps', min: 1, max: 50 },
+  { key: 'maxIteratorBodyEdges', min: 1, max: 100 },
+] as const;
+
+type LimitFieldKey = (typeof LIMIT_FIELD_CONFIG)[number]['key'];
 
 function buildSelectableModels(models: AdminModelResponse[], selectedModelId: string | null): AdminModelResponse[] {
   const activeModels = models.filter((model) => model.isActive);
@@ -41,6 +60,7 @@ export function PlaybookSettingsPage() {
     advisorEvaluationModelId: null,
     nodeSuggestionsMode: 'manual',
     approvalSuggestionMode: 'auto',
+    intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
   });
 
   useEffect(() => {
@@ -108,6 +128,27 @@ export function PlaybookSettingsPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleLimitChange = (
+    key: LimitFieldKey,
+    value: string,
+  ) => {
+    const config = LIMIT_FIELD_CONFIG.find((item) => item.key === key);
+    if (!config) return;
+
+    const parsedValue = Number.parseInt(value, 10);
+    const nextValue = Number.isFinite(parsedValue)
+      ? Math.min(config.max, Math.max(config.min, parsedValue))
+      : config.min;
+
+    setSettings((prev) => ({
+      ...prev,
+      intentNormalizationLimits: {
+        ...prev.intentNormalizationLimits,
+        [key]: nextValue,
+      },
+    }));
   };
 
   return (
@@ -225,6 +266,49 @@ export function PlaybookSettingsPage() {
                     <SelectItem value="manual">{t('playbookSettings.fields.approvalSuggestionMode.manual')}</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {t('playbookSettings.actions.save')}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('playbookSettings.intentNormalization.title')}</CardTitle>
+          <CardDescription>{t('playbookSettings.intentNormalization.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t('playbookSettings.loading')}</span>
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-4 md:grid-cols-2">
+                {LIMIT_FIELD_CONFIG.map((field) => (
+                  <div key={field.key} className="space-y-2">
+                    <Label htmlFor={field.key}>{t(`playbookSettings.fields.${field.key}.label`)}</Label>
+                    <Input
+                      id={field.key}
+                      type="number"
+                      min={field.min}
+                      max={field.max}
+                      value={settings.intentNormalizationLimits[field.key]}
+                      onChange={(event) => handleLimitChange(field.key, event.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {t(`playbookSettings.fields.${field.key}.help`, { min: field.min, max: field.max })}
+                    </p>
+                  </div>
+                ))}
               </div>
 
               <div className="flex justify-end">

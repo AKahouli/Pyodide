@@ -386,7 +386,7 @@ export interface PlaybookIntentSingleChangeSuggestion {
   reason: string;
   confidence: number;
   operationType: PlaybookIntentOperationType;
-  task: PlaybookIntentTaskDraft | null;
+  task: PlaybookIntentTaskDraft | Partial<PlaybookIntentTaskDraft> | null;
   targetTaskId: string | null;
   isDirectIntentFallback: boolean;
 }
@@ -1535,9 +1535,11 @@ export interface AdvisorRemediationItem {
   };
 }
 
-export interface ApplyRemediationsData {
-  mode?: 'update-current' | 'generate-new';
-  selectedIds?: string[];
+export type AdvisorRemediationMode = 'optimize-step' | 'update-current' | 'generate-new';
+
+export interface AdvisorIntentApplyRequest {
+  intent: string;
+  selectedTaskId?: string;
 }
 
 // ===== Store =====
@@ -1708,12 +1710,8 @@ export interface PlaybookActions {
     data: UpdateOutputFormatTemplateData,
   ) => Promise<OutputFormatTemplate>;
   deleteOutputFormatTemplate: (playbookId: string, taskId: string) => Promise<{ removed: boolean }>;
-  updatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
-  generatePlaybookFromJudge: (playbookId: string, executionId: string) => Promise<Playbook>;
-  optimizeStepFromJudge: (playbookId: string, executionId: string, taskId: string) => Promise<Playbook>;
   runAdvisorEvaluation: (executionId: string, taskId: string, iteration?: number) => Promise<void>;
   fetchAdvisorRemediations: (playbookId: string, executionId: string, taskId?: string) => Promise<AdvisorRemediationItem[]>;
-  applyAdvisorRemediations: (playbookId: string, executionId: string, data: ApplyRemediationsData) => Promise<Playbook>;
   reapplyOptimization: (playbookId: string, executionId: string, taskId: string, historyIndex: number, direction: 'after' | 'before') => Promise<Playbook>;
   pendingRerunTaskId: string | null;
   setPendingRerunTaskId: (taskId: string | null) => void;

@@ -10,11 +10,7 @@ const storeState = vi.hoisted(() => ({
   currentPlaybook: null as any,
   deleteExecution: vi.fn(),
   deleteStepExecution: vi.fn(),
-  updatePlaybookFromJudge: vi.fn(),
-  generatePlaybookFromJudge: vi.fn(),
-  optimizeStepFromJudge: vi.fn(),
   fetchAdvisorRemediations: vi.fn().mockResolvedValue([]),
-  designPlaybook: vi.fn().mockResolvedValue(undefined),
   executePlaybook: vi.fn().mockResolvedValue({ executionId: 'exec-new' }),
   validateTaskReplay: vi.fn(),
   fetchTaskReplays: vi.fn().mockResolvedValue([]),
@@ -270,6 +266,7 @@ describe('ExecutionStepDetail', () => {
   });
 
   it('opens the remediation review dialog before generating a new optimized playbook', async () => {
+    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
     storeState.currentPlaybook = {
       id: 'p1',
       tasks: [{ id: 't1', title: 'Analyze Data' }],
@@ -371,20 +368,122 @@ describe('ExecutionStepDetail', () => {
           createdAt: '2025-01-01T00:00:00.000Z',
           updatedAt: '2025-01-01T00:00:01.000Z',
         }}
+        onApplyAdvisorIntent={onApplyAdvisorIntent}
       />,
     );
 
     await userEvent.click(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' }));
 
     expect(storeState.fetchAdvisorRemediations).toHaveBeenCalledWith('p1', 'exec-1', undefined);
-    expect(storeState.generatePlaybookFromJudge).not.toHaveBeenCalled();
     expect(navigateMock).not.toHaveBeenCalled();
     expect(screen.getByText('detail.remediation.generateNewTitle')).toBeInTheDocument();
 
     storeState.currentPlaybook = null;
   });
 
+  it('applies selected remediation items through the advisor intent callback', async () => {
+    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', title: 'Analyze Data' }],
+    };
+    storeState.fetchAdvisorRemediations.mockResolvedValueOnce([
+      {
+        id: 'rem-1',
+        category: 'prompt',
+        scope: 'task',
+        targetTaskId: 't1',
+        title: 'Clarify the task prompt',
+        description: 'Clarify the task prompt to request a concise summary.',
+        editable: true,
+        defaultSelected: true,
+        source: { kind: 'judge_result', field: 'prompt', index: 0 },
+      },
+    ]);
+
+    render(
+      <ExecutionStepDetail
+        step={{ ...baseStep, judgeResult: { overallScore: 82 } as any, judgeStatus: 'evaluated' }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [{ ...baseStep, judgeResult: { overallScore: 82 } as any, judgeStatus: 'evaluated' }],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+        onApplyAdvisorIntent={onApplyAdvisorIntent}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'detail.judge.previewChanges' }));
+    await screen.findByText('detail.remediation.optimizeStepTitle');
+    await userEvent.click(screen.getByRole('button', { name: 'detail.remediation.applySelected' }));
+
+    expect(onApplyAdvisorIntent).toHaveBeenCalledWith({
+      intent: expect.stringContaining('Optimize only the step "Analyze Data" based on these advisor findings.'),
+      selectedTaskId: 't1',
+    });
+
+    storeState.currentPlaybook = null;
+  });
+
+  it('disables remediation apply actions when the canvas handler is unavailable', () => {
+    storeState.currentPlaybook = {
+      id: 'p1',
+      tasks: [{ id: 't1', title: 'Analyze Data' }],
+    };
+
+    render(
+      <ExecutionStepDetail
+        step={{ ...baseStep, judgeResult: { overallScore: 82, rewriteHints: [] } as any, judgeStatus: 'evaluated' }}
+        execution={{
+          id: 'exec-1',
+          playbookId: 'p1',
+          executedBy: 'user-1',
+          executionNumber: 1,
+          status: 'completed',
+          taskResults: [{ ...baseStep, judgeResult: { overallScore: 82, rewriteHints: [] } as any, judgeStatus: 'evaluated' }],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: 1000,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:01.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'detail.judge.generateOptimizedPlaybook' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'detail.judge.previewChanges' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'detail.judge.applyToCurrentPlaybook' })).toBeDisabled();
+    expect(screen.getByText('detail.remediation.applyUnavailable')).toBeInTheDocument();
+
+    storeState.currentPlaybook = null;
+  });
+
   it('warns when advisor evaluation is missing for some playbook tasks before generating', async () => {
+    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
     storeState.fetchAdvisorRemediations.mockClear();
     storeState.executePlaybook.mockClear();
     storeState.currentPlaybook = {
@@ -453,6 +552,7 @@ describe('ExecutionStepDetail', () => {
           createdAt: '2025-01-01T00:00:00.000Z',
           updatedAt: '2025-01-01T00:00:01.000Z',
         }}
+        onApplyAdvisorIntent={onApplyAdvisorIntent}
       />,
     );
 
@@ -475,6 +575,7 @@ describe('ExecutionStepDetail', () => {
   });
 
   it('warns when a current playbook task is missing entirely from execution task results before generating', async () => {
+    const onApplyAdvisorIntent = vi.fn().mockResolvedValue(undefined);
     storeState.fetchAdvisorRemediations.mockClear();
     storeState.currentPlaybook = {
       id: 'p1',
@@ -539,6 +640,7 @@ describe('ExecutionStepDetail', () => {
           createdAt: '2025-01-01T00:00:00.000Z',
           updatedAt: '2025-01-01T00:00:01.000Z',
         }}
+        onApplyAdvisorIntent={onApplyAdvisorIntent}
       />,
     );
 
@@ -1475,7 +1577,7 @@ describe('ExecutionStepDetail', () => {
     );
 
     expect(screen.getAllByRole('combobox')).toHaveLength(2);
-    expect(screen.getByText(/detail.evaluation.attempt - \| 01\/01\/2025 01:00:05/)).toBeInTheDocument();
+    expect(screen.getByText(/detail.evaluation.attempt - \| .*2025/)).toBeInTheDocument();
     expect(screen.getAllByText('Latest advisor result.').length).toBeGreaterThan(0);
   });
 

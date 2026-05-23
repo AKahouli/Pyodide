@@ -369,20 +369,36 @@ describe('PlaybookFlowReplayService', () => {
   });
 
   describe('deleteTaskReplay', () => {
-    it('deletes the replay document', async () => {
+    it('deletes the replay document and returns wasActive true for active replay', async () => {
       const { service, replayModel } = createReplayServiceForTests();
 
+      replayModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({ _id: 'replay-1', status: FlowReplayValidationStatus.ACTIVE }) });
       replayModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
 
-      await expect(service.deleteTaskReplay('flow-1', 'step-1', 'replay-1')).resolves.toBeUndefined();
+      const result = await service.deleteTaskReplay('flow-1', 'step-1', 'replay-1');
+
+      expect(result).toEqual({ removed: true, wasActive: true });
     });
 
-    it('throws NotFoundException when nothing deleted', async () => {
+    it('returns wasActive false for inactive replay', async () => {
       const { service, replayModel } = createReplayServiceForTests();
 
-      replayModel.deleteOne.mockResolvedValue({ deletedCount: 0 });
+      replayModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({ _id: 'replay-1', status: FlowReplayValidationStatus.INACTIVE }) });
+      replayModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
 
-      await expect(service.deleteTaskReplay('flow-1', 'step-1', 'replay-1')).rejects.toThrow(NotFoundException);
+      const result = await service.deleteTaskReplay('flow-1', 'step-1', 'replay-1');
+
+      expect(result).toEqual({ removed: true, wasActive: false });
+    });
+
+    it('returns removed false when replay does not exist', async () => {
+      const { service, replayModel } = createReplayServiceForTests();
+
+      replayModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue(null) });
+
+      const result = await service.deleteTaskReplay('flow-1', 'step-1', 'replay-1');
+
+      expect(result).toEqual({ removed: false, wasActive: false });
     });
   });
 

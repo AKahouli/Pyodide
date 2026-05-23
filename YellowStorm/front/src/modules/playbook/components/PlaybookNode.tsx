@@ -32,7 +32,7 @@ import { PORT_COLORS } from '../utils/port-colors';
 import { migrateTask } from '../hooks/helpers/node-serializer';
 import { getEffectiveNodeType } from '../utils/node-type';
 import { detectPortHit } from '../utils/port-hit-detection';
-import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference } from '../types';
+import type { ArtifactKind, PlaybookNodeData, StepStatus, InputFile, TaskInputPort, TaskOutputPort, ToolBinding, PlaybookResourceReference, ValidatedTaskReplay } from '../types';
 
 const ITERATOR_CHILD_STATUS_PRIORITY: Record<StepStatus, number> = {
   running: 5,
@@ -90,15 +90,11 @@ export interface NodeContextMenuActions {
   onResumeFromStep: (nodeId: string) => void;
   onSkipStep: (nodeId: string) => void;
   onSaveBaseline: (nodeId: string) => void;
-  onGrabOutputFormat: (nodeId: string) => void;
-  onRemoveReplayBaseline: (playbookId: string, taskId: string, replayId: string) => Promise<void>;
-  onRenameReplayBaseline: (playbookId: string, taskId: string, replayId: string, label: string | null) => Promise<void>;
   canExecute: boolean;
   isExecuting: boolean;
   canResumeFromStep: (nodeId: string) => boolean;
   canSkipStep: (nodeId: string) => boolean;
   canSaveBaseline: (nodeId: string) => boolean;
-  canGrabOutputFormat: (nodeId: string) => boolean;
 }
 
 export interface ConnectorDropPayload {
@@ -437,6 +433,37 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const outputFormatBadgeLabel = currentTask?.activeOutputFormatTemplateVersion
     ? t('detail.badges.outputFormatTemplate', { version: currentTask.activeOutputFormatTemplateVersion })
     : t('detail.badges.outputFormat');
+  const activeReplay: ValidatedTaskReplay | null = currentTask?.activeReplayId
+    ? {
+        id: currentTask.activeReplayId,
+        playbookId: playbookId || '',
+        taskId: id,
+        taskTitle: currentTask.title,
+        agentName: '',
+        createdBy: '',
+        referenceExecutionId: '',
+        referenceExecutionNumber: currentTask.activeReplayVersion || 0,
+        validationVersion: currentTask.activeReplayVersion || 0,
+        status: 'active',
+        mode: 'strict_replay',
+        toolCalls: [],
+        referenceOutput: null,
+        preserveOutputFormat: currentTask.activeReplayPreserveOutputFormat,
+        outputFormatGuide: null,
+        formatGuideStatus: currentTask.activeReplayFormatGuideStatus ?? 'disabled',
+        formatGuideError: currentTask.activeReplayFormatGuideError ?? null,
+        isStale: currentTask.activeReplayIsStale,
+        staleReasons: currentTask.activeReplayStaleReasons,
+        label: currentTask.activeReplayLabel ?? null,
+        replayConfig: {
+          replayOutputFormat: false,
+          replayToolTrace: false,
+          replayReasoningChain: true,
+        },
+        createdAt: '',
+        updatedAt: '',
+      }
+    : null;
   const toolBindings = currentTask?.toolBindings ?? data.toolBindings ?? [];
   const removeToolBindingFromTask = usePlaybookStore((s) => s.removeToolBindingFromTask);
 
@@ -784,17 +811,15 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
                 )}
                 {showReplayBadge && (
                   <BaselineBadgePopover
-                    taskId={id}
+                    task={effectiveTask}
                     playbookId={playbookId || ''}
-                    replayId={currentTask?.activeReplayId}
-                    label={currentTask?.activeReplayLabel}
+                    replay={activeReplay}
                     toneClassName={currentTask?.activeReplayIsStale
                       ? 'border-orange-500/30 bg-orange-100 text-orange-700'
                       : 'border-amber-500/30 bg-amber-100 text-amber-700'}
                     badgeLabel={replayBadgeLabel}
                     isBusy={Boolean(currentTask?.isSavingReplayBaseline)}
-                    onRemove={actions?.onRemoveReplayBaseline ?? (() => Promise.resolve())}
-                    onRename={actions?.onRenameReplayBaseline ?? (() => Promise.resolve())}
+                    onOpenOutputFormatEditor={nodeDataActions?.openOutputFormatEditor}
                   />
                 )}
                 {showOutputFormatBadge && (
@@ -1011,10 +1036,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
         <ContextMenuItem disabled={!actions?.canSaveBaseline(id)} onClick={() => actions?.onSaveBaseline(id)}>
           <FileText className="h-4 w-4" />
           {t('nodeContextMenu.saveBaseline')}
-        </ContextMenuItem>
-        <ContextMenuItem disabled={!actions?.canGrabOutputFormat(id)} onClick={() => actions?.onGrabOutputFormat(id)}>
-          <FileText className="h-4 w-4" />
-          {t('nodeContextMenu.saveOutputFormat')}
         </ContextMenuItem>
         <ContextMenuItem onClick={() => actions?.onEdit(id)}>
           <Pencil className="h-4 w-4" />

@@ -1200,7 +1200,7 @@ describe('service terminal handling', () => {
       builderService: { buildSnapshot: jest.fn().mockReturnValue({ settings: {}, nodes: [], controlEdges: [], dataBindings: [] }) },
       executionModel: {
         updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
-        findById: jest.fn(() => ({ lean: jest.fn().mockResolvedValue({ ownerId: 'owner-1', status: 'cancelled' }) })),
+        findById: jest.fn(() => ({ lean: () => ({ exec: jest.fn().mockResolvedValue({ ownerId: 'owner-1', status: 'cancelled' }) }) })),
         findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
       },
     });

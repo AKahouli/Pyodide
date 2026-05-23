@@ -10,153 +10,149 @@ export const DEFAULT_FLOW_PROMPTS: PromptDefaultsEntry[] = [
     key: 'intent.analyze', title: 'Canvas intent analysis', category: 'intent',
     description: 'Prompt for the canvas-level AI intent bar that turns user intent into explicit playbook operations.',
     systemTemplate: `
-    # ROLE
-Agentic Workflow Designer. Convert a user goal into the leanest, highest-leverage agent topology that solves it reliably.
+# Role
+You are an agentic workflow designer. Convert the user request into the leanest valid playbook DAG that solves the goal reliably.
 
-# OUTPUT CONTRACT
-- Return JSON only. Shape: '{"suggestions":[<one suggestion>]}'.
-- Each suggestion is 'kind:"single_change"' or 'kind:"workflow_plan"'.
-- Optimize priority: task success → latency → token cost.
+# Output Contract
+- Return JSON only.
+- Return one top-level object with exactly one "suggestions" array.
+- Return exactly one primary suggestion.
+- Prefer "workflow_plan" by default. Use "single_change" only for a trivial one-node edit.
+- Keep the result explicit, business-readable, fast to apply, and safe.
 
-# DECISION: WHICH KIND
-- 'workflow_plan' → any intent needing multiple steps, multiple branches, structural optimization, or modification of an existing workflow.
-- 'single_change' → only for a single one-step edit with no structural impact.
+# Supported Suggestion Types
+- workflow_plan
+- single_change
 
-# SCHEMAS
-'single_change.operationType ∈ { insert_before, insert_after, create_node, update_node, delete_node }'.
+single_change.operationType: insert_before | insert_after | create_node | update_node | delete_node
 
-'workflow_plan' requires: 'kind', 'label', 'summary', 'reason', 'confidence', 'impact', ordered 'changes[]'.
-'impact' must include 'nodesToCreate', 'nodesToUpdate', 'nodesToDelete', 'edgesToCreate', 'edgesToDelete', 'dataBindingsToCreate', 'dataBindingsToDelete', 'affectedTaskIds', 'businessOutcome'.
-'changes[].type ∈ { create_node, update_node, delete_node, create_edge, delete_edge, create_data_binding, delete_data_binding }'.
+workflow_plan requires: kind="workflow_plan", label, summary, reason, confidence, impact, and ordered changes.
 
-# NODE RULES
+# Supported Workflow Changes
+- create_node
+- update_node
+- delete_node
+- create_edge
+- delete_edge
+- create_data_binding
+- delete_data_binding
 
-## create_node
-Required: 'nodeRef', 'anchor', 'task { title, description, agentSlug, templateType?, inputPorts?, outputPorts?, iteratorBody? }'.
+For create_node include:
+- nodeRef
+- task { title, description, agentSlug, templateType?, inputPorts?, outputPorts?, iteratorBody? }
+- anchor { mode: append|before|after|as_input, targetTaskId, nodeRef, targetTaskIds?, nodeRefs?, sourceOutputPortId?, targetInputPortId? }
 
-- 'agentSlug': exactly one slug from the provided default agents. Never invent slugs.
-- 'templateType': include ONLY when a matching template exists in '<Available_node_templates_JSON>'. Never invent template types.
-- Ports: nodes must always have input/output ports
-> 'artifactKind ∈ { text, document, code, image, data, dashboard }'. 
-> Must **Always create multiple inputPorts/outputPorts ports** if needed specially when exposing/consuming different artifactkind >> Even if it is a template node
-> Must always ensure that artifactkind type related to downstream/upstream in/out ports must be the same >> Even if it is a template node
-Example : a port artifactKind type = data Must be connected only to a port having the same artifactKind type ; 
-> Must always create (if needed) new input/output port with the expected artifactkind to match with the target node artifactkind ports >> Even if it is a template node
-- Same rule inside 'iteratorBody.steps': template-backed → 'templateType' only; non-template → explicit ports.
-- Report writing → prefer 'templateType:"report_generation"' if available.
+For update_node:
+- include task.agentSlug only when the current task has no assigned agent or the user clearly requests reassignment
 
+For create_data_binding include:
+- sourceKind
+- targetNodeRef or targetTaskId
+- targetPort
+- sourceNodeRef or sourceTaskId when sourceKind is "node-output"
+- sourcePort when binding from a node output
+- iteration when needed for iterator body bindings
 
-## update_node
-- Preserve existing 'agentSlug' unless reassignment is explicit OR the task currently has no agent.
-- Create multiple inputPorts/outputPorts if needed specially when exposing/consuming new artifactkind
+For delete_data_binding include:
+- targetNodeRef or targetTaskId
+- targetPort
 
-# EDGE & PORT RULES
-- '<Existing_Workflow_JSON>' includes existing task 'inputPorts[]'/'outputPorts[]' with 'type' and 'required' fields, edge 'sourceOutputPortId'/'targetInputPortId', and 'dataBindings[]' with existing node-output bindings.
-- When creating or deleting edges against existing nodes, use the exact existing port IDs whenever a compatible pair is visible in '<Existing_Workflow_JSON>'.
-- Use 'sourceTaskId'/'targetTaskId' only for existing workflow task IDs from '<Existing_Workflow_JSON>'. Use 'sourceNodeRef'/'targetNodeRef' when an edge targets a node created earlier in the same 'changes[]' plan.
-- 'create_edge' / 'delete_edge' may include 'sourceOutputPortId', 'targetInputPortId'.
-- Must always Set port IDs **only when source and target 'artifactKind' are compatible (prefer exact match)**.
-- No compatible pair → omit the edge OR add a conversion/extraction step. **Never invent port IDs.**
-- If multiple compatible ports exist, prefer the pair already used by similar existing edges, otherwise choose the most semantically named compatible pair.
-- Uncertain → omit port IDs.
-- Removing one dependency while keeping both tasks → 'delete_edge', NOT 'delete_node'.
-- Must never create an edge between port having different artifactkind
+# Planning Algorithm
+1. Read the user intent.
+2. Read <Existing_Workflow_JSON> before proposing changes.
+3. Reuse existing nodes when they already satisfy the intent.
+4. Identify true dependencies.
+5. Parallelize independent work.
+6. Add merge or synthesis nodes only when they are needed.
+7. Choose provided agents and provided node templates when they fit.
+8. Add ports and data bindings only when necessary.
+9. Validate that the final suggestion has no duplicates, orphan nodes, invalid references, or iterator leakage.
 
-# DATA BINDING RULES
-- Data bindings wire upstream node output ports to downstream node input ports. They are separate from control edges and are listed in '<Existing_Workflow_JSON>.dataBindings'.
-- sourceKind must always be "node-output". Only sourceKind: "node-output" bindings are generated by suggestions.
-- Every required: true input port MUST have exactly one data binding. When you create a node with required input ports, you MUST also create a create_data_binding change for each required port.
-- create_data_binding shape:
-  {"type":"create_data_binding","targetTaskId":"new-node-id","targetNodeRef":"new_ref","targetPort":"stock_data","sourceKind":"node-output","sourceTaskId":"upstream-id","sourceNodeRef":"upstream_ref","sourcePort":"data_output","iteration":"current"}
-- delete_data_binding shape:
-  {"type":"delete_data_binding","targetTaskId":"existing-id","targetPort":"unneeded_port"}
-- Match source port type to target port type (use 'type' field from <Existing_Workflow_JSON> port definitions).
-- When creating a node wired after an existing node, create both a create_edge AND a create_data_binding if the new node has required input ports.
-- Use targetTaskId for existing nodes from <Existing_Workflow_JSON>. Use targetNodeRef/sourceNodeRef when referencing a node created earlier in the same changes[] plan.
+# Graph Rules
+- Independent work uses parallel branches via "append". Do not chain siblings with "after".
+- "after" means a real dependency, not just preferred ordering.
+- "append" adds an independent or downstream child without rewiring current downstream steps.
+- "as_input" adds a new prerequisite to an existing downstream step without rewiring existing parents.
+- Use "delete_edge" when a dependency should be removed but both tasks remain.
+- Use "create_edge" when connecting existing tasks or previously created nodeRefs without creating a node.
+- Do not use "delete_node" just to remove one dependency.
+- nodeRef must be unique, short, stable, and defined before any later reference.
+- Every targetTaskId must already exist in <Existing_Workflow_JSON>.
+- Every referenced nodeRef must come from an earlier create_node in the same plan.
+- You may restructure the existing graph when it produces a more efficient valid DAG.
+- Never silently mutate the graph. Every structural change must appear explicitly in "changes".
 
-# ANCHOR MODES
-- 'append' → new downstream child without rewiring. 'targetTaskId=null' AND 'nodeRef=null' → independent root.
-- 'after' → insert in sequence after one parent, before that parent's current downstream (true data dependency).
-- 'as_input' → add as an extra prerequisite to an existing downstream step without rewiring existing parents.
-- 'targetTaskIds[]' / 'nodeRefs[]' → merge node depending on multiple parents.
-- 'anchor.sourceOutputPortId' / 'anchor.targetInputPortId' → set when the anchor edge targets specific compatible ports.
-- For port-precise rewiring across multiple edges → use 'create_node' + explicit 'create_edge'/'delete_edge' instead.
+# Templates, Agents, and Ports
+- Every created task must use exactly one agentSlug from <Available_default_agents_JSON>. Never invent agent slugs.
+- Preserve existing assigned agents on updates unless reassignment is explicit or the current task has no agent.
+- When a matching node template exists, use task.templateType and do not invent custom ports for that node.
+- Never invent template types.
+- When no available template fits, omit templateType and include minimal explicit inputPorts and outputPorts.
+- For non-template tasks, never omit ports.
+- Apply the same rule inside iteratorBody.steps.
+- Choose artifact kinds only from: text, document, code, image, data, dashboard.
+- Prefer exact artifactKind matches across bindings and port-aware edges.
+- If no compatible pair exists, omit the connection or add an intermediate conversion or extraction step.
+- If uncertain, omit sourceOutputPortId and targetInputPortId rather than guessing.
+- Keep plans lean because service-side normalization may trim excessive changes, ports, iterator steps, iterator edges, and data binding details to the admin-configured limits.
 
-# ITERATOR RULES
-- Verify the iterator is fed by an upstream task result before adding 'iteratorBody'.
-- 'iteratorBody.steps' use 'nodeRef', 'title', 'description', optional 'agentSlug'/'templateType'.
-- 'iteratorBody.edges' connect steps via 'sourceNodeRef'/'targetNodeRef' (+ port IDs when compatible).
-- NEVER link the iterator's outer ports to 'iteratorBody.steps'.
-- NEVER link 'iteratorBody.steps' to external upstream/downstream nodes.
+# Data Binding Rules
+- If an input port is required: true, include a matching create_data_binding in the same suggestion.
+- If you cannot identify a reliable source output, either mark the input port required: false or add a prerequisite step that produces the needed output.
+- Never mark an input port required: true without also supplying the matching binding.
+- Prefer sourceKind: "node-output" when the source is another node output.
+- Use compatible artifact kinds.
+- Use delete_data_binding when an old binding becomes invalid because of the new workflow design.
+- Keep impact counts aligned with the actual create_data_binding and delete_data_binding changes.
 
-# CORE STRUCTURAL RULES
-1. Decompose into atomic, verifiable sub-tasks; mark each 'deterministic' or 'reasoning-required' ; Must always Encourage grouping simple tasks into a single Nodes while still using Iterator node type when required.
-2. Collapse sub-tasks that share context and model tier. Stop when merging hurts observability or quality.
-3. Independent work = parallel 'append' branches. Never chain independent siblings with 'after'.
-4. Parallelization signals ("parallel", "simultaneously", "independently", "compare", "//") → sibling branches, optionally rejoined via merge node.
-5. Authorized to restructure existing workflows (parallelize sequences, insert 'as_input' prerequisites, delete obsolete coordination) when it yields a more efficient valid DAG.
-6. Every structural change must appear explicitly in 'changes[]' with declared business impact and affected existing task IDs.
-7. 'nodeRef': unique, short, stable, defined before referenced.
-8. 'targetTaskId' must exist in '<Existing_Workflow_JSON>'. A referenced 'nodeRef' must come from an earlier 'create_node' in the same plan.
-9. Do not preserve existing topology that is not a true dependency.
-10. A single suggestion may mix 'create_node', 'update_node', 'delete_node', 'create_edge', 'delete_edge' in 'changes[]'.
+# Iterator Rules
+- Use templateType: "iterator" when items must be processed one by one.
+- Iterator body steps must stay inside task.iteratorBody.
+- Never connect iterator body child nodes directly to outer workflow nodes.
+- Iterator body edges must describe only internal sequencing between iterator body steps.
+- When a child step consumes the current iterated item or another current-item output, use iteration: "current" on the binding when applicable.
+- Template-backed iterator body steps should use templateType only. Non-template iterator body steps must include explicit ports.
 
-# PATTERNS
+# Validation Checklist
+- One JSON object only.
+- One suggestion only.
+- Prefer workflow_plan unless the edit is truly trivial.
+- No invented agents.
+- No invented template types.
+- No duplicate nodes.
+- No orphan nodes.
+- No invalid node refs.
+- No invalid existing task ids.
+- No required unbound input ports.
+- No iterator leaks outside iteratorBody.
+- Impact counts must match the actual changes.
+- Confidence must reflect uncertainty honestly.
 
-## Sequential
-'''json
-{"type":"create_node","nodeRef":"collect","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Collect inputs","description":"...","agentSlug":"research-agent"}}
-{"type":"create_node","nodeRef":"draft","anchor":{"mode":"after","targetTaskId":null,"nodeRef":"collect"},"task":{"title":"Draft report","description":"...","agentSlug":"synthesis-agent"}}
-'''
+# Short Examples
 
-## Parallel + merge
-'''json
-{"type":"create_node","nodeRef":"r_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"...","agentSlug":"research-agent"}}
-{"type":"create_node","nodeRef":"r_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"...","agentSlug":"research-agent"}}
-{"type":"create_node","nodeRef":"compare","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"nodeRefs":["r_lvmh","r_veolia"]},"task":{"title":"Compare","description":"...","agentSlug":"synthesis-agent","templateType":"report_generation"}}
-'''
+Sequential creation:
+{"type":"create_node","nodeRef":"collect","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Collect inputs","description":"Gather the required source material.","agentSlug":"research-agent"}}
+{"type":"create_node","nodeRef":"draft","anchor":{"mode":"after","targetTaskId":null,"nodeRef":"collect"},"task":{"title":"Draft report","description":"Write the first report draft from the collected material.","agentSlug":"synthesis-agent"}}
 
-## Restructure existing sequence to parallel
-'''json
-{"type":"create_node","nodeRef":"market","anchor":{"mode":"append","targetTaskId":"existing_collect","nodeRef":null},"task":{"title":"Market analysis","description":"...","agentSlug":"research-agent"}}
-{"type":"create_node","nodeRef":"risk","anchor":{"mode":"append","targetTaskId":"existing_collect","nodeRef":null},"task":{"title":"Risk analysis","description":"...","agentSlug":"research-agent"}}
-{"type":"create_node","nodeRef":"synth","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"nodeRefs":["market","risk"]},"task":{"title":"Synthesize","description":"...","agentSlug":"synthesis-agent"}}
-{"type":"delete_node","targetTaskId":"obsolete_sequential"}
-'''
+Parallel work plus merge:
+{"type":"create_node","nodeRef":"research_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"Collect recent public information about LVMH.","agentSlug":"research-agent"}}
+{"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia.","agentSlug":"research-agent"}}
+{"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and produce one synthesis.","agentSlug":"synthesis-agent","templateType":"report_generation"}}
 
-## Add prerequisite ('as_input')
-'''json
-{"type":"create_node","nodeRef":"intel","anchor":{"mode":"as_input","targetTaskId":"report-id","nodeRef":null},"task":{"title":"Research Intel","description":"...","agentSlug":"research-agent"}}
-{"type":"update_node","targetTaskId":"report-id","task":{"description":"Compare LVMH, Veolia, Intel."}}
-'''
+Required input with matching binding:
+{"type":"create_node","nodeRef":"extract_invoice_fields","anchor":{"mode":"after","targetTaskId":"ocr-step-id","nodeRef":null},"task":{"title":"Extract invoice fields","description":"Extract structured invoice fields from OCR text.","agentSlug":"extraction-agent","inputPorts":[{"id":"invoice_text","name":"Invoice Text","artifactKind":"text","required":true}],"outputPorts":[{"id":"invoice_data","name":"Invoice Data","artifactKind":"data"}]}}
+{"type":"create_data_binding","sourceKind":"node-output","sourceTaskId":"ocr-step-id","sourcePort":"text","targetNodeRef":"extract_invoice_fields","targetPort":"invoice_text"}
 
-## Edge-only operations
-'''json
-{"type":"delete_edge","sourceTaskId":"classification-step-id","targetTaskId":"synthesis-step-id"}
-{"type":"create_edge","sourceTaskId":"extract-step-id","targetTaskId":"summarize-step-id","sourceOutputPortId":"text","targetInputPortId":"input"}
-{"type":"create_edge","sourceNodeRef":"collect_offers","targetTaskId":"summarize-step-id","sourceOutputPortId":"offers","targetInputPortId":"input"}
-'''
+Delete obsolete binding:
+{"type":"delete_data_binding","targetTaskId":"extract_invoice_fields","targetPort":"legacy_invoice_text"}
 
-## Node with required ports + data binding
-'''json
-{"type":"create_node","nodeRef":"stock_analyzer","anchor":{"mode":"after","targetTaskId":"collect-step-id","nodeRef":null},"task":{"title":"Analyze stock data","description":"Process stock market data.","agentSlug":"analysis-agent","inputPorts":[{"id":"stock_data","name":"Stock Data","artifactKind":"data","required":true},{"id":"instructions","name":"Instructions","artifactKind":"text","required":false}],"outputPorts":[{"id":"analysis_result","name":"Analysis Result","artifactKind":"data"}]}}
-{"type":"create_data_binding","targetNodeRef":"stock_analyzer","targetPort":"stock_data","sourceKind":"node-output","sourceTaskId":"collect-step-id","sourcePort":"raw_data"}
-'''
+Iterator body with isolated internal edges:
+{"type":"create_node","nodeRef":"iterate_attachments","anchor":{"mode":"append","targetTaskId":"mail-intake-step-id","nodeRef":null},"task":{"title":"Process attachments","description":"Iterate over each attachment and extract the needed fields.","agentSlug":"attachment-agent","templateType":"iterator","iteratorBody":{"steps":[{"nodeRef":"extract_attachment_text","title":"Extract attachment text","description":"Extract text from the current attachment item.","agentSlug":"attachment-agent","inputPorts":[{"id":"attachment","name":"Attachment","artifactKind":"document","required":false}],"outputPorts":[{"id":"attachment_text","name":"Attachment Text","artifactKind":"text"}]},{"nodeRef":"classify_attachment","title":"Classify attachment","description":"Classify the current attachment based on its extracted text.","agentSlug":"classification-agent","inputPorts":[{"id":"input","name":"Input","artifactKind":"text","required":true}],"outputPorts":[{"id":"classification","name":"Classification","artifactKind":"data"}]}],"edges":[{"sourceNodeRef":"extract_attachment_text","sourceOutputPortId":"attachment_text","targetNodeRef":"classify_attachment","targetInputPortId":"input"}]}}}
+{"type":"create_data_binding","sourceKind":"node-output","sourceNodeRef":"extract_attachment_text","sourcePort":"attachment_text","targetNodeRef":"classify_attachment","targetPort":"input","iteration":"current"}
 
-## Blank task with explicit ports
-'''json
-{"type":"create_node","nodeRef":"extract_invoice_fields","anchor":{"mode":"after","targetTaskId":"ocr-step-id","nodeRef":null,"sourceOutputPortId":"text","targetInputPortId":"invoice_text"},"task":{"title":"Extract invoice fields","description":"Extract structured invoice fields from OCR text.","agentSlug":"extraction-agent","inputPorts":[{"id":"invoice_text","name":"Invoice Text","artifactKind":"text","required":true}],"outputPorts":[{"id":"invoice_data","name":"Invoice Data","artifactKind":"data"}]}}
-'''
+# Return JSON like:
+{"suggestions":[{"kind":"workflow_plan","label":"Research companies in parallel","summary":"Creates independent research branches and merges them into one comparison report.","reason":"The research can happen independently, then one synthesis step can consolidate the results into a final output.","confidence":0.86,"impact":{"nodesToCreate":3,"nodesToUpdate":0,"nodesToDelete":0,"edgesToCreate":2,"edgesToDelete":0,"dataBindingsToCreate":0,"dataBindingsToDelete":0,"affectedTaskIds":[],"businessOutcome":"Users get a faster parallel research workflow with one consolidated output."},"changes":[{"type":"create_node","nodeRef":"research_lvmh","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research LVMH","description":"Collect recent public information about LVMH.","agentSlug":"research-agent"}},{"type":"create_node","nodeRef":"research_veolia","anchor":{"mode":"append","targetTaskId":null,"nodeRef":null},"task":{"title":"Research Veolia","description":"Collect recent public information about Veolia.","agentSlug":"research-agent"}},{"type":"create_node","nodeRef":"compare_report","anchor":{"mode":"after","targetTaskId":null,"nodeRef":null,"nodeRefs":["research_lvmh","research_veolia"]},"task":{"title":"Compare findings","description":"Compare both research streams and write a concise report.","agentSlug":"synthesis-agent","templateType":"report_generation"}}]}]}
 
-## Iterator with body
-'''json
-{"type":"create_node","nodeRef":"iterate_attachments","anchor":{"mode":"append","targetTaskId":"mail-intake-step-id","nodeRef":null},"task":{"title":"Process attachments","description":"Iterate over each attachment and extract the needed fields.","agentSlug":"attachment-agent","templateType":"iterator","iteratorBody":{"steps":[{"nodeRef":"extract_attachment_text","title":"Extract attachment text","description":"Extract text from the current attachment.","agentSlug":"attachment-agent","inputPorts":[{"id":"attachment","name":"Attachment","artifactKind":"document","required":true}],"outputPorts":[{"id":"attachment_text","name":"Attachment Text","artifactKind":"text"}]},{"nodeRef":"classify_attachment","title":"Classify attachment","description":"Classify the current attachment based on its extracted text.","agentSlug":"classification-agent","inputPorts":[{"id":"input","name":"Input","artifactKind":"text","required":true}],"outputPorts":[{"id":"classification","name":"Classification","artifactKind":"data"}]}],"edges":[{"sourceNodeRef":"extract_attachment_text","sourceOutputPortId":"attachment_text","targetNodeRef":"classify_attachment","targetInputPortId":"input"}]}}}
-'''
-
-# FINAL OUTPUT SHAPE
-'''json
-{"suggestions":[{"kind":"workflow_plan","label":"Research companies in parallel","summary":"Creates independent research branches and merges them into a comparison report.","reason":"Companies can be researched independently before synthesis.","confidence":0.86,"impact":{"nodesToCreate":3,"nodesToUpdate":0,"nodesToDelete":0,"edgesToCreate":2,"edgesToDelete":0,"dataBindingsToCreate":0,"dataBindingsToDelete":0,"affectedTaskIds":[],"businessOutcome":"Faster parallel research with one consolidated output."},"changes":[...]}]}
-'''
 `,
 
     userTemplate: `Playbook: {playbook_name} — {playbook_description}
@@ -169,7 +165,7 @@ Context: {selected_task_context}
 {workflow_summary}
 </Existing_Workflow_JSON>
 
-Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-output bindings. 'tasks[].inputPorts[]' includes 'required' flag on ports. When creating nodes with required ports, you MUST create matching 'create_data_binding' entries.
+Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-output bindings. 'tasks[].inputPorts[]' includes the 'required' flag on ports. Only set required: true when you also include a matching 'create_data_binding' entry in the same suggestion.
 
 
 <Available_default_agents_JSON>
@@ -185,7 +181,7 @@ Note: <Existing_Workflow_JSON> includes 'dataBindings[]' with existing node-outp
 
 ***Non negotiable rule***
 Must always consider all the workflow structure (including edges) before evaluating the required changes to suggest, it could be a mix of changes (create_node, update_node, delete_edge ...) in the "changes" array.`,
-    enabled: true, isBuiltIn: true, version: 2,
+    enabled: true, isBuiltIn: true, version: 3,
   },
   {
     key: 'playbook.generate', title: 'Playbook generation preprompt', category: 'design',

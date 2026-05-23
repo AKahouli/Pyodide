@@ -46,13 +46,16 @@ def finalize_step_result(
             if artifact is not None:
                 artifacts.append(artifact)
 
-        return {
+        result: dict[str, Any] = {
             "output": parsed["display_text"],
             "display_text": parsed["display_text"],
             "outputs": outputs_by_port,
             "artifacts": artifacts,
             "components": normalized_components,
         }
+        if parsed.get("reasoning_trace"):
+            result["reasoning_trace"] = parsed["reasoning_trace"]
+        return result
 
     text_output = str(response_text or "")
     artifacts: list[dict[str, Any]] = []
@@ -144,10 +147,14 @@ def _parse_structured_final_response(response_text: str) -> dict[str, Any]:
         display_text = str(payload.get("display_text") or payload.get("displayText") or "").strip()
         outputs = payload.get("outputs")
         if display_text and isinstance(outputs, list):
-            return {
+            result: dict[str, Any] = {
                 "display_text": display_text,
                 "outputs": [item for item in outputs if isinstance(item, dict)],
             }
+            raw_trace = payload.get("reasoning_trace") or payload.get("reasoningTrace")
+            if isinstance(raw_trace, list):
+                result["reasoning_trace"] = raw_trace
+            return result
     if candidates:
         raise ValueError("Structured final response must include display_text and an outputs list")
     raise ValueError("Step did not return a JSON object")

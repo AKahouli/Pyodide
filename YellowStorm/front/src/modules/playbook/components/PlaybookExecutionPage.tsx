@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 
 import { Loader2 } from 'lucide-react';
 import {
@@ -17,6 +17,7 @@ import { useModuleTranslation } from '@/modules/localization';
 
 export function PlaybookExecutionPage() {
   const { id, executionId } = useParams<{ id: string; executionId: string }>();
+  const navigate = useNavigate();
   const { t } = useModuleTranslation('playbook');
 
   const playbook = useCurrentPlaybook();
@@ -61,6 +62,19 @@ export function PlaybookExecutionPage() {
     return group[selectedIterationIndex] || group[0] || null;
   })();
 
+  const handleOpenCanvasForAdvisorApply = useCallback(() => {
+    if (!id || !execution) return;
+
+    const taskId = selectedResult?.taskId || selectedStepId || '';
+    const params = new URLSearchParams({ execution: execution.id });
+    if (taskId) {
+      params.set('task', taskId);
+      params.set('iteration', String(selectedIterationIndex));
+    }
+
+    navigate(`/playbooks/${id}?${params.toString()}`);
+  }, [execution, id, navigate, selectedIterationIndex, selectedResult?.taskId, selectedStepId]);
+
   if (!execution || executionLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -80,7 +94,11 @@ export function PlaybookExecutionPage() {
           selectedIterationIndex={selectedIterationIndex}
           onSelectStep={handleSelectStep}
         />
-        <ExecutionStepDetail step={selectedResult} execution={execution} />
+        <ExecutionStepDetail
+          step={selectedResult}
+          execution={execution}
+          onOpenCanvasForAdvisorApply={handleOpenCanvasForAdvisorApply}
+        />
       </div>
     </div>
   );

@@ -80,7 +80,7 @@ export class PlaybookFlowReplayController {
     @Param('id') flowId: string,
     @Param('taskId') taskId: string,
     @Param('replayId') replayId: string,
-  ) {
-    await this.replayService.deleteTaskReplay(flowId, taskId, replayId);
+  ): Promise<{ removed: boolean; wasActive: boolean }> {
+    return this.replayService.deleteTaskReplay(flowId, taskId, replayId);
   }
 }

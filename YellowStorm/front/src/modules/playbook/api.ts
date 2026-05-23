@@ -32,7 +32,6 @@ import type {
   UpdateOutputFormatTemplateData,
   OutputFormatTemplate,
   AdvisorRemediationItem,
-  ApplyRemediationsData,
   PlaybookEvaluationBaseline,
   PlaybookEvaluationExecution,
   PlaybookRepeatabilitySummary,
@@ -788,30 +787,6 @@ export async function requestPlaybookNodeAdvisor(
   return response.data.data;
 }
 
-export async function updatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
-  const response = await apiClient.post<ApiResponse<Playbook>>(
-    `${API_ENDPOINTS.playbooks.byId(id)}/judge/update-current`,
-    { executionId },
-  );
-  return response.data.data;
-}
-
-export async function generatePlaybookFromJudge(id: string, executionId: string): Promise<Playbook> {
-  const response = await apiClient.post<ApiResponse<Playbook>>(
-    `${API_ENDPOINTS.playbooks.byId(id)}/judge/generate-new`,
-    { executionId },
-  );
-  return response.data.data;
-}
-
-export async function optimizeStepFromJudge(id: string, executionId: string, taskId: string): Promise<Playbook> {
-  const response = await apiClient.post<ApiResponse<Playbook>>(
-    `${API_ENDPOINTS.playbooks.byId(id)}/judge/optimize-step`,
-    { executionId, taskId },
-  );
-  return response.data.data;
-}
-
 export async function fetchAdvisorRemediations(
   playbookId: string,
   executionId: string,
@@ -821,18 +796,6 @@ export async function fetchAdvisorRemediations(
   const response = await apiClient.get<ApiResponse<AdvisorRemediationItem[]>>(
     `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations`,
     { params },
-  );
-  return response.data.data;
-}
-
-export async function applyAdvisorRemediations(
-  playbookId: string,
-  executionId: string,
-  data: ApplyRemediationsData,
-): Promise<Playbook> {
-  const response = await apiClient.post<ApiResponse<Playbook>>(
-    `${API_ENDPOINTS.playbooks.byId(playbookId)}/executions/${executionId}/advisor-remediations/apply`,
-    data,
   );
   return response.data.data;
 }

@@ -1516,37 +1516,35 @@ export const usePlaybookStore = create<PlaybookStore>()(
       deleteTaskReplay: async (playbookId, taskId, replayId) => {
         try {
           const result = await api.deleteTaskReplay(playbookId, taskId, replayId);
-          if (result.wasActive) {
-            set((state) => ({
-              currentPlaybook: state.currentPlaybook?.id === playbookId
-                ? {
-                  ...state.currentPlaybook,
-                  tasks: state.currentPlaybook.tasks.map((task) =>
-                    task.id === taskId
-                      ? {
-                        ...task,
-                        hasValidatedReplay: false,
-                        activeReplayId: null,
-                        activeReplayVersion: null,
-                        activeReplayIsStale: false,
-                        activeReplayStaleReasons: [],
-                        activeReplayPreserveOutputFormat: false,
-                        activeReplayFormatGuideStatus: 'disabled',
-                        activeReplayFormatGuideError: null,
-                        activeReplayLabel: null,
-                        hasOutputFormatTemplate: false,
-                        activeOutputFormatTemplateId: null,
-                        activeOutputFormatTemplateVersion: null,
-                        activeOutputFormatStatus: null,
-                        activeOutputFormatError: null,
-                        isSavingReplayBaseline: false,
-                      }
-                      : task,
-                  ),
-                }
-                : state.currentPlaybook,
-            }));
-          }
+          set((state) => ({
+            currentPlaybook: state.currentPlaybook?.id === playbookId
+              ? {
+                ...state.currentPlaybook,
+                tasks: state.currentPlaybook.tasks.map((task) =>
+                  task.id === taskId
+                    ? {
+                      ...task,
+                      hasValidatedReplay: result.wasActive ? false : task.hasValidatedReplay,
+                      activeReplayId: result.wasActive ? null : task.activeReplayId,
+                      activeReplayVersion: result.wasActive ? null : task.activeReplayVersion,
+                      activeReplayIsStale: result.wasActive ? false : task.activeReplayIsStale,
+                      activeReplayStaleReasons: result.wasActive ? [] : task.activeReplayStaleReasons,
+                      activeReplayPreserveOutputFormat: result.wasActive ? false : task.activeReplayPreserveOutputFormat,
+                      activeReplayFormatGuideStatus: result.wasActive ? 'disabled' : task.activeReplayFormatGuideStatus,
+                      activeReplayFormatGuideError: result.wasActive ? null : task.activeReplayFormatGuideError,
+                      activeReplayLabel: result.wasActive ? null : task.activeReplayLabel,
+                      hasOutputFormatTemplate: task.hasOutputFormatTemplate,
+                      activeOutputFormatTemplateId: task.activeOutputFormatTemplateId,
+                      activeOutputFormatTemplateVersion: task.activeOutputFormatTemplateVersion,
+                      activeOutputFormatStatus: task.activeOutputFormatStatus,
+                      activeOutputFormatError: task.activeOutputFormatError,
+                      isSavingReplayBaseline: false,
+                    }
+                    : task,
+                ),
+              }
+              : state.currentPlaybook,
+          }));
           toast.success(tPlaybook('store.toasts.replayDeleted', 'Replay baseline removed'));
           return result;
         } catch (err) {
@@ -1921,75 +1919,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
         }
       },
 
-      updatePlaybookFromJudge: async (playbookId, executionId) => {
-        try {
-          const updated = await api.updatePlaybookFromJudge(playbookId, executionId);
-          set((state) => ({
-            currentPlaybook: state.currentPlaybook?.id === playbookId ? updated : state.currentPlaybook,
-          }));
-          toast.success(tPlaybook('store.toasts.updatedFromAdvisor', 'Playbook updated from advisor'));
-          return updated;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
-      },
-
-      generatePlaybookFromJudge: async (playbookId, executionId) => {
-        try {
-          const created = await api.generatePlaybookFromJudge(playbookId, executionId);
-          const summary: PlaybookSummary = {
-            id: created.id,
-            name: created.name,
-            description: created.description,
-             taskCount: (created.tasks ?? created.nodes ?? []).length,
-            isFavorite: created.isFavorite,
-            scheduleEnabled: created.executionSchedule?.enabled === true,
-            executionStatus: null,
-            lastExecutionAt: null,
-            createdAt: created.createdAt,
-            updatedAt: created.updatedAt,
-          };
-          set((state) => ({
-            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== created.id)],
-            currentPlaybook: created,
-          }));
-          toast.success(tPlaybook('store.toasts.optimizedGenerated', 'Optimized playbook generated'));
-          return created;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
-      },
-
-      optimizeStepFromJudge: async (playbookId, executionId, taskId) => {
-        try {
-          const updated = await api.optimizeStepFromJudge(playbookId, executionId, taskId);
-          const summary: PlaybookSummary = {
-            id: updated.id,
-            name: updated.name,
-            description: updated.description,
-            taskCount: (updated.tasks ?? updated.nodes ?? []).length,
-            isFavorite: updated.isFavorite,
-            scheduleEnabled: updated.executionSchedule?.enabled === true,
-            executionStatus: null,
-            lastExecutionAt: null,
-            createdAt: updated.createdAt,
-            updatedAt: updated.updatedAt,
-          };
-          set((state) => ({
-            playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
-            currentPlaybook: updated,
-            pendingRerunTaskId: taskId,
-          }));
-          toast.success(tPlaybook('store.toasts.stepOptimized', 'Step optimized'));
-          return updated;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
-      },
-
       runAdvisorEvaluation: async (executionId, taskId, iteration) => {
         const matchesTargetIteration = (taskResult: PlaybookExecution['taskResults'][number]) => (
           taskResult.taskId === taskId
@@ -2075,38 +2004,6 @@ export const usePlaybookStore = create<PlaybookStore>()(
 
       fetchAdvisorRemediations: async (playbookId, executionId, taskId) => {
         return api.fetchAdvisorRemediations(playbookId, executionId, taskId);
-      },
-
-      applyAdvisorRemediations: async (playbookId, executionId, data) => {
-        try {
-          const updated = await api.applyAdvisorRemediations(playbookId, executionId, data);
-          if (data.mode === 'generate-new') {
-            toast.success(tPlaybook('store.toasts.optimizedGenerated', 'Optimized playbook generated'));
-          } else {
-            const summary: PlaybookSummary = {
-              id: updated.id,
-              name: updated.name,
-              description: updated.description,
-              taskCount: (updated.tasks ?? updated.nodes ?? []).length,
-              isFavorite: updated.isFavorite,
-              scheduleEnabled: updated.executionSchedule?.enabled === true,
-              executionStatus: null,
-              lastExecutionAt: null,
-              createdAt: updated.createdAt,
-              updatedAt: updated.updatedAt,
-            };
-            set((state) => ({
-              playbooks: [summary, ...state.playbooks.filter((playbook) => playbook.id !== updated.id)],
-              currentPlaybook: updated,
-              pendingRerunTaskId: state.selectedStepId || null,
-            }));
-            toast.success(tPlaybook('store.toasts.updatedFromAdvisor', 'Playbook updated from advisor'));
-          }
-          return updated;
-        } catch (err) {
-          handleApiError(err);
-          throw err;
-        }
       },
 
       reapplyOptimization: async (playbookId, executionId, taskId, historyIndex, direction) => {

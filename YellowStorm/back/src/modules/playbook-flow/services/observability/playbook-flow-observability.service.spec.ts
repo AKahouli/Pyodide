@@ -79,11 +79,11 @@ describe('PlaybookFlowObservabilityService', () => {
     }]);
   });
 
-  it('extracts reasoning from raw_llm_output for structured-output steps', () => {
+  it('extracts reasoning from reasoning_trace for structured-output steps', () => {
     const payload = service.extractCompletedResultPayload({
       output: 'Summary text',
       display_text: 'Summary text',
-      raw_llm_output: '{"display_text":"Summary text","outputs":[{"output_port_id":"out1","artifact_kind":"text","content":"result"}]}\n---PUBLIC_REASONING_TRACE_JSON---\n[{"id":"s1","type":"analysis","label":"Checked","description":"Verified."}]',
+      reasoning_trace: [{ id: 's1', type: 'analysis', label: 'Checked', description: 'Verified.' }],
       outputs: { out1: { output_port_id: 'out1', artifact_kind: 'text', content: 'result' } },
     }, { executionId: 'exec-1', taskId: 'task-1' });
 
@@ -95,5 +95,41 @@ describe('PlaybookFlowObservabilityService', () => {
       label: 'Checked',
       description: 'Verified.',
     }]);
+  });
+
+  it('falls back to raw_llm_output parsing when reasoning_trace is absent', () => {
+    const payload = service.extractCompletedResultPayload({
+      output: 'Summary text',
+      raw_llm_output: 'Summary text\n---PUBLIC_REASONING_TRACE_JSON---\n[{"id":"s2","type":"observation","label":"Looked","description":"Checked data."}]',
+    }, { executionId: 'exec-1', taskId: 'task-1' });
+
+    expect(payload.output).toBe('Summary text');
+    expect(payload.reasoningChain).toEqual([{
+      id: 's2',
+      type: 'observation',
+      label: 'Looked',
+      description: 'Checked data.',
+    }]);
+  });
+
+  it('normalizes in-band reasoning_trace items and drops invalid ones', () => {
+    const payload = service.extractCompletedResultPayload({
+      output: 'Summary text',
+      display_text: 'Summary text',
+      reasoning_trace: [
+        { id: 's1', type: 'analysis', label: 'Valid', description: 'Good item.' },
+        { id: '', type: 'analysis', label: 'Missing id', description: 'Dropped.' },
+        { type: 'analysis', label: 'No id', description: 'Also dropped.' },
+        { id: 's4', type: 'analysis', label: 'Valid too', description: 'Second good.', confidence: 0.8 },
+        { id: 's5', type: 'bad', label: 'Bad confidence', description: 'Wrong.', confidence: 5.0 },
+      ],
+      outputs: { out1: { output_port_id: 'out1', artifact_kind: 'text', content: 'result' } },
+    }, { executionId: 'exec-1', taskId: 'task-1' });
+
+    expect(payload.reasoningChain).toEqual([
+      { id: 's1', type: 'analysis', label: 'Valid', description: 'Good item.' },
+      { id: 's4', type: 'analysis', label: 'Valid too', description: 'Second good.', confidence: 0.8 },
+    ]);
+    expect((payload.traceMetadata as any)?.publicReasoning?.markerFound).toBe(false);
   });
 });

@@ -20,8 +20,21 @@ import { AIMessageContent } from '@/components/ai-elements/ai-message-content';
 import { MessageProvider } from '@/components/ai-elements/message-context';
 import { cn } from '@/lib/utils';
 import { showError, showSuccess } from '@/lib/notifications';
-import type { TaskResult, PlaybookExecution, PlaybookPageMode, ValidatedTaskReplay, TaskArtifact, AdvisorRemediationItem, RemediationCategory, PlaybookEvaluationExecution } from '../types';
+import type {
+  AdvisorIntentApplyRequest,
+  AdvisorRemediationItem,
+  AdvisorRemediationMode,
+  PlaybookEvaluationExecution,
+  PlaybookExecution,
+  PlaybookPageMode,
+  RemediationCategory,
+  TaskArtifact,
+  TaskResult,
+  ValidatedTaskReplay,
+} from '../types';
 import { PORT_COLORS } from '../utils/port-colors';
+
+const MAX_ADVISOR_INTENT_LENGTH = 4000;
 
 const REMEDIATION_CATEGORY_COLORS: Record<RemediationCategory, string> = {
   structure: 'bg-purple-100 text-purple-700 border-purple-200',
@@ -49,7 +62,7 @@ type JudgeResultLike = {
 
 function buildLocalRemediationItems(
   judgeResult: JudgeResultLike | null,
-  mode: 'optimize-step' | 'update-current' | 'generate-new',
+  mode: AdvisorRemediationMode,
   taskId?: string,
 ): AdvisorRemediationItem[] {
   if (!judgeResult) return [];
@@ -91,10 +104,12 @@ function RemediationItemRow({
   text,
   category,
   onApply,
+  disabled = false,
 }: {
   text: string;
   category: RemediationCategory;
   onApply: () => void;
+  disabled?: boolean;
 }) {
   const { t } = useModuleTranslation('playbook');
   return (
@@ -106,7 +121,7 @@ function RemediationItemRow({
       </div>
       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{text}</p>
       <div className="mt-2 flex justify-end">
-        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply}>
+        <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={onApply} disabled={disabled}>
           <CheckSquare className="mr-1 h-3 w-3" />
           {t('detail.remediation.apply')}
         </Button>
@@ -222,6 +237,8 @@ interface Props {
   onRequestGrabOutputFormat?: (taskId: string) => void;
   onOpenOutputFormatEditor?: (taskId: string) => void;
   onStepReplayModeChange?: (taskId: string, mode: 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive') => void;
+  onApplyAdvisorIntent?: (request: AdvisorIntentApplyRequest) => Promise<void>;
+  onOpenCanvasForAdvisorApply?: () => void;
   isRunningEvaluation?: boolean;
   activeTab?: string;
   onActiveTabChange?: (value: string) => void;
@@ -414,6 +431,8 @@ export function ExecutionStepDetail({
   onRequestGrabOutputFormat,
   onOpenOutputFormatEditor,
   onStepReplayModeChange,
+  onApplyAdvisorIntent,
+  onOpenCanvasForAdvisorApply,
   isRunningEvaluation = false,
   activeTab = 'results',
   onActiveTabChange,
@@ -422,11 +441,7 @@ export function ExecutionStepDetail({
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
-  const updatePlaybookFromJudge = usePlaybookStore((s) => s.updatePlaybookFromJudge);
-  const generatePlaybookFromJudge = usePlaybookStore((s) => s.generatePlaybookFromJudge);
-  const optimizeStepFromJudge = usePlaybookStore((s) => s.optimizeStepFromJudge);
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
-  const designPlaybookAction = usePlaybookStore((s) => s.designPlaybook);
   const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
@@ -449,9 +464,8 @@ export function ExecutionStepDetail({
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
   const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
-  const [judgeActionLoading, setJudgeActionLoading] = useState<'update' | 'generate' | 'optimize' | null>(null);
   const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
-  const [remediationDialogMode, setRemediationDialogMode] = useState<'optimize-step' | 'update-current' | 'generate-new'>('update-current');
+  const [remediationDialogMode, setRemediationDialogMode] = useState<AdvisorRemediationMode>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
   const [remediationLoading, setRemediationLoading] = useState(false);
   const [reapplyingIndex, setReapplyingIndex] = useState<number | null>(null);
@@ -585,7 +599,8 @@ export function ExecutionStepDetail({
     () => missingAdvisorTaskIds.map((taskId) => playbookTaskTitleMap.get(taskId) || taskId),
     [missingAdvisorTaskIds, playbookTaskTitleMap],
   );
-  const remediationCount = stepJudgeResult?.rewriteHints.length ?? 0;
+  const canApplyAdvisorChanges = typeof onApplyAdvisorIntent === 'function';
+  const remediationCount = stepJudgeResult?.rewriteHints?.length ?? 0;
   const issueCount = issueSections.reduce((sum, section) => sum + section.items.length, 0);
   const promptTraceItems = useMemo(() => {
     const items = [...(step?.llmPromptTrace || [])];
@@ -758,27 +773,7 @@ export function ExecutionStepDetail({
     }
   }, [step, t]);
 
-  const handleApplyJudgeUpdate = useCallback(async () => {
-    if (!execution || !currentPlaybook) return;
-    setJudgeActionLoading('update');
-    try {
-      await updatePlaybookFromJudge(currentPlaybook.id, execution.id);
-    } finally {
-      setJudgeActionLoading(null);
-    }
-  }, [currentPlaybook, execution, updatePlaybookFromJudge]);
-
-  const handleOptimizeJudgeStep = useCallback(async () => {
-    if (!execution || !currentPlaybook || !step) return;
-    setJudgeActionLoading('optimize');
-    try {
-      await optimizeStepFromJudge(currentPlaybook.id, execution.id, step.taskId);
-    } finally {
-      setJudgeActionLoading(null);
-    }
-  }, [currentPlaybook, execution, optimizeStepFromJudge, step]);
-
-  const openRemediationDialog = useCallback(async (mode: 'optimize-step' | 'update-current' | 'generate-new') => {
+  const openRemediationDialog = useCallback(async (mode: AdvisorRemediationMode) => {
     if (!execution || !currentPlaybook) return;
     if (mode === 'generate-new') {
       const taskResultsById = new Map((execution.taskResults || []).map((taskResult) => [taskResult.taskId, taskResult]));
@@ -833,10 +828,10 @@ export function ExecutionStepDetail({
     }
   }, [currentPlaybook, executePlaybook, t]);
 
-  const buildOptimizationQuery = useCallback((
+  const buildAdvisorIntent = useCallback((
     selectedIds: string[],
     editedItems: Map<string, string>,
-    mode: 'optimize-step' | 'update-current' | 'generate-new',
+    mode: AdvisorRemediationMode,
   ): string => {
     const selectedItems = remediationItems.filter((item) => selectedIds.includes(item.id));
     const groupedByCategory = new Map<RemediationCategory, AdvisorRemediationItem[]>();
@@ -875,8 +870,8 @@ export function ExecutionStepDetail({
 
     if (mode === 'generate-new') {
       return [
-        'Generate an optimized playbook based on these advisor findings.',
-        'Restructure the workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
+        'Plan a broader optimization of the current playbook based on these advisor findings.',
+        'Restructure the current workflow to address all findings. You may add, remove, reorder, or rewrite steps as needed.',
         'Preserve the user\'s original intent.',
         '',
         'Advisor findings:',
@@ -899,9 +894,25 @@ export function ExecutionStepDetail({
 
   const handleApplyRemediations = useCallback(async (selectedIds: string[], editedItems: Map<string, string>) => {
     if (!currentPlaybook || !execution) return;
-    const query = buildOptimizationQuery(selectedIds, editedItems, remediationDialogMode);
-    return designPlaybookAction(currentPlaybook.id, { query });
-  }, [currentPlaybook, execution, remediationDialogMode, buildOptimizationQuery, designPlaybookAction]);
+
+    if (!onApplyAdvisorIntent) {
+      const message = t('detail.remediation.applyUnavailable');
+      showError(message);
+      throw new Error(message);
+    }
+
+    const intent = buildAdvisorIntent(selectedIds, editedItems, remediationDialogMode);
+    if (intent.length > MAX_ADVISOR_INTENT_LENGTH) {
+      const message = t('detail.remediation.intentTooLong', { max: MAX_ADVISOR_INTENT_LENGTH });
+      showError(message);
+      throw new Error(message);
+    }
+
+    return onApplyAdvisorIntent({
+      intent,
+      selectedTaskId: remediationDialogMode === 'optimize-step' ? step?.taskId : undefined,
+    });
+  }, [buildAdvisorIntent, currentPlaybook, execution, onApplyAdvisorIntent, remediationDialogMode, step?.taskId, t]);
 
   const handleReapplyOptimization = useCallback(async (historyIndex: number, direction: 'after' | 'before') => {
     if (!currentPlaybook || !execution || !step) return;
@@ -1916,7 +1927,7 @@ export function ExecutionStepDetail({
                       <p>{t('detail.judge.missingEvaluationDescription', { count: missingAdvisorTaskIds.length })}</p>
                       <p className="text-xs text-destructive/90">{missingAdvisorTaskTitles.join(', ')}</p>
                       <div>
-                        <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight || judgeActionLoading !== null}>
+                        <Button size="sm" onClick={() => void handleRunAdvisorForAllTasks()} disabled={runningAdvisorPreflight}>
                           {runningAdvisorPreflight && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
                           {t('detail.judge.missingEvaluationRunCta')}
                         </Button>
@@ -1925,10 +1936,19 @@ export function ExecutionStepDetail({
                   </Alert>
                 )}
                 <div className="flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={judgeActionLoading !== null || remediationLoading}>
-                    {judgeActionLoading === 'generate' && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.generateOptimizedPlaybook')}
-                  </Button>
+                  {canApplyAdvisorChanges ? (
+                    <Button size="sm" onClick={() => void handleGenerateJudgePlaybook()} disabled={remediationLoading}>
+                      {t('detail.judge.generateOptimizedPlaybook')}
+                    </Button>
+                  ) : onOpenCanvasForAdvisorApply ? (
+                    <Button size="sm" onClick={onOpenCanvasForAdvisorApply}>
+                      {t('detail.remediation.openCanvasCta')}
+                    </Button>
+                  ) : (
+                    <Button size="sm" disabled>
+                      {t('detail.judge.generateOptimizedPlaybook')}
+                    </Button>
+                  )}
                   {judgeHistory.length > 0 && (
                     <Select value={selectedJudgeHistory?.id || ''} onValueChange={setSelectedJudgeHistoryId}>
                       <SelectTrigger className="h-9 min-w-[260px] sm:w-[320px]">
@@ -1944,15 +1964,31 @@ export function ExecutionStepDetail({
                       </SelectContent>
                     </Select>
                   )}
-                  <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.previewChanges')}
-                  </Button>
-                  <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
-                    {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
-                    {t('detail.judge.applyToCurrentPlaybook')}
-                  </Button>
+                  {canApplyAdvisorChanges ? (
+                    <>
+                      <Button size="sm" variant="outline" onClick={() => openRemediationDialog('optimize-step')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.previewChanges')}
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => openRemediationDialog('update-current')} disabled={remediationLoading}>
+                        {remediationLoading && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                        {t('detail.judge.applyToCurrentPlaybook')}
+                      </Button>
+                    </>
+                  ) : !onOpenCanvasForAdvisorApply ? (
+                    <>
+                      <Button size="sm" variant="outline" disabled>
+                        {t('detail.judge.previewChanges')}
+                      </Button>
+                      <Button size="sm" variant="ghost" disabled>
+                        {t('detail.judge.applyToCurrentPlaybook')}
+                      </Button>
+                    </>
+                  ) : null}
                 </div>
+                {!canApplyAdvisorChanges && (
+                  <div className="text-xs text-muted-foreground">{t('detail.remediation.applyUnavailable')}</div>
+                )}
 
                 <AdvisorResultPanel judgeResult={stepJudgeResult} />
 
@@ -1975,9 +2011,15 @@ export function ExecutionStepDetail({
                     <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform data-[state=open]:rotate-180" />
                   </CollapsibleTrigger>
                   <CollapsibleContent className="mt-2 space-y-2 text-sm data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
-                    {stepJudgeResult.rewriteHints.length > 0 ? (
+                    {stepJudgeResult.rewriteHints?.length ? (
                       stepJudgeResult.rewriteHints.map((hint, idx) => (
-                        <RemediationItemRow key={`rewrite-${idx}`} text={hint} category="prompt" onApply={() => openRemediationDialog('update-current')} />
+                        <RemediationItemRow
+                          key={`rewrite-${idx}`}
+                          text={hint}
+                          category="prompt"
+                          onApply={() => openRemediationDialog('update-current')}
+                          disabled={!canApplyAdvisorChanges}
+                        />
                       ))
                     ) : (
                       <div className="text-muted-foreground">{t('detail.judge.none')}</div>

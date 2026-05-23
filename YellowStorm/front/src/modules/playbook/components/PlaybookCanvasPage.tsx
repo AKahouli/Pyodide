@@ -71,7 +71,7 @@ import { RouterNode } from './RouterNode';
 import { HumanApprovalNode } from './HumanApprovalNode';
 import { ConditionalEdge } from './ConditionalEdge';
 import { DataBindingEdge } from './DataBindingEdge';
-import { PlaybookNodeEditor } from './PlaybookNodeEditor';
+import { PlaybookNodeEditor, type PlaybookNodeEditorHandle } from './PlaybookNodeEditor';
 import { PlaybookToolbar } from './PlaybookToolbar';
 import { PlaybookCanvasFloatingToolbar, type PlaybookCanvasFloatingToolbarHandle } from './PlaybookCanvasFloatingToolbar';
 import { PlaybookIntentBar } from './PlaybookIntentBar';
@@ -92,7 +92,7 @@ import {
 } from '../utils/intent-application-key';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
-import type { PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport } from '../types';
+import type { AdvisorIntentApplyRequest, PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -117,6 +117,25 @@ const ITERATOR_CHILD_NODE_WIDTH = 384;
 const ITERATOR_CHILD_NODE_HEIGHT = 240;
 const DEFAULT_NODE_SPACING_X = 520;
 const TOOLBAR_MIN_LEFT_OFFSET = 40;
+
+function getTopIntentSuggestion(
+  suggestions: PlaybookIntentSuggestion[],
+  options?: { includeFallback?: boolean },
+): PlaybookIntentSuggestion | null {
+  const preferredSuggestions = suggestions.filter((suggestion) => !suggestion.isDirectIntentFallback);
+  const candidateSuggestions = preferredSuggestions.length > 0
+    ? preferredSuggestions
+    : options?.includeFallback
+      ? suggestions
+      : preferredSuggestions;
+
+  return candidateSuggestions.reduce<PlaybookIntentSuggestion | null>((best, suggestion) => {
+    if (!best || suggestion.confidence > best.confidence) {
+      return suggestion;
+    }
+    return best;
+  }, null);
+}
 
 function getIteratorBodyChildPosition(iteratorX: number, iteratorY: number, childIndex: number, totalChildren: number) {
   const columnCount = Math.min(
@@ -401,8 +420,6 @@ function PlaybookCanvasInner() {
   const stopExecution = usePlaybookStore((s) => s.stopExecution);
   const selectStep = usePlaybookStore((s) => s.selectStep);
   const validateTaskReplay = usePlaybookStore((s) => s.validateTaskReplay);
-  const deleteTaskReplay = usePlaybookStore((s) => s.deleteTaskReplay);
-  const renameTaskReplay = usePlaybookStore((s) => s.renameTaskReplay);
   const grabOutputFormatTemplate = usePlaybookStore((s) => s.grabOutputFormatTemplate);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
   const pendingRerunTaskId = usePlaybookStore((s) => s.pendingRerunTaskId);
@@ -421,6 +438,7 @@ function PlaybookCanvasInner() {
   const canvasChromeRef = useRef<HTMLDivElement | null>(null);
   const intentBarRef = useRef<HTMLDivElement | null>(null);
   const floatingToolbarRef = useRef<PlaybookCanvasFloatingToolbarHandle | null>(null);
+  const nodeEditorRef = useRef<PlaybookNodeEditorHandle | null>(null);
   const previousWaitingForHumanInputRef = useRef(false);
   const viewportInitializedPlaybookRef = useRef<string | null>(null);
 
@@ -501,8 +519,11 @@ function PlaybookCanvasInner() {
   const [outputFormatDraft, setOutputFormatDraft] = useState('');
   const [outputFormatLoading, setOutputFormatLoading] = useState(false);
   const [outputFormatSaving, setOutputFormatSaving] = useState(false);
+  const [outputFormatGenerating, setOutputFormatGenerating] = useState(false);
   const connectorSidebarOpen = usePlaybookStore((s) => s.connectorSidebarOpen);
   const setConnectorSidebarOpen = usePlaybookStore((s) => s.setConnectorSidebarOpen);
+  const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
+  const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
   const addToolBindingToTask = usePlaybookStore((s) => s.addToolBindingToTask);
 
   const [bindingModalState, setBindingModalState] = useState<{
@@ -570,6 +591,37 @@ function PlaybookCanvasInner() {
       setTriggersSheetOpen(true);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    const executionIdParam = searchParams.get('execution');
+    if (!id || !executionIdParam || isGeneratingRoute) return;
+
+    const taskIdParam = searchParams.get('task');
+    const iterationParam = searchParams.get('iteration');
+    const parsedIteration = iterationParam ? Number(iterationParam) : Number.NaN;
+
+    setExecutionPanelCollapsed(false);
+    setExecutionPanelOpen(true);
+    setPageMode('run');
+
+    void fetchExecution(id, executionIdParam).then(() => {
+      const restoredExecution = usePlaybookStore.getState().executionCache[executionIdParam];
+      if (!restoredExecution) {
+        return;
+      }
+
+      viewExecutionInPanel(executionIdParam);
+      if (taskIdParam) {
+        selectStep(taskIdParam, Number.isFinite(parsedIteration) ? parsedIteration : undefined);
+      }
+      setSearchParams((prev) => {
+        prev.delete('execution');
+        prev.delete('task');
+        prev.delete('iteration');
+        return prev;
+      }, { replace: true });
+    });
+  }, [fetchExecution, id, isGeneratingRoute, searchParams, selectStep, setExecutionPanelOpen, setPageMode, setSearchParams, viewExecutionInPanel]);
 
   useEffect(() => {
     const intent = searchParams.get('intent');
@@ -1276,14 +1328,7 @@ function PlaybookCanvasInner() {
       if (isDirty) await saveNow();
       const node = nodes.find((n) => n.id === nodeId);
       const task = node?.data as unknown as PlaybookTask | undefined;
-      const selectedStepMode = task?.stepReplayMode || 'live';
-      const requiresExistingExecution = selectedStepMode !== 'live' || Boolean(task?.activeReplayId || task?.hasValidatedReplay);
       try {
-        if (requiresExistingExecution) {
-          showError(t('errors.executionActionUnavailable'));
-          return;
-        }
-
         if (!canExecuteSingleStep(playbook, task ?? null)) {
           showError(t('errors.executionActionUnavailable'));
           return;
@@ -1292,7 +1337,7 @@ function PlaybookCanvasInner() {
         await executePlaybook(id, {
           singleStepTaskId: nodeId,
           executionMode: 'live',
-          stepExecutionModes: { [nodeId]: selectedStepMode },
+          stepExecutionModes: { [nodeId]: 'live' },
           streaming: true,
           runNodeReflection: nodeReflectionEnabled,
           advisorAutopilotEnabled,
@@ -1354,6 +1399,7 @@ function PlaybookCanvasInner() {
     setOutputFormatDraft('');
     setOutputFormatLoading(false);
     setOutputFormatSaving(false);
+    setOutputFormatGenerating(false);
   }, []);
 
   const handleSaveOutputFormat = useCallback(async () => {
@@ -1384,6 +1430,24 @@ function PlaybookCanvasInner() {
     }
   }, [deleteOutputFormatTemplate, editingOutputFormatTaskId, id]);
 
+  const saveAndCloseOutputFormatDialog = useCallback(() => {
+    if (!editingOutputFormatTaskId) return;
+    if (outputFormatDraft.trim() && id) {
+      void updateOutputFormatTemplate(id, editingOutputFormatTaskId, { formatGuide: outputFormatDraft });
+    }
+    closeOutputFormatDialog(false);
+  }, [closeOutputFormatDialog, editingOutputFormatTaskId, id, outputFormatDraft, updateOutputFormatTemplate]);
+
+  const handlePaneClick = useCallback(() => {
+    if (editingOutputFormatTaskId) {
+      saveAndCloseOutputFormatDialog();
+    }
+    if (editorOpen) {
+      nodeEditorRef.current?.flushSave();
+      setEditorOpen(false);
+    }
+  }, [editingOutputFormatTaskId, editorOpen, saveAndCloseOutputFormatDialog, setEditorOpen]);
+
   const executionForNodeActions =
     currentExecution?.playbookId === id
       ? currentExecution
@@ -1404,46 +1468,55 @@ function PlaybookCanvasInner() {
     [executionForNodeActions, getTaskResultForNode, id, validateTaskReplay],
   );
 
-  const handleGrabOutputFormat = useCallback(
-    async (nodeId: string) => {
-      if (!id || !executionForNodeActions) return;
-      const taskResult = getTaskResultForNode(nodeId);
-      if (!taskResult || taskResult.status !== 'completed' || (!taskResult.output && !(taskResult.components?.length))) return;
-      await grabOutputFormatTemplate(id, nodeId, { executionId: executionForNodeActions.id });
-    },
-    [executionForNodeActions, getTaskResultForNode, grabOutputFormatTemplate, id],
-  );
-
-  const handleRemoveReplayBaseline = useCallback(
-    async (playbookId: string, taskId: string, replayId: string) => {
-      await deleteTaskReplay(playbookId, taskId, replayId);
-    },
-    [deleteTaskReplay],
-  );
-
-  const handleRenameReplayBaseline = useCallback(
-    async (playbookId: string, taskId: string, replayId: string, label: string | null) => {
-      await renameTaskReplay(playbookId, taskId, replayId, label);
-    },
-    [renameTaskReplay],
-  );
-
   const canSaveBaseline = useCallback(
     (nodeId: string) => Boolean(executionForNodeActions && getTaskResultForNode(nodeId)?.status === 'completed'),
     [executionForNodeActions, getTaskResultForNode],
   );
 
-  const canGrabOutputFormat = useCallback(
-    (nodeId: string) => {
-      const taskResult = getTaskResultForNode(nodeId);
-      return Boolean(
-        executionForNodeActions
-        && taskResult?.status === 'completed'
-        && (taskResult.output || taskResult.components?.length),
-      );
-    },
-    [executionForNodeActions, getTaskResultForNode],
-  );
+  const canGenerateEditingOutputFormat = useMemo(() => {
+    if (!editingOutputFormatTaskId || !executionForNodeActions) return false;
+    const taskResult = getTaskResultForNode(editingOutputFormatTaskId);
+    return Boolean(taskResult?.status === 'completed' && (taskResult.output || taskResult.components?.length));
+  }, [editingOutputFormatTaskId, executionForNodeActions, getTaskResultForNode]);
+
+  const handleGenerateOutputFormat = useCallback(async () => {
+    if (!id || !editingOutputFormatTaskId || !executionForNodeActions) return;
+    const taskResult = getTaskResultForNode(editingOutputFormatTaskId);
+    if (!taskResult || taskResult.status !== 'completed' || (!taskResult.output && !(taskResult.components?.length))) return;
+
+    setOutputFormatGenerating(true);
+    try {
+      const template = await grabOutputFormatTemplate(id, editingOutputFormatTaskId, { executionId: executionForNodeActions.id });
+
+      if (template.generationStatus === 'pending') {
+        setOutputFormatDraft('');
+        await new Promise<void>((resolve) => {
+          let attempts = 0;
+          const maxAttempts = 60;
+          const poll = async () => {
+            if (attempts >= maxAttempts) { resolve(); return; }
+            attempts++;
+            try {
+              const current = await fetchOutputFormatTemplate(id, editingOutputFormatTaskId);
+              if (!current || current.generationStatus !== 'pending') {
+                setOutputFormatDraft(current?.formatGuide || '');
+                setEditingOutputFormatVersion(current?.templateVersion || null);
+                resolve();
+                return;
+              }
+            } catch { /* retry */ }
+            setTimeout(poll, 2000);
+          };
+          setTimeout(poll, 2000);
+        });
+      } else {
+        setOutputFormatDraft(template.formatGuide || '');
+        setEditingOutputFormatVersion(template.templateVersion);
+      }
+    } finally {
+      setOutputFormatGenerating(false);
+    }
+  }, [editingOutputFormatTaskId, executionForNodeActions, fetchOutputFormatTemplate, getTaskResultForNode, grabOutputFormatTemplate, id]);
 
   const canSkipStep = useCallback(
     (_nodeId: string) => false,
@@ -1523,15 +1596,11 @@ function PlaybookCanvasInner() {
       onResumeFromStep: () => undefined,
       onSkipStep: () => undefined,
       onSaveBaseline: handleSaveBaseline,
-      onGrabOutputFormat: handleGrabOutputFormat,
-      onRemoveReplayBaseline: handleRemoveReplayBaseline,
-      onRenameReplayBaseline: handleRenameReplayBaseline,
       canExecute: !hasActiveExecution && !isSaving && !isDirty,
       isExecuting,
       canResumeFromStep,
       canSkipStep,
       canSaveBaseline,
-      canGrabOutputFormat,
     }),
     [
       handleEditNode,
@@ -1541,9 +1610,6 @@ function PlaybookCanvasInner() {
       handleToggleEnabled,
       handleExecuteStep,
       handleSaveBaseline,
-      handleGrabOutputFormat,
-      handleRemoveReplayBaseline,
-      handleRenameReplayBaseline,
       hasActiveExecution,
       isSaving,
       isDirty,
@@ -1551,7 +1617,6 @@ function PlaybookCanvasInner() {
       canResumeFromStep,
       canSkipStep,
       canSaveBaseline,
-      canGrabOutputFormat,
     ],
   );
 
@@ -2389,8 +2454,8 @@ function PlaybookCanvasInner() {
       if (!change.task) return;
       applyCreate(
         'single-change',
-        change.task.title,
-        change.task.description,
+        change.task.title || '',
+        change.task.description || '',
         change.task.agentSlug,
         change.task.templateType,
         change.task.inputPorts,
@@ -2552,6 +2617,28 @@ function PlaybookCanvasInner() {
     }
   }, [id, currentExecution, execution, stopExecution]);
 
+  const runIntentAnalysis = useCallback(async (intent: string, selectedTaskId?: string, options?: { includeFallback?: boolean }) => {
+    if (!id || !playbook) return null;
+
+    let expectedUpdatedAt = playbook.updatedAt;
+    if (isDirty) {
+      await saveNow();
+      expectedUpdatedAt = usePlaybookStore.getState().currentPlaybook?.updatedAt || expectedUpdatedAt;
+    }
+
+    const result = await requestPlaybookIntent(id, {
+      intent,
+      selectedTaskId,
+    });
+    const suggestions = result.suggestions || [];
+
+    return {
+      expectedUpdatedAt,
+      suggestions,
+      topSuggestion: getTopIntentSuggestion(suggestions, options),
+    };
+  }, [id, isDirty, playbook, requestPlaybookIntent, saveNow]);
+
   const handleSubmitIntent = useCallback(async () => {
     const normalizedIntent = intentValue.trim();
     if (!id || !playbook || normalizedIntent.length < 3) {
@@ -2566,29 +2653,13 @@ function PlaybookCanvasInner() {
       selectStep(null);
     }
 
-    let expectedUpdatedAt = playbook.updatedAt;
-    if (isDirty) {
-      await saveNow();
-      expectedUpdatedAt = usePlaybookStore.getState().currentPlaybook?.updatedAt || expectedUpdatedAt;
-    }
-
     setIntentLoading(true);
     setIntentError('');
     try {
-      const result = await requestPlaybookIntent(id, {
-        intent: normalizedIntent,
-        selectedTaskId: resolvedSelectedTaskId,
-      });
-      const newSuggestions = result.suggestions || [];
-      const topSuggestion = newSuggestions.reduce<PlaybookIntentSuggestion | null>((best, suggestion) => {
-        if (suggestion.isDirectIntentFallback) {
-          return best;
-        }
-        if (!best || suggestion.confidence > best.confidence) {
-          return suggestion;
-        }
-        return best;
-      }, null);
+      const analysis = await runIntentAnalysis(normalizedIntent, resolvedSelectedTaskId);
+      if (!analysis) return;
+
+      const { expectedUpdatedAt, suggestions: newSuggestions, topSuggestion } = analysis;
       if (intentAutoApply && topSuggestion && topSuggestion.confidence >= AUTO_APPLY_MIN_CONFIDENCE) {
         addIntentSuggestionHistoryEntry(id, playbook?.name ?? '', topSuggestion, normalizedIntent);
         handleApplyIntentSuggestion(topSuggestion, { expectedUpdatedAt });
@@ -2605,7 +2676,52 @@ function PlaybookCanvasInner() {
     } finally {
       setIntentLoading(false);
     }
-  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, isDirty, nodeTemplates, playbook, playbook?.tasks, requestPlaybookIntent, saveNow, selectStep, selectedStepId, t]);
+  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, intentAutoApply, intentValue, playbook, runIntentAnalysis, selectStep, selectedStepId, t]);
+
+  const handleApplyAdvisorIntent = useCallback(async ({ intent, selectedTaskId }: AdvisorIntentApplyRequest) => {
+    if (!id || !playbook) return;
+
+    const normalizedIntent = intent.trim();
+    if (selectedTaskId && !playbook.tasks.some((task) => task.id === selectedTaskId)) {
+      const message = t('detail.remediation.targetMissing');
+      setIntentError(message);
+      throw new Error(message);
+    }
+
+    const resolvedSelectedTaskId = selectedTaskId;
+
+    setIntentLoading(true);
+    setIntentError('');
+    try {
+      const analysis = await runIntentAnalysis(normalizedIntent, resolvedSelectedTaskId, { includeFallback: true });
+      if (!analysis) return;
+
+      const { expectedUpdatedAt, suggestions, topSuggestion } = analysis;
+      if (!topSuggestion) {
+        setLastIntentSuggestions(suggestions);
+        setIntentSuggestions(suggestions);
+        throw new Error(t('detail.remediation.noApplicableSuggestion'));
+      }
+
+      if (!resolvedSelectedTaskId && topSuggestion.isDirectIntentFallback && topSuggestion.kind === 'single_change' && !topSuggestion.targetTaskId) {
+        setLastIntentSuggestions(suggestions);
+        setIntentSuggestions(suggestions);
+        throw new Error(t('detail.remediation.noApplicableSuggestion'));
+      }
+
+      addIntentSuggestionHistoryEntry(id, playbook.name, topSuggestion, normalizedIntent);
+      handleApplyIntentSuggestion(topSuggestion, { expectedUpdatedAt });
+      setLastIntentSuggestions([]);
+      setIntentSuggestions([]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('intentBar.error');
+      setIntentError(message);
+      showError(message);
+      throw error;
+    } finally {
+      setIntentLoading(false);
+    }
+  }, [addIntentSuggestionHistoryEntry, handleApplyIntentSuggestion, id, playbook, runIntentAnalysis, t]);
 
   useEffect(() => {
     if (!autoIntentRef.current) return;
@@ -2765,9 +2881,6 @@ function PlaybookCanvasInner() {
   }, [designerOpen, pageMode, setCopilotMode, setDesignerOpen]);
 
   const waitingForHumanInput = currentExecution?.playbookId === id && currentExecution?.waitingForHumanInput === true;
-
-  const setExecutionPanelOpen = usePlaybookStore((s) => s.setExecutionPanelOpen);
-  const viewExecutionInPanel = usePlaybookStore((s) => s.viewExecutionInPanel);
 
   const handleIntentBarClick = useCallback(() => {
     setWorkspaceExplorerOpen(false);
@@ -3136,7 +3249,7 @@ function PlaybookCanvasInner() {
                   onNodeClick={handleNodeClick}
                   onNodeDoubleClick={handleNodeDoubleClick}
                   onEdgeDoubleClick={handleEdgeDoubleClick}
-                  onPaneClick={() => { if (editorOpen) setEditorOpen(false); }}
+                  onPaneClick={handlePaneClick}
                   onPaneMouseMove={() => {
                     if (highlightDismissArmed) {
                       clearChangeFeedback();
@@ -3232,6 +3345,7 @@ function PlaybookCanvasInner() {
             <ExecutionPanel
               playbookId={id}
               pageMode={pageMode}
+              onApplyAdvisorIntent={handleApplyAdvisorIntent}
               onCollapse={() => setExecutionPanelCollapsed(true)}
               onOpenOutputFormatEditor={(taskId) => {
                 void openOutputFormatEditor(taskId);
@@ -3262,12 +3376,14 @@ function PlaybookCanvasInner() {
 
       {/* Node Editor Sheet */}
       <PlaybookNodeEditor
+        ref={nodeEditorRef}
         playbookId={playbook.id}
         task={effectiveEditingTask}
         allTasks={playbook.tasks}
         open={editorOpen}
         onOpenChange={setEditorOpen}
         onSave={handleNodeSave}
+        onOpenOutputFormatEditor={openOutputFormatEditor}
       />
 
       <PlaybookNodeAdvisorDialog
@@ -3305,45 +3421,75 @@ function PlaybookCanvasInner() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!editingOutputFormatTaskId} onOpenChange={closeOutputFormatDialog}>
+      <Dialog open={!!editingOutputFormatTaskId} onOpenChange={(nextOpen) => { if (!nextOpen) saveAndCloseOutputFormatDialog(); }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>
-              {editingOutputFormatVersion ? `Edit output format template v${editingOutputFormatVersion}` : 'Edit output format template'}
+              {editingOutputFormatVersion
+                ? t('outputFormatDialog.titleVersioned', { version: editingOutputFormatVersion })
+                : t('outputFormatDialog.title')}
             </DialogTitle>
+            <DialogDescription>{t('outputFormatDialog.description')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="text-sm text-muted-foreground">
-              Adjust the active output format template for this step. This is independent from replay baselines.
+            <div className="flex items-center justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleGenerateOutputFormat()}
+                disabled={
+                  outputFormatLoading
+                  || outputFormatSaving
+                  || outputFormatGenerating
+                  || !canGenerateEditingOutputFormat
+                }
+              >
+                {outputFormatGenerating ? t('outputFormatDialog.generating') : t('baselineBadge.generateOutputFormat')}
+              </Button>
             </div>
-            <Textarea
-              value={outputFormatDraft}
-              onChange={(e) => setOutputFormatDraft(e.target.value)}
-              rows={18}
-              disabled={outputFormatLoading || outputFormatSaving}
-              placeholder={outputFormatLoading ? 'Loading template...' : 'Output format guide'}
-            />
+            {editingOutputFormatTaskId && !canGenerateEditingOutputFormat && !outputFormatGenerating && (
+              <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">
+                {t('baselineBadge.generateOutputFormatDisabledHint')}
+              </div>
+            )}
+            <div className="relative">
+              <Textarea
+                value={outputFormatDraft}
+                onChange={(e) => setOutputFormatDraft(e.target.value)}
+                rows={18}
+                disabled={outputFormatLoading || outputFormatSaving || outputFormatGenerating}
+                placeholder={outputFormatLoading ? t('outputFormatDialog.loadingPlaceholder') : t('outputFormatDialog.placeholder')}
+              />
+              {outputFormatGenerating && (
+                <div className="absolute inset-0 flex items-center justify-center rounded-md bg-background/60">
+                  <div className="flex flex-col items-center gap-2">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">{t('outputFormatDialog.generating')}</span>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button
               variant="destructive"
               onClick={() => void handleRemoveOutputFormat()}
-              disabled={outputFormatLoading || outputFormatSaving || !editingOutputFormatVersion}
+              disabled={outputFormatLoading || outputFormatSaving || outputFormatGenerating || !editingOutputFormatVersion}
             >
-              Remove
+              {t('outputFormatDialog.remove')}
             </Button>
             <Button
               variant="outline"
               onClick={() => closeOutputFormatDialog(false)}
-              disabled={outputFormatSaving}
+              disabled={outputFormatSaving || outputFormatGenerating}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               onClick={() => void handleSaveOutputFormat()}
-              disabled={outputFormatLoading || outputFormatSaving || !outputFormatDraft.trim()}
+              disabled={outputFormatLoading || outputFormatSaving || outputFormatGenerating || !outputFormatDraft.trim()}
             >
-              {outputFormatSaving ? 'Saving...' : 'Save template'}
+              {outputFormatSaving ? t('outputFormatDialog.saving') : t('outputFormatDialog.save')}
             </Button>
           </DialogFooter>
         </DialogContent>

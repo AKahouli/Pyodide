@@ -78,7 +78,7 @@ export class FlowReplayConfig {
   @Prop({ required: false, type: Boolean, default: false })
   replayToolTrace!: boolean;
 
-  @Prop({ required: false, type: Boolean, default: false })
+  @Prop({ required: false, type: Boolean, default: true })
   replayReasoningChain!: boolean;
 }
 
@@ -174,7 +174,7 @@ export class FlowValidatedReplay {
   @Prop({ required: false, type: String })
   label?: string;
 
-  @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplayConfig), default: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false } })
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplayConfig), default: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: true } })
   replayConfig!: FlowReplayConfig;
 }
 

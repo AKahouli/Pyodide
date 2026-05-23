@@ -94,6 +94,20 @@ export class PlaybookFlowPublicReasoningParserService {
     };
   }
 
+  normalizeReasoningTrace(rawItems: unknown[], context: { executionId: string; taskId: string }): PublicReasoningTraceItem[] {
+    if (!Array.isArray(rawItems)) return [];
+    return rawItems
+      .slice(0, MAX_PUBLIC_REASONING_ITEMS)
+      .flatMap((entry, index) => {
+        const normalized = this.normalizeItem(entry);
+        if (!normalized) {
+          this.warn(context, `dropping_invalid_in_band_item_${index}`);
+          return [];
+        }
+        return [normalized];
+      });
+  }
+
   private normalizeItem(entry: unknown): PublicReasoningTraceItem | null {
     if (!entry || typeof entry !== 'object') {
       return null;

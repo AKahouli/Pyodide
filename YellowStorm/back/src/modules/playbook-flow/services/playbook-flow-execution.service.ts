@@ -655,9 +655,14 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       });
 
       const taskNodeIds = enrichedNodes
-        .filter((n: any) => n.kind === 'task' || n.kind === 'iterator')
+        .filter((n: any) => n.kind === 'step' || n.kind === 'iterator')
         .map((n: any) => n.id);
-      const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, taskNodeIds);
+      const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId').lean().exec();
+      const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
+      const nodesEligibleForReplay = singleStepTargetId
+        ? taskNodeIds.filter((nid: string) => nid !== singleStepTargetId)
+        : taskNodeIds;
+      const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, nodesEligibleForReplay);
 
       for (const node of enrichedNodes) {
         const artifacts = replayArtifacts.get(node.id);

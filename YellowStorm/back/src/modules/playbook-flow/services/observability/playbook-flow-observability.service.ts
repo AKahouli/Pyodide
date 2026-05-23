@@ -42,9 +42,14 @@ export class PlaybookFlowObservabilityService {
         : cleanOutput && typeof cleanOutput === 'object'
           ? JSON.stringify(cleanOutput)
           : String(cleanOutput ?? '');
+    const inBandReasoning = Array.isArray(payload.reasoning_trace)
+      ? this.publicReasoningParser.normalizeReasoningTrace(payload.reasoning_trace, context)
+      : null;
     const reasoningSource = rawLlmOutput ?? rawOutput;
-    const publicReasoning = this.publicReasoningParser.parse(reasoningSource, context);
-    const outputText = rawLlmOutput
+    const publicReasoning = inBandReasoning
+      ? { output: rawOutput, reasoningChain: inBandReasoning, markerFound: false, parseError: undefined }
+      : this.publicReasoningParser.parse(reasoningSource, context);
+    const outputText = (rawLlmOutput && !inBandReasoning)
       ? this.publicReasoningParser.parse(rawOutput, context).output
       : publicReasoning.output;
     const displayText = rawDisplayText === rawOutput

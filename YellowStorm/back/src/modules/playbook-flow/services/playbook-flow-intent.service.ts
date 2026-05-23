@@ -11,6 +11,8 @@ import { PlaybookFlowPromptRendererService } from './playbook-flow-prompt-render
 import { PlaybookFlowNodeTemplateService } from './playbook-flow-node-template.service';
 import type { EffectiveFlowDesignSettings } from '../interfaces/playbook-flow-settings.interface';
 
+type IntentNormalizationLimits = EffectiveFlowDesignSettings['intentNormalizationLimits'];
+
 type PlaybookIntentOperationType = 'create_node' | 'insert_before' | 'insert_after' | 'update_node' | 'delete_node';
 
 interface PlaybookIntentTaskDraft {
@@ -65,7 +67,7 @@ interface PlaybookIntentSingleChangeSuggestion {
   reason: string;
   confidence: number;
   operationType: PlaybookIntentOperationType;
-  task: PlaybookIntentTaskDraft | null;
+  task: PlaybookIntentTaskDraft | Partial<PlaybookIntentTaskDraft> | null;
   targetTaskId: string | null;
   isDirectIntentFallback: boolean;
 }
@@ -233,7 +235,12 @@ export class PlaybookFlowIntentService {
     }, { timeout: 45000 });
 
     return {
-      suggestions: this.normalizeSuggestions(this.extractChatCompletionText(response.data), dto, selectedNode?.id || null),
+      suggestions: this.normalizeSuggestions(
+        this.extractChatCompletionText(response.data),
+        dto,
+        selectedNode?.id || null,
+        effectiveSettings.intentNormalizationLimits,
+      ),
       model,
       settings: effectiveSettings,
     };
@@ -307,13 +314,18 @@ export class PlaybookFlowIntentService {
     return '';
   }
 
-  private normalizeSuggestions(raw: string, dto: RequestPlaybookFlowIntentDto, selectedNodeId: string | null): PlaybookIntentSuggestion[] {
+  private normalizeSuggestions(
+    raw: string,
+    dto: RequestPlaybookFlowIntentDto,
+    selectedNodeId: string | null,
+    limits: IntentNormalizationLimits,
+  ): PlaybookIntentSuggestion[] {
     try {
       const parsed = JSON.parse(raw || '{}') as { suggestions?: Array<Record<string, unknown>> };
       const suggestions = Array.isArray(parsed.suggestions) ? parsed.suggestions : [];
       const normalized = suggestions
         .slice(0, 6)
-        .map((item, index) => this.normalizeSuggestion(item, index, selectedNodeId))
+        .map((item, index) => this.normalizeSuggestion(item, index, selectedNodeId, limits))
         .filter((item): item is PlaybookIntentSuggestion => item !== null);
 
       return [this.createFallbackSuggestion(dto, selectedNodeId), ...normalized];
@@ -322,52 +334,81 @@ export class PlaybookFlowIntentService {
     }
   }
 
-  private normalizeSuggestion(item: Record<string, unknown>, index: number, selectedNodeId: string | null): PlaybookIntentSuggestion | null {
+  private normalizeSuggestion(
+    item: Record<string, unknown>,
+    index: number,
+    selectedNodeId: string | null,
+    limits: IntentNormalizationLimits,
+  ): PlaybookIntentSuggestion | null {
     if (item.kind === 'workflow_plan' || Array.isArray(item.changes) || this.looksLikeWorkflowPlanImpact(item.impact)) {
-      return this.normalizeWorkflowPlanSuggestion(item, index);
+      return this.normalizeWorkflowPlanSuggestion(item, index, limits);
     }
 
     const label = this.normalizeText(item.label) || this.normalizeText(item.title);
-    if (!label) {
+    const nestedTask = item.task && typeof item.task === 'object' ? item.task as Record<string, unknown> : null;
+    const operationType = this.normalizeOperationType(item.operationType, selectedNodeId);
+    const derivedLabel = label
+      || (nestedTask ? this.normalizeText(nestedTask.title) || this.normalizeText(nestedTask.description)?.slice(0, 100) : '')
+      || this.normalizeText(item.summary)?.slice(0, 100);
+    if (!derivedLabel) {
       return null;
     }
 
-    const operationType = this.normalizeOperationType(item.operationType, selectedNodeId);
-    const taskTitle = this.normalizeText(item.taskTitle) || label;
-    const taskDescription = this.normalizeText(item.taskDescription) || this.normalizeText(item.summary);
-    const agentSlug = this.normalizeText(item.agentSlug);
-    const templateType = this.normalizeText(item.templateType);
+    const explicitTitle = this.normalizeText(item.taskTitle) || this.normalizeText(nestedTask?.title);
+    const taskTitle = operationType === 'update_node' ? explicitTitle : (explicitTitle || derivedLabel);
+    const taskDescription = this.normalizeText(item.taskDescription) || this.normalizeText(nestedTask?.description) || this.normalizeText(item.summary);
+    const agentSlug = this.normalizeText(item.agentSlug) || this.normalizeText(nestedTask?.agentSlug);
+    const templateType = this.normalizeText(item.templateType) || this.normalizeText(nestedTask?.templateType);
+    const inputPorts = nestedTask ? this.normalizeInputPorts(nestedTask.inputPorts, limits) : [];
+    const outputPorts = nestedTask ? this.normalizeOutputPorts(nestedTask.outputPorts, limits) : [];
+
+    const task = operationType === 'delete_node'
+      ? null
+      : operationType === 'update_node'
+        ? {
+          ...(taskTitle ? { title: taskTitle } : {}),
+          description: taskDescription,
+          ...(agentSlug ? { agentSlug } : {}),
+          ...(templateType ? { templateType } : {}),
+          ...(inputPorts.length ? { inputPorts } : {}),
+          ...(outputPorts.length ? { outputPorts } : {}),
+        }
+        : {
+          title: taskTitle || label,
+          description: taskDescription,
+          agentSlug: agentSlug || null,
+          templateType: templateType || null,
+          ...(inputPorts.length ? { inputPorts } : {}),
+          ...(outputPorts.length ? { outputPorts } : {}),
+        };
 
     return {
       id: `intent-${index}`,
       kind: 'single_change',
-      label,
+      label: derivedLabel,
       summary: this.normalizeText(item.summary) || '',
       reason: this.normalizeText(item.reason) || '',
       confidence: this.normalizeConfidence(item.confidence),
       operationType,
-      task: operationType === 'delete_node'
-        ? null
-        : {
-          title: taskTitle,
-          description: taskDescription,
-          agentSlug: agentSlug || null,
-          templateType: templateType || null,
-        },
-      targetTaskId: this.normalizeText(item.targetTaskId) || selectedNodeId,
+      task,
+      targetTaskId: this.normalizeText(item.targetTaskId) || this.normalizeText(item.nodeRef) || selectedNodeId,
       isDirectIntentFallback: false,
     };
   }
 
-  private normalizeWorkflowPlanSuggestion(item: Record<string, unknown>, index: number): PlaybookIntentWorkflowPlanSuggestion | null {
+  private normalizeWorkflowPlanSuggestion(
+    item: Record<string, unknown>,
+    index: number,
+    limits: IntentNormalizationLimits,
+  ): PlaybookIntentWorkflowPlanSuggestion | null {
     const label = this.normalizeText(item.label) || this.normalizeText(item.title);
     if (!label || !Array.isArray(item.changes)) {
       return null;
     }
 
     const changes = item.changes
-      .slice(0, 8)
-      .map((change) => this.normalizeWorkflowChange(change))
+      .slice(0, limits.maxWorkflowPlanChanges)
+      .map((change) => this.normalizeWorkflowChange(change, limits))
       .filter((change): change is PlaybookIntentWorkflowChange => change !== null);
 
     if (changes.length === 0) {
@@ -387,7 +428,7 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  private normalizeWorkflowChange(value: unknown): PlaybookIntentWorkflowChange | null {
+  private normalizeWorkflowChange(value: unknown, limits: IntentNormalizationLimits): PlaybookIntentWorkflowChange | null {
     if (!value || typeof value !== 'object') {
       return null;
     }
@@ -395,7 +436,12 @@ export class PlaybookFlowIntentService {
     const item = value as Record<string, unknown>;
     if (item.type === 'create_node') {
       const nodeRef = this.normalizeText(item.nodeRef);
-      const task = this.normalizeTaskDraft(item.task, this.normalizeText(item.taskTitle), this.normalizeText(item.taskDescription));
+      const task = this.normalizeTaskDraft(
+        item.task,
+        this.normalizeText(item.taskTitle),
+        this.normalizeText(item.taskDescription),
+        limits,
+      );
       if (!nodeRef || !task) {
         return null;
       }
@@ -410,7 +456,12 @@ export class PlaybookFlowIntentService {
 
     if (item.type === 'update_node') {
       const targetTaskId = this.normalizeText(item.targetTaskId) || this.normalizeText(item.nodeRef);
-      const task = this.normalizePartialTaskDraft(item.task, this.normalizeText(item.taskTitle), this.normalizeText(item.taskDescription));
+      const task = this.normalizePartialTaskDraft(
+        item.task,
+        this.normalizeText(item.taskTitle),
+        this.normalizeText(item.taskDescription),
+        limits,
+      );
       if (!targetTaskId || Object.keys(task).length === 0) {
         return null;
       }
@@ -501,15 +552,20 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  private normalizeTaskDraft(value: unknown, fallbackTitle = '', fallbackDescription = ''): PlaybookIntentTaskDraft | null {
+  private normalizeTaskDraft(
+    value: unknown,
+    fallbackTitle = '',
+    fallbackDescription = '',
+    limits: IntentNormalizationLimits,
+  ): PlaybookIntentTaskDraft | null {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const templateType = this.normalizeText(item.templateType);
-    const inputPorts = this.normalizeInputPorts(item.inputPorts);
-    const outputPorts = this.normalizeOutputPorts(item.outputPorts);
-    const iteratorBody = this.normalizeIteratorBody(item.iteratorBody);
+    const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
+    const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
+    const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
     return title
       ? {
         title,
@@ -523,15 +579,20 @@ export class PlaybookFlowIntentService {
       : null;
   }
 
-  private normalizePartialTaskDraft(value: unknown, fallbackTitle = '', fallbackDescription = ''): Partial<PlaybookIntentTaskDraft> {
+  private normalizePartialTaskDraft(
+    value: unknown,
+    fallbackTitle = '',
+    fallbackDescription = '',
+    limits: IntentNormalizationLimits,
+  ): Partial<PlaybookIntentTaskDraft> {
     const item = value && typeof value === 'object' ? value as Record<string, unknown> : {};
     const title = this.normalizeText(item.title) || fallbackTitle;
     const description = this.normalizeText(item.description) || fallbackDescription;
     const agentSlug = this.normalizeText(item.agentSlug);
     const templateType = this.normalizeText(item.templateType);
-    const inputPorts = this.normalizeInputPorts(item.inputPorts);
-    const outputPorts = this.normalizeOutputPorts(item.outputPorts);
-    const iteratorBody = this.normalizeIteratorBody(item.iteratorBody);
+    const inputPorts = this.normalizeInputPorts(item.inputPorts, limits);
+    const outputPorts = this.normalizeOutputPorts(item.outputPorts, limits);
+    const iteratorBody = this.normalizeIteratorBody(item.iteratorBody, limits);
     return {
       ...(title ? { title } : {}),
       ...(description ? { description } : {}),
@@ -543,7 +604,7 @@ export class PlaybookFlowIntentService {
     };
   }
 
-  private normalizeIteratorBody(value: unknown): PlaybookIntentTaskDraft['iteratorBody'] | undefined {
+  private normalizeIteratorBody(value: unknown, limits: IntentNormalizationLimits): PlaybookIntentTaskDraft['iteratorBody'] | undefined {
     if (!value || typeof value !== 'object') {
       return undefined;
     }
@@ -566,8 +627,8 @@ export class PlaybookFlowIntentService {
           const description = this.normalizeText(draft.description);
           const agentSlug = this.normalizeText(draft.agentSlug);
           const templateType = this.normalizeText(draft.templateType);
-          const inputPorts = this.normalizeInputPorts(draft.inputPorts);
-          const outputPorts = this.normalizeOutputPorts(draft.outputPorts);
+          const inputPorts = this.normalizeInputPorts(draft.inputPorts, limits);
+          const outputPorts = this.normalizeOutputPorts(draft.outputPorts, limits);
           return {
             nodeRef,
             title,
@@ -579,7 +640,7 @@ export class PlaybookFlowIntentService {
           };
         })
         .filter((step): step is NonNullable<typeof step> => step !== null)
-        .slice(0, 12)
+        .slice(0, limits.maxIteratorBodySteps)
       : [];
 
     const validStepRefs = new Set(steps.map((s) => s.nodeRef));
@@ -610,7 +671,7 @@ export class PlaybookFlowIntentService {
           };
         })
         .filter((edge): edge is NonNullable<typeof edge> => edge !== null)
-        .slice(0, 24)
+        .slice(0, limits.maxIteratorBodyEdges)
       : [];
 
     return steps.length > 0 ? { steps, edges } : undefined;
@@ -705,7 +766,7 @@ export class PlaybookFlowIntentService {
       : '';
   }
 
-  private normalizeInputPorts(value: unknown): NonNullable<PlaybookIntentTaskDraft['inputPorts']> {
+  private normalizeInputPorts(value: unknown, limits: IntentNormalizationLimits): NonNullable<PlaybookIntentTaskDraft['inputPorts']> {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -734,10 +795,10 @@ export class PlaybookFlowIntentService {
         };
       })
       .filter((port): port is NonNullable<typeof port> => port !== null)
-      .slice(0, 4);
+      .slice(0, limits.maxInputPorts);
   }
 
-  private normalizeOutputPorts(value: unknown): NonNullable<PlaybookIntentTaskDraft['outputPorts']> {
+  private normalizeOutputPorts(value: unknown, limits: IntentNormalizationLimits): NonNullable<PlaybookIntentTaskDraft['outputPorts']> {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -765,7 +826,7 @@ export class PlaybookFlowIntentService {
         };
       })
       .filter((port): port is NonNullable<typeof port> => port !== null)
-      .slice(0, 4);
+      .slice(0, limits.maxOutputPorts);
   }
 
   private normalizeOperationType(value: unknown, selectedNodeId: string | null): PlaybookIntentOperationType {

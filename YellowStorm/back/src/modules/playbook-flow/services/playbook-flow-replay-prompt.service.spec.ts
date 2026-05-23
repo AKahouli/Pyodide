@@ -13,7 +13,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
     replayConfig: overrides.replayConfig ?? {
       replayOutputFormat: false,
       replayToolTrace: false,
-      replayReasoningChain: false,
+      replayReasoningChain: true,
     },
   };
 }
@@ -25,8 +25,10 @@ describe('PlaybookFlowReplayPromptService', () => {
     service = new PlaybookFlowReplayPromptService();
   });
 
-  it('returns empty string when no toggles are active and no reference output', () => {
-    const result = service.buildReplayPromptSection(makeArtifacts());
+  it('returns empty string when no reference output and no data', () => {
+    const result = service.buildReplayPromptSection(makeArtifacts({
+      replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
+    }));
     expect(result).toBe('');
   });
 

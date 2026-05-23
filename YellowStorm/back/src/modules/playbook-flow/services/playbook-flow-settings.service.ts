@@ -9,6 +9,7 @@ import {
   UpdateFlowDesignSettingsDto,
   DEFAULT_FLOW_DESIGN_SETTINGS,
 } from '../interfaces/playbook-flow-settings.interface';
+import { UpdateAdminPlaybookSettingsDto } from '../dto/update-admin-playbook-settings.dto';
 
 @Injectable()
 export class PlaybookFlowSettingsService {
@@ -19,6 +20,40 @@ export class PlaybookFlowSettingsService {
 
   async getAdminSettings(): Promise<AdminPlaybookSettings> {
     return this.systemService.getPlaybookSettings();
+  }
+
+  async updateAdminSettings(patch: UpdateAdminPlaybookSettingsDto): Promise<AdminPlaybookSettings> {
+    const current = await this.getAdminSettings();
+    const inferenceModelId = patch.inferenceModelId === undefined
+      ? current.inferenceModelId
+      : patch.inferenceModelId?.trim() || null;
+    const advisorEvaluationModelId = patch.advisorEvaluationModelId === undefined
+      ? current.advisorEvaluationModelId
+      : patch.advisorEvaluationModelId?.trim() || null;
+
+    if (patch.inferenceModelId !== undefined && inferenceModelId) {
+      const validation = await this.modelsService.validateModelActive(inferenceModelId);
+      if (!validation.valid) throw new BadRequestException(ErrorCode.BAD_REQUEST);
+    }
+
+    if (patch.advisorEvaluationModelId !== undefined && advisorEvaluationModelId) {
+      const validation = await this.modelsService.validateModelActive(advisorEvaluationModelId);
+      if (!validation.valid) throw new BadRequestException(ErrorCode.MODEL_INACTIVE, 'Advisor evaluation model is unavailable.');
+    }
+
+    return this.systemService.setPlaybookSettings({
+      inferenceModelId,
+      advisorEvaluationModelId,
+      nodeSuggestionsMode: patch.nodeSuggestionsMode ?? current.nodeSuggestionsMode,
+      approvalSuggestionMode: patch.approvalSuggestionMode ?? current.approvalSuggestionMode,
+      intentNormalizationLimits: {
+        maxWorkflowPlanChanges: patch.intentNormalizationLimits?.maxWorkflowPlanChanges ?? current.intentNormalizationLimits.maxWorkflowPlanChanges,
+        maxInputPorts: patch.intentNormalizationLimits?.maxInputPorts ?? current.intentNormalizationLimits.maxInputPorts,
+        maxOutputPorts: patch.intentNormalizationLimits?.maxOutputPorts ?? current.intentNormalizationLimits.maxOutputPorts,
+        maxIteratorBodySteps: patch.intentNormalizationLimits?.maxIteratorBodySteps ?? current.intentNormalizationLimits.maxIteratorBodySteps,
+        maxIteratorBodyEdges: patch.intentNormalizationLimits?.maxIteratorBodyEdges ?? current.intentNormalizationLimits.maxIteratorBodyEdges,
+      },
+    });
   }
 
   async resolveAdvisorEvaluationModelId(): Promise<string> {
@@ -104,6 +139,7 @@ export class PlaybookFlowSettingsService {
         ? adminSettings.nodeSuggestionsMode : normalized.nodeSuggestionsMode,
       approvalSuggestionMode: normalized.approvalSuggestionMode === 'inherit'
         ? adminSettings.approvalSuggestionMode : normalized.approvalSuggestionMode,
+      intentNormalizationLimits: adminSettings.intentNormalizationLimits,
       resolvedInferenceModelId,
       recursionLimit: normalized.recursionLimit,
       maxParallelism: normalized.maxParallelism,
