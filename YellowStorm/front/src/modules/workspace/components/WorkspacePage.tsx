@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, RefreshCw, Search, Shield, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, RefreshCw, Search, Shield, Sparkles, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
 import { useWorkspaceStore } from '../store';
+import * as pageApi from '../page-api';
 import type { WorkspaceFile, WorkspaceFolder } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { WorkspacePicker } from './WorkspacePicker';
@@ -89,7 +90,41 @@ export function WorkspacePage() {
   const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
+
+  const handleSync = useCallback(async () => {
+    if (!activeWorkspaceId || isSyncing) return;
+    setIsSyncing(true);
+    const loadingToastId = toast.loading('Génération de l’archive ZIP…');
+    try {
+      const { blob, filename, fileCount, unclassifiedCount, failedCount } = await pageApi.syncWorkspace(activeWorkspaceId);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      toast.dismiss(loadingToastId);
+      if (failedCount > 0) {
+        toast.warning(`Archive prête (${fileCount} fichier(s))`, {
+          description: `${failedCount} fichier(s) n’ont pas pu être inclus.`,
+        });
+      } else {
+        toast.success(`Archive prête (${fileCount} fichier(s))`, {
+          description: unclassifiedCount > 0 ? `${unclassifiedCount} fichier(s) à la racine.` : undefined,
+        });
+      }
+    } catch (err) {
+      toast.dismiss(loadingToastId);
+      const message = err instanceof Error ? err.message : 'Échec de la génération du ZIP';
+      toast.error('Sync impossible', { description: message });
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [activeWorkspaceId, isSyncing]);
 
   const breadcrumbs = useMemo(() => {
     if (!currentFolderId) return [] as WorkspaceFolder[];
@@ -209,6 +244,10 @@ export function WorkspacePage() {
             <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
               <Shield className='h-4 w-4' />
               Règles
+            </Button>
+            <Button variant='outline' size='sm' onClick={handleSync} disabled={isSyncing} className='gap-1.5'>
+              {isSyncing ? <Loader2 className='h-4 w-4 animate-spin' /> : <DownloadCloud className='h-4 w-4' />}
+              Sync
             </Button>
             <Separator orientation='vertical' className='h-6' />
             <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>

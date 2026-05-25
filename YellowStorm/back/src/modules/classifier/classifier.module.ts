@@ -33,11 +33,13 @@ import { ClassifierFolderController } from './controllers/classifier-folder.cont
 import { ClassifierFileController } from './controllers/classifier-file.controller';
 import { ClassifierRunController } from './controllers/classifier-run.controller';
 import { ClassifierRuleController } from './controllers/classifier-rule.controller';
+import { ClassifierSyncController } from './controllers/classifier-sync.controller';
 import { ClassifierAccessService } from './services/classifier-access.service';
 import { ClassifierFolderService } from './services/classifier-folder.service';
 import { ClassifierFileService } from './services/classifier-file.service';
 import { ClassifierRunService } from './services/classifier-run.service';
 import { ClassifierRuleService } from './services/classifier-rule.service';
+import { ClassifierSyncService } from './services/classifier-sync.service';
 import { LoggerModule } from '../logger';
 
 @Module({
@@ -59,6 +61,7 @@ import { LoggerModule } from '../logger';
     ClassifierFileController,
     ClassifierRunController,
     ClassifierRuleController,
+    ClassifierSyncController,
   ],
   providers: [
     ClassifierAccessService,
@@ -66,12 +69,14 @@ import { LoggerModule } from '../logger';
     ClassifierFileService,
     ClassifierRunService,
     ClassifierRuleService,
+    ClassifierSyncService,
   ],
   exports: [
     ClassifierFolderService,
     ClassifierFileService,
     ClassifierRunService,
     ClassifierRuleService,
+    ClassifierSyncService,
   ],
 })
 export class ClassifierModule {}
