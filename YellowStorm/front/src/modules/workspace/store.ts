@@ -269,7 +269,7 @@ interface WorkspaceActions {
   deletePageFolder: (id: string) => Promise<void>;
   movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
   setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
-  uploadPageFiles: (files: File[]) => Promise<void>;
+  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
 }
@@ -1751,12 +1751,14 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }
       },
 
-      uploadPageFiles: async (files) => {
+      uploadPageFiles: async (files, options) => {
         const workspaceId = get().selectedWorkspaceId;
         if (!workspaceId || files.length === 0) return;
 
         const { validFiles } = validateFiles(files);
         if (validFiles.length === 0) return;
+
+        const previousFileIds = new Set(get().pageFiles.map((f) => f.id));
 
         get().addFilesToQueue(validFiles, workspaceId);
         try {
@@ -1767,6 +1769,30 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               : `${validFiles.length} fichiers ajoutés`,
           );
           await get().refreshPageData();
+
+          if (options?.autoIndex) {
+            const newFileIds = get()
+              .pageFiles.filter((f) => !previousFileIds.has(f.id))
+              .map((f) => f.id);
+
+            if (newFileIds.length > 0) {
+              const results = await Promise.allSettled(
+                newFileIds.map((fileId) => workspaceApi.reindexDocument(workspaceId, fileId)),
+              );
+              const failed = results.filter((r) => r.status === 'rejected').length;
+              if (failed === 0) {
+                toast.success(
+                  newFileIds.length === 1
+                    ? 'Indexation lancée'
+                    : `Indexation lancée pour ${newFileIds.length} fichiers`,
+                );
+              } else if (failed === newFileIds.length) {
+                toast.error("Échec du lancement de l'indexation");
+              } else {
+                toast.warning(`Indexation partielle : ${failed} échec(s)`);
+              }
+            }
+          }
         } catch (err) {
           toast.error(getApiErrorMessage(err, "Échec de l'upload"));
         }

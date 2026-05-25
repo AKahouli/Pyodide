@@ -5,7 +5,10 @@ import { ArrowRight, ChevronRight, Download, Eye, File as FileIcon, FileText, Fi
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -14,6 +17,7 @@ import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
 import { useWorkspaceStore } from '../store';
 import type { WorkspaceFile, WorkspaceFolder } from '../types';
+import { useAutoIndexation } from '../hooks/useAutoIndexation';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { EditFolderDialog } from './EditFolderDialog';
@@ -83,6 +87,7 @@ export function WorkspacePage() {
   const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
   const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
+  const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
 
   const breadcrumbs = useMemo(() => {
     if (!currentFolderId) return [] as WorkspaceFolder[];
@@ -174,6 +179,27 @@ export function WorkspacePage() {
           </div>
 
           <div className='ml-auto flex items-center gap-2'>
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className='flex items-center gap-2 rounded-md border bg-background px-2.5 py-1 h-9'>
+                    <Label htmlFor='auto-indexation-toggle' className='cursor-pointer text-xs font-medium leading-none select-none'>
+                      Auto-indexation
+                    </Label>
+                    <Switch id='auto-indexation-toggle' checked={autoIndex} onCheckedChange={setAutoIndex} aria-label="Activer l'indexation automatique des fichiers uploadés" />
+                    <span className={cn('text-[10px] font-semibold uppercase tracking-wide tabular-nums', autoIndex ? 'text-primary' : 'text-muted-foreground')}>
+                      {autoIndex ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side='bottom' className='max-w-xs text-center'>
+                  {autoIndex
+                    ? 'Les nouveaux fichiers uploadés sont envoyés au pipeline d’indexation automatiquement.'
+                    : 'Les fichiers sont uploadés sans indexation. Vous pouvez indexer manuellement plus tard.'}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            <Separator orientation='vertical' className='h-6' />
             <Button variant='outline' size='sm' onClick={() => setCreateOpen(true)} className='gap-1.5'>
               <FolderPlus className='h-4 w-4' />
               Nouveau dossier
