@@ -15,9 +15,14 @@ import {
 } from './schemas/admin-connector-oauth-state.schema';
 import { AdminConnectorController } from './admin-connector.controller';
 import { AdminConnectorAuthCallbackController } from './admin-connector-auth-callback.controller';
+import { UnifiedOAuthCallbackController } from './controllers/unified-oauth-callback.controller';
 import { ConnectorController } from './connector.controller';
 import { AuthorizationModule } from '../authorization/authorization.module';
 import { ConnectedAppModule } from '../connected-app/connected-app.module';
+import {
+  ConnectedAppOAuthState,
+  ConnectedAppOAuthStateSchema,
+} from '../connected-app/schemas/connected-app-oauth-state.schema';
 import { WorkspaceModule } from '../workspace/workspace.module';
 import { UserModule } from '../user/user.module';
 import { LoggerModule } from '../logger';
@@ -32,6 +37,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
       { name: ConnectorCredential.name, schema: ConnectorCredentialSchema },
       { name: AdminConnectorAuth.name, schema: AdminConnectorAuthSchema },
       { name: AdminConnectorOAuthState.name, schema: AdminConnectorOAuthStateSchema },
+      { name: ConnectedAppOAuthState.name, schema: ConnectedAppOAuthStateSchema },
     ]),
     AuthorizationModule,
     ConnectedAppModule,
@@ -39,7 +45,7 @@ import { ConnectorAdminAuthService } from './services/connector-admin-auth.servi
     UserModule,
     LoggerModule,
   ],
-  controllers: [AdminConnectorController, AdminConnectorAuthCallbackController, ConnectorController],
+  controllers: [AdminConnectorController, AdminConnectorAuthCallbackController, UnifiedOAuthCallbackController, ConnectorController],
   providers: [
     CryptoService,
     ConnectorService,

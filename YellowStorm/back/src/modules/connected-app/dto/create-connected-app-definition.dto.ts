@@ -10,12 +10,34 @@ import {
   MaxLength,
 } from 'class-validator';
 
+// Default COMMON_APP_KEYS (used as fallback if not in .env)
+export const DEFAULT_COMMON_APP_KEYS = {
+  github: 'github',
+  google: 'google',
+  microsoft: 'microsoft',
+  slack: 'slack',
+  notion: 'notion',
+  linear: 'linear',
+  anthropic: 'anthropic',
+  openai: 'openai',
+  jira: 'jira',
+  asana: 'asana',
+  trello: 'trello',
+  dropbox: 'dropbox',
+  box: 'box',
+} as const;
+
+// Legacy export for backward compatibility
+export const COMMON_APP_KEYS = DEFAULT_COMMON_APP_KEYS;
+
+export type CommonAppKey = keyof typeof COMMON_APP_KEYS;
+
 export class CreateConnectedAppDefinitionDto {
   @ApiProperty({ description: 'Unique app key (lowercase alphanumeric + hyphens)', example: 'google-drive' })
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)
-  @Matches(/^[a-z0-9-]+$/, { message: 'appKey must contain only lowercase letters, numbers, and hyphens' })
+  @Matches(/^[a-z0-9-]+(?:-[a-z0-9]+)*$/, { message: 'appKey must contain only lowercase letters, numbers, and hyphens' })
   appKey!: string;
 
   @ApiProperty({ description: 'Display name shown in UI', example: 'Google Drive' })
@@ -86,4 +108,12 @@ export class CreateConnectedAppDefinitionDto {
   @IsNumber()
   @IsOptional()
   sortOrder?: number;
+
+  @ApiPropertyOptional({
+    description: 'Callback URL preview (automatically generated)',
+    example: 'http://localhost:3000/api/v1/connected-apps/google-drive/callback'
+  })
+  @IsString()
+  @IsOptional()
+  callbackUrlPreview?: string;
 }

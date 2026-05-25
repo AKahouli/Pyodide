@@ -200,17 +200,25 @@ export function CreateEditConnectorDialog({
   const [inspectTools, setInspectTools] = useState<McpToolDefinition[]>([]);
   const [availableSkills, setAvailableSkills] = useState<SkillResponse[]>([]);
   const [connectedApps, setConnectedApps] = useState<ConnectedAppAdminResponse[]>([]);
-  const [githubConnected, setGithubConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<Record<string, boolean>>({});
   const [oauthConnecting, setOauthConnecting] = useState(false);
 
-  const refreshGithubConnectionStatus = useCallback(async () => {
+  const refreshConnectionStatus = useCallback(async (appKey: string) => {
     try {
-      const status = await getConnectorAppOAuthStatus('github');
-      setGithubConnected(status.connected);
+      const status = await getConnectorAppOAuthStatus(appKey);
+      setConnectionStatus((prev) => ({ ...prev, [appKey]: status.connected }));
     } catch {
-      setGithubConnected(false);
+      setConnectionStatus((prev) => ({ ...prev, [appKey]: false }));
     }
   }, []);
+
+  const getCurrentConnectedApp = useCallback(() => {
+    return connectedApps.find((app) => app.appKey === form.connectedAppKey);
+  }, [connectedApps, form.connectedAppKey]);
+
+  const isCurrentAppConnected = useCallback(() => {
+    return form.connectedAppKey ? connectionStatus[form.connectedAppKey] ?? false : false;
+  }, [connectionStatus, form.connectedAppKey]);
 
   useEffect(() => {
     if (open) {
@@ -220,10 +228,19 @@ export function CreateEditConnectorDialog({
         .then((result) => setAvailableSkills(result.data || []))
         .catch(() => setAvailableSkills([]));
       getAdminConnectedApps()
-        .then((apps) => setConnectedApps(apps.filter((app) => app.enabled)))
-        .catch(() => setConnectedApps([]));
-
-      void refreshGithubConnectionStatus();
+        .then((apps) => {
+          const enabledApps = apps.filter((app) => app.enabled);
+          setConnectedApps(enabledApps);
+          const initialStatus: Record<string, boolean> = {};
+          enabledApps.forEach((app) => {
+            initialStatus[app.appKey] = false;
+          });
+          setConnectionStatus(initialStatus);
+        })
+        .catch(() => {
+          setConnectedApps([]);
+          setConnectionStatus({});
+        });
 
       if (connector) {
         const parsedRuntime = parseRuntimeAuthConfig(connector.runtimeAuthConfig);
@@ -253,24 +270,25 @@ export function CreateEditConnectorDialog({
           referencedSkillIds: connector.referencedSkillIds || [],
           isActive: connector.isActive,
         });
+
+        if (connector.connectedAppKey) {
+          void refreshConnectionStatus(connector.connectedAppKey);
+        }
       } else {
         setForm({ ...defaultConnectorFormValues });
       }
     }
-  }, [open, connector, refreshGithubConnectionStatus]);
+  }, [open, connector, refreshConnectionStatus]);
 
   useEffect(() => {
-    if (!open) {
+    if (!open || !form.connectedAppKey) {
       return;
     }
 
-    if (form.authSourceType === 'connected_app' && form.connectedAppKey === 'github') {
-      void refreshGithubConnectionStatus();
-      return;
+    if (form.authSourceType === 'connected_app') {
+      void refreshConnectionStatus(form.connectedAppKey);
     }
-
-    setGithubConnected(false);
-  }, [form.authSourceType, form.connectedAppKey, open, refreshGithubConnectionStatus]);
+  }, [form.authSourceType, form.connectedAppKey, open, refreshConnectionStatus]);
 
   const handleSubmit = () => {
     if (!form.slug.trim() || !form.name.trim()) {
@@ -320,6 +338,12 @@ export function CreateEditConnectorDialog({
       return;
     }
 
+    if (form.authSourceType === 'connected_app' && !isCurrentAppConnected()) {
+      const app = getCurrentConnectedApp();
+      toast.error(t('connectors.form.auth.connectRequired', { app: app?.displayName || form.connectedAppKey }));
+      return;
+    }
+
     let mcpServerConfig: Record<string, unknown> | undefined;
     try {
       mcpServerConfig = buildMcpServerConfig(form.mcpServerConfig, form.githubPatToken);
@@ -361,15 +385,15 @@ export function CreateEditConnectorDialog({
     }
   };
 
-  const handleGithubOAuth = async () => {
+  const handleOAuth = async (appKey: string, appDisplayName: string) => {
     setOauthConnecting(true);
 
     try {
-      const result = await authorizeConnectorAppOAuth('github');
-      const popup = window.open(result.authorizationUrl, 'connector-admin-github-oauth', 'width=600,height=700');
+      const result = await authorizeConnectorAppOAuth(appKey);
+      const popup = window.open(result.authorizationUrl, `connector-admin-${appKey}-oauth`, 'width=600,height=700');
 
       if (!popup) {
-        toast.error(t('connectors.form.auth.githubConnectFailed'));
+        toast.error(t('connectors.form.auth.connectFailed', { app: appDisplayName }));
         return;
       }
 
@@ -388,7 +412,7 @@ export function CreateEditConnectorDialog({
           }
           settled = true;
           cleanup();
-          await refreshGithubConnectionStatus();
+          await refreshConnectionStatus(appKey);
           resolve(success);
         };
 
@@ -397,7 +421,7 @@ export function CreateEditConnectorDialog({
             return;
           }
           try {
-            const status = await getConnectorAppOAuthStatus('github');
+            const status = await getConnectorAppOAuthStatus(appKey);
             await finish(status.connected);
           } catch {
             await finish(false);
@@ -409,7 +433,7 @@ export function CreateEditConnectorDialog({
             | { type?: string; appKey?: string; success?: boolean; error?: string }
             | undefined;
 
-          if (message?.type !== 'connector-admin-oauth-result' || message.appKey !== 'github') {
+          if (message?.type !== 'connector-admin-oauth-result' || message.appKey !== appKey) {
             return;
           }
 
@@ -418,7 +442,7 @@ export function CreateEditConnectorDialog({
             return;
           }
 
-          toast.error(t('connectors.form.auth.githubConnectFailed'), {
+          toast.error(t('connectors.form.auth.connectFailed', { app: appDisplayName }), {
             description: message.error,
           });
           void finish(false);
@@ -433,11 +457,13 @@ export function CreateEditConnectorDialog({
         }, 500);
       });
 
-      if (!connected) {
-        toast.error(t('connectors.form.auth.githubConnectFailed'));
+      if (connected) {
+        toast.success(t('connectors.form.auth.connectSuccess', { app: appDisplayName }));
+      } else {
+        toast.error(t('connectors.form.auth.connectFailed', { app: appDisplayName }));
       }
     } catch (err) {
-      toast.error(t('connectors.form.auth.githubConnectFailed'), {
+      toast.error(t('connectors.form.auth.connectFailed', { app: appDisplayName }), {
         description: err instanceof Error ? err.message : undefined,
       });
     } finally {
@@ -445,13 +471,13 @@ export function CreateEditConnectorDialog({
     }
   };
 
-  const handleGithubDisconnect = async () => {
+  const handleDisconnect = async (appKey: string, appDisplayName: string) => {
     try {
-      await disconnectConnectorAppOAuth('github');
-      await refreshGithubConnectionStatus();
-      toast.success(t('connectors.form.auth.githubDisconnected'));
+      await disconnectConnectorAppOAuth(appKey);
+      await refreshConnectionStatus(appKey);
+      toast.success(t('connectors.form.auth.disconnectSuccess', { app: appDisplayName }));
     } catch (err) {
-      toast.error(t('connectors.form.auth.githubDisconnectFailed'), {
+      toast.error(t('connectors.form.auth.disconnectFailed', { app: appDisplayName }), {
         description: err instanceof Error ? err.message : undefined,
       });
     }
@@ -750,21 +776,25 @@ export function CreateEditConnectorDialog({
                   <TestTube2 className='h-4 w-4' />
                   {t('connectors.form.inspect.title')}
                 </h4>
-                {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && (
-                  <div className='flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium'>
-                    {githubConnected ? (
-                      <>
-                        <div className='w-2 h-2 rounded-full bg-green-500 animate-pulse' />
-                        <span className='text-green-600'>{t('connectors.form.auth.githubConnected')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <div className='w-2 h-2 rounded-full bg-amber-500' />
-                        <span className='text-amber-600'>{t('connectors.form.auth.githubNotConnected')}</span>
-                      </>
-                    )}
-                  </div>
-                )}
+                {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
+                  const app = getCurrentConnectedApp();
+                  const isConnected = isCurrentAppConnected();
+                  return app ? (
+                    <div className='flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium'>
+                      {isConnected ? (
+                        <>
+                          <div className='w-2 h-2 rounded-full bg-green-500 animate-pulse' />
+                          <span className='text-green-600'>{t('connectors.form.auth.connected', { app: app.displayName })}</span>
+                        </>
+                      ) : (
+                        <>
+                          <div className='w-2 h-2 rounded-full bg-amber-500' />
+                          <span className='text-amber-600'>{t('connectors.form.auth.notConnected', { app: app.displayName })}</span>
+                        </>
+                      )}
+                    </div>
+                  ) : null;
+                })()}
               </div>
               <p className='text-sm text-muted-foreground'>
                 {t('connectors.form.inspect.description')}
@@ -772,49 +802,55 @@ export function CreateEditConnectorDialog({
             </div>
 
             <div className='flex flex-wrap items-center gap-3'>
-              {form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && (
-                <>
-                  {!githubConnected ? (
-                    <Button
-                      type='button'
-                      variant='outline'
-                      onClick={handleGithubOAuth}
-                      disabled={oauthConnecting}
-                      className='flex items-center gap-2'
-                    >
-                      {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <Github className='h-4 w-4' />}
-                      {t('connectors.form.auth.githubConnectAction')}
-                    </Button>
-                  ) : (
-                    <>
-                      <Button
-                        type='button'
-                        variant='default'
-                        className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
-                        disabled
-                      >
-                        <Github className='h-4 w-4' />
-                        {t('connectors.form.auth.githubConnectedAction')}
-                      </Button>
+              {form.authSourceType === 'connected_app' && form.connectedAppKey && (() => {
+                const app = getCurrentConnectedApp();
+                const isConnected = isCurrentAppConnected();
+                if (!app) return null;
+
+                return (
+                  <>
+                    {!isConnected ? (
                       <Button
                         type='button'
                         variant='outline'
-                        onClick={handleGithubDisconnect}
+                        onClick={() => handleOAuth(app.appKey, app.displayName)}
                         disabled={oauthConnecting}
                         className='flex items-center gap-2'
                       >
-                        {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <X className='h-4 w-4' />}
-                        {t('connectors.form.auth.githubDisconnectAction')}
+                        {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <Github className='h-4 w-4' />}
+                        {t('connectors.form.auth.connectAction', { app: app.displayName })}
                       </Button>
-                    </>
-                  )}
-                </>
-              )}
+                    ) : (
+                      <>
+                        <Button
+                          type='button'
+                          variant='default'
+                          className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
+                          disabled
+                        >
+                          <Github className='h-4 w-4' />
+                          {t('connectors.form.auth.connectedAction', { app: app.displayName })}
+                        </Button>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={() => handleDisconnect(app.appKey, app.displayName)}
+                          disabled={oauthConnecting}
+                          className='flex items-center gap-2'
+                        >
+                          {oauthConnecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <X className='h-4 w-4' />}
+                          {t('connectors.form.auth.disconnectAction', { app: app.displayName })}
+                        </Button>
+                      </>
+                    )}
+                  </>
+                );
+              })()}
               <Button
                 type='button'
                 variant='outline'
                 onClick={handleInspect}
-                disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey === 'github' && !githubConnected)}
+                disabled={inspecting || (form.authSourceType === 'connected_app' && form.connectedAppKey !== '' && !isCurrentAppConnected())}
                 className='flex items-center gap-2'
               >
                 {inspecting ? <Loader2 className='h-4 w-4 animate-spin' /> : <TestTube2 className='h-4 w-4' />}
