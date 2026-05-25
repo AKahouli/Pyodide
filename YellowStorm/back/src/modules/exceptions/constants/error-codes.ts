@@ -207,6 +207,9 @@ export enum ErrorCode {
   CLASSIFIER_RUN_NOT_FOUND = 'ERR_2820',
   CLASSIFIER_RUN_FORBIDDEN = 'ERR_2821',
   CLASSIFIER_RUN_PLAYBOOK_INVALID = 'ERR_2822',
+  CLASSIFIER_RULE_NOT_FOUND = 'ERR_2830',
+  CLASSIFIER_RULE_FORBIDDEN = 'ERR_2831',
+  CLASSIFIER_RULE_INVALID_SCOPE = 'ERR_2832',
 
   // Auth Provider errors (2600-2699)
   AUTH_PROVIDER_NOT_FOUND = 'ERR_2600',
@@ -408,6 +411,9 @@ export const ErrorMessages: Record<ErrorCode, string> = {
   [ErrorCode.CLASSIFIER_RUN_NOT_FOUND]: 'Classification run not found.',
   [ErrorCode.CLASSIFIER_RUN_FORBIDDEN]: 'You do not have access to this classification run.',
   [ErrorCode.CLASSIFIER_RUN_PLAYBOOK_INVALID]: 'The selected playbook is invalid or not accessible.',
+  [ErrorCode.CLASSIFIER_RULE_NOT_FOUND]: 'Classifier rule not found.',
+  [ErrorCode.CLASSIFIER_RULE_FORBIDDEN]: 'You do not have access to this classifier rule.',
+  [ErrorCode.CLASSIFIER_RULE_INVALID_SCOPE]: 'Invalid rule scope: local rules require a workspaceId, global rules must not have one.',
 
   [ErrorCode.AUTH_PROVIDER_NOT_FOUND]: 'Authentication provider not found.',
   [ErrorCode.AUTH_PROVIDER_ALREADY_EXISTS]: 'An authentication provider with this key already exists.',
