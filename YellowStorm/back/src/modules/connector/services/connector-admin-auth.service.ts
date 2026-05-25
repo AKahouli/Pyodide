@@ -432,6 +432,13 @@ ${statusMessage}
   }> {
     const appDefinition = await this.connectedAppDefinitionService.findByKey(appKey);
 
+    if (!appDefinition.authorizationUrl || !appDefinition.tokenUrl || !appDefinition.clientId || !appDefinition.clientSecret) {
+      throw new BadRequestException(
+        ErrorCode.BAD_REQUEST,
+        `Connected app '${appKey}' is not properly configured for OAuth 2.0`,
+      );
+    }
+
     return {
       appKey: appDefinition.appKey,
       authorizationUrl: appDefinition.authorizationUrl,

@@ -36,17 +36,19 @@ export interface MailboxCapability {
 export interface ConnectedAppAdminResponse {
   id: string;
   appKey: string;
+  authType: 'oauth2' | 'api_key';
   displayName: string;
   description?: string;
   iconKey?: string;
-  clientId: string;
-  clientSecret: string;
+  clientId?: string;
+  clientSecret?: string;
   tenantId?: string;
-  authorizationUrl: string;
-  tokenUrl: string;
+  authorizationUrl?: string;
+  tokenUrl?: string;
   revokeUrl?: string;
   scopes: string[];
   pkceEnabled: boolean;
+  apiKey?: string;
   enabled: boolean;
   sortOrder: number;
   connectedUserCount: number;

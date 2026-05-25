@@ -217,8 +217,14 @@ export function CreateEditConnectorDialog({
   }, [connectedApps, form.connectedAppKey]);
 
   const isCurrentAppConnected = useCallback(() => {
-    return form.connectedAppKey ? connectionStatus[form.connectedAppKey] ?? false : false;
-  }, [connectionStatus, form.connectedAppKey]);
+    if (!form.connectedAppKey) return false;
+
+    const app = getCurrentConnectedApp();
+    // For API key type, always consider as connected
+    if (app?.authType === 'api_key') return true;
+
+    return connectionStatus[form.connectedAppKey] ?? false;
+  }, [connectionStatus, form.connectedAppKey, getCurrentConnectedApp]);
 
   useEffect(() => {
     if (open) {
@@ -574,7 +580,16 @@ export function CreateEditConnectorDialog({
             <div className='grid grid-cols-2 gap-4'>
               <div>
                 <Label>{t('connectors.form.auth.sourceLabel')}</Label>
-                <Select value={form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '' })}>
+                <Select value={form.authSourceType} onValueChange={(value) => {
+                  const newConnectedAppKey = value === 'connected_app' ? form.connectedAppKey : '';
+                  const selectedApp = connectedApps.find((app) => app.appKey === newConnectedAppKey);
+                  setForm({
+                    ...form,
+                    authSourceType: value,
+                    connectedAppKey: newConnectedAppKey,
+                    authType: value === 'connected_app' && selectedApp ? selectedApp.authType : value === 'credential' ? 'token' : 'none',
+                  });
+                }}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.sourcePlaceholder')} />
                   </SelectTrigger>
@@ -587,7 +602,15 @@ export function CreateEditConnectorDialog({
               </div>
               <div>
                 <Label>{t('connectors.form.auth.connectedAppLabel')}</Label>
-                <Select value={form.connectedAppKey || '__none__'} onValueChange={(value) => setForm({ ...form, connectedAppKey: value === '__none__' ? '' : value })} disabled={form.authSourceType !== 'connected_app'}>
+                <Select value={form.connectedAppKey || '__none__'} onValueChange={(value) => {
+                  const newConnectedAppKey = value === '__none__' ? '' : value;
+                  const selectedApp = connectedApps.find((app) => app.appKey === newConnectedAppKey);
+                  setForm({
+                    ...form,
+                    connectedAppKey: newConnectedAppKey,
+                    authType: selectedApp?.authType || 'oauth2',
+                  });
+                }} disabled={form.authSourceType !== 'connected_app'}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.connectedAppPlaceholder')} />
                   </SelectTrigger>
@@ -806,6 +829,21 @@ export function CreateEditConnectorDialog({
                 const app = getCurrentConnectedApp();
                 const isConnected = isCurrentAppConnected();
                 if (!app) return null;
+
+                // For API key type, don't show connect/disconnect buttons
+                if (app.authType === 'api_key') {
+                  return (
+                    <Button
+                      type='button'
+                      variant='default'
+                      className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
+                      disabled
+                    >
+                      <Github className='h-4 w-4' />
+                      {t('connectors.form.auth.connectedAction', { app: app.displayName })}
+                    </Button>
+                  );
+                }
 
                 return (
                   <>
