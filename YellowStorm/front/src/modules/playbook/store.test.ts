@@ -116,6 +116,30 @@ describe('playbook store', () => {
       expect(state.pageMode).toBe('run');
     });
 
+  it('preserves per-step execution modes in optimistic executions before SSE arrives', async () => {
+    const playbook = makePlaybook({
+      id: 'p1',
+      tasks: [
+        makeTask({ id: 't1', title: 'Step 1', executionOrder: 1 }),
+        makeTask({ id: 't2', title: 'Step 2', executionOrder: 2 }),
+      ],
+    });
+    apiMock.executePlaybook.mockResolvedValueOnce({ executionId: 'e-replay' });
+
+    usePlaybookStore.setState({ currentPlaybook: playbook, executionPanelOpen: false, selectedStepId: null });
+
+    await usePlaybookStore.getState().executePlaybook('p1', {
+      executionMode: 'inherit',
+      stepExecutionModes: { t2: 'replay_flex' },
+    });
+
+    expect(usePlaybookStore.getState().currentExecution).toMatchObject({
+      id: 'e-replay',
+      executionMode: 'inherit',
+      stepExecutionModes: { t2: 'replay_flex' },
+    });
+  });
+
   it('still marks the chosen step as running for single-step execution', async () => {
     const playbook = makePlaybook({
       id: 'p1',
@@ -1059,6 +1083,8 @@ describe('playbook store', () => {
       playbookId: 'p1',
       executionNumber: 1,
       status: 'running',
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-2': 'replay_flex' },
       singleStepTaskId: 'task-2',
       reflectionEnabled: false,
       advisorScoringMode: 'heuristic',
@@ -1070,6 +1096,8 @@ describe('playbook store', () => {
     const state = usePlaybookStore.getState();
     expect(state.executionPanelOpen).toBe(true);
     expect(state.currentExecution).toMatchObject({
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-2': 'replay_flex' },
       singleStepTaskId: 'task-2',
       reflectionEnabled: false,
       advisorScoringMode: 'heuristic',
@@ -1601,6 +1629,26 @@ describe('playbook store', () => {
       waitingForHumanInput: true,
       currentInterruptTaskId: 'task-7',
       interruptPayload: expect.objectContaining({ taskId: 'task-7' }),
+    });
+  });
+
+  it('preserves replay execution modes when hydrating active executions', () => {
+    usePlaybookStore.setState({ currentPlaybook: makePlaybook({ id: 'p1' }) });
+
+    usePlaybookStore.getState().hydrateActiveExecutions([
+      makeExecution({
+        id: 'e-replay',
+        playbookId: 'p1',
+        status: 'running',
+        executionMode: 'inherit',
+        stepExecutionModes: { 'task-1': 'replay_flex' },
+      }),
+    ]);
+
+    expect(usePlaybookStore.getState().currentExecution).toMatchObject({
+      id: 'e-replay',
+      executionMode: 'inherit',
+      stepExecutionModes: { 'task-1': 'replay_flex' },
     });
   });
 

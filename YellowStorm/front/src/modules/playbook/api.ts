@@ -248,6 +248,8 @@ function sanitizePlaybookSettings(data: UpdatePlaybookData): UpdatePlaybookData 
 function sanitizeValidateReplayData(data: ValidateTaskReplayData): ValidateTaskReplayData {
   return {
     executionId: data.executionId,
+    ...(typeof data.iteration === 'number' ? { iteration: data.iteration } : {}),
+    ...(data.mode ? { mode: data.mode } : {}),
     preserveOutputFormat: Boolean(data.preserveOutputFormat),
     ...(data.replayConfig ? { replayConfig: data.replayConfig } : {}),
   };
@@ -609,9 +611,16 @@ function normalizeExecutionSummary(
 
 function normalizeExecution(raw: any): PlaybookExecution {
   const summary = normalizeExecutionSummary(raw);
+  const stepExecutionModes = raw.stepExecutionModes ?? raw.step_execution_modes;
+  const replayPlanningByTask = raw.replayPlanningByTask;
 
   return {
     ...summary,
+    executionMode: raw.executionMode || 'live',
+    stepExecutionModes:
+      stepExecutionModes && typeof stepExecutionModes === 'object'
+        ? stepExecutionModes
+        : undefined,
     taskResults: Array.isArray(raw.taskResults) ? raw.taskResults.map(normalizeTaskResult) : [],
     threadId: toNullableString(raw.threadId),
     interruptPayload: raw.interruptPayload ?? null,
@@ -639,7 +648,36 @@ function normalizeExecution(raw: any): PlaybookExecution {
     judgeSummaryStatus: raw.judgeSummaryStatus ?? 'idle',
     judgeSummary: raw.judgeSummary ?? null,
     replaySourceByTask: raw.replaySourceByTask ?? null,
+    replayPlanningByTask:
+      replayPlanningByTask && typeof replayPlanningByTask === 'object'
+        ? replayPlanningByTask
+        : null,
     error: summary.error,
+  };
+}
+
+function normalizeValidatedTaskReplay(raw: any): ValidatedTaskReplay {
+  return {
+    ...raw,
+    id: toNullableString(raw.id ?? raw._id) ?? '',
+    playbookId: toNullableString(raw.playbookId ?? raw.flowId) ?? '',
+    taskId: toNullableString(raw.taskId) ?? '',
+    taskTitle: toNullableString(raw.taskTitle) ?? '',
+    agentName: toNullableString(raw.agentName) ?? '',
+    createdBy: toNullableString(raw.createdBy) ?? '',
+    referenceExecutionId: toNullableString(raw.referenceExecutionId) ?? '',
+    referenceExecutionNumber: toNullableNumber(raw.referenceExecutionNumber) ?? 0,
+    validationVersion: toNullableNumber(raw.validationVersion) ?? 0,
+    referenceOutput: toNullableString(raw.referenceOutput),
+    outputContract: raw.outputContract ?? null,
+    intentKey: toNullableString(raw.intentKey),
+    intentLabel: toNullableString(raw.intentLabel),
+    reasoningOutline: Array.isArray(raw.reasoningOutline) ? raw.reasoningOutline : [],
+    stableReasoningRules: Array.isArray(raw.stableReasoningRules) ? raw.stableReasoningRules : [],
+    contextVariableSchema: Array.isArray(raw.contextVariableSchema) ? raw.contextVariableSchema : [],
+    toolTraceTemplate: Array.isArray(raw.toolTraceTemplate) ? raw.toolTraceTemplate : [],
+    driftPolicy: raw.driftPolicy ?? null,
+    acceptedExamples: Array.isArray(raw.acceptedExamples) ? raw.acceptedExamples : [],
   };
 }
 
@@ -831,6 +869,7 @@ export async function executePlaybook(
   if (data?.advisorAutopilotMaxTurns !== undefined) payload.advisorAutopilotMaxTurns = data.advisorAutopilotMaxTurns;
   if (data?.runNodeReflection !== undefined) payload.reflectionEnabled = data.runNodeReflection;
   if (data?.advisorScoringMode !== undefined) payload.advisorScoringMode = data.advisorScoringMode;
+  if (data?.modelIdOverride) payload.modelIdOverride = data.modelIdOverride;
   const response = await apiClient.post<ApiResponse<{ executionId: string }>>(
     API_ENDPOINTS.playbookFlows.execute(id),
     payload,
@@ -911,7 +950,7 @@ export async function validateTaskReplay(
     API_ENDPOINTS.playbooks.validateReplay(playbookId, taskId),
     sanitizeValidateReplayData(data),
   );
-  return response.data.data;
+  return normalizeValidatedTaskReplay(response.data.data);
 }
 
 export async function getTaskReplays(
@@ -921,7 +960,7 @@ export async function getTaskReplays(
   const response = await apiClient.get<ApiResponse<ValidatedTaskReplay[]>>(
     API_ENDPOINTS.playbooks.replays(playbookId, taskId),
   );
-  return response.data.data;
+  return response.data.data.map(normalizeValidatedTaskReplay);
 }
 
 export async function activateTaskReplay(
@@ -932,7 +971,7 @@ export async function activateTaskReplay(
   const response = await apiClient.post<ApiResponse<ValidatedTaskReplay>>(
     API_ENDPOINTS.playbooks.activateReplay(playbookId, taskId, replayId),
   );
-  return response.data.data;
+  return normalizeValidatedTaskReplay(response.data.data);
 }
 
 export async function updateTaskReplayFormatGuide(
@@ -945,7 +984,7 @@ export async function updateTaskReplayFormatGuide(
     API_ENDPOINTS.playbooks.updateReplayFormatGuide(playbookId, taskId, replayId),
     data,
   );
-  return response.data.data;
+  return normalizeValidatedTaskReplay(response.data.data);
 }
 
 export async function updateTaskReplayLabel(
@@ -958,7 +997,7 @@ export async function updateTaskReplayLabel(
     API_ENDPOINTS.playbooks.updateReplayLabel(playbookId, taskId, replayId),
     { label },
   );
-  return response.data.data;
+  return normalizeValidatedTaskReplay(response.data.data);
 }
 
 export async function deleteTaskReplay(
@@ -968,6 +1007,18 @@ export async function deleteTaskReplay(
 ): Promise<{ removed: boolean; wasActive: boolean }> {
   const response = await apiClient.delete<ApiResponse<{ removed: boolean; wasActive: boolean }>>(
     API_ENDPOINTS.playbooks.deleteReplay(playbookId, taskId, replayId),
+  );
+  return response.data.data;
+}
+
+export async function getReplayReports(
+  playbookId: string,
+  taskId: string,
+  query?: { executionId?: string; iteration?: number; limit?: number; offset?: number },
+): Promise<import('./types').ReplayRunReport[]> {
+  const response = await apiClient.get<ApiResponse<import('./types').ReplayRunReport[]>>(
+    API_ENDPOINTS.playbookFlows.replayReports(playbookId, taskId),
+    { params: query ?? {} },
   );
   return response.data.data;
 }

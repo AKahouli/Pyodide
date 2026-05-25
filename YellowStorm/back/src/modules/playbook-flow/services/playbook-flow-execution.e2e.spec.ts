@@ -2,6 +2,9 @@ import { PlaybookFlowExecutionService } from './playbook-flow-execution.service'
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowPublicReasoningParserService } from './observability/playbook-flow-public-reasoning-parser.service';
 import { PlaybookFlowTraceRedactionService } from './observability/playbook-flow-trace-redaction.service';
+import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
+import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 
 function mockExecutionModel(overrides?: Record<string, any>) {
   const base = {
@@ -47,6 +50,21 @@ async function createE2EService(
     builderService?: Record<string, any>;
   },
 ): Promise<E2EContext> {
+  const settleAsyncHandlers = async (cycles: number = 4) => {
+    for (let i = 0; i < cycles; i += 1) {
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+
+  const waitFor = async (predicate: () => boolean, maxCycles: number = 40) => {
+    for (let i = 0; i < maxCycles; i += 1) {
+      if (predicate()) {
+        return;
+      }
+      await new Promise((r) => setImmediate(r));
+    }
+  };
+
   const savedDoc: Record<string, any> = {
     id: 'exec-e2e',
     _id: 'exec-e2e',
@@ -80,15 +98,16 @@ async function createE2EService(
 
   const triggerStreamEvents = async () => {
     if (!streamEventsSequence) return;
+    await waitFor(() => mockRun.mock.calls.length > 0 && Boolean(streamHandlers.data) && Boolean(streamHandlers.end));
     for (const evt of streamEventsSequence) {
       if (streamHandlers.data) {
         streamHandlers.data(evt);
-        await new Promise((r) => setImmediate(r));
+        await settleAsyncHandlers();
       }
     }
     if (streamHandlers.end) {
       streamHandlers.end();
-      await new Promise((r) => setImmediate(r));
+      await settleAsyncHandlers();
     }
   };
 
@@ -144,6 +163,14 @@ async function createE2EService(
     emitExecutionQueued: jest.fn(),
     emitExecutionCancelled: jest.fn(),
   };
+  const replayReportService = { findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null) };
+  const outputContractService = new PlaybookFlowOutputContractService();
+  const replayDriftService = new PlaybookFlowReplayDriftService(
+    ExecutionModel as any,
+    replayReportService as any,
+    outputContractService,
+    new PlaybookFlowReplayPlanService(),
+  );
 
   const service = new PlaybookFlowExecutionService(
     ExecutionModel,
@@ -161,10 +188,18 @@ async function createE2EService(
       new PlaybookFlowTraceRedactionService(),
       new PlaybookFlowPublicReasoningParserService(),
     ) as any,
-    {} as any,
-    { resolveReplayArtifacts: async () => new Map() } as any,
-    { buildReplayPromptSection: () => '' } as any,
-  );
+      {} as any,
+      { resolveReplayArtifacts: async () => new Map() } as any,
+      { buildReplayPromptSection: () => '' } as any,
+      { buildCurrentReplayFingerprints: jest.fn() } as any,
+      { evaluateReplayEligibility: jest.fn() } as any,
+      replayReportService as any,
+      outputContractService as any,
+      { validateModelActive: jest.fn().mockResolvedValue({ valid: true, model: null, inactive: false }) } as any,
+      undefined as any,
+      new PlaybookFlowReplayPlanService() as any,
+      replayDriftService as any,
+    );
 
   (service as any).isGrpcAvailable = true;
   (service as any).playbookFlowClient = { Run: mockRun };

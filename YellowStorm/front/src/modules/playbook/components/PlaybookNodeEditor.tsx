@@ -1119,6 +1119,11 @@ export const PlaybookNodeEditor = forwardRef<PlaybookNodeEditorHandle, Props>(fu
                         {t('execution.staleResult')}
                       </Badge>
                     )}
+                    {task.stepReplayMode === 'replay_flex' && (
+                      <Badge variant="outline" className="border-emerald-600/30 text-emerald-700">
+                        {t('execution.mode.replayFlex')}
+                      </Badge>
+                    )}
                   </div>
 
                   {(task.hasOutputFormatTemplate || task.activeOutputFormatStatus) && (

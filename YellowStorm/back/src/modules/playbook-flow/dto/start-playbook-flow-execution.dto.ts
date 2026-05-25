@@ -1,8 +1,41 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+  ValidationArguments,
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  Validate,
+} from 'class-validator';
 import { ADVISOR_SCORING_MODES, type AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 
 const EXECUTION_MODES = ['live', 'inherit', 'replay_strict', 'replay_flex', 'replay_adaptive'] as const;
+const STEP_EXECUTION_MODES = ['live', 'replay_strict', 'replay_flex', 'replay_adaptive'] as const;
+
+@ValidatorConstraint({ name: 'StepExecutionModesConstraint', async: false })
+class StepExecutionModesConstraint implements ValidatorConstraintInterface {
+  validate(value: unknown): boolean {
+    if (value == null) {
+      return true;
+    }
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+
+    return Object.values(value as Record<string, unknown>).every(
+      (entry) => typeof entry === 'string' && STEP_EXECUTION_MODES.includes(entry as (typeof STEP_EXECUTION_MODES)[number]),
+    );
+  }
+
+  defaultMessage(args: ValidationArguments): string {
+    return `${args.property} contains an invalid execution mode`;
+  }
+}
 
 export class StartPlaybookFlowExecutionDto {
   @ApiPropertyOptional({ description: 'Optional single node id for targeted step execution' })
@@ -20,9 +53,10 @@ export class StartPlaybookFlowExecutionDto {
   @IsIn(EXECUTION_MODES)
   executionMode?: string;
 
-  @ApiPropertyOptional({ description: 'Per-task execution modes (taskId -> mode)' })
+  @ApiPropertyOptional({ description: 'Per-task execution modes (taskId -> mode). Values: live/replay_strict/replay_flex/replay_adaptive' })
   @IsOptional()
   @IsObject()
+  @Validate(StepExecutionModesConstraint)
   stepExecutionModes?: Record<string, string>;
 
   @ApiPropertyOptional({ description: 'Enable advisor autopilot mode for automatic advisor evaluation on task completion' })
@@ -49,4 +83,9 @@ export class StartPlaybookFlowExecutionDto {
   @IsOptional()
   @IsIn(ADVISOR_SCORING_MODES)
   advisorScoringMode?: AdvisorScoringMode;
+
+  @ApiPropertyOptional({ description: 'Optional model ID override for migration testing; applies to all nodes without mutating the playbook' })
+  @IsOptional()
+  @IsString()
+  modelIdOverride?: string;
 }

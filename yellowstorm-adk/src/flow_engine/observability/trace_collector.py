@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict
 from typing import Any
 
@@ -15,6 +16,8 @@ from src.flow_engine.observability.trace_types import (
     UsageSummary,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class TraceCollector:
     def __init__(self) -> None:
@@ -22,6 +25,10 @@ class TraceCollector:
         self._llm_prompt_trace: list[LLMPromptTraceItem] = []
         self._usage: UsageSummary | None = None
         self._next_call_index = 0
+        self._observed_intent_key: str | None = None
+
+    def set_observed_intent_key(self, key: str | None) -> None:
+        self._observed_intent_key = key
 
     def record_prompt(self, stage: str, model: str, prompt: str) -> None:
         self._llm_prompt_trace.append(
@@ -70,12 +77,17 @@ class TraceCollector:
         )
 
     def build_payload(self) -> dict[str, Any]:
+        if not self._tool_trace and not self._llm_prompt_trace:
+            logger.warning("No tool trace or LLM prompt trace captured during execution")
+        elif not self._tool_trace and self._llm_prompt_trace:
+            logger.warning("No tool trace captured: execution had LLM prompts but no tool calls")
         payload: dict[str, Any] = {
             "tool_trace": [asdict(item) for item in self._tool_trace],
             "llm_prompt_trace": [asdict(item) for item in self._llm_prompt_trace],
             "trace_metadata": {
                 "tool_trace_count": len(self._tool_trace),
                 "llm_prompt_trace_count": len(self._llm_prompt_trace),
+                **({"observed_intent_key": self._observed_intent_key} if self._observed_intent_key is not None else {}),
             },
         }
         if self._usage is not None:

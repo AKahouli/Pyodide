@@ -769,6 +769,84 @@ export interface ToolTraceItem {
   toolName: string;
   args: Record<string, unknown>;
   outputSummary: string | null;
+  purpose?: string | null;
+}
+
+export interface ReplayContextMappingEntry {
+  variableKey: string;
+  key: string;
+  label: string;
+  source: 'task' | 'input_context' | 'tool_args' | 'unknown' | 'task_title' | 'task_description' | 'task_text';
+  valueType: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
+  required: boolean;
+  baselineValue: string | null;
+  currentValue: string | number | boolean | Record<string, unknown> | unknown[] | null;
+  confidence: number;
+  reason: string;
+  value: string | number | boolean | Record<string, unknown> | unknown[] | null;
+  matched: boolean;
+}
+
+export interface ReplayPlanToolStep {
+  stepIndex: number;
+  toolName: string;
+  purpose: string;
+  required: boolean;
+  argumentShape: Record<string, unknown>;
+  argumentShapeKeys: string[];
+  expectedArgs: Record<string, unknown>;
+  sourceCallIndex?: number | null;
+}
+
+export interface ReplayToolCallComparison {
+  expectedStepIndex: number | null;
+  expectedToolName: string | null;
+  expectedPurpose: string | null;
+  expectedArgs: Record<string, unknown>;
+  observedCallIndex: number | null;
+  observedToolName: string | null;
+  observedPurpose?: string | null;
+  observedArgs: Record<string, unknown>;
+  status: 'matched' | 'warning' | 'failed' | 'missing' | 'extra';
+  reasons: string[];
+}
+
+export interface ReplaySemanticChecklistItem {
+  key: string;
+  description: string;
+  variables: string[];
+  severity: 'info' | 'warning' | 'fail';
+  source: 'intent' | 'reasoning' | 'quality_check' | 'output_contract' | 'context';
+}
+
+export interface ReplaySemanticFinding {
+  key?: string | null;
+  expected?: string | null;
+  observed?: string | null;
+  severity: 'info' | 'warning' | 'fail';
+}
+
+export interface ReplayExecutionPlan {
+  taskId: string;
+  replayId: string;
+  validationVersion: number;
+  intentKey: string | null;
+  intentLabel: string | null;
+  matchedContextCount: number;
+  missingRequiredContextCount: number;
+  requiredStageLabels: string[];
+  requiredOutputChecks: string[];
+  plannedToolSteps: ReplayPlanToolStep[];
+  semanticChecklist: ReplaySemanticChecklistItem[];
+}
+
+export interface ReplayPlanningSummary {
+  replayId: string;
+  validationVersion: number;
+  intentKey: string | null;
+  intentLabel: string | null;
+  contextMapping: ReplayContextMappingEntry[];
+  executionPlan: ReplayExecutionPlan;
 }
 
 export interface LLMPromptTraceItem {
@@ -785,6 +863,13 @@ export interface SemanticMatchResult {
   reason: string;
   missingPoints: string[];
   changedPoints: string[];
+  preservedPoints?: string[];
+  missingPointFindings?: ReplaySemanticFinding[];
+  changedPointFindings?: ReplaySemanticFinding[];
+  extraPointFindings?: ReplaySemanticFinding[];
+  staleContextReferenceFindings?: ReplaySemanticFinding[];
+  unsupportedClaimFindings?: ReplaySemanticFinding[];
+  evaluationSource?: 'instantiated_replay' | 'runtime' | 'unknown' | null;
   model: string;
   judgeUsed: boolean;
 }
@@ -1001,6 +1086,8 @@ export interface PlaybookExecution {
     reason: string;
   } | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
+  replayPlanningByTask?: Record<string, ReplayPlanningSummary> | null;
+  stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   taskResults: TaskResult[];
   attemptHistory?: Array<{
     attemptNumber: number;
@@ -1052,11 +1139,119 @@ export interface PlaybookExecutionSummary {
   updatedAt: string;
 }
 
+export type ReplayMode = 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+
+export type ReplayRunVerdict = 'pass' | 'warning' | 'fail' | 'skipped' | 'unknown';
+export type ReplaySignalEvaluationStatus = 'not_evaluated' | 'not_applicable' | 'passed' | 'warning' | 'failed';
+
+export interface ReplayDriftFinding {
+  category: 'context' | 'reasoning' | 'tool_sequence' | 'argument_shape' | 'output_contract' | 'semantic';
+  severity: 'info' | 'warning' | 'fail';
+  reason: string;
+}
+
+export interface ReplaySignalStatus {
+  status: ReplaySignalEvaluationStatus;
+  reason?: string | null;
+}
+
+export interface ReplayRunReport {
+  id: string;
+  executionId: string;
+  flowId: string;
+  taskId: string;
+  iteration: number;
+  replayId: string;
+  validationVersion: number;
+  mode: ReplayMode;
+  applied: boolean;
+  confidenceScore: number;
+  appliedSections: string[];
+  skippedSections: string[];
+  invalidationReasons: string[];
+  confidenceFactors: Record<string, number>;
+  outputContractEvaluated: boolean;
+  outputContractPassed: boolean;
+  structuralDriftScore: number | null;
+  toolPolicyScore: number | null;
+  verdict?: ReplayRunVerdict | null;
+  overallScore?: number | null;
+  verdictReasons?: string[];
+  structuralDriftReasons: string[];
+  semanticMatch?: SemanticMatchResult | null;
+  matchedBaselineId?: string | null;
+  matchedBaselineVersion?: number | null;
+  intentKey?: string | null;
+  replayConfidence?: number | null;
+  toolSequenceMatch?: number | null;
+  argumentShapeMatch?: number | null;
+  reasoningMatch?: number | null;
+  outputFormatMatch?: number | null;
+  contextDrift?: number | null;
+  dataDrift?: number | null;
+  driftFindings?: ReplayDriftFinding[];
+  blockedBy?: string[];
+  expectedToolSteps?: ReplayPlanToolStep[];
+  observedToolCalls?: ToolTraceItem[];
+  toolCallComparisons?: ReplayToolCallComparison[];
+  instantiatedSemanticChecklist?: ReplaySemanticChecklistItem[];
+  intentStatus?: ReplaySignalStatus;
+  reasoningStatus?: ReplaySignalStatus;
+  toolSequenceStatus?: ReplaySignalStatus;
+  argumentShapeStatus?: ReplaySignalStatus;
+  outputContractStatus?: ReplaySignalStatus;
+  semanticStatus?: ReplaySignalStatus;
+  contextSubstitutionStatus?: ReplaySignalStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ValidatedReplayToolCall {
   callIndex: number;
   toolName: string;
   args: Record<string, unknown>;
   outputSummary: string | null;
+}
+
+export interface ReplayReasoningStage {
+  stageKey: string;
+  stageType: string;
+  label: string;
+  description: string;
+  confidence?: number | null;
+}
+
+export interface ReplayContextVariable {
+  key: string;
+  label: string;
+  source: 'task' | 'input_context' | 'tool_args' | 'unknown';
+  valueType: 'string' | 'number' | 'boolean' | 'array' | 'object' | 'unknown';
+  required: boolean;
+  exampleValue?: string | null;
+}
+
+export interface ReplayToolTraceTemplateItem {
+  stepIndex: number;
+  toolName: string;
+  purpose: string;
+  argumentShape: Record<string, unknown>;
+  required: boolean;
+}
+
+export interface ReplayDriftPolicy {
+  requireSameIntent: boolean;
+  requireSameReasoningStages: boolean;
+  requireSameToolOrder: boolean;
+  allowAdditionalTools: boolean;
+  allowArgumentValueChanges: boolean;
+  enforceOutputContract: boolean;
+}
+
+export interface ReplayAcceptedExample {
+  referenceExecutionId: string;
+  referenceExecutionNumber: number;
+  summary: string;
+  outputPreview?: string | null;
 }
 
 export interface ValidatedTaskReplay {
@@ -1070,18 +1265,33 @@ export interface ValidatedTaskReplay {
   referenceExecutionNumber: number;
   validationVersion: number;
   status: 'active' | 'inactive' | 'archived';
-  mode: 'strict_replay';
+  mode: ReplayMode | 'strict_replay';
   referenceTaskDescription?: string;
   referenceAssignedAgentId?: string | null;
   referenceWorkspaceIds?: string[];
   toolCalls: ValidatedReplayToolCall[];
   referenceOutput: string | null;
+  outputContract?: {
+    type: 'freeform' | 'markdown_sections' | 'json_schema';
+    requiredSections: string[];
+    forbiddenSections: string[];
+    jsonSchema?: Record<string, unknown> | null;
+    citationPolicy: 'required' | 'optional' | 'forbidden';
+  } | null;
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string | null;
   formatGuideStatus?: 'disabled' | 'pending' | 'ready' | 'failed';
   formatGuideError?: string | null;
   llmPromptTrace?: LLMPromptTraceItem[];
   reasoningChain?: PublicReasoningTraceItem[];
+  intentKey?: string | null;
+  intentLabel?: string | null;
+  reasoningOutline?: ReplayReasoningStage[];
+  stableReasoningRules?: string[];
+  contextVariableSchema?: ReplayContextVariable[];
+  toolTraceTemplate?: ReplayToolTraceTemplateItem[];
+  driftPolicy?: ReplayDriftPolicy | null;
+  acceptedExamples?: ReplayAcceptedExample[];
   referenceUsage?: {
     inputTokens?: number | null;
     outputTokens?: number | null;
@@ -1089,6 +1299,15 @@ export interface ValidatedTaskReplay {
     model?: string | null;
   } | null;
   referenceSemanticMatch?: SemanticMatchResult | null;
+  fingerprints?: {
+    inputContextHash?: string | null;
+    flowSnapshotHash?: string | null;
+    nodeSnapshotHash?: string | null;
+    agentConfigHash?: string | null;
+    modelConfigHash?: string | null;
+    toolConfigHash?: string | null;
+    outputContractHash?: string | null;
+  } | null;
   traceMetadata?: Record<string, unknown>;
   referenceFlowRevision?: number;
   referenceNodeSnapshot?: Record<string, unknown> | null;
@@ -1205,6 +1424,7 @@ export interface PlaybookExecutionStartEvent {
   executionNumber: number;
   status: string;
   executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+  stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   reflectionEnabled?: boolean;
   advisorScoringMode?: AdvisorScoringMode;
   advisorAutopilotEnabled?: boolean;
@@ -1216,6 +1436,7 @@ export interface PlaybookExecutionStartEvent {
   advisorAutopilotLastError?: string | null;
   singleStepTaskId?: string | null;
   replaySourceByTask?: Record<string, { replayId: string; validationVersion: number }> | null;
+  replayPlanningByTask?: Record<string, ReplayPlanningSummary> | null;
   taskResults?: TaskResult[];
 }
 
@@ -1456,7 +1677,7 @@ export interface UpdatePlaybookData {
 export interface ExecutePlaybookData {
   singleStepTaskId?: string;
   query?: string;
-  executionMode?: 'live' | 'inherit';
+  executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
   stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
   runEvaluation?: boolean;
   streaming?: boolean;
@@ -1465,10 +1686,13 @@ export interface ExecutePlaybookData {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  modelIdOverride?: string;
 }
 
 export interface ValidateTaskReplayData {
   executionId: string;
+  iteration?: number;
+  mode?: 'replay_strict' | 'replay_flex' | 'replay_adaptive' | 'strict_replay';
   preserveOutputFormat?: boolean;
   replayConfig?: {
     replayOutputFormat?: boolean;

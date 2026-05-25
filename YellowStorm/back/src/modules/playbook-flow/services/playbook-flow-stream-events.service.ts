@@ -36,12 +36,14 @@ export class PlaybookFlowStreamEventsService {
     ownerId: string,
     payload?: {
       executionMode?: 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+      stepExecutionModes?: Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>;
       reflectionEnabled?: boolean;
       advisorScoringMode?: 'llm' | 'heuristic';
       advisorAutopilotEnabled?: boolean;
       advisorAutopilotTargetScore?: number;
       advisorAutopilotMaxTurns?: number;
       singleStepTaskId?: string | null;
+      replayPlanningByTask?: Record<string, unknown> | null;
     },
   ): Promise<void> {
     const count = await this.executionModel.countDocuments({ flowId });
@@ -55,12 +57,14 @@ export class PlaybookFlowStreamEventsService {
         executionNumber: count,
         status: 'running',
         executionMode: payload?.executionMode ?? 'live',
+        ...(payload?.stepExecutionModes !== undefined ? { stepExecutionModes: payload.stepExecutionModes } : {}),
         ...(payload?.reflectionEnabled !== undefined ? { reflectionEnabled: payload.reflectionEnabled } : {}),
         ...(payload?.advisorScoringMode !== undefined ? { advisorScoringMode: payload.advisorScoringMode } : {}),
         ...(payload?.advisorAutopilotEnabled !== undefined ? { advisorAutopilotEnabled: payload.advisorAutopilotEnabled } : {}),
         ...(payload?.advisorAutopilotTargetScore !== undefined ? { advisorAutopilotTargetScore: payload.advisorAutopilotTargetScore } : {}),
         ...(payload?.advisorAutopilotMaxTurns !== undefined ? { advisorAutopilotMaxTurns: payload.advisorAutopilotMaxTurns } : {}),
         ...(payload?.singleStepTaskId !== undefined ? { singleStepTaskId: payload.singleStepTaskId } : {}),
+        ...(payload?.replayPlanningByTask !== undefined ? { replayPlanningByTask: payload.replayPlanningByTask } : {}),
         taskResults: [],
       },
     });
@@ -252,6 +256,14 @@ export class PlaybookFlowStreamEventsService {
     prompt: string,
     iteration: number,
     threadId?: string,
+    extra?: {
+      interruptType?: string;
+      interruptId?: string;
+      taskDescription?: string;
+      result?: string;
+      payloadJson?: string;
+      resumableActions?: string[];
+    },
   ): void {
     const ownerId = this.executionOwnerCache.get(executionId);
     if (!ownerId) return;
@@ -261,11 +273,16 @@ export class PlaybookFlowStreamEventsService {
       data: {
         executionId,
         taskId: nodeId,
-        type: 'human_approval',
+        type: extra?.interruptType ?? 'human_approval',
         message: prompt,
         iteration,
         threadId: threadId ?? executionId,
         round: iteration,
+        interruptId: extra?.interruptId,
+        taskDescription: extra?.taskDescription,
+        result: extra?.result,
+        payloadJson: extra?.payloadJson,
+        resumableActions: extra?.resumableActions,
       },
     });
   }
@@ -276,7 +293,7 @@ export class PlaybookFlowStreamEventsService {
         ownerId: userId,
         status: { $in: ['queued', 'running', 'pending_approval'] },
       },
-      'flowId status startedAt createdAt updatedAt threadId singleStepTaskId pendingApproval advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode',
+      'flowId status startedAt createdAt updatedAt threadId singleStepTaskId pendingApproval advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes replayPlanningByTask',
     ).lean().exec();
 
     this.streamGateway.sendToUser(userId, {
@@ -289,8 +306,9 @@ export class PlaybookFlowStreamEventsService {
           executedBy: '',
           executionNumber: 0,
           status: execution.status,
-          executionMode: 'live',
+          executionMode: execution.executionMode ?? 'live',
           executionTrigger: 'manual',
+          stepExecutionModes: (execution as Record<string, unknown>).stepExecutionModes ?? {},
           reflectionEnabled: execution.reflectionEnabled ?? false,
           advisorScoringMode: execution.advisorScoringMode ?? 'llm',
           advisorAutopilotEnabled: execution.advisorAutopilotEnabled ?? false,
@@ -303,6 +321,7 @@ export class PlaybookFlowStreamEventsService {
           judgeSummaryStatus: 'idle',
           judgeSummary: null,
           replaySourceByTask: null,
+          replayPlanningByTask: (execution as Record<string, unknown>).replayPlanningByTask ?? null,
           taskResults: [],
           threadId: execution.threadId ?? null,
           interruptPayload: execution.pendingApproval

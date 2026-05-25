@@ -12,8 +12,12 @@ import {
   type OnConnect,
   type Connection,
   type OnNodeDrag,
+  type OnConnectStart,
+  type OnConnectEnd,
+  type NodeMouseHandler,
   applyNodeChanges,
   applyEdgeChanges,
+  useReactFlow,
 } from '@xyflow/react';
 import { usePlaybookStore, useCurrentPlaybook } from '../store';
 import { showWarning, showInfo, showSuccess } from '@/lib/notifications';
@@ -30,8 +34,9 @@ import {
   flowEdgesToPlaybookEdges,
 } from './helpers/control-edge-serializer';
 import { wouldCreateCycle } from './helpers/cycle-router-validator';
-import type { DataBinding, PlaybookTask, PlaybookNodeData } from '../types';
+import type { DataBinding, PlaybookTask, PlaybookNodeData, ArtifactKind } from '../types';
 import { getEffectiveNodeType } from '../utils/node-type';
+import { hasArtifactKindMismatch, createCompatibleInputPort } from '../utils/port-compatibility';
 import {
   buildClipboardPayload,
   writeClipboard,
@@ -56,6 +61,7 @@ export interface TriggerNodeActions {
 export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const playbook = useCurrentPlaybook();
   const { t } = useModuleTranslation('playbook');
+  const { screenToFlowPosition } = useReactFlow();
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const updateEdges = usePlaybookStore((s) => s.updateEdges);
   const updateDataBindings = usePlaybookStore((s) => s.updateDataBindings);
@@ -66,6 +72,14 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
 
+  const [pendingMismatch, setPendingMismatch] = useState<{
+    connection: Connection;
+    sourcePortName: string;
+    sourceArtifactKind: ArtifactKind;
+    targetPortName: string;
+    targetArtifactKind: ArtifactKind;
+  } | null>(null);
+
   const nodesRef = useRef<Node[]>(nodes);
   nodesRef.current = nodes;
   const edgesRef = useRef<Edge[]>(edges);
@@ -74,6 +88,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
   const syncedKeyRef = useRef<string | null>(null);
   const triggerPosRef = useRef({ x: 40, y: 160 });
   const pasteCountRef = useRef(0);
+  const connectHandledRef = useRef(false);
 
   const getSelectedTaskNodes = useCallback((): Node[] => {
     return nodesRef.current.filter(
@@ -218,6 +233,7 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
 
   const onConnect: OnConnect = useCallback(
     (connection: Connection) => {
+      connectHandledRef.current = true;
       const currentEdges = edgesRef.current;
       const currentTasks = nodesToTasks(nodesRef.current);
       const sourceNode = nodesRef.current.find((n) => n.id === connection.source);
@@ -237,6 +253,17 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
       const isErrorEdge = routerLabel === '__error__';
       const createsTriggerBinding = connection.source === TRIGGER_NODE_ID && Boolean(targetPort);
       const createsNodeOutputBinding = !isRouterSource && Boolean(sourcePort) && Boolean(targetPort);
+
+      if (createsNodeOutputBinding && hasArtifactKindMismatch(sourcePort?.artifactKind, targetPort?.artifactKind)) {
+        setPendingMismatch({
+          connection,
+          sourcePortName: sourcePort!.name || sourcePort!.id,
+          sourceArtifactKind: sourcePort!.artifactKind,
+          targetPortName: targetPort!.name || targetPort!.id,
+          targetArtifactKind: targetPort!.artifactKind,
+        });
+        return;
+      }
 
       if (createsTriggerBinding) {
         const nextBinding: DataBinding = createsTriggerBinding
@@ -342,6 +369,235 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     },
     [captureSnapshot, syncDataBindings, syncEdges, t],
   );
+
+  const commitEdgeAndBinding = useCallback(
+    (sourceId: string, sourceHandle: string | null, targetId: string, targetHandle: string | null) => {
+      const sourceHandleId = sourceHandle ?? 'default';
+      const targetHandleId = targetHandle ?? 'default';
+      const edgeId = `e-${sourceId}-${sourceHandleId}-${targetId}-${targetHandleId}`;
+
+      const nextBinding: DataBinding = {
+        id: `db-${sourceId}-${sourceHandleId}-${targetId}-${targetHandleId}`,
+        targetNode: targetId,
+        targetPort: targetHandleId,
+        sourceKind: 'node-output',
+        sourceNode: sourceId,
+        sourcePort: sourceHandleId,
+        iteration: 'current',
+      };
+      dataBindingsRef.current = [
+        ...dataBindingsRef.current.filter(
+          (b) => !(b.targetNode === nextBinding.targetNode && b.targetPort === nextBinding.targetPort),
+        ),
+        nextBinding,
+      ];
+
+      const nextEdgeBase = edgesRef.current.filter((edge) => {
+        const edgeData = (edge.data || {}) as { targetInputPortId?: string; routerLabel?: string | null };
+        const edgeTargetPortId = edgeData.targetInputPortId || edge.targetHandle || 'default';
+        const isConditionalEdge = edge.type === 'conditional' || Boolean(edgeData.routerLabel);
+        if (isConditionalEdge) return true;
+        return !(edge.target === targetId && edgeTargetPortId === targetHandleId);
+      });
+
+      if (nextEdgeBase.some((edge) => edge.id === edgeId)) return;
+
+      const newEdge: Edge = {
+        id: edgeId,
+        source: sourceId,
+        target: targetId,
+        sourceHandle,
+        targetHandle,
+        type: 'animated',
+        animated: true,
+        data: {
+          sourceOutputPortId: sourceHandleId,
+          targetInputPortId: targetHandleId,
+          isTypeMatch: true,
+          routerLabel: null,
+        },
+      };
+
+      const nextEdges = [...nextEdgeBase, newEdge];
+      edgesRef.current = nextEdges;
+      captureSnapshot();
+      setEdges(nextEdges);
+      deferStoreUpdate(() => syncDataBindings(dataBindingsRef.current));
+      deferStoreUpdate(() => syncEdges(nextEdges));
+    },
+    [captureSnapshot, syncDataBindings, syncEdges],
+  );
+
+  const connectStartRef = useRef<{ nodeId: string | null; handleId: string | null; handleType: string | null } | null>(null);
+
+  const [connectionDragHoveredId, setConnectionDragHoveredId] = useState<string | null>(null);
+
+  const onConnectStartHandler: OnConnectStart = useCallback((_event, { nodeId, handleId, handleType }) => {
+    connectStartRef.current = { nodeId, handleId, handleType };
+  }, []);
+
+  const autoConnectToNodeBody = useCallback(
+    (targetNodeId: string) => {
+      const start = connectStartRef.current;
+      if (!start?.nodeId || start.handleType !== 'source' || start.nodeId === targetNodeId) return false;
+
+      const sourceNode = nodesRef.current.find((n) => n.id === start.nodeId);
+      const targetNode = nodesRef.current.find((n) => n.id === targetNodeId);
+      const sourceData = sourceNode?.data as PlaybookNodeData | undefined;
+      const targetData = targetNode?.data as PlaybookNodeData | undefined;
+      if (!sourceData || !targetData) return false;
+
+      const sourceType = getEffectiveNodeType(sourceData);
+      if (sourceType === 'router' || start.nodeId === TRIGGER_NODE_ID) return false;
+
+      const sourceHandleId = start.handleId ?? 'default';
+      const sourcePort = sourceData.outputPorts?.find((p) => p.id === sourceHandleId);
+      if (!sourcePort) return false;
+
+      const currentTasks = nodesToTasks(nodesRef.current);
+      const cycleNodes = currentTasks.map((t) => ({
+        id: t.id,
+        data: { ...t, nodeType: t.nodeType ?? undefined },
+      }));
+      if (wouldCreateCycle(edgesRef.current, start.nodeId, targetNodeId, cycleNodes)) {
+        showWarning(t('canvas.cycleRejected'));
+        return false;
+      }
+
+      const newPort = createCompatibleInputPort(sourcePort.name || sourcePort.id, sourcePort.artifactKind);
+      const updatedInputPorts = [...(targetData.inputPorts ?? []), newPort];
+
+      setNodes((nds) => {
+        const updated = nds.map((n) => {
+          if (n.id !== targetNodeId) return n;
+          return { ...n, data: { ...n.data, inputPorts: updatedInputPorts } };
+        });
+        nodesRef.current = updated;
+        deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+        return updated;
+      });
+
+      commitEdgeAndBinding(start.nodeId, start.handleId, targetNodeId, newPort.id);
+      return true;
+    },
+    [commitEdgeAndBinding, t, updateTasks],
+  );
+
+  const onConnectEndHandler: OnConnectEnd = useCallback(
+    (event) => {
+      setConnectionDragHoveredId(null);
+      const start = connectStartRef.current;
+      connectStartRef.current = null;
+      if (!start?.nodeId || start.handleType !== 'source') return;
+
+      if (connectHandledRef.current) {
+        connectHandledRef.current = false;
+        return;
+      }
+
+      const flowPos = screenToFlowPosition({
+        x: (event as MouseEvent).clientX,
+        y: (event as MouseEvent).clientY,
+      });
+
+      let targetNodeId: string | null = null;
+      for (const node of nodesRef.current) {
+        const { position, measured } = node;
+        const width = measured?.width ?? (node as Node & { width?: number }).width ?? 0;
+        const height = measured?.height ?? (node as Node & { height?: number }).height ?? 0;
+        if (
+          flowPos.x >= position.x &&
+          flowPos.x <= position.x + width &&
+          flowPos.y >= position.y &&
+          flowPos.y <= position.y + height
+        ) {
+          targetNodeId = node.id;
+          break;
+        }
+      }
+
+      if (!targetNodeId || targetNodeId === start.nodeId) return;
+
+      autoConnectToNodeBody(targetNodeId);
+    },
+    [autoConnectToNodeBody, screenToFlowPosition],
+  );
+
+  const onNodeMouseEnter: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      if (!connectStartRef.current?.nodeId || connectStartRef.current.handleType !== 'source') return;
+      if (node.id === connectStartRef.current.nodeId || node.id === TRIGGER_NODE_ID) return;
+      setConnectionDragHoveredId(node.id);
+    },
+    [],
+  );
+
+  const onNodeMouseLeave: NodeMouseHandler = useCallback(
+    (_event, node) => {
+      setConnectionDragHoveredId((prev) => (prev === node.id ? null : prev));
+    },
+    [],
+  );
+
+  const resolveMismatchUpdateExisting = useCallback(() => {
+    if (!pendingMismatch) return;
+    const { connection } = pendingMismatch;
+    setPendingMismatch(null);
+
+    const targetNode = nodesRef.current.find((n) => n.id === connection.target);
+    const targetData = targetNode?.data as PlaybookNodeData | undefined;
+    const sourceData = (nodesRef.current.find((n) => n.id === connection.source)?.data) as PlaybookNodeData | undefined;
+    const sourcePort = sourceData?.outputPorts?.find((p) => p.id === (connection.sourceHandle ?? 'default'));
+    const targetPort = targetData?.inputPorts?.find((p) => p.id === (connection.targetHandle ?? 'default'));
+    if (!sourcePort || !targetPort || !targetData) return;
+
+    const updatedInputPorts = targetData.inputPorts?.map((p) =>
+      p.id === targetPort.id ? { ...p, artifactKind: sourcePort.artifactKind } : p,
+    ) ?? targetData.inputPorts;
+
+    setNodes((nds) => {
+      const updated = nds.map((n) => {
+        if (n.id !== connection.target) return n;
+        return { ...n, data: { ...n.data, inputPorts: updatedInputPorts } };
+      });
+      nodesRef.current = updated;
+      deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+      return updated;
+    });
+
+    commitEdgeAndBinding(connection.source, connection.sourceHandle, connection.target, connection.targetHandle);
+  }, [pendingMismatch, updateTasks, commitEdgeAndBinding]);
+
+  const resolveMismatchCreateCompatible = useCallback(() => {
+    if (!pendingMismatch) return;
+    const { connection, sourcePortName, sourceArtifactKind } = pendingMismatch;
+    setPendingMismatch(null);
+
+    const targetNode = nodesRef.current.find((n) => n.id === connection.target);
+    const targetData = targetNode?.data as PlaybookNodeData | undefined;
+    const sourceData = (nodesRef.current.find((n) => n.id === connection.source)?.data) as PlaybookNodeData | undefined;
+    const sourcePort = sourceData?.outputPorts?.find((p) => p.id === (connection.sourceHandle ?? 'default'));
+    if (!sourcePort || !targetData) return;
+
+    const newPort = createCompatibleInputPort(sourcePortName, sourceArtifactKind);
+    const updatedInputPorts = [...(targetData.inputPorts ?? []), newPort];
+
+    setNodes((nds) => {
+      const updated = nds.map((n) => {
+        if (n.id !== connection.target) return n;
+        return { ...n, data: { ...n.data, inputPorts: updatedInputPorts } };
+      });
+      nodesRef.current = updated;
+      deferStoreUpdate(() => updateTasks(nodesToTasks(updated)));
+      return updated;
+    });
+
+    commitEdgeAndBinding(connection.source, connection.sourceHandle, connection.target, newPort.id);
+  }, [pendingMismatch, updateTasks, commitEdgeAndBinding]);
+
+  const dismissMismatch = useCallback(() => {
+    setPendingMismatch(null);
+  }, []);
 
   const addNode = useCallback(
     (task: PlaybookTask) => {
@@ -626,6 +882,11 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     onNodeDragStop,
     onEdgesChange,
     onConnect,
+    onConnectStart: onConnectStartHandler,
+    onConnectEnd: onConnectEndHandler,
+    onNodeMouseEnter,
+    onNodeMouseLeave,
+    connectionDragHoveredId,
     addNode,
     removeNode,
     updateNodeData,
@@ -637,5 +898,19 @@ export function usePlaybookCanvas(triggerActions?: TriggerNodeActions) {
     cutSelection,
     pasteClipboard,
     triggerActions: playbook?.id ? triggerActions : undefined,
+    artifactKindMismatch: pendingMismatch
+      ? {
+          open: true,
+          sourcePortName: pendingMismatch.sourcePortName,
+          sourceArtifactKind: pendingMismatch.sourceArtifactKind,
+          targetPortName: pendingMismatch.targetPortName,
+          targetArtifactKind: pendingMismatch.targetArtifactKind,
+          canModifyPorts: true,
+          onCreateCompatibleInput: resolveMismatchCreateCompatible,
+          onUpdateExistingInput: resolveMismatchUpdateExisting,
+          onCancel: dismissMismatch,
+          onOpenChange: (open: boolean) => { if (!open) dismissMismatch(); },
+        }
+      : null,
   };
 }

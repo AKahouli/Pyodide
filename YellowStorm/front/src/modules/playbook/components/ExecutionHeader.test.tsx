@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,10 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('@/modules/localization', () => ({
   useModuleTranslation: () => ({ t: (key: string) => key }),
+}));
+
+vi.mock('@/components/ui/badge', () => ({
+  Badge: ({ children }: { children: ReactNode }) => <span>{children}</span>,
 }));
 
 vi.mock('./PlaybookStatusBadge', () => ({
@@ -91,6 +96,40 @@ describe('ExecutionHeader', () => {
   it('renders history dropdown', () => {
     render(<ExecutionHeader execution={makeExecution()} playbook={null} />);
     expect(screen.getByTestId('history-dropdown')).toBeInTheDocument();
+  });
+
+  it('shows replay flex planning summary when present', () => {
+    const execution = makeExecution({
+      executionMode: 'replay_flex',
+      replayPlanningByTask: {
+        t1: {
+          replayId: 'replay-1',
+          validationVersion: 4,
+          intentKey: 'earnings.summary',
+          intentLabel: 'Summarize earnings changes',
+          contextMapping: [],
+            executionPlan: {
+              taskId: 't1',
+              replayId: 'replay-1',
+              validationVersion: 4,
+              intentKey: 'earnings.summary',
+              intentLabel: 'Summarize earnings changes',
+              matchedContextCount: 1,
+              missingRequiredContextCount: 0,
+              requiredStageLabels: [],
+              requiredOutputChecks: [],
+              plannedToolSteps: [],
+              semanticChecklist: [],
+            },
+        },
+      },
+    });
+
+    render(<ExecutionHeader execution={execution} playbook={null} />);
+
+    expect(screen.getByText('execution.mode.replayFlex')).toBeInTheDocument();
+    expect(screen.getByText('replayPlanning.headerLabel')).toBeInTheDocument();
+    expect(screen.getByText('Summarize earnings changes')).toBeInTheDocument();
   });
 
 });

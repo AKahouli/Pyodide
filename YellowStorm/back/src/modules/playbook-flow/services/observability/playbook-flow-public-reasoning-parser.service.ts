@@ -18,7 +18,7 @@ export class PlaybookFlowPublicReasoningParserService {
     rawOutput: string,
     context: { executionId: string; taskId: string },
   ): ParsedPublicReasoning {
-    const markerIndex = rawOutput.indexOf(PUBLIC_REASONING_MARKER);
+    const markerIndex = this.findMarkerIndex(rawOutput, context);
     if (markerIndex === -1) {
       return {
         output: rawOutput,
@@ -27,7 +27,17 @@ export class PlaybookFlowPublicReasoningParserService {
       };
     }
 
-    const visibleOutput = rawOutput.slice(0, markerIndex).trimEnd();
+    const echoedInstructionIndex = this.findEchoedInstructionIndex(rawOutput, markerIndex);
+    const visibleOutput = this.resolveVisibleOutput(rawOutput, markerIndex, echoedInstructionIndex);
+    if (echoedInstructionIndex !== -1) {
+      this.warn(context, 'invalid_json');
+      return {
+        output: visibleOutput,
+        reasoningChain: [],
+        markerFound: true,
+        parseError: 'invalid_json',
+      };
+    }
     const jsonBlock = rawOutput.slice(markerIndex + PUBLIC_REASONING_MARKER.length).trim();
     if (jsonBlock.length === 0) {
       this.warn(context, 'missing_json_block');
@@ -49,11 +59,8 @@ export class PlaybookFlowPublicReasoningParserService {
       };
     }
 
-    let parsedJson: unknown;
-    try {
-      parsedJson = JSON.parse(jsonBlock);
-    } catch {
-      this.warn(context, 'invalid_json');
+    const parsedJson = this.tryParseJson(jsonBlock, context);
+    if (parsedJson === undefined) {
       return {
         output: visibleOutput,
         reasoningChain: [],
@@ -92,6 +99,33 @@ export class PlaybookFlowPublicReasoningParserService {
       reasoningChain,
       markerFound: true,
     };
+  }
+
+  private findMarkerIndex(rawOutput: string, context: { executionId: string; taskId: string }): number {
+    const markerIndexes: number[] = [];
+    let fromIndex = 0;
+    while (fromIndex < rawOutput.length) {
+      const nextIndex = rawOutput.indexOf(PUBLIC_REASONING_MARKER, fromIndex);
+      if (nextIndex === -1) {
+        break;
+      }
+      markerIndexes.push(nextIndex);
+      fromIndex = nextIndex + PUBLIC_REASONING_MARKER.length;
+    }
+
+    for (let index = markerIndexes.length - 1; index >= 0; index -= 1) {
+      const markerIndex = markerIndexes[index]!;
+      const jsonBlock = rawOutput.slice(markerIndex + PUBLIC_REASONING_MARKER.length).trim();
+      if (!jsonBlock) {
+        continue;
+      }
+      const parsedJson = this.tryParseJson(jsonBlock, context, false);
+      if (Array.isArray(parsedJson)) {
+        return markerIndex;
+      }
+    }
+
+    return markerIndexes[markerIndexes.length - 1] ?? -1;
   }
 
   normalizeReasoningTrace(rawItems: unknown[], context: { executionId: string; taskId: string }): PublicReasoningTraceItem[] {
@@ -136,6 +170,35 @@ export class PlaybookFlowPublicReasoningParserService {
     };
   }
 
+  private findEchoedInstructionIndex(rawOutput: string, markerIndex: number): number {
+    const echoedInstructionIndex = rawOutput.lastIndexOf('Reasoning Trace:', markerIndex);
+    if (echoedInstructionIndex >= 0) {
+      const echoedBlock = rawOutput.slice(
+        echoedInstructionIndex,
+        markerIndex + PUBLIC_REASONING_MARKER.length,
+      );
+      const looksLikePromptEcho = echoedBlock.includes(PUBLIC_REASONING_MARKER)
+        && (
+          echoedBlock.includes('After your final answer')
+          || echoedBlock.includes('MUST ALWAYS append')
+          || echoedBlock.includes('Each item represents one step of your reasoning process')
+        );
+      if (looksLikePromptEcho) {
+        return echoedInstructionIndex;
+      }
+    }
+
+    return -1;
+  }
+
+  private resolveVisibleOutput(rawOutput: string, markerIndex: number, echoedInstructionIndex: number): string {
+    if (echoedInstructionIndex !== -1) {
+      return rawOutput.slice(0, echoedInstructionIndex).replace(/\s*"\s*$/, '').trimEnd();
+    }
+
+    return rawOutput.slice(0, markerIndex).trimEnd();
+  }
+
   private readRequiredString(value: unknown, maxLength?: number): string | null {
     if (typeof value !== 'string') {
       return null;
@@ -160,6 +223,65 @@ export class PlaybookFlowPublicReasoningParserService {
       return undefined;
     }
     return value;
+  }
+
+  private tryParseJson(
+    jsonBlock: string,
+    context: { executionId: string; taskId: string },
+    warnOnFailure: boolean = true,
+  ): unknown | undefined {
+    try {
+      return JSON.parse(jsonBlock);
+    } catch {
+      // LLMs commonly emit trailing ]] or leading prose before the JSON array.
+      // Try stripping trailing ] noise first, then try extracting from the first [.
+      let candidate = jsonBlock.trimEnd();
+      while (candidate.length > 1) {
+        const lastChar = candidate[candidate.length - 1];
+        if (lastChar === ']') {
+          candidate = candidate.slice(0, -1).trimEnd();
+        } else {
+          break;
+        }
+        try {
+          return JSON.parse(candidate);
+        } catch {
+          // continue stripping
+        }
+      }
+
+      // Leading prose: find the first [ and try to parse from there
+      const arrayStart = jsonBlock.indexOf('[');
+      const leadingProse = jsonBlock.slice(0, arrayStart).trim();
+      if (
+        arrayStart > 0
+        && leadingProse.length > 0
+        && leadingProse.length <= 80
+        && !leadingProse.includes(':')
+        && !leadingProse.includes(PUBLIC_REASONING_MARKER)
+      ) {
+        const fromArray = jsonBlock.slice(arrayStart);
+        try {
+          return JSON.parse(fromArray);
+        } catch {
+          // also try stripping trailing noise from the extracted array
+          let trailing = fromArray.trimEnd();
+          while (trailing.length > 1 && trailing[trailing.length - 1] === ']') {
+            trailing = trailing.slice(0, -1).trimEnd();
+            try {
+              return JSON.parse(trailing);
+            } catch {
+              // continue
+            }
+          }
+        }
+      }
+
+      if (warnOnFailure) {
+        this.warn(context, 'invalid_json');
+      }
+      return undefined;
+    }
   }
 
   private warn(context: { executionId: string; taskId: string }, reason: string): void {

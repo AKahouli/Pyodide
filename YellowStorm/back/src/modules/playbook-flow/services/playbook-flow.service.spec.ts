@@ -628,13 +628,7 @@ describe('PlaybookFlowService', () => {
     expect(validatorService.validate).toHaveBeenCalledWith(
       [{ id: 'task-1' }],
       [],
-      [{
-        id: 'binding-1',
-        targetNode: 'task-1',
-        targetPort: 'prompt',
-        sourceKind: 'constant',
-        constantValue: { text: 'hi' },
-      }],
+      [],
       { allowDraftRouters: true },
     );
   });

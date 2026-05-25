@@ -121,6 +121,8 @@ export const NodeDataActionsContext = createContext<NodeDataActions | null>(null
 
 export const NodeContextMenuContext = createContext<NodeContextMenuActions | null>(null);
 
+export const ConnectionDragContext = createContext<{ hoveredTargetId: string | null }>({ hoveredTargetId: null });
+
 const STATUS_RING: Record<StepStatus, string> = {
   pending: '',
   running: 'border-running shadow-md shadow-running/10',
@@ -320,6 +322,7 @@ function getPortTopPercent(idx: number, total: number): number {
 export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const data = rawData as unknown as PlaybookNodeData;
   const actions = useContext(NodeContextMenuContext);
+  const connectionDrag = useContext(ConnectionDragContext);
   const nodeDataActions = useContext(NodeDataActionsContext);
   const { t } = useModuleTranslation('playbook');
   const getAgentById = useAgentStore((s) => s.getAgentById);
@@ -340,7 +343,6 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
     return latest?.taskResults ?? null;
   });
   const playbookId = usePlaybookStore((s) => s.currentPlaybook?.id ?? null);
-  const selectedStepId = usePlaybookStore((s) => s.selectedStepId);
   const openExecutionDetailTab = usePlaybookStore((s) => s.openExecutionDetailTab);
   const addInputFileToTask = usePlaybookStore((s) => s.addInputFileToTask);
   const removeInputFileFromTask = usePlaybookStore((s) => s.removeInputFileFromTask);
@@ -415,7 +417,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
   const isStepRunning = status === 'running';
   const isExplicitlyDisabled = data.enabled === false;
   const isEnabled = !isExplicitlyDisabled;
-  const isSelected = selected || selectedStepId === id;
+  const isSelected = Boolean(selected);
   const isRecentlyChanged = data.isRecentlyChanged === true;
   const selectedClass = isSelected
     ? 'border-2 border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25 animate-[pulse_4.5s_ease-in-out_infinite]'
@@ -625,6 +627,7 @@ export function PlaybookNode({ id, data: rawData, selected }: NodeProps) {
             isDragOver && !dragOverPortId && 'ring-2 ring-primary ring-inset bg-primary/5',
             isDragOver && dragOverPortId && dragPortCompatible === true && 'ring-2 ring-green-400/50 ring-inset bg-green-50/30',
             isDragOver && dragOverPortId && dragPortCompatible === false && 'ring-2 ring-red-400/50 ring-inset bg-red-50/20',
+            connectionDrag.hoveredTargetId === id && 'ring-2 ring-blue-400/60 ring-inset shadow-[0_0_12px_3px_rgba(96,165,250,0.15)]',
           )}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}

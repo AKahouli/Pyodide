@@ -8,6 +8,9 @@ import { IteratorResultPanel } from './IteratorResultPanel';
 import { StepComponents } from './StepComponents';
 import { PortArtifactPane } from './PortArtifactPane';
 import { PortContentViewer } from './PortContentViewer';
+import { ReplayReportPanel } from './ReplayReportPanel';
+import { ReplayContextMappingCard } from './ReplayContextMappingCard';
+import { ReplayExecutionPlanCard } from './ReplayExecutionPlanCard';
 
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -441,6 +444,7 @@ export function ExecutionStepDetail({
   const currentPlaybook = usePlaybookStore((s) => s.currentPlaybook);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const replaySource = step ? execution?.replaySourceByTask?.[step.taskId] : null;
+  const replayPlanning = step ? execution?.replayPlanningByTask?.[step.taskId] ?? null : null;
   const fetchAdvisorRemediations = usePlaybookStore((s) => s.fetchAdvisorRemediations);
   const reapplyOptimization = usePlaybookStore((s) => s.reapplyOptimization);
   const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
@@ -464,6 +468,7 @@ export function ExecutionStepDetail({
   const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
   const [comparisonEvaluationId, setComparisonEvaluationId] = useState<string | null>(null);
   const [selectedJudgeHistoryId, setSelectedJudgeHistoryId] = useState<string | null>(null);
+  const [detailActiveTab, setDetailActiveTab] = useState(activeTab);
   const [remediationDialogOpen, setRemediationDialogOpen] = useState(false);
   const [remediationDialogMode, setRemediationDialogMode] = useState<AdvisorRemediationMode>('update-current');
   const [remediationItems, setRemediationItems] = useState<AdvisorRemediationItem[]>([]);
@@ -609,6 +614,15 @@ export function ExecutionStepDetail({
     }
     return items;
   }, [step?.llmPromptTrace, baselineReplay?.llmPromptTrace]);
+
+  useEffect(() => {
+    setDetailActiveTab(activeTab);
+  }, [activeTab]);
+
+  const handleActiveTabChange = useCallback((value: string) => {
+    setDetailActiveTab(value);
+    onActiveTabChange?.(value);
+  }, [onActiveTabChange]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1297,7 +1311,7 @@ export function ExecutionStepDetail({
             <span className="text-[10px] text-muted-foreground self-center">{t('detail.actions.traceReplayHint')}</span>
           </div>
         )}
-        <Tabs value={activeTab} onValueChange={onActiveTabChange} className="gap-4">
+        <Tabs value={detailActiveTab} onValueChange={handleActiveTabChange} className="gap-4">
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="results">{t('detail.tabs.results')}</TabsTrigger>
             <TabsTrigger value="evaluation">{t('detail.tabs.evaluation')}</TabsTrigger>
@@ -1358,13 +1372,29 @@ export function ExecutionStepDetail({
                   {replaySource && (
                     <div>{t('detail.provenance.baseline')}: v{replaySource.validationVersion}</div>
                   )}
+                  {replayPlanning && (
+                    <div>
+                      {t('replayPlanning.provenanceLabel')}: v{replayPlanning.validationVersion}
+                      {replayPlanning.intentLabel ? ` • ${replayPlanning.intentLabel}` : ''}
+                    </div>
+                  )}
                   {baselineReplay?.preserveOutputFormat && (
                     <div>{t('detail.provenance.outputFormat')}</div>
                   )}
                 </div>
               </div>
             )}
-
+            {replayPlanning && (
+              <div className="space-y-3">
+                {replayPlanning.executionPlan.missingRequiredContextCount > 0 && (
+                  <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+                    {t('replayPlanning.unresolvedRequiredWarning')}
+                  </div>
+                )}
+                <ReplayContextMappingCard entries={replayPlanning.contextMapping} />
+                <ReplayExecutionPlanCard plan={replayPlanning.executionPlan} />
+              </div>
+            )}
             {selectedStepExecution?.artifacts && selectedStepExecution.artifacts.length > 0 && (
               <div className="space-y-3">
                 <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t('artifacts.title' as any)}</div>
@@ -1495,6 +1525,16 @@ export function ExecutionStepDetail({
                   </div>
                 )}
               </div>
+            )}
+
+            {execution?.id && step?.taskId && (
+              <ReplayReportPanel
+                playbookId={execution.playbookId}
+                taskId={step.taskId}
+                executionId={execution.id}
+                iteration={step.iteration ?? 0}
+                execution={execution}
+              />
             )}
 
             {currentTask?.taskType === 'evaluation' && (

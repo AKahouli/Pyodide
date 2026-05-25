@@ -261,6 +261,32 @@ export class PlaybookFlowService {
       this.logger.warn(`Removed ${bindingCountBefore - existing.dataBindings.length} orphaned data binding(s)`);
     }
 
+    const nodesById = new Map((existing.nodes as any[]).map((n: any) => [n.id, n]));
+    const portCountBefore = existing.dataBindings.length;
+    existing.dataBindings = existing.dataBindings.filter((b: any) => {
+      const targetNode = nodesById.get(b.targetNode);
+      if (!targetNode) return true;
+      const targetPortExists = targetNode.input?.ports?.some((p: any) => p.id === b.targetPort);
+      if (!targetPortExists) {
+        this.logger.warn(`Removing stale data binding ${b.id}: target port ${b.targetNode}.${b.targetPort} no longer exists`);
+        return false;
+      }
+      if (b.sourceKind === 'node-output' && b.sourceNode) {
+        const sourceNode = nodesById.get(b.sourceNode);
+        if (sourceNode) {
+          const sourcePortExists = sourceNode.output?.ports?.some((p: any) => p.id === b.sourcePort);
+          if (!sourcePortExists) {
+            this.logger.warn(`Removing stale data binding ${b.id}: source port ${b.sourceNode}.${b.sourcePort} no longer exists`);
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+    if (existing.dataBindings.length < portCountBefore) {
+      this.logger.warn(`Removed ${portCountBefore - existing.dataBindings.length} stale port binding(s)`);
+    }
+
     this.validatorService.validate(
       existing.nodes as any,
       existing.controlEdges as any,
@@ -331,6 +357,29 @@ export class PlaybookFlowService {
       if (update.dataBindings) existing.dataBindings = update.dataBindings;
       existing.workspaces = this.normalizeWorkspaces(existing.workspaces);
       this.ensureWorkspaceSelection(existing.workspaces);
+
+      const nodesById = new Map((existing.nodes as any[]).map((n: any) => [n.id, n]));
+      existing.dataBindings = (existing.dataBindings as any[]).filter((b: any) => {
+        const targetNode = nodesById.get(b.targetNode);
+        if (!targetNode) return true;
+        const targetPortExists = targetNode.input?.ports?.some((p: any) => p.id === b.targetPort);
+        if (!targetPortExists) {
+          this.logger.warn(`Removing stale data binding ${b.id}: target port ${b.targetNode}.${b.targetPort} no longer exists`);
+          return false;
+        }
+        if (b.sourceKind === 'node-output' && b.sourceNode) {
+          const sourceNode = nodesById.get(b.sourceNode);
+          if (sourceNode) {
+            const sourcePortExists = sourceNode.output?.ports?.some((p: any) => p.id === b.sourcePort);
+            if (!sourcePortExists) {
+              this.logger.warn(`Removing stale data binding ${b.id}: source port ${b.sourceNode}.${b.sourcePort} no longer exists`);
+              return false;
+            }
+          }
+        }
+        return true;
+      });
+
       this.validatorService.validate(
         existing.nodes as any,
         existing.controlEdges as any,

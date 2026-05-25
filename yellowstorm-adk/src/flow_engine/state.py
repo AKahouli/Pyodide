@@ -34,3 +34,4 @@ class ExecutionState(TypedDict):
     errors: Annotated[list[ExecutionError], append]
     pending_approval: Annotated[Optional[PendingApproval], last_write]
     cancelled: Annotated[bool, or_]
+    hitl_checkpoint: Annotated[Optional[dict[str, Any]], last_write]

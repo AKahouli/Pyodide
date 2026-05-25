@@ -44,6 +44,9 @@ vi.mock('@xyflow/react', () => ({
     const removeIds = new Set(changes.filter((c) => c.type === 'remove').map((c) => c.id));
     return edges.filter((e) => !removeIds.has(e.id));
   },
+  useReactFlow: () => ({
+    screenToFlowPosition: (pos: { x: number; y: number }) => pos,
+  }),
 }));
 
 describe('usePlaybookCanvas', () => {

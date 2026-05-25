@@ -168,6 +168,40 @@ describe('playbookStreamService (BroadcastChannel leader election)', () => {
     unmount();
   });
 
+  it('hydrates replay execution modes from connected events', () => {
+    const { unmount } = renderHook(() => usePlaybookStreamGlobal());
+
+    act(() => { vi.advanceTimersByTime(250); });
+
+    const es = EventSourceMock.instances[0];
+    const connectedListener = es.listeners.get('playbook_connected')?.[0];
+    connectedListener?.({
+      data: JSON.stringify({
+        connectionId: 'c1',
+        activeExecutions: [
+          {
+            id: 'exec-1',
+            playbookId: 'playbook-1',
+            status: 'running',
+            executionMode: 'inherit',
+            stepExecutionModes: { 'task-1': 'replay_flex' },
+            taskResults: [],
+          },
+        ],
+      }),
+    } as MessageEvent);
+
+    expect(store.hydrateActiveExecutions).toHaveBeenCalledWith([
+      expect.objectContaining({
+        id: 'exec-1',
+        executionMode: 'inherit',
+        stepExecutionModes: { 'task-1': 'replay_flex' },
+      }),
+    ]);
+
+    unmount();
+  });
+
   it('shares pending-approval executions with follower tabs', () => {
     const { unmount } = renderHook(() => usePlaybookStreamGlobal());
 

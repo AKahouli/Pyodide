@@ -8,12 +8,20 @@ import { FlowTaskResult, FlowTaskResultDocument } from '../schemas/playbook-flow
 import {
   FlowValidatedReplay,
   FlowValidatedReplayDocument,
+  type FlowReplayToolPolicy,
   FlowReplayValidationStatus,
+  normalizeReplayMode,
+  type ReplayMode,
 } from '../schemas/playbook-flow-validated-replay.schema';
 import {
   FlowEvaluationExecution,
   FlowEvaluationExecutionDocument,
 } from '../schemas/playbook-flow-evaluation-execution.schema';
+import {
+  type FlowReplayOutputContract,
+} from '../schemas/playbook-flow-validated-replay.schema';
+import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { scoreToolPolicyCompliance } from '../utils/playbook-flow-tool-policy.util';
 
 export type FlowExpectedResultSource = 'node_metadata' | 'golden_baseline' | 'none';
 export type FlowRepeatabilityMatchState = 'matched' | 'not_matched' | 'not_evaluated';
@@ -29,6 +37,10 @@ export interface FlowRepeatabilityTaskSummary {
   matchState: FlowRepeatabilityMatchState;
   structuralPassed: boolean;
   structuralEvaluated: boolean;
+  structuralScore: number | null;
+  structuralDriftReasons: string[];
+  toolPolicyScore: number | null;
+  textMatchScore: number | null;
   contentScore: number | null;
   contentEvaluated: boolean;
   passed: boolean;
@@ -43,6 +55,7 @@ export interface FlowRepeatabilityIterationSummary {
   passedTasks: number;
   averageMatchScore: number | null;
   averageContentScore: number | null;
+  averageToolPolicyScore: number | null;
   passed: boolean;
   tasks: FlowRepeatabilityTaskSummary[];
 }
@@ -54,12 +67,25 @@ export interface FlowRepeatabilitySummary {
   passedIterations: number;
   overallAverageMatchScore: number | null;
   overallAverageContentScore: number | null;
+  overallAverageToolPolicyScore: number | null;
   generatedAt: string;
   iterations: FlowRepeatabilityIterationSummary[];
 }
 
 const MIN_ITERATIONS = 2;
 const PASS_SCORE_THRESHOLD = 80;
+const STRUCTURAL_WEIGHT = 0.5;
+const TEXT_WEIGHT = 0.1;
+const CONTENT_WEIGHT = 0.4;
+
+interface GoldenBaselineRecord {
+  flowId?: string;
+  replayId?: string;
+  mode: ReplayMode | null;
+  referenceOutput: string | null;
+  toolPolicy: FlowReplayToolPolicy | null;
+  outputContract: FlowReplayOutputContract | null;
+}
 
 @Injectable()
 export class PlaybookFlowRepeatabilityService {
@@ -70,6 +96,7 @@ export class PlaybookFlowRepeatabilityService {
     @InjectModel(FlowValidatedReplay.name) private readonly replayModel: Model<FlowValidatedReplayDocument>,
     @InjectModel(FlowEvaluationExecution.name) private readonly evalModel: Model<FlowEvaluationExecutionDocument>,
     private readonly logger: LoggerService,
+    private readonly outputContractService: PlaybookFlowOutputContractService,
   ) { this.logger.setContext('PlaybookFlowRepeatabilityService'); }
 
   async getRepeatability(
@@ -94,6 +121,7 @@ export class PlaybookFlowRepeatabilityService {
         passedIterations: 0,
         overallAverageMatchScore: null,
         overallAverageContentScore: null,
+        overallAverageToolPolicyScore: null,
         generatedAt: new Date().toISOString(),
         iterations: [],
       };
@@ -122,6 +150,9 @@ export class PlaybookFlowRepeatabilityService {
     const overallAverageContentScore = this.computeOverallAverage(
       evaluatedIterations.map((i) => i.averageContentScore),
     );
+    const overallAverageToolPolicyScore = this.computeOverallAverage(
+      evaluatedIterations.map((i) => i.averageToolPolicyScore),
+    );
 
     return {
       flowId,
@@ -130,6 +161,7 @@ export class PlaybookFlowRepeatabilityService {
       passedIterations: passedIterations.length,
       overallAverageMatchScore,
       overallAverageContentScore,
+      overallAverageToolPolicyScore,
       generatedAt: new Date().toISOString(),
       iterations: allIterations.slice(offset, offset + limit),
     };
@@ -164,18 +196,18 @@ export class PlaybookFlowRepeatabilityService {
 
   resolveExpectedResult(
     node: { metadata?: Record<string, unknown> },
-    goldenBaseline: string | null,
+    goldenBaseline: GoldenBaselineRecord | null,
   ): { value: string | null; source: FlowExpectedResultSource } {
     const nodeValue = String(node.metadata?.['expectedResult'] || '').trim();
     if (nodeValue) return { value: nodeValue, source: 'node_metadata' };
-    if (goldenBaseline) return { value: goldenBaseline, source: 'golden_baseline' };
+    if (goldenBaseline?.referenceOutput) return { value: goldenBaseline.referenceOutput, source: 'golden_baseline' };
     return { value: null, source: 'none' };
   }
 
   private async evaluateIteration(
     executionId: string,
     nodes: Array<{ id: string; label?: string; metadata?: Record<string, unknown> }>,
-    goldenBaselines: Map<string, string>,
+    goldenBaselines: Map<string, GoldenBaselineRecord>,
   ): Promise<FlowRepeatabilityIterationSummary> {
     const taskSummaries = await Promise.all(
       nodes.map((node) =>
@@ -183,7 +215,7 @@ export class PlaybookFlowRepeatabilityService {
       ),
     );
 
-    const execution = await this.executionModel.findById(executionId).lean();
+    const execution = await this.executionModel.findById(executionId).lean().exec();
 
     const evaluatedTasks = taskSummaries.filter((t) => t.evaluated);
     const passedTasks = taskSummaries.filter((t) => t.passed);
@@ -196,6 +228,7 @@ export class PlaybookFlowRepeatabilityService {
       passedTasks: passedTasks.length,
       averageMatchScore: this.computeOverallAverage(evaluatedTasks.map((t) => t.matchScore)),
       averageContentScore: this.computeOverallAverage(evaluatedTasks.map((t) => t.contentScore)),
+      averageToolPolicyScore: this.computeOverallAverage(evaluatedTasks.map((t) => t.toolPolicyScore)),
       passed: evaluatedTasks.length > 0 && passedTasks.length === evaluatedTasks.length,
       tasks: taskSummaries,
     };
@@ -204,7 +237,7 @@ export class PlaybookFlowRepeatabilityService {
   private async evaluateTaskExecution(
     executionId: string,
     node: { id: string; label?: string; metadata?: Record<string, unknown> },
-    goldenBaselines: Map<string, string>,
+    goldenBaselines: Map<string, GoldenBaselineRecord>,
   ): Promise<FlowRepeatabilityTaskSummary> {
     const baseline = goldenBaselines.get(node.id) || null;
     const { value: expectedResult, source: expectedResultSource } =
@@ -212,33 +245,59 @@ export class PlaybookFlowRepeatabilityService {
 
     const taskResult = await this.taskResultModel
       .findOne({ executionId, taskId: node.id, status: 'completed' })
-      .lean();
+      .lean()
+      .exec();
 
     const output = taskResult
       ? typeof taskResult.output === 'string' ? taskResult.output : JSON.stringify(taskResult.output ?? '')
       : null;
 
     const completedAt = taskResult?.endedAt ?? null;
+    const toolPolicy = scoreToolPolicyCompliance({
+      toolPolicy: baseline?.toolPolicy ?? null,
+      toolTrace: taskResult?.toolTrace ?? [],
+    });
 
-    const structuralEvaluated = expectedResultSource !== 'none' && output !== null;
-    const matchScore = structuralEvaluated && expectedResult && output
+    const textMatchScore = expectedResultSource !== 'none' && expectedResult && output
       ? this.computeTextSimilarity(expectedResult, output)
       : null;
-    const structuralPassed = matchScore !== null && matchScore >= PASS_SCORE_THRESHOLD;
+    const structuralValidation = this.outputContractService.validateOutputContract({
+      output,
+      outputContract: baseline?.outputContract ?? null,
+    });
+    const structuralEvaluated = structuralValidation.evaluated || (expectedResultSource !== 'none' && output !== null);
+    const structuralScore = structuralValidation.score;
+    const structuralPassed = structuralValidation.evaluated
+      ? structuralValidation.passed
+      : textMatchScore !== null && textMatchScore >= PASS_SCORE_THRESHOLD;
+    const structuralDriftReasons = structuralValidation.evaluated
+      ? structuralValidation.reasons
+      : [];
 
     const contentEval = await this.evalModel
       .findOne({ executionId, taskId: node.id })
       .sort({ createdAt: -1 })
-      .lean();
+      .lean()
+      .exec();
 
     const contentScore = contentEval
       ? this.normalizePercentScore(contentEval.semanticScore)
       : null;
     const contentEvaluated = contentScore !== null;
 
+    const matchScore = this.computeWeightedScore({
+      structuralScore,
+      textMatchScore,
+      contentScore,
+    });
+
+    const hasStrictToolPolicyViolation = baseline?.mode === 'replay_strict' && toolPolicy.evaluated && !toolPolicy.passed;
+
     const evaluated = structuralEvaluated || contentEvaluated;
     const passed = evaluated && structuralPassed &&
-      (!contentEvaluated || (contentScore !== null && contentScore >= PASS_SCORE_THRESHOLD));
+      matchScore !== null && matchScore >= PASS_SCORE_THRESHOLD &&
+      (!contentEvaluated || (contentScore !== null && contentScore >= PASS_SCORE_THRESHOLD)) &&
+      !hasStrictToolPolicyViolation;
 
     let matchState: FlowRepeatabilityMatchState;
     if (!evaluated) matchState = 'not_evaluated';
@@ -256,6 +315,10 @@ export class PlaybookFlowRepeatabilityService {
       matchState,
       structuralPassed,
       structuralEvaluated,
+      structuralScore,
+      structuralDriftReasons,
+      toolPolicyScore: toolPolicy.score,
+      textMatchScore,
       contentScore,
       contentEvaluated,
       passed,
@@ -281,8 +344,8 @@ export class PlaybookFlowRepeatabilityService {
   private async loadGoldenBaselines(
     flowId: string,
     taskIds: string[],
-  ): Promise<Map<string, string>> {
-    const baselines = new Map<string, string>();
+  ): Promise<Map<string, GoldenBaselineRecord>> {
+    const baselines = new Map<string, GoldenBaselineRecord>();
     if (taskIds.length === 0) return baselines;
 
     const replays = await this.replayModel
@@ -295,11 +358,40 @@ export class PlaybookFlowRepeatabilityService {
       .exec();
 
     for (const replay of replays) {
-      if (replay.referenceOutput) {
-        baselines.set(replay.taskId, replay.referenceOutput);
-      }
+      baselines.set(replay.taskId, {
+        flowId: replay.flowId,
+        replayId: String(replay._id),
+        mode: replay.mode ? normalizeReplayMode(replay.mode) : null,
+        referenceOutput: replay.referenceOutput ?? null,
+        toolPolicy: replay.toolPolicy ?? null,
+        outputContract: replay.outputContract ?? null,
+      });
     }
     return baselines;
+  }
+
+  private computeWeightedScore(params: {
+    structuralScore: number | null;
+    textMatchScore: number | null;
+    contentScore: number | null;
+  }): number | null {
+    const weightedParts = [
+      params.structuralScore !== null ? { score: params.structuralScore, weight: STRUCTURAL_WEIGHT } : null,
+      params.textMatchScore !== null ? { score: params.textMatchScore, weight: TEXT_WEIGHT } : null,
+      params.contentScore !== null ? { score: params.contentScore, weight: CONTENT_WEIGHT } : null,
+    ].filter((entry): entry is { score: number; weight: number } => entry !== null);
+
+    if (weightedParts.length === 0) {
+      return null;
+    }
+
+    const totalWeight = weightedParts.reduce((sum, entry) => sum + entry.weight, 0);
+    if (totalWeight === 0) {
+      return null;
+    }
+
+    const weightedScore = weightedParts.reduce((sum, entry) => sum + (entry.score * entry.weight), 0) / totalWeight;
+    return Math.round(weightedScore * 10) / 10;
   }
 
   private computeTextSimilarity(expected: string, actual: string): number {
@@ -345,6 +437,7 @@ export class PlaybookFlowRepeatabilityService {
       passedIterations: 0,
       overallAverageMatchScore: null,
       overallAverageContentScore: null,
+      overallAverageToolPolicyScore: null,
       generatedAt: new Date().toISOString(),
       iterations: [],
     };

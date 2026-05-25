@@ -41,6 +41,8 @@ def finalize_step_result(
                 declared_kind or selected_kind,
                 output_spec.get("content"),
                 generated_artifacts,
+                explicit_filename=str(output_spec.get("filename") or "").strip(),
+                explicit_filepath=str(output_spec.get("filepath") or output_spec.get("file_path") or "").strip(),
             )
             outputs_by_port[port_id] = structured_output
             if artifact is not None:
@@ -221,6 +223,9 @@ def _build_structured_output_entry(
     artifact_kind: str,
     content: Any,
     generated_artifacts: list[dict[str, Any]],
+    *,
+    explicit_filename: str = "",
+    explicit_filepath: str = "",
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     normalized_kind = artifact_kind or "text"
     if normalized_kind in {"text", "code"}:
@@ -257,9 +262,14 @@ def _build_structured_output_entry(
         or metadata.get("url")
         or metadata.get("file_path")
         or metadata.get("filePath")
+        or explicit_filepath
         or ""
     ).strip()
-    filename = str((generated or {}).get("filename") or metadata.get("filename") or "").strip()
+    filename = str(
+        (generated or {}).get("filename")
+        or metadata.get("filename")
+        or explicit_filename
+    ).strip()
     mime_type = str(
         (generated or {}).get("mime_type")
         or metadata.get("mime_type")
@@ -277,6 +287,8 @@ def _build_structured_output_entry(
         entry["ref"] = metadata
     if filename:
         entry["filename"] = filename
+    if url:
+        entry["filepath"] = url
     if mime_type:
         entry["mime_type"] = mime_type
 
@@ -285,6 +297,7 @@ def _build_structured_output_entry(
         "artifact_kind": normalized_kind,
         "url": url,
         "filename": filename,
+        "filepath": url,
         "mime_type": mime_type,
     }
     return entry, artifact if url or filename else None

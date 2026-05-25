@@ -3,6 +3,7 @@ import { PublicReasoningTraceItem } from './playbook-flow-reasoning.interface';
 export interface FlowToolTraceItem {
   callIndex: number;
   toolName: string;
+  purpose?: string | null;
   args: Record<string, unknown>;
   outputSummary?: string | null;
   status?: 'completed' | 'failed' | 'skipped' | null;

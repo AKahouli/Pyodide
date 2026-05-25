@@ -2,6 +2,27 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
 import { ADVISOR_SCORING_MODES, AdvisorScoringMode } from './playbook-flow.schema';
 
+@Schema({ _id: false })
+export class ReplayPlanningMetadata {
+  @Prop({ required: true, type: String })
+  replayId!: string;
+
+  @Prop({ required: true, type: Number })
+  validationVersion!: number;
+
+  @Prop({ required: false, type: String, default: null })
+  intentKey?: string | null;
+
+  @Prop({ required: false, type: String, default: null })
+  intentLabel?: string | null;
+
+  @Prop({ required: false, type: [Object], default: [] })
+  contextMapping!: Array<Record<string, unknown>>;
+
+  @Prop({ required: false, type: Object, default: null })
+  executionPlan?: Record<string, unknown> | null;
+}
+
 export type FlowExecutionDocument = HydratedDocument<FlowExecution>;
 
 @Schema({ _id: false })
@@ -104,6 +125,12 @@ export class FlowExecution {
 
   @Prop({ required: false, type: Object, default: {} })
   stepExecutionModes?: Record<string, string>;
+
+  @Prop({ required: false, type: Object, default: {} })
+  replayPlanningByTask?: Record<string, ReplayPlanningMetadata>;
+
+  @Prop({ required: false, type: String })
+  modelIdOverride?: string;
 
   createdAt?: Date;
 

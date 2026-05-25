@@ -114,6 +114,79 @@ describe('PlaybookNode', () => {
       ],
     };
     storeState.executionCache = {};
+    storeState.selectedStepId = null;
+  });
+
+  it('only uses the canvas selected prop for node highlight state', () => {
+    storeState.selectedStepId = 'node-1';
+
+    const { container, rerender } = render(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: false,
+          data: {
+            id: 'node-1',
+            title: 'Summarize',
+            description: 'Summarize the document',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    expect(container.firstChild).not.toHaveClass('border-[#ffcd03]');
+
+    rerender(
+      <PlaybookNode
+        {...({
+          id: 'node-1',
+          selected: true,
+          data: {
+            id: 'node-1',
+            title: 'Summarize',
+            description: 'Summarize the document',
+            assignedAgentId: 'agent-1',
+            executionOrder: 0,
+            positionX: 0,
+            positionY: 0,
+            interruptBefore: false,
+            interruptAfter: false,
+            allowClarification: false,
+            clarificationPrompt: '',
+            maxClarifications: 0,
+            inputKeys: [],
+            outputKey: '',
+            enabled: true,
+            notifyOnComplete: false,
+            notifyEmails: [],
+            inputFiles: [],
+            taskType: 'generic',
+            inputPorts: [],
+            outputPorts: [],
+          },
+        } as any)}
+      />,
+    );
+
+    expect(container.firstChild).toHaveClass('border-[#ffcd03]');
   });
 
   it('does not render the complementary artifacts pane', () => {

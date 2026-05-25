@@ -10,8 +10,10 @@ import {
   FlowValidatedReplay,
   FlowValidatedReplayDocument,
   FlowReplayValidationStatus,
+  type ReplayMode,
 } from '../schemas/playbook-flow-validated-replay.schema';
 import { flattenUsage } from './observability/playbook-flow-observability.mapper';
+import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
 
 export interface TraceReplayEvent {
   type: 'NodeStarted' | 'NodeCompleted' | 'NodeFailed' | 'RouterDecision' | 'ApprovalRequested' | 'ExecutionCompleted' | 'ExecutionFailed';
@@ -19,8 +21,9 @@ export interface TraceReplayEvent {
   data: Record<string, unknown>;
 }
 
-export interface ValidateTaskReplayDto {
+export interface ValidateTaskReplayOptions {
   preserveOutputFormat?: boolean;
+  mode?: ReplayMode | 'strict_replay';
   replayConfig?: {
     replayOutputFormat?: boolean;
     replayToolTrace?: boolean;
@@ -28,7 +31,7 @@ export interface ValidateTaskReplayDto {
   };
 }
 
-export interface UpdateReplayFormatGuideDto {
+export interface UpdateReplayFormatGuidePayload {
   preserveOutputFormat?: boolean;
   outputFormatGuide?: string;
   replayConfig?: {
@@ -46,11 +49,12 @@ export class PlaybookFlowReplayService {
     @InjectModel(FlowRouterDecision.name) private readonly routerDecisionModel: Model<FlowRouterDecisionDocument>,
     @InjectModel(FlowValidatedReplay.name) private readonly replayModel: Model<FlowValidatedReplayDocument>,
     private readonly executionService: PlaybookFlowExecutionService,
+    private readonly replayBaselineService: PlaybookFlowReplayBaselineService,
     private readonly logger: LoggerService,
   ) { this.logger.setContext('PlaybookFlowReplayService'); }
 
   async traceReplay(executionId: string, userId: string): Promise<TraceReplayEvent[]> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).lean();
+    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).select('+snapshot +inputContext').lean();
     if (!execution) throw new NotFoundException('Execution not found');
 
     const [taskResults, routerDecisions] = await Promise.all([
@@ -119,13 +123,23 @@ export class PlaybookFlowReplayService {
   }
 
   async reExecute(executionId: string, userId: string): Promise<{ executionId: string; divergenceWarning: boolean }> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).lean();
+    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).select('+snapshot +inputContext').lean();
     if (!execution) throw new NotFoundException('Execution not found');
 
     const result = await this.executionService.start(
       execution.flowId,
       userId,
       execution.inputContext as Record<string, unknown> | undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      execution.executionMode || 'live',
+      execution.stepExecutionModes as Record<string, string> | undefined,
+      execution.modelIdOverride,
     );
 
     return { executionId: result.id, divergenceWarning: true };
@@ -137,13 +151,17 @@ export class PlaybookFlowReplayService {
     taskId: string,
     iteration: number,
     executionId: string,
-    dto?: ValidateTaskReplayDto,
+    dto?: ValidateTaskReplayOptions,
   ): Promise<FlowValidatedReplayDocument> {
-    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).lean();
+    const execution = await this.executionModel.findOne({ _id: executionId, ownerId: userId }).select('+snapshot +inputContext').lean();
     if (!execution) throw new NotFoundException('Execution not found');
+    if (execution.flowId !== flowId) throw new NotFoundException('Execution not found');
 
     const taskResult = await this.taskResultModel.findOne({ executionId, taskId, iteration }).lean();
     if (!taskResult) throw new NotFoundException('Task result not found');
+
+    const referenceNodeSnapshot = this.findReferenceNodeSnapshot(execution.snapshot, taskId);
+    if (!referenceNodeSnapshot) throw new NotFoundException('Task not found in execution snapshot');
 
     const lastReplay = await this.replayModel
       .findOne({ flowId, taskId })
@@ -151,26 +169,63 @@ export class PlaybookFlowReplayService {
       .lean();
 
     const newVersion = (lastReplay?.validationVersion ?? 0) + 1;
+    const taskTitle = this.resolveTaskTitle(referenceNodeSnapshot, taskId);
+    const taskDescription = this.resolveTaskDescription(referenceNodeSnapshot);
+    const referenceExecutionNumber = this.resolveReferenceExecutionNumber(execution);
+    const baseline = this.replayBaselineService.buildValidatedReplayBaseline({
+      taskId,
+      taskTitle,
+      taskDescription,
+      referenceExecutionId: executionId,
+      referenceExecutionNumber,
+      mode: dto?.mode,
+      inputContext: execution.inputContext,
+      flowSnapshot: execution.snapshot,
+      nodeSnapshot: referenceNodeSnapshot,
+      taskResult: {
+        output: taskResult.output,
+        toolTrace: taskResult.toolTrace ?? [],
+        reasoningChain: (taskResult as any).reasoningChain ?? [],
+        judgeResult: taskResult.judgeResult ?? null,
+      },
+      preserveOutputFormat: dto?.preserveOutputFormat ?? false,
+      outputFormatGuide: undefined,
+    });
 
     const [replay] = await this.replayModel.create([{
       flowId,
       taskId,
       iteration,
-      taskTitle: taskId,
+      taskTitle,
+      referenceTaskDescription: taskDescription ?? '',
       createdBy: userId,
       referenceExecutionId: executionId,
-      referenceExecutionNumber: 1,
+      referenceExecutionNumber,
       validationVersion: newVersion,
       status: FlowReplayValidationStatus.ACTIVE,
+      mode: baseline.mode,
       referenceOutput: typeof taskResult.output === 'string' ? taskResult.output : JSON.stringify(taskResult.output ?? ''),
       toolCalls: taskResult.toolTrace ?? [],
       reasoningChain: (taskResult as any).reasoningChain ?? [],
       llmPromptTrace: taskResult.llmPromptTrace ?? [],
+      fingerprints: baseline.fingerprints,
+      behaviorBaseline: baseline.behaviorBaseline,
+      toolPolicy: baseline.toolPolicy,
+      outputContract: baseline.outputContract,
+      intentKey: baseline.intentKey,
+      intentLabel: baseline.intentLabel,
+      reasoningOutline: baseline.reasoningOutline,
+      stableReasoningRules: baseline.stableReasoningRules,
+      contextVariableSchema: baseline.contextVariableSchema,
+      toolTraceTemplate: baseline.toolTraceTemplate,
+      semanticChecklist: baseline.semanticChecklist,
+      driftPolicy: baseline.driftPolicy,
+      acceptedExamples: baseline.acceptedExamples,
       referenceUsage: taskResult.usage ?? null,
       referenceSemanticMatch: taskResult.semanticMatch ?? null,
       traceMetadata: taskResult.traceMetadata ?? {},
       referenceFlowRevision: execution.schemaVersion,
-      referenceNodeSnapshot: this.findReferenceNodeSnapshot(execution.snapshot, taskId),
+      referenceNodeSnapshot,
       isStale: false,
       staleReasons: [],
       preserveOutputFormat: dto?.preserveOutputFormat ?? false,
@@ -214,14 +269,34 @@ export class PlaybookFlowReplayService {
     flowId: string,
     taskId: string,
     replayId: string,
-    dto: UpdateReplayFormatGuideDto,
+    dto: UpdateReplayFormatGuidePayload,
   ): Promise<FlowValidatedReplayDocument> {
+    const existing = await this.replayModel.findOne({ _id: replayId, flowId, taskId }).lean();
+    if (!existing) throw new NotFoundException('Replay not found');
+
+    const preserveOutputFormat = dto.preserveOutputFormat ?? existing.preserveOutputFormat ?? false;
+    const outputFormatGuide = dto.outputFormatGuide ?? existing.outputFormatGuide ?? null;
+    const outputContract = this.replayBaselineService.buildOutputContractFromReplay({
+      output: existing.referenceOutput ?? null,
+      preserveOutputFormat,
+      outputFormatGuide,
+      existingOutputContract: existing.outputContract ?? null,
+    });
+    const fingerprints = existing.fingerprints
+      ? {
+        ...existing.fingerprints,
+        outputContractHash: this.replayBaselineService.buildOutputContractHash(outputContract),
+      }
+      : existing.fingerprints;
+
     const updated = await this.replayModel.findOneAndUpdate(
       { _id: replayId, flowId, taskId },
       {
         $set: {
-          outputFormatGuide: dto.outputFormatGuide,
-          preserveOutputFormat: dto.preserveOutputFormat,
+          outputFormatGuide,
+          preserveOutputFormat,
+          outputContract,
+          ...(fingerprints ? { fingerprints } : {}),
           ...(dto.replayConfig?.replayOutputFormat != null ? { 'replayConfig.replayOutputFormat': dto.replayConfig.replayOutputFormat } : {}),
           ...(dto.replayConfig?.replayToolTrace != null ? { 'replayConfig.replayToolTrace': dto.replayConfig.replayToolTrace } : {}),
           ...(dto.replayConfig?.replayReasoningChain != null ? { 'replayConfig.replayReasoningChain': dto.replayConfig.replayReasoningChain } : {}),
@@ -237,7 +312,7 @@ export class PlaybookFlowReplayService {
     flowId: string,
     taskId: string,
     replayId: string,
-    label: string,
+    label: string | null,
   ): Promise<FlowValidatedReplayDocument> {
     const updated = await this.replayModel.findOneAndUpdate(
       { _id: replayId, flowId, taskId },
@@ -280,5 +355,29 @@ export class PlaybookFlowReplayService {
 
     const matched = nodes.find((node) => node && typeof node === 'object' && (node as { id?: unknown }).id === taskId);
     return matched && typeof matched === 'object' ? matched as Record<string, unknown> : null;
+  }
+
+  private resolveTaskTitle(nodeSnapshot: Record<string, unknown> | null, taskId: string): string {
+    const label = typeof nodeSnapshot?.label === 'string' && nodeSnapshot.label.trim() !== ''
+      ? nodeSnapshot.label.trim()
+      : null;
+    return label ?? taskId;
+  }
+
+  private resolveTaskDescription(nodeSnapshot: Record<string, unknown> | null): string | null {
+    const metadata = nodeSnapshot?.metadata;
+    if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+      return null;
+    }
+
+    const description = (metadata as Record<string, unknown>).description;
+    return typeof description === 'string' && description.trim() !== '' ? description.trim() : null;
+  }
+
+  private resolveReferenceExecutionNumber(execution: Record<string, unknown>): number {
+    const executionNumber = execution.executionNumber;
+    return typeof executionNumber === 'number' && Number.isFinite(executionNumber) && executionNumber > 0
+      ? executionNumber
+      : 1;
   }
 }

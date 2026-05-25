@@ -8,6 +8,7 @@ function createReplayServiceForTests(overrides?: {
   routerDecisionModel?: Record<string, any>;
   replayModel?: Record<string, any>;
   executionService?: Record<string, any>;
+  replayBaselineService?: Record<string, any>;
   logger?: Record<string, any>;
 }) {
   const executionModel = {
@@ -37,6 +38,33 @@ function createReplayServiceForTests(overrides?: {
     start: jest.fn(),
     ...overrides?.executionService,
   };
+  const replayBaselineService = {
+    buildValidatedReplayBaseline: jest.fn().mockReturnValue({
+      mode: 'replay_strict',
+      fingerprints: { inputContextHash: 'hash-1' },
+      behaviorBaseline: { decisionInvariants: ['Verify facts'], qualityChecks: [], knownFailureModes: [], behaviorSummary: '' },
+      toolPolicy: { requiredTools: ['search'], forbiddenTools: [], sequencingRules: [], requireSameOrder: false },
+      outputContract: { type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' },
+      intentKey: 'task-review',
+      intentLabel: 'Task review',
+      reasoningOutline: [{ stageKey: 'analyze', stageType: 'analysis', label: 'Analyze', description: 'Inspect the request.', confidence: 0.9 }],
+      stableReasoningRules: ['Preserve analyze.'],
+      contextVariableSchema: [{ key: 'query', label: 'query', source: 'input_context', valueType: 'string', required: true, exampleValue: 'hello' }],
+      toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence.', argumentShape: { query: 'string' }, required: true }],
+      driftPolicy: {
+        requireSameIntent: true,
+        requireSameReasoningStages: true,
+        requireSameToolOrder: true,
+        allowAdditionalTools: false,
+        allowArgumentValueChanges: true,
+        enforceOutputContract: true,
+      },
+      acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Task review.', outputPreview: 'original output' }],
+    }),
+    buildOutputContractFromReplay: jest.fn().mockReturnValue({ type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' }),
+    buildOutputContractHash: jest.fn().mockReturnValue('contract-hash'),
+    ...overrides?.replayBaselineService,
+  };
   const logger = {
     setContext: jest.fn(),
     log: jest.fn(),
@@ -51,6 +79,7 @@ function createReplayServiceForTests(overrides?: {
     routerDecisionModel as any,
     replayModel as any,
     executionService as any,
+    replayBaselineService as any,
     logger as any,
   );
 
@@ -61,12 +90,17 @@ function createReplayServiceForTests(overrides?: {
     routerDecisionModel,
     replayModel,
     executionService,
+    replayBaselineService,
     logger,
   };
 }
 
 function makeFindOneChain(value: unknown) {
-  return { lean: jest.fn().mockResolvedValue(value) };
+  const chain = {
+    select: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue(value),
+  };
+  return chain;
 }
 
 function makeFindChain(value: unknown) {
@@ -183,6 +217,21 @@ describe('PlaybookFlowReplayService', () => {
 
       await expect(service.traceReplay('nonexistent', 'user-1')).rejects.toThrow(NotFoundException);
     });
+
+    it('selects snapshot and inputContext when loading the execution', async () => {
+      const { service, executionModel, taskResultModel, routerDecisionModel } = createReplayServiceForTests();
+      const executionQuery = makeFindOneChain({
+        id: 'exec-1', ownerId: 'user-1', status: 'completed', endedAt: new Date('2026-01-01T00:06:00Z'),
+      });
+
+      executionModel.findOne.mockReturnValue(executionQuery);
+      taskResultModel.find.mockReturnValue(makeFindChain([]));
+      routerDecisionModel.find.mockReturnValue(makeFindChain([]));
+
+      await service.traceReplay('exec-1', 'user-1');
+
+      expect(executionQuery.select).toHaveBeenCalledWith('+snapshot +inputContext');
+    });
   });
 
   describe('reExecute', () => {
@@ -192,13 +241,28 @@ describe('PlaybookFlowReplayService', () => {
       executionModel.findOne.mockReturnValue(makeFindOneChain({
         id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1',
         inputContext: { query: 'hello' },
+        modelIdOverride: 'gpt-override',
       }));
 
       executionService.start.mockResolvedValue({ id: 'exec-42' });
 
       const result = await service.reExecute('exec-1', 'user-1');
 
-      expect(executionService.start).toHaveBeenCalledWith('flow-1', 'user-1', { query: 'hello' });
+      expect(executionService.start).toHaveBeenCalledWith(
+        'flow-1',
+        'user-1',
+        { query: 'hello' },
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'live',
+        undefined,
+        'gpt-override',
+      );
       expect(result.executionId).toBe('exec-42');
       expect(result.divergenceWarning).toBe(true);
     });
@@ -210,14 +274,32 @@ describe('PlaybookFlowReplayService', () => {
 
       await expect(service.reExecute('nonexistent', 'user-1')).rejects.toThrow(NotFoundException);
     });
+
+    it('selects snapshot and inputContext before replay re-execution', async () => {
+      const { service, executionModel, executionService } = createReplayServiceForTests();
+      const executionQuery = makeFindOneChain({
+        id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1', inputContext: { query: 'hello' }, executionMode: 'live', modelIdOverride: 'gpt-override',
+      });
+
+      executionModel.findOne.mockReturnValue(executionQuery);
+      executionService.start.mockResolvedValue({ id: 'exec-42' });
+
+      await service.reExecute('exec-1', 'user-1');
+
+      expect(executionQuery.select).toHaveBeenCalledWith('+snapshot +inputContext');
+    });
   });
 
   describe('validateTaskReplay', () => {
     it('creates a validated replay entry with incremented version', async () => {
-      const { service, executionModel, taskResultModel, replayModel } = createReplayServiceForTests();
+      const { service, executionModel, taskResultModel, replayModel, replayBaselineService } = createReplayServiceForTests();
 
       executionModel.findOne.mockReturnValue(makeFindOneChain({
-        id: 'exec-1', ownerId: 'user-1', status: 'completed',
+        id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1', status: 'completed',
+        executionNumber: 2,
+        inputContext: { query: 'hello' },
+        snapshot: { nodes: [{ id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } }] },
+        schemaVersion: 3,
       }));
 
       taskResultModel.findOne.mockReturnValue(makeFindOneChain({
@@ -242,10 +324,31 @@ describe('PlaybookFlowReplayService', () => {
 
       expect(result.validationVersion).toBe(1);
       expect(result.status).toBe(FlowReplayValidationStatus.ACTIVE);
+      expect(replayBaselineService.buildValidatedReplayBaseline).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: 'step-1',
+        taskTitle: 'step-1',
+        referenceExecutionNumber: 2,
+        inputContext: { query: 'hello' },
+        flowSnapshot: { nodes: [{ id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } }] },
+      }));
       expect(replayModel.create).toHaveBeenCalledWith([expect.objectContaining({
+        referenceExecutionNumber: 2,
+        mode: 'replay_strict',
+        intentKey: 'task-review',
+        intentLabel: 'Task review',
+        reasoningOutline: [{ stageKey: 'analyze', stageType: 'analysis', label: 'Analyze', description: 'Inspect the request.', confidence: 0.9 }],
+        stableReasoningRules: ['Preserve analyze.'],
+        contextVariableSchema: [{ key: 'query', label: 'query', source: 'input_context', valueType: 'string', required: true, exampleValue: 'hello' }],
+        toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence.', argumentShape: { query: 'string' }, required: true }],
+        driftPolicy: expect.objectContaining({ requireSameIntent: true }),
+        acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Task review.', outputPreview: 'original output' }],
         toolCalls: [{ callIndex: 0, toolName: 'search', args: {}, outputSummary: 'ok' }],
         reasoningChain: [{ id: 'step_1', type: 'observation', label: 'Identify', description: 'Picked the answer.' }],
         llmPromptTrace: [{ stage: 'initial_request', model: 'gpt-4o-mini', prompt: 'Hello' }],
+        fingerprints: { inputContextHash: 'hash-1' },
+        behaviorBaseline: { decisionInvariants: ['Verify facts'], qualityChecks: [], knownFailureModes: [], behaviorSummary: '' },
+        toolPolicy: { requiredTools: ['search'], forbiddenTools: [], sequencingRules: [], requireSameOrder: false },
+        outputContract: { type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' },
         referenceUsage: { inputTokens: 1, outputTokens: 2, totalTokens: 3, model: 'gpt-4o-mini' },
         referenceSemanticMatch: { matchScore: 0.9 },
         traceMetadata: { collected: true },
@@ -254,11 +357,48 @@ describe('PlaybookFlowReplayService', () => {
       })]);
     });
 
+    it('selects snapshot and inputContext before building replay fingerprints', async () => {
+      const { service, executionModel, taskResultModel, replayModel, replayBaselineService } = createReplayServiceForTests();
+      const executionQuery = makeFindOneChain({
+        id: 'exec-1',
+        ownerId: 'user-1',
+        flowId: 'flow-1',
+        status: 'completed',
+        inputContext: { query: 'hello' },
+        snapshot: {
+          nodes: [{ id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } }],
+        },
+        schemaVersion: 3,
+      });
+
+      executionModel.findOne.mockReturnValue(executionQuery);
+      taskResultModel.findOne.mockReturnValue(makeFindOneChain({
+        executionId: 'exec-1',
+        taskId: 'step-1',
+        iteration: 0,
+        output: 'original output',
+      }));
+      replayModel.findOne.mockReturnValue({ sort: jest.fn().mockReturnValue({ lean: jest.fn().mockResolvedValue(null) }) });
+      replayModel.create.mockResolvedValue([{ validationVersion: 1, status: FlowReplayValidationStatus.ACTIVE }]);
+
+      await service.validateTaskReplay('user-1', 'flow-1', 'step-1', 0, 'exec-1');
+
+      expect(executionQuery.select).toHaveBeenCalledWith('+snapshot +inputContext');
+      expect(replayBaselineService.buildValidatedReplayBaseline).toHaveBeenCalledWith(expect.objectContaining({
+        inputContext: { query: 'hello' },
+        flowSnapshot: {
+          nodes: [{ id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } }],
+        },
+        nodeSnapshot: { id: 'step-1', modelId: 'gpt-4o-mini', metadata: { agent_model: 'gpt-4o-mini' } },
+      }));
+    });
+
     it('defaults missing reasoningChain to an empty array', async () => {
       const { service, executionModel, taskResultModel, replayModel } = createReplayServiceForTests();
 
       executionModel.findOne.mockReturnValue(makeFindOneChain({
-        id: 'exec-1', ownerId: 'user-1', status: 'completed',
+        id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1', status: 'completed',
+        snapshot: { nodes: [{ id: 'step-1' }] },
       }));
 
       taskResultModel.findOne.mockReturnValue(makeFindOneChain({
@@ -287,7 +427,8 @@ describe('PlaybookFlowReplayService', () => {
       const { service, executionModel, taskResultModel } = createReplayServiceForTests();
 
       executionModel.findOne.mockReturnValue(makeFindOneChain({
-        id: 'exec-1', ownerId: 'user-1', status: 'completed',
+        id: 'exec-1', ownerId: 'user-1', flowId: 'flow-1', status: 'completed',
+        snapshot: { nodes: [{ id: 'step-1' }] },
       }));
 
       taskResultModel.findOne.mockReturnValue(makeFindOneChain(null));
@@ -295,6 +436,19 @@ describe('PlaybookFlowReplayService', () => {
       await expect(
         service.validateTaskReplay('user-1', 'flow-1', 'step-1', 0, 'exec-1'),
       ).rejects.toThrow(NotFoundException);
+    });
+
+    it('rejects validation when the execution belongs to a different flow', async () => {
+      const { service, executionModel } = createReplayServiceForTests();
+
+      executionModel.findOne.mockReturnValue(makeFindOneChain({
+        id: 'exec-1',
+        ownerId: 'user-1',
+        flowId: 'flow-2',
+        snapshot: { nodes: [{ id: 'step-1' }] },
+      }));
+
+      await expect(service.validateTaskReplay('user-1', 'flow-1', 'step-1', 0, 'exec-1')).rejects.toThrow(NotFoundException);
     });
   });
 
@@ -331,6 +485,17 @@ describe('PlaybookFlowReplayService', () => {
     it('updates output format guide fields', async () => {
       const { service, replayModel } = createReplayServiceForTests();
 
+      replayModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({
+        _id: 'replay-1',
+        flowId: 'flow-1',
+        taskId: 'step-1',
+        referenceOutput: '{"summary":"ok"}',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'Old guide',
+        outputContract: { type: 'freeform', requiredSections: [], forbiddenSections: [], jsonSchema: null, citationPolicy: 'optional' },
+        fingerprints: { inputContextHash: 'hash-1' },
+      }) });
+
       replayModel.findOneAndUpdate.mockResolvedValue({
         _id: 'replay-1', flowId: 'flow-1', taskId: 'step-1',
         preserveOutputFormat: true, outputFormatGuide: 'JSON array',
@@ -342,10 +507,113 @@ describe('PlaybookFlowReplayService', () => {
 
       expect(replayModel.findOneAndUpdate).toHaveBeenCalledWith(
         { _id: 'replay-1', flowId: 'flow-1', taskId: 'step-1' },
-        { $set: { outputFormatGuide: 'JSON array', preserveOutputFormat: true } },
+        { $set: expect.objectContaining({ outputFormatGuide: 'JSON array', preserveOutputFormat: true, outputContract: expect.anything() }) },
         { new: true },
       );
       expect(result.preserveOutputFormat).toBe(true);
+    });
+
+    it('preserves json schema contract when reference output is stored as stringified json', async () => {
+      const jsonSchemaContract = {
+        type: 'json_schema',
+        requiredSections: [],
+        forbiddenSections: [],
+        jsonSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+        citationPolicy: 'optional',
+      };
+      const { service, replayModel, replayBaselineService } = createReplayServiceForTests({
+        replayBaselineService: {
+          buildOutputContractFromReplay: jest.fn().mockReturnValue(jsonSchemaContract),
+          buildOutputContractHash: jest.fn().mockReturnValue('json-hash'),
+        },
+      });
+
+      replayModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({
+        _id: 'replay-1',
+        flowId: 'flow-1',
+        taskId: 'step-1',
+        referenceOutput: '{"summary":"ok"}',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'Old guide',
+        outputContract: jsonSchemaContract,
+        fingerprints: { outputContractHash: 'old-hash' },
+      }) });
+      replayModel.findOneAndUpdate.mockResolvedValue({ _id: 'replay-1' });
+
+      await service.updateTaskReplayFormatGuide('flow-1', 'step-1', 'replay-1', {
+        preserveOutputFormat: true,
+        outputFormatGuide: 'Keep same JSON keys.',
+      });
+
+      expect(replayBaselineService.buildOutputContractFromReplay).toHaveBeenCalledWith({
+        output: '{"summary":"ok"}',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'Keep same JSON keys.',
+        existingOutputContract: jsonSchemaContract,
+      });
+      expect(replayModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: 'replay-1', flowId: 'flow-1', taskId: 'step-1' },
+        { $set: expect.objectContaining({
+          outputContract: jsonSchemaContract,
+          fingerprints: { outputContractHash: 'json-hash' },
+        }) },
+        { new: true },
+      );
+    });
+
+    it('keeps existing preserveOutputFormat when omitted from partial updates', async () => {
+      const jsonSchemaContract = {
+        type: 'json_schema',
+        requiredSections: [],
+        forbiddenSections: [],
+        jsonSchema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+        citationPolicy: 'optional',
+      };
+      const { service, replayModel, replayBaselineService } = createReplayServiceForTests({
+        replayBaselineService: {
+          buildOutputContractFromReplay: jest.fn().mockReturnValue(jsonSchemaContract),
+          buildOutputContractHash: jest.fn().mockReturnValue('json-hash'),
+        },
+      });
+
+      replayModel.findOne.mockReturnValue({ lean: jest.fn().mockResolvedValue({
+        _id: 'replay-1',
+        flowId: 'flow-1',
+        taskId: 'step-1',
+        referenceOutput: '{"summary":"ok"}',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'Old guide',
+        outputContract: jsonSchemaContract,
+        fingerprints: { outputContractHash: 'old-hash' },
+      }) });
+      replayModel.findOneAndUpdate.mockResolvedValue({
+        _id: 'replay-1',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'New guide',
+      });
+
+      await service.updateTaskReplayFormatGuide('flow-1', 'step-1', 'replay-1', {
+        outputFormatGuide: 'New guide',
+        replayConfig: { replayOutputFormat: true },
+      });
+
+      expect(replayBaselineService.buildOutputContractFromReplay).toHaveBeenCalledWith({
+        output: '{"summary":"ok"}',
+        preserveOutputFormat: true,
+        outputFormatGuide: 'New guide',
+        existingOutputContract: jsonSchemaContract,
+      });
+      expect(replayModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: 'replay-1', flowId: 'flow-1', taskId: 'step-1' },
+        { $set: expect.objectContaining({
+          outputFormatGuide: 'New guide',
+          preserveOutputFormat: true,
+          outputContract: jsonSchemaContract,
+          fingerprints: { outputContractHash: 'json-hash' },
+          'replayConfig.replayOutputFormat': true,
+        }) },
+        { new: true },
+      );
     });
   });
 

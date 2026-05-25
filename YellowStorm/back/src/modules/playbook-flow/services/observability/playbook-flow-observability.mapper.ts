@@ -46,6 +46,7 @@ export function mapToolTrace(value: unknown): FlowToolTraceItem[] {
     items.push({
       callIndex: toNumberValue(record.call_index ?? record.callIndex) ?? index,
       toolName,
+      purpose: toStringValue(record.purpose ?? record.tool_purpose ?? record.toolPurpose) ?? null,
       args: record.args && typeof record.args === 'object' && !Array.isArray(record.args)
         ? record.args as Record<string, unknown>
         : {},

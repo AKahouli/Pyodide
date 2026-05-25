@@ -64,7 +64,7 @@ import { dataBindingsToLayerEdges } from '../hooks/helpers/data-binding-serializ
 import { tasksToNodes, TRIGGER_NODE_ID } from '../hooks/helpers/node-serializer';
 import { cloneRouterConfig } from '../hooks/helpers/router-template';
 import { useAutosave } from '../hooks/useAutosave';
-import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
+import { PlaybookNode, NodeContextMenuContext, NodeDataActionsContext, ConnectionDragContext, type NodeContextMenuActions, type ConnectorDropPayload } from './PlaybookNode';
 import { PlaybookTriggerNode } from './PlaybookTriggerNode';
 import { PlaybookIteratorContainerNode } from './PlaybookIteratorContainerNode';
 import { RouterNode } from './RouterNode';
@@ -84,6 +84,7 @@ import { CloneShareDialog } from './CloneShareDialog';
 import { ConnectorSidebar } from './ConnectorSidebar';
 import { ConnectorBindingModal } from './ConnectorBindingModal';
 import { RepeatabilityDetails } from './RepeatabilityDetails';
+import { ReplayMigrationHarnessCard } from './ReplayMigrationHarnessCard';
 import { downloadWorkflowExecutionResultsHtml } from '../utils/renderStepResultHtml';
 import {
   createIntentSuggestionApplicationKey,
@@ -92,7 +93,7 @@ import {
 } from '../utils/intent-application-key';
 import { getPlaybookRepeatability, requestPlaybookNodeAdvisor } from '../api';
 import { getDefaultIteratorInputPorts, getDefaultIteratorOutputPorts } from '../hooks/helpers/node-serializer';
-import type { AdvisorIntentApplyRequest, PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport } from '../types';
+import type { AdvisorIntentApplyRequest, PlaybookTask, StepStatus, SemanticMatchResult, PlaybookPageMode, TaskTemplate, PlaybookNodeData, PlaybookExecution, ToolBinding, PlaybookIntentSuggestion, PlaybookTrigger, InterruptType, PlaybookIntentTaskDraft, PlaybookNodeAdvisorSuggestion, DataBinding, PlaybookDefinitionExport, TaskInputPort, TaskOutputPort } from '../types';
 import { edgeMatchesIntentPortPair, getPreferredIntentInputPortId, getPreferredIntentOutputPortId, resolveIntentEdgePorts } from '../hooks/helpers/control-edge-serializer';
 import { useModuleTranslation } from '@/modules/localization';
 import { useUsage } from '@/modules/usage';
@@ -100,6 +101,7 @@ import { PlaybookScheduleBadge } from './schedule/PlaybookScheduleBadge';
 import { PlaybookScheduleSheet } from './schedule/PlaybookScheduleSheet';
 import { PlaybookFlowSettingsDrawer } from './PlaybookFlowSettingsDrawer';
 import { PlaybookImportWarningModal } from './PlaybookImportWarningModal';
+import { ArtifactKindMismatchDialog } from './ArtifactKindMismatchDialog';
 import { exportPlaybookDefinition } from '../utils/playbookExport';
 import { readPlaybookDefinitionFile, PlaybookImportError } from '../utils/playbookImport';
 import { showError, toast } from '@/lib/notifications';
@@ -373,6 +375,17 @@ export function buildCanvasStepStatusMap(
   return map;
 }
 
+export function resolveCanvasNodeSelection(
+  selectedNodeIds: ReadonlySet<string>,
+  selectedNodeCount: number,
+  nodeId: string,
+  selectedStepId: string | null,
+): boolean {
+  return selectedNodeCount > 1
+    ? selectedNodeIds.has(nodeId)
+    : nodeId === selectedStepId;
+}
+
 function PlaybookCanvasInner() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -487,6 +500,11 @@ function PlaybookCanvasInner() {
     onNodeDragStop,
     onEdgesChange,
     onConnect,
+    onConnectStart,
+    onConnectEnd,
+    onNodeMouseEnter,
+    onNodeMouseLeave,
+    connectionDragHoveredId,
     addNode,
     removeNode,
     updateNodeData,
@@ -497,6 +515,7 @@ function PlaybookCanvasInner() {
     copySelection,
     cutSelection,
     pasteClipboard,
+    artifactKindMismatch,
   } = usePlaybookCanvas(triggerNodeActions);
 
   const { saveNow, hasUnboundRequiredPorts, hasIncompleteBindings } = useAutosave();
@@ -914,9 +933,14 @@ function PlaybookCanvasInner() {
   const mailTrigger = playbook?.triggers.find((tr) => tr.type === 'mail');
 
   const liveNodes = useMemo(() => {
+    const selectedNodeIds = new Set(
+      nodes.filter((node) => node.selected).map((node) => node.id),
+    );
+    const selectedNodeCount = selectedNodeIds.size;
+
     return nodes.map((node) => {
       if (node.id === TRIGGER_NODE_ID) {
-        const nextSelected = node.id === selectedStepId;
+        const nextSelected = resolveCanvasNodeSelection(selectedNodeIds, selectedNodeCount, node.id, selectedStepId);
         const triggerData = {
           ...(node.data as Record<string, unknown>),
           triggerActions: triggerNodeActions,
@@ -936,7 +960,7 @@ function PlaybookCanvasInner() {
       const judgeStatus = stepJudgeStatusMap.get(node.id);
       const judgeResult = stepJudgeResultMap.get(node.id);
       const routerLabel = activeRouterLabelMap.get(node.id);
-      const nextSelected = node.id === selectedStepId;
+      const nextSelected = resolveCanvasNodeSelection(selectedNodeIds, selectedNodeCount, node.id, selectedStepId);
       const nextData = {
         ...currentData,
         stepStatus: status,
@@ -1363,8 +1387,8 @@ function PlaybookCanvasInner() {
 
         await executePlaybook(id, {
           singleStepTaskId: nodeId,
-          executionMode: 'live',
-          stepExecutionModes: { [nodeId]: 'live' },
+          executionMode: 'inherit',
+          stepExecutionModes: { [nodeId]: task?.stepReplayMode || 'live' },
           streaming: true,
           runNodeReflection: nodeReflectionEnabled,
           advisorAutopilotEnabled,
@@ -1810,6 +1834,51 @@ function PlaybookCanvasInner() {
         name: port.name || port.id,
         artifactKind: port.artifactKind,
       }));
+    };
+    const mergePorts = <T extends { id: string; name: string }>(existing: T[] | undefined, updates: Array<{ id: string; name?: string | null; [k: string]: unknown }>): T[] | undefined => {
+      if (!updates || updates.length === 0) return existing;
+      const map = new Map<string, T>((existing || []).map((p) => [p.id, { ...p }]));
+      for (const u of updates) {
+        const entry = map.get(u.id);
+        if (entry) {
+          if (u.name) entry.name = u.name;
+        } else {
+          map.set(u.id, { ...u, id: u.id, name: u.name || u.id } as unknown as T);
+        }
+      }
+      return [...map.values()];
+    };
+    const replacePorts = (updates: Array<{ id: string; name?: string | null; artifactKind: unknown; required?: boolean }>): TaskInputPort[] => {
+      return updates.map((u) => ({ id: u.id, name: u.name || u.id, artifactKind: u.artifactKind as import('../types').ArtifactKind, required: u.required === true }));
+    };
+    const replaceOutputPorts = (updates: Array<{ id: string; name?: string | null; artifactKind: unknown }>): TaskOutputPort[] => {
+      return updates.map((u) => ({ id: u.id, name: u.name || u.id, artifactKind: u.artifactKind as import('../types').ArtifactKind }));
+    };
+    const applyUpdateNodePorts = (taskId: string, task: PlaybookTask, intentTask: Partial<PlaybookIntentTaskDraft>) => {
+      const updatedTask: PlaybookTask = {
+        ...task,
+        ...(intentTask.title ? { title: intentTask.title } : {}),
+        ...(intentTask.description ? { description: intentTask.description } : {}),
+        assignedAgentId: intentTask.agentSlug ? resolveAssignedAgentId(intentTask.agentSlug) : task.assignedAgentId,
+      };
+      const newInputPortIds = new Set<string>();
+      const newOutputPortIds = new Set<string>();
+      if (intentTask.inputPorts && intentTask.inputPorts.length > 0) {
+        updatedTask.inputPorts = replacePorts(normalizeIntentInputPorts(intentTask.inputPorts));
+        updatedTask.inputPorts.forEach((p) => newInputPortIds.add(p.id));
+      }
+      if (intentTask.outputPorts && intentTask.outputPorts.length > 0) {
+        updatedTask.outputPorts = replaceOutputPorts(normalizeIntentOutputPorts(intentTask.outputPorts));
+        updatedTask.outputPorts.forEach((p) => newOutputPortIds.add(p.id));
+      }
+      if (newInputPortIds.size > 0 || newOutputPortIds.size > 0) {
+        nextDataBindings = nextDataBindings.filter((b) => {
+          if (b.targetNode !== taskId) return true;
+          if (newInputPortIds.size > 0 && !newInputPortIds.has(b.targetPort)) return false;
+          return true;
+        });
+      }
+      return updatedTask;
     };
 
     const findMatchingTemplate = (_title: string, _description: string, templateType?: string | null) => {
@@ -2506,12 +2575,9 @@ function PlaybookCanvasInner() {
           return;
         }
         if (!change.task) return;
-        nextTasks = nextTasks.map((task) => task.id === targetTask.id ? {
-          ...task,
-          title: change.task?.title || task.title,
-          description: change.task?.description || task.description,
-          assignedAgentId: change.task?.agentSlug ? resolveAssignedAgentId(change.task.agentSlug) : task.assignedAgentId,
-        } : task);
+        nextTasks = nextTasks.map((task) => task.id === targetTask.id
+          ? applyUpdateNodePorts(targetTask.id, task, change.task!)
+          : task);
         changedNodeIds.add(targetTask.id);
         commitGraph(nextTasks, nextEdges, nextDataBindings);
         void saveCurrentPlaybook({
@@ -2624,12 +2690,9 @@ function PlaybookCanvasInner() {
 
         if (change.type === 'update_node') {
           if (nextTasks.some((task) => task.id === change.targetTaskId)) {
-            nextTasks = nextTasks.map((task) => task.id === change.targetTaskId ? {
-              ...task,
-              ...(change.task.title ? { title: change.task.title } : {}),
-              ...(change.task.description ? { description: change.task.description } : {}),
-              assignedAgentId: change.task.agentSlug ? resolveAssignedAgentId(change.task.agentSlug) : task.assignedAgentId,
-            } : task);
+            nextTasks = nextTasks.map((task) => task.id === change.targetTaskId
+              ? applyUpdateNodePorts(change.targetTaskId, task, change.task)
+              : task);
             changedNodeIds.add(change.targetTaskId);
         }
         continue;
@@ -3337,6 +3400,7 @@ function PlaybookCanvasInner() {
           >
             <NodeContextMenuContext.Provider value={nodeContextMenuActions}>
               <NodeDataActionsContext.Provider value={{ updateNodeData, setIteratorNodeSize, resizeIteratorNode: handleResizeIteratorNode, repackIteratorChildren: handleRepackIteratorChildren, openOutputFormatEditor, onConnectorDrop: handleConnectorDrop }}>
+                <ConnectionDragContext.Provider value={{ hoveredTargetId: connectionDragHoveredId }}>
                 <Canvas
                   nodes={canvasNodes}
                   edges={liveEdges}
@@ -3344,6 +3408,10 @@ function PlaybookCanvasInner() {
                   onNodeDragStop={onNodeDragStop}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
+                  onConnectStart={onConnectStart}
+                  onConnectEnd={onConnectEnd}
+                  onNodeMouseEnter={onNodeMouseEnter}
+                  onNodeMouseLeave={onNodeMouseLeave}
                   onNodeClick={handleNodeClick}
                   onNodeDoubleClick={handleNodeDoubleClick}
                   onEdgeDoubleClick={handleEdgeDoubleClick}
@@ -3432,6 +3500,7 @@ function PlaybookCanvasInner() {
                   onCollapsedChange={setToolbarCollapsed}
                   minLeftOffset={TOOLBAR_MIN_LEFT_OFFSET}
                 />
+                </ConnectionDragContext.Provider>
               </NodeDataActionsContext.Provider>
             </NodeContextMenuContext.Provider>
             {isDesigning && (
@@ -3512,7 +3581,29 @@ function PlaybookCanvasInner() {
             <DialogTitle>{t('evaluationDialog.title')}</DialogTitle>
             <DialogDescription>{t('evaluationDialog.description')}</DialogDescription>
           </DialogHeader>
-          <div className="min-h-0 overflow-y-auto pr-1">
+          <div className="min-h-0 overflow-y-auto pr-1 space-y-4">
+            {playbook && (
+              <ReplayMigrationHarnessCard
+                playbook={playbook}
+                disabled={isExecuting || isSaving || !id}
+                onRun={async ({ modelIdOverride, mode }) => {
+                  if (!id || !playbook) return;
+                  const stepExecutionModes = Object.fromEntries(
+                    playbook.tasks
+                      .filter((task) => task.enabled !== false && (task.activeReplayId || task.hasValidatedReplay))
+                      .map((task) => [task.id, mode]),
+                  );
+                  if (Object.keys(stepExecutionModes).length === 0) return;
+                  await executePlaybook(id, {
+                    executionMode: 'inherit',
+                    stepExecutionModes: stepExecutionModes as Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'>,
+                    modelIdOverride,
+                    runNodeReflection: nodeReflectionEnabled,
+                  });
+                  setEvaluationDialogOpen(false);
+                }}
+              />
+            )}
             <RepeatabilityDetails
               repeatability={repeatability}
               loading={repeatabilityLoading}
@@ -3623,6 +3714,10 @@ function PlaybookCanvasInner() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {artifactKindMismatch && (
+        <ArtifactKindMismatchDialog {...artifactKindMismatch} />
+      )}
     </div>
   );
 }

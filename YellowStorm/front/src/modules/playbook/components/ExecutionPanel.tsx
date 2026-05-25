@@ -243,6 +243,7 @@ export function ExecutionPanel({
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchTaskReplays = usePlaybookStore((s) => s.fetchTaskReplays);
   const runAdvisorEvaluation = usePlaybookStore((s) => s.runAdvisorEvaluation);
+  const executePlaybook = usePlaybookStore((s) => s.executePlaybook);
   const updateTasks = usePlaybookStore((s) => s.updateTasks);
   const [baselineExecutionId, setBaselineExecutionId] = useState<string | null>(null);
   const executionDetailTab = usePlaybookStore((s) => s.executionDetailTab);
@@ -397,6 +398,19 @@ export function ExecutionPanel({
       await fetchExecution(execution.playbookId, execution.id);
     },
     [execution, fetchExecution, grabOutputFormatTemplate],
+  );
+
+  const handleRunReplayEvaluation = useCallback(
+    async (taskId: string) => {
+      if (!execution?.playbookId) return;
+      await executePlaybook(execution.playbookId, {
+        singleStepTaskId: taskId,
+        executionMode: 'inherit',
+        stepExecutionModes: { [taskId]: 'replay_strict' },
+        streaming: true,
+      });
+    },
+    [execution, executePlaybook],
   );
 
   const canStop = execution && (visibleExecutionStatus === 'running' || visibleExecutionStatus === 'interrupted');
@@ -585,6 +599,9 @@ export function ExecutionPanel({
           onRequestGrabOutputFormat={handleGrabOutputFormat}
           onOpenOutputFormatEditor={onOpenOutputFormatEditor}
           onStepReplayModeChange={handleStepReplayModeChange}
+          onRequestRunEvaluation={(taskId) => {
+            void handleRunReplayEvaluation(taskId);
+          }}
           isRunningEvaluation={isExecuting}
           activeTab={activeDetailTab}
           onActiveTabChange={setActiveDetailTab}

@@ -112,7 +112,7 @@ describe('ExecutionPanel', () => {
     expect(screen.getByText('execution.stop')).toBeInTheDocument();
   });
 
-  it('hides manual evaluation rerun actions until targeted reruns are supported', async () => {
+  it('shows replay evaluation rerun action in evaluation tab', async () => {
     const execution = makeExecution({
       status: 'completed',
       advisorAutopilotEnabled: true,
@@ -137,7 +137,7 @@ describe('ExecutionPanel', () => {
     render(<ExecutionPanel />);
 
     await user.click(screen.getByRole('tab', { name: 'detail.tabs.evaluation' }));
-    expect(screen.queryByText('detail.actions.runReplayEvaluation')).not.toBeInTheDocument();
+    expect(screen.getByText('detail.actions.runReplayEvaluation')).toBeInTheDocument();
   });
 
   it('wires advisor evaluation CTA through the execution panel store action', async () => {

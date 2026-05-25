@@ -27,6 +27,7 @@ import { FlowPromptTemplate, FlowPromptTemplateSchema } from './schemas/playbook
 import { FlowOutputFormat, FlowOutputFormatSchema } from './schemas/playbook-flow-output-format.schema';
 import { FlowDesignMessage, FlowDesignMessageSchema } from './schemas/playbook-flow-design-message.schema';
 import { FlowValidatedReplay, FlowValidatedReplaySchema } from './schemas/playbook-flow-validated-replay.schema';
+import { FlowReplayRunReport, FlowReplayRunReportSchema } from './schemas/playbook-flow-replay-run-report.schema';
 import { FlowEvaluationBaseline, FlowEvaluationBaselineSchema } from './schemas/playbook-flow-evaluation-baseline.schema';
 import { FlowEvaluationExecution, FlowEvaluationExecutionSchema } from './schemas/playbook-flow-evaluation-execution.schema';
 import { FlowMailEventLedger, FlowMailEventLedgerSchema } from './schemas/playbook-flow-mail-event-ledger.schema';
@@ -88,6 +89,13 @@ import { PlaybookFlowPublicReasoningParserService } from './services/observabili
 import { PlaybookFlowTraceRedactionService } from './services/observability/playbook-flow-trace-redaction.service';
 import { PlaybookFlowReplayArtifactService } from './services/playbook-flow-replay-artifact.service';
 import { PlaybookFlowReplayPromptService } from './services/playbook-flow-replay-prompt.service';
+import { PlaybookFlowReplayHashService } from './services/playbook-flow-replay-hash.service';
+import { PlaybookFlowReplayBaselineService } from './services/playbook-flow-replay-baseline.service';
+import { PlaybookFlowReplayEligibilityService } from './services/playbook-flow-replay-eligibility.service';
+import { PlaybookFlowReplayReportService } from './services/playbook-flow-replay-report.service';
+import { PlaybookFlowReplayDriftService } from './services/playbook-flow-replay-drift.service';
+import { PlaybookFlowReplayPlanService } from './services/playbook-flow-replay-plan.service';
+import { PlaybookFlowOutputContractService } from './services/playbook-flow-output-contract.service';
 
 @Module({
   imports: [
@@ -102,6 +110,7 @@ import { PlaybookFlowReplayPromptService } from './services/playbook-flow-replay
       { name: FlowOutputFormat.name, schema: FlowOutputFormatSchema },
       { name: FlowDesignMessage.name, schema: FlowDesignMessageSchema },
       { name: FlowValidatedReplay.name, schema: FlowValidatedReplaySchema },
+      { name: FlowReplayRunReport.name, schema: FlowReplayRunReportSchema },
       { name: FlowEvaluationBaseline.name, schema: FlowEvaluationBaselineSchema },
       { name: FlowEvaluationExecution.name, schema: FlowEvaluationExecutionSchema },
       { name: FlowMailEventLedger.name, schema: FlowMailEventLedgerSchema },
@@ -177,6 +186,13 @@ import { PlaybookFlowReplayPromptService } from './services/playbook-flow-replay
     PlaybookFlowTraceRedactionService,
     PlaybookFlowReplayArtifactService,
     PlaybookFlowReplayPromptService,
+    PlaybookFlowReplayHashService,
+    PlaybookFlowReplayBaselineService,
+    PlaybookFlowReplayEligibilityService,
+    PlaybookFlowReplayReportService,
+    PlaybookFlowReplayDriftService,
+    PlaybookFlowReplayPlanService,
+    PlaybookFlowOutputContractService,
   ],
   exports: [
     PlaybookFlowService,

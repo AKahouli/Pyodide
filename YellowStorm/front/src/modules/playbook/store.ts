@@ -1234,6 +1234,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               executionNumber: (state.executionHistory[0]?.executionNumber || 0) + 1,
               status: 'running',
               executionMode: data?.executionMode || 'live',
+              stepExecutionModes: data?.stepExecutionModes ?? {},
               executionTrigger: 'manual',
               reflectionEnabled: data?.runNodeReflection !== false,
               advisorScoringMode: data?.advisorScoringMode ?? state.currentPlaybook?.advisorScoringMode ?? 'llm',
@@ -1247,6 +1248,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
               judgeSummaryStatus: 'idle',
               judgeSummary: null,
               replaySourceByTask: null,
+              replayPlanningByTask: null,
               taskResults,
               threadId: null,
               interruptPayload: null,
@@ -1293,6 +1295,14 @@ export const usePlaybookStore = create<PlaybookStore>()(
           set({ isStopping: false });
         } catch (err) {
           set({ isStopping: false });
+          const apiError = parseApiError(err);
+          if (apiError.code === 'ERR_1006') {
+            const cached = get().executionCache[executionId];
+            if (cached?.playbookId) {
+              void get().fetchExecution(cached.playbookId, executionId);
+            }
+            return;
+          }
           handleApiError(err);
           throw err;
         }
@@ -2165,6 +2175,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           executionNumber: data.executionNumber,
           status: data.status as any,
           executionMode: data.executionMode || 'live',
+          stepExecutionModes: data.stepExecutionModes ?? {},
           executionTrigger: 'manual',
           reflectionEnabled: data.reflectionEnabled !== false,
           advisorScoringMode: data.advisorScoringMode ?? 'llm',
@@ -2178,6 +2189,7 @@ export const usePlaybookStore = create<PlaybookStore>()(
           judgeSummaryStatus: 'idle',
           judgeSummary: null,
           replaySourceByTask: data.replaySourceByTask || null,
+          replayPlanningByTask: data.replayPlanningByTask || null,
           taskResults,
           threadId: null,
           interruptPayload: null,

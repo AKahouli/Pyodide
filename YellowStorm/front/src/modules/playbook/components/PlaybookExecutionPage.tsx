@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { Loader2 } from 'lucide-react';
@@ -31,6 +31,7 @@ export function PlaybookExecutionPage() {
   const executionLoading = useCurrentExecutionLoading();
   const selectedStepId = useSelectedStep();
   const selectedIterationIndex = usePlaybookStore((s) => s.selectedIterationIndex);
+  const [activeDetailTab, setActiveDetailTab] = useState('results');
   const fetchPlaybook = usePlaybookStore((s) => s.fetchPlaybook);
   const fetchExecution = usePlaybookStore((s) => s.fetchExecution);
   const fetchExecutions = usePlaybookStore((s) => s.fetchExecutions);
@@ -98,6 +99,8 @@ export function PlaybookExecutionPage() {
           step={selectedResult}
           execution={execution}
           onOpenCanvasForAdvisorApply={handleOpenCanvasForAdvisorApply}
+          activeTab={activeDetailTab}
+          onActiveTabChange={setActiveDetailTab}
         />
       </div>
     </div>

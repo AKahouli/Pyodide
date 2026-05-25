@@ -185,7 +185,7 @@ export class PlaybookFlowIntentService {
 
     const flow = await this.flowService.findOne(flowId, ownerId);
     const selectedNode = dto.selectedTaskId
-      ? (flow.nodes as Array<{ id: string; label?: string; description?: string }>).find((n) => n.id === dto.selectedTaskId) || null
+      ? (flow.nodes as Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown> }>).find((n) => n.id === dto.selectedTaskId) || null
       : null;
 
     if (dto.selectedTaskId && !selectedNode) {
@@ -231,7 +231,7 @@ export class PlaybookFlowIntentService {
       })), null, 2),
       intent_text: dto.intent.trim(),
       selected_task_title: selectedNode?.label || '',
-      selected_task_description: selectedNode?.description || '',
+      selected_task_description: selectedNode?.description || (selectedNode?.metadata as Record<string, unknown> | undefined)?.description as string || '',
       selected_task_id: selectedNode?.id || '',
       selected_task_context: JSON.stringify(this.buildSelectedNodeContext(flow, selectedNode?.id || null), null, 2),
     });
@@ -298,7 +298,7 @@ export class PlaybookFlowIntentService {
   }
 
   private buildWorkflowSummary(flow: any, selectedNodeId: string | null) {
-    const nodes: Array<{ id: string; label?: string; description?: string; input?: { ports?: Array<{ id: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown>; input?: { ports?: Array<{ id: string; label?: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; label?: string; type?: string }> } }> = flow.nodes || [];
     const edges: Array<{ source: string; target: string; sourceOutputPortId?: string; targetInputPortId?: string }> = flow.controlEdges || [];
     const bindings: Array<{ id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string; iteration?: string }> = flow.dataBindings || [];
 
@@ -309,9 +309,9 @@ export class PlaybookFlowIntentService {
       tasks: nodes.map((node) => ({
         id: node.id,
         title: node.label || node.id,
-        description: node.description || '',
-        inputPorts: (node.input?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type, required: p.required === true })),
-        outputPorts: (node.output?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type })),
+        description: node.description || (node.metadata?.description as string) || '',
+        inputPorts: (node.input?.ports || []).map((p) => ({ id: p.id, name: p.label || p.id, artifactKind: p.type, required: p.required === true })),
+        outputPorts: (node.output?.ports || []).map((p) => ({ id: p.id, name: p.label || p.id, artifactKind: p.type })),
       })),
       edges: edges.map((edge) => ({
         sourceId: edge.source,
@@ -337,15 +337,15 @@ export class PlaybookFlowIntentService {
     }
 
     const edges: Array<{ source: string; target: string }> = flow.controlEdges || [];
-    const nodes: Array<{ id: string; label?: string; description?: string; input?: { ports?: Array<{ id: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; type?: string }> } }> = flow.nodes || [];
+    const nodes: Array<{ id: string; label?: string; description?: string; metadata?: Record<string, unknown>; input?: { ports?: Array<{ id: string; label?: string; type?: string; required?: boolean }> }; output?: { ports?: Array<{ id: string; label?: string; type?: string }> } }> = flow.nodes || [];
     const bindings: Array<{ id: string; sourceKind: string; targetNode: string; targetPort: string; sourceNode?: string; sourcePort?: string }> = flow.dataBindings || [];
 
     const upstreamIds = edges.filter((e) => e.target === selectedNodeId).map((e) => e.source);
     const downstreamIds = edges.filter((e) => e.source === selectedNodeId).map((e) => e.target);
 
     return {
-      upstream: nodes.filter((n) => upstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', outputPorts: (n.output?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type })) })),
-      downstream: nodes.filter((n) => downstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || '', inputPorts: (n.input?.ports || []).map((p) => ({ id: p.id, artifactKind: p.type, required: p.required === true })) })),
+      upstream: nodes.filter((n) => upstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || (n.metadata?.description as string) || '', outputPorts: (n.output?.ports || []).map((p) => ({ id: p.id, name: p.label || p.id, artifactKind: p.type })) })),
+      downstream: nodes.filter((n) => downstreamIds.includes(n.id)).map((n) => ({ id: n.id, title: n.label || n.id, description: n.description || (n.metadata?.description as string) || '', inputPorts: (n.input?.ports || []).map((p) => ({ id: p.id, name: p.label || p.id, artifactKind: p.type, required: p.required === true })) })),
       incomingBindings: bindings.filter((b) => b.targetNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, sourceNode: b.sourceNode || null, sourcePort: b.sourcePort || null, targetPort: b.targetPort })),
       outgoingBindings: bindings.filter((b) => b.sourceNode === selectedNodeId).map((b) => ({ id: b.id, sourceKind: b.sourceKind, targetNode: b.targetNode, targetPort: b.targetPort, sourcePort: b.sourcePort || null })),
     };

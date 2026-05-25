@@ -75,3 +75,29 @@ async def test_run_step_with_tools_records_failed_tool_call(monkeypatch) -> None
     assert payload["tool_trace"][0]["tool_name"] == "search"
     assert payload["tool_trace"][0]["status"] == "failed"
     assert payload["usage"]["total_tokens"] == 3
+
+
+def test_trace_collector_includes_observed_intent_key_when_set() -> None:
+    collector = TraceCollector()
+    collector.set_observed_intent_key("verify-facts-analysis")
+
+    payload = collector.build_payload()
+
+    assert payload["trace_metadata"]["observed_intent_key"] == "verify-facts-analysis"
+
+
+def test_trace_collector_omits_observed_intent_key_when_not_set() -> None:
+    collector = TraceCollector()
+
+    payload = collector.build_payload()
+
+    assert "observed_intent_key" not in payload["trace_metadata"]
+
+
+def test_trace_collector_omits_observed_intent_key_when_set_to_none() -> None:
+    collector = TraceCollector()
+    collector.set_observed_intent_key(None)
+
+    payload = collector.build_payload()
+
+    assert "observed_intent_key" not in payload["trace_metadata"]

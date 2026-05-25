@@ -336,6 +336,7 @@ export const API_ENDPOINTS = {
     updateReplayFormatGuide: (id: string, taskId: string, replayId: string) => `/playbooks/${id}/tasks/${taskId}/replays/${replayId}/format-guide`,
     updateReplay: (id: string, taskId: string, replayId: string) => `/playbooks/${id}/tasks/${taskId}/replays/${replayId}`,
     deleteReplay: (id: string, taskId: string, replayId: string) => `/playbooks/${id}/tasks/${taskId}/replays/${replayId}`,
+    replayReports: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/replay-reports`,
     outputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     grabOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,
     updateOutputFormatTemplate: (id: string, taskId: string) => `/playbooks/${id}/tasks/${taskId}/output-format-template`,

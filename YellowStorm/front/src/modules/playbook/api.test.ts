@@ -15,7 +15,10 @@ import {
   clearPlaybookTriggerSchedule,
   clearPlaybookTriggerMail,
   getPlaybook,
+  getReplayReports,
+  getTaskReplays,
   updatePlaybook,
+  validateTaskReplay,
 } from './api';
 import { makeTask } from './test-utils';
 
@@ -376,6 +379,101 @@ describe('playbook trigger routes', () => {
         params: { enabled: true, timezone: 'UTC', type: 'daily', daily: { timesLocal: ['10:00'] } },
       },
     });
+  });
+});
+
+describe('validated replay routes', () => {
+  it('normalizes replay baseline template fields from replay endpoints', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.post.mockReset();
+
+    apiClientMock.post.mockResolvedValueOnce({
+      data: {
+        data: {
+          _id: 'replay-1',
+          flowId: 'playbook-1',
+          taskId: 'task-1',
+          taskTitle: 'Review customer SLA',
+          agentName: 'Agent',
+          createdBy: 'user-1',
+          referenceExecutionId: 'exec-1',
+          referenceExecutionNumber: 2,
+          validationVersion: 3,
+          status: 'active',
+          mode: 'strict_replay',
+          toolCalls: [],
+          reasoningOutline: [{ stageKey: 'analyze', stageType: 'analysis', label: 'Analyze', description: 'Inspect the request.' }],
+          stableReasoningRules: ['Preserve analyze.'],
+          contextVariableSchema: [{ key: 'query', label: 'query', source: 'input_context', valueType: 'string', required: true }],
+          toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence.', argumentShape: { query: 'string' }, required: true }],
+          driftPolicy: { requireSameIntent: true },
+          acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Review customer SLA.' }],
+          createdAt: '2026-05-24T12:00:00.000Z',
+          updatedAt: '2026-05-24T12:00:00.000Z',
+        },
+      },
+    });
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: [{
+          _id: 'replay-1',
+          flowId: 'playbook-1',
+          taskId: 'task-1',
+          taskTitle: 'Review customer SLA',
+          agentName: 'Agent',
+          createdBy: 'user-1',
+          referenceExecutionId: 'exec-1',
+          referenceExecutionNumber: 2,
+          validationVersion: 3,
+          status: 'active',
+          mode: 'strict_replay',
+          toolCalls: [],
+          createdAt: '2026-05-24T12:00:00.000Z',
+          updatedAt: '2026-05-24T12:00:00.000Z',
+        }],
+      },
+    });
+
+    const created = await validateTaskReplay('playbook-1', 'task-1', {
+      executionId: 'exec-1',
+      iteration: 2,
+      mode: 'replay_flex',
+    });
+    const listed = await getTaskReplays('playbook-1', 'task-1');
+
+    expect(apiClientMock.post).toHaveBeenCalledWith(
+      '/playbooks/playbook-1/tasks/task-1/validate-replay',
+      { executionId: 'exec-1', iteration: 2, mode: 'replay_flex', preserveOutputFormat: false },
+    );
+
+    expect(created).toMatchObject({
+      id: 'replay-1',
+      playbookId: 'playbook-1',
+      intentKey: null,
+      outputContract: null,
+      reasoningOutline: [{ stageKey: 'analyze', stageType: 'analysis', label: 'Analyze', description: 'Inspect the request.' }],
+      stableReasoningRules: ['Preserve analyze.'],
+      contextVariableSchema: [{ key: 'query', label: 'query', source: 'input_context', valueType: 'string', required: true }],
+      toolTraceTemplate: [{ stepIndex: 1, toolName: 'search', purpose: 'Find evidence.', argumentShape: { query: 'string' }, required: true }],
+      acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Review customer SLA.' }],
+    });
+    expect(listed[0]).toMatchObject({ id: 'replay-1', playbookId: 'playbook-1', reasoningOutline: [] });
+  });
+
+  it('passes iteration when fetching replay reports', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: [],
+      },
+    });
+
+    await getReplayReports('playbook-1', 'task-1', { executionId: 'exec-1', iteration: 2, limit: 1 });
+
+    expect(apiClientMock.get).toHaveBeenCalledWith(
+      '/playbooks/playbook-1/tasks/task-1/replay-reports',
+      { params: { executionId: 'exec-1', iteration: 2, limit: 1 } },
+    );
   });
 });
 
@@ -1051,6 +1149,39 @@ describe('getExecution', () => {
       judgeError: null,
       judgeResult: expect.objectContaining({ overallScore: 91, confidence: 0.87 }),
       judgeHistory: [expect.objectContaining({ id: 'judge-1' })],
+    });
+  });
+
+  it('normalizes step execution modes from execution details', async () => {
+    apiClientMock.get.mockReset();
+    apiClientMock.get.mockResolvedValueOnce({
+      data: {
+        data: {
+          id: 'exec-3',
+          flowId: 'playbook-1',
+          ownerId: 'user-1',
+          status: 'running',
+          executionMode: 'inherit',
+          stepExecutionModes: {
+            'task-1': 'replay_flex',
+            'task-2': 'live',
+          },
+          pendingApproval: null,
+          recursionLimit: 25,
+          maxParallelism: 1,
+          taskResults: [],
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:01.000Z',
+        },
+      },
+    });
+
+    const execution = await getExecution('playbook-1', 'exec-3');
+
+    expect(execution.executionMode).toBe('inherit');
+    expect(execution.stepExecutionModes).toEqual({
+      'task-1': 'replay_flex',
+      'task-2': 'live',
     });
   });
 

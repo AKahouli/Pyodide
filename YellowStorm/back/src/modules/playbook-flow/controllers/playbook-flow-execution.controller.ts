@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Headers, HttpException, HttpStatus,
+  Controller, Get, Post, Delete, Param, Body, Query, UseGuards, Headers, HttpException, HttpStatus, NotFoundException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiHeader } from '@nestjs/swagger';
 import { PlaybookFlowExecutionService } from '../services/playbook-flow-execution.service';
@@ -21,6 +21,14 @@ export class PlaybookFlowExecutionController {
     private readonly replayService: PlaybookFlowReplayService,
   ) {}
 
+  private async ensureExecutionBelongsToFlow(executionId: string, flowId: string, userId: string) {
+    const execution = await this.executionService.findOne(executionId, userId);
+    if (execution.flowId !== flowId) {
+      throw new NotFoundException('Execution not found');
+    }
+    return execution;
+  }
+
   @Post('playbooks/:flowId/executions')
   @ApiOperation({ summary: 'Start a playbook flow execution' })
   @ApiHeader({ name: 'Idempotency-Key', required: false })
@@ -39,10 +47,11 @@ export class PlaybookFlowExecutionController {
     const advisorAutopilotMaxTurns: number | undefined = body.advisorAutopilotMaxTurns;
     const reflectionEnabled: boolean | undefined = body.reflectionEnabled;
     const advisorScoringMode: AdvisorScoringMode | undefined = body.advisorScoringMode;
+    const modelIdOverride: string | undefined = body.modelIdOverride;
     const execution = await this.executionService.start(
       flowId, userId, body.inputContext, idempotencyKey, singleStepTaskId,
       advisorAutopilotEnabled, advisorAutopilotTargetScore, advisorAutopilotMaxTurns, reflectionEnabled, advisorScoringMode,
-      executionMode, stepExecutionModes,
+      executionMode, stepExecutionModes, modelIdOverride,
     );
     return { executionId: (execution as any).id ?? (execution as any)._id?.toString() };
   }
@@ -152,6 +161,7 @@ export class PlaybookFlowExecutionController {
     @Param('flowId') flowId: string,
     @Body() body: { executionId: string },
   ) {
+    await this.ensureExecutionBelongsToFlow(body.executionId, flowId, userId);
     return this.executionService.resumeApproval(body.executionId, userId, { decision: 'approved' });
   }
 
@@ -163,6 +173,7 @@ export class PlaybookFlowExecutionController {
     @Param('flowId') flowId: string,
     @Body() body: { executionId: string },
   ) {
+    await this.ensureExecutionBelongsToFlow(body.executionId, flowId, userId);
     return this.executionService.cancel(body.executionId, userId);
   }
 
@@ -209,7 +220,7 @@ export class PlaybookFlowExecutionController {
     @Param('flowId') flowId: string,
     @Param('executionId') executionId: string,
   ) {
-    return this.executionService.findOne(executionId, userId);
+    return this.ensureExecutionBelongsToFlow(executionId, flowId, userId);
   }
 
   @Delete('playbooks/:flowId/executions/:executionId')
@@ -220,6 +231,7 @@ export class PlaybookFlowExecutionController {
     @Param('flowId') flowId: string,
     @Param('executionId') executionId: string,
   ) {
+    await this.ensureExecutionBelongsToFlow(executionId, flowId, userId);
     await this.executionService.delete(executionId, userId);
     return { deleted: true };
   }

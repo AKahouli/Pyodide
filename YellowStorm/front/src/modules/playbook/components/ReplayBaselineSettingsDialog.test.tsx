@@ -14,7 +14,7 @@ beforeEach(() => {
 });
 
 vi.mock('@/modules/localization', () => ({
-  useModuleTranslation: () => ({ t: (key: string) => key }),
+  useModuleTranslation: () => ({ t: (key: string) => key, language: 'en' }),
 }));
 
 vi.mock('../store', () => ({
@@ -52,6 +52,49 @@ vi.mock('@/components/ui/scroll-area', () => ({
   ScrollArea: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
+vi.mock('@/components/ui/badge', () => ({
+  Badge: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/collapsible', () => ({
+  Collapsible: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  CollapsibleTrigger: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button type="button" {...props}>{children}</button>,
+  CollapsibleContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/ui/tabs', async () => {
+  const React = await import('react');
+
+  const TabsContext = React.createContext<{ value: string; setValue: (value: string) => void } | null>(null);
+
+  return {
+    Tabs: ({ children, value, onValueChange }: { children: ReactNode; value: string; onValueChange?: (value: string) => void }) => (
+      <TabsContext.Provider value={{ value, setValue: onValueChange ?? (() => undefined) }}>
+        <div>{children}</div>
+      </TabsContext.Provider>
+    ),
+    TabsList: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+    TabsTrigger: ({ children, value, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { value: string }) => {
+      const context = React.useContext(TabsContext);
+      return (
+        <button
+          type="button"
+          data-state={context?.value === value ? 'active' : 'inactive'}
+          onClick={() => context?.setValue(value)}
+          {...props}
+        >
+          {children}
+        </button>
+      );
+    },
+    TabsContent: ({ children, value }: { children: ReactNode; value: string }) => {
+      const context = React.useContext(TabsContext);
+      if (context?.value !== value) return null;
+      return <div>{children}</div>;
+    },
+  };
+});
+
 vi.mock('@/components/ui/switch', () => ({
   Switch: ({ checked, onCheckedChange, ...props }: { checked?: boolean; onCheckedChange?: (checked: boolean) => void }) => (
     <button type="button" aria-pressed={checked} onClick={() => onCheckedChange?.(!checked)} {...props} />
@@ -60,11 +103,12 @@ vi.mock('@/components/ui/switch', () => ({
 
 vi.mock('lucide-react', async (importOriginal) => {
   const actual = await importOriginal<typeof import('lucide-react')>();
-  return {
-    ...actual,
-    Loader2: () => null,
-    Trash2: () => null,
-  };
+    return {
+      ...actual,
+      ChevronDown: () => null,
+      Loader2: () => null,
+      Trash2: () => null,
+    };
 });
 
 const task: PlaybookTask = {
@@ -108,11 +152,26 @@ const replay: ValidatedTaskReplay = {
   validationVersion: 3,
   status: 'active',
   mode: 'strict_replay',
-  toolCalls: [],
+  toolCalls: [{ callIndex: 1, toolName: 'search_docs', args: { query: 'replay' }, outputSummary: '1 result' }],
   referenceOutput: 'Reference output',
   preserveOutputFormat: true,
   outputFormatGuide: 'Current guide',
   formatGuideStatus: 'ready',
+  llmPromptTrace: [{ stage: 'planner', model: 'gpt-5.4', prompt: 'Plan the replay run.' }],
+  reasoningChain: [{ id: 'reason-1', type: 'decision', label: 'Pick route', description: 'Choose the validated path.', confidence: 0.91 }],
+  intentKey: 'review-customer-sla',
+  intentLabel: 'Review customer SLA',
+  reasoningOutline: [{ stageKey: 'analyze', stageType: 'analysis', label: 'Analyze', description: 'Inspect the request.', confidence: 0.91 }],
+  stableReasoningRules: ['Preserve analyze.'],
+  contextVariableSchema: [{ key: 'query', label: 'Query', source: 'input_context', valueType: 'string', required: true, exampleValue: 'replay' }],
+  toolTraceTemplate: [{ stepIndex: 1, toolName: 'search_docs', purpose: 'Find prior baseline evidence.', argumentShape: { query: 'string' }, required: true }],
+  driftPolicy: { requireSameIntent: true, requireSameReasoningStages: true, requireSameToolOrder: true, allowAdditionalTools: false, allowArgumentValueChanges: true, enforceOutputContract: true },
+  acceptedExamples: [{ referenceExecutionId: 'exec-1', referenceExecutionNumber: 2, summary: 'Validated replay baseline for Review customer SLA.', outputPreview: 'Reference output' }],
+  referenceUsage: { totalTokens: 321, model: 'gpt-5.4' },
+  referenceTaskDescription: 'Reproduce the prior validated execution.',
+  referenceNodeSnapshot: { taskId: 'task-1', title: 'Task' },
+  fingerprints: { inputContextHash: 'hash-1', nodeSnapshotHash: 'hash-2' },
+  traceMetadata: { collected: true },
   replayConfig: {
     replayOutputFormat: true,
     replayToolTrace: false,
@@ -124,6 +183,83 @@ const replay: ValidatedTaskReplay = {
 };
 
 describe('ReplayBaselineSettingsDialog', () => {
+  it('shows captured replay validation data by default when requested', async () => {
+    fetchTaskReplays.mockResolvedValue([replay]);
+
+    render(
+      <ReplayBaselineSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        playbookId="playbook-1"
+        task={task}
+        replay={replay}
+        replayId={replay.id}
+        defaultTab="capture"
+      />,
+    );
+
+    expect(await screen.findByText('baselineBadge.captureTitle')).toBeInTheDocument();
+    expect(screen.queryByLabelText('baselineBadge.nameLabel')).not.toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.sections.replayTemplate')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.template.intentKey')).toBeInTheDocument();
+    expect(screen.getByText('review-customer-sla')).toBeInTheDocument();
+    expect(screen.getByText('Analyze')).toBeInTheDocument();
+    expect(screen.getByText('Preserve analyze.')).toBeInTheDocument();
+    expect(screen.getAllByText('search_docs')).toHaveLength(2);
+    expect(screen.getByText('Plan the replay run.')).toBeInTheDocument();
+    expect(screen.getByText('Pick route')).toBeInTheDocument();
+    expect(screen.getAllByText('Reference output')).toHaveLength(2);
+    expect(screen.getByText(/inputContextHash/)).toBeInTheDocument();
+    expect(screen.getByText(/nodeSnapshotHash/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'baselineBadge.tabs.settings' }));
+    expect(screen.getByLabelText('baselineBadge.nameLabel')).toBeInTheDocument();
+    expect(screen.queryByText('baselineBadge.captureTitle')).not.toBeInTheDocument();
+  });
+
+  it('shows explicit empty capture states when no replay artifacts were captured', async () => {
+    const emptyReplay: ValidatedTaskReplay = {
+      ...replay,
+      toolCalls: [],
+      llmPromptTrace: [],
+      reasoningChain: [],
+      intentKey: null,
+      intentLabel: null,
+      reasoningOutline: [],
+      stableReasoningRules: [],
+      contextVariableSchema: [],
+      toolTraceTemplate: [],
+      driftPolicy: null,
+      acceptedExamples: [],
+      referenceOutput: null,
+      referenceNodeSnapshot: null,
+      fingerprints: null,
+      traceMetadata: {},
+    };
+    fetchTaskReplays.mockResolvedValue([emptyReplay]);
+
+    render(
+      <ReplayBaselineSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        playbookId="playbook-1"
+        task={task}
+        replay={emptyReplay}
+        replayId={emptyReplay.id}
+        defaultTab="capture"
+      />,
+    );
+
+    expect(await screen.findByText('baselineBadge.empty.output')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.replayTemplate')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.toolCalls')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.reasoning')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.prompts')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.nodeSnapshot')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.fingerprints')).toBeInTheDocument();
+    expect(screen.getByText('baselineBadge.empty.traceMetadata')).toBeInTheDocument();
+  });
+
   it('saves rename and replay settings together', async () => {
     fetchTaskReplays.mockResolvedValue([replay]);
     renameTaskReplay.mockResolvedValue({ ...replay, label: 'Renamed Baseline' });
@@ -152,6 +288,39 @@ describe('ReplayBaselineSettingsDialog', () => {
       expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', expect.objectContaining({
         outputFormatGuide: 'Current guide',
         replayConfig: expect.objectContaining({ replayToolTrace: false }),
+      }));
+    });
+  });
+
+  it('does not coerce a missing format guide to an empty string during rename-only saves', async () => {
+    const replayWithoutGuide: ValidatedTaskReplay = {
+      ...replay,
+      outputFormatGuide: null,
+    };
+    fetchTaskReplays.mockResolvedValue([replayWithoutGuide]);
+    renameTaskReplay.mockResolvedValue({ ...replayWithoutGuide, label: 'Renamed Baseline' });
+    updateTaskReplayFormatGuide.mockResolvedValue({
+      ...replayWithoutGuide,
+      label: 'Renamed Baseline',
+    });
+
+    render(
+      <ReplayBaselineSettingsDialog
+        open
+        onOpenChange={vi.fn()}
+        playbookId="playbook-1"
+        task={task}
+        replay={replayWithoutGuide}
+        replayId={replayWithoutGuide.id}
+      />,
+    );
+
+    fireEvent.change(await screen.findByLabelText('baselineBadge.nameLabel'), { target: { value: 'Renamed Baseline' } });
+    fireEvent.click(screen.getByRole('button', { name: 'baselineBadge.saveSettings' }));
+
+    await waitFor(() => {
+      expect(updateTaskReplayFormatGuide).toHaveBeenCalledWith('playbook-1', 'task-1', 'replay-1', expect.objectContaining({
+        outputFormatGuide: undefined,
       }));
     });
   });

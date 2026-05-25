@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations } from './PlaybookCanvasPage';
+import { buildCanvasJudgeStateMap, hasPendingJudgeEvaluations, resolveCanvasNodeSelection } from './PlaybookCanvasPage';
 import { makeExecution } from '../test-utils';
 
 describe('buildCanvasJudgeStateMap', () => {
@@ -139,5 +139,22 @@ describe('hasPendingJudgeEvaluations', () => {
     });
 
     expect(hasPendingJudgeEvaluations(execution)).toBe(false);
+  });
+});
+
+describe('resolveCanvasNodeSelection', () => {
+  it('preserves React Flow multi-selection even when selectedStepId points elsewhere', () => {
+    const selectedNodeIds = new Set(['task-1', 'task-2']);
+
+    expect(resolveCanvasNodeSelection(selectedNodeIds, 2, 'task-1', 'task-3')).toBe(true);
+    expect(resolveCanvasNodeSelection(selectedNodeIds, 2, 'task-2', 'task-3')).toBe(true);
+    expect(resolveCanvasNodeSelection(selectedNodeIds, 2, 'task-3', 'task-3')).toBe(false);
+  });
+
+  it('falls back to selectedStepId when there is not an active multi-selection', () => {
+    const selectedNodeIds = new Set(['task-1']);
+
+    expect(resolveCanvasNodeSelection(selectedNodeIds, 1, 'task-1', 'task-2')).toBe(false);
+    expect(resolveCanvasNodeSelection(selectedNodeIds, 1, 'task-2', 'task-2')).toBe(true);
   });
 });

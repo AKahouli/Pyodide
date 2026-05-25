@@ -12,6 +12,9 @@ export class FlowTaskToolTraceItem {
   @Prop({ required: true, type: String })
   toolName!: string;
 
+  @Prop({ required: false, type: String, default: null })
+  purpose?: string | null;
+
   @Prop({ required: false, type: Object, default: {} })
   args!: Record<string, unknown>;
 
@@ -74,6 +77,21 @@ export class FlowTaskUsage {
 }
 
 @Schema({ _id: false })
+export class FlowTaskSemanticFinding {
+  @Prop({ required: false, type: String, default: null })
+  key?: string | null;
+
+  @Prop({ required: false, type: String, default: null })
+  expected?: string | null;
+
+  @Prop({ required: false, type: String, default: null })
+  observed?: string | null;
+
+  @Prop({ required: true, type: String, enum: ['info', 'warning', 'fail'] })
+  severity!: 'info' | 'warning' | 'fail';
+}
+
+@Schema({ _id: false })
 export class FlowTaskSemanticMatch {
   @Prop({ required: false, type: Number })
   matchScore?: number;
@@ -95,6 +113,27 @@ export class FlowTaskSemanticMatch {
 
   @Prop({ required: false, type: [String], default: [] })
   changedPoints?: string[];
+
+  @Prop({ required: false, type: [String], default: [] })
+  preservedPoints?: string[];
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskSemanticFinding)], default: [] })
+  missingPointFindings?: FlowTaskSemanticFinding[];
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskSemanticFinding)], default: [] })
+  changedPointFindings?: FlowTaskSemanticFinding[];
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskSemanticFinding)], default: [] })
+  extraPointFindings?: FlowTaskSemanticFinding[];
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskSemanticFinding)], default: [] })
+  staleContextReferenceFindings?: FlowTaskSemanticFinding[];
+
+  @Prop({ required: false, type: [SchemaFactory.createForClass(FlowTaskSemanticFinding)], default: [] })
+  unsupportedClaimFindings?: FlowTaskSemanticFinding[];
+
+  @Prop({ required: false, type: String, default: null })
+  evaluationSource?: 'instantiated_replay' | 'runtime' | 'unknown' | null;
 
   @Prop({ required: false, type: String })
   model?: string;

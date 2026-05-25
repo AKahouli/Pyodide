@@ -1,4 +1,4 @@
-import { forwardRef, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { forwardRef, Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
@@ -42,6 +42,18 @@ import type { AdvisorScoringMode } from '../schemas/playbook-flow.schema';
 import { PlaybookFlowObservabilityService } from './observability/playbook-flow-observability.service';
 import { PlaybookFlowReplayArtifactService } from './playbook-flow-replay-artifact.service';
 import { PlaybookFlowReplayPromptService } from './playbook-flow-replay-prompt.service';
+import { PlaybookFlowReplayBaselineService } from './playbook-flow-replay-baseline.service';
+import { PlaybookFlowReplayEligibilityService } from './playbook-flow-replay-eligibility.service';
+import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.service';
+import { PlaybookFlowReplayDriftService } from './playbook-flow-replay-drift.service';
+import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
+import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
+import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
+import { ModelsService } from '@modules/models/models.service';
+import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
+import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
+import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
+import type { ReplayRunReportLookup } from './playbook-flow-replay-report.service';
 import {
   flattenUsage,
 } from './observability/playbook-flow-observability.mapper';
@@ -158,6 +170,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
   private readonly logger = new Logger(PlaybookFlowExecutionService.name);
   private playbookFlowClient: any;
   private isGrpcAvailable = false;
+  private readonly selectedReplayArtifactsByExecution = new Map<
+    string,
+    Map<string, ResolvedReplayArtifacts>
+  >();
+  private readonly trackedReplayTasksByExecution = new Map<string, Set<string>>();
 
   constructor(
     @InjectModel(FlowExecution.name)
@@ -180,7 +197,26 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     private readonly advisorService: PlaybookFlowExecutionAdvisorService,
     private readonly replayArtifactService: PlaybookFlowReplayArtifactService,
     private readonly replayPromptService: PlaybookFlowReplayPromptService,
+    private readonly replayBaselineService: PlaybookFlowReplayBaselineService,
+    private readonly replayEligibilityService: PlaybookFlowReplayEligibilityService,
+    private readonly replayReportService: PlaybookFlowReplayReportService,
+    private readonly outputContractService: PlaybookFlowOutputContractService,
+    private readonly modelsService: ModelsService,
+    @Optional() private readonly outputFormatService?: PlaybookFlowOutputFormatService,
+    @Optional() private readonly replayPlanService?: PlaybookFlowReplayPlanService,
+    @Optional() private readonly replayDriftService?: PlaybookFlowReplayDriftService,
   ) {}
+
+  private getReplayDriftService(): PlaybookFlowReplayDriftService {
+    return this.replayDriftService
+      ?? new PlaybookFlowReplayDriftService(
+        this.executionModel,
+        this.replayReportService,
+        this.outputContractService,
+        this.replayPlanService ?? new PlaybookFlowReplayPlanService(),
+        { setContext: () => undefined, warn: () => undefined, log: () => undefined, error: () => undefined } as any,
+      );
+  }
 
   onModuleInit() {
     this.initGrpcClient();
@@ -194,6 +230,225 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
 
   private async reconcileOrphanedExecutions(): Promise<void> {
     // This remains disabled until execution ownership is persisted and validated.
+  }
+
+  private buildReplayComparableFlowSnapshot(snapshot: FlowSnapshot): Record<string, unknown> {
+    return {
+      nodes: Array.isArray(snapshot.nodes)
+        ? snapshot.nodes.map((node) => this.buildReplayComparableNode(node as unknown as Record<string, unknown>))
+        : [],
+      controlEdges: snapshot.controlEdges || [],
+      dataBindings: snapshot.dataBindings || [],
+      settings: snapshot.settings || {},
+      workspaces: (snapshot as any).workspaces || [],
+    };
+  }
+
+  private buildReplayComparableNode(node: Record<string, unknown>): Record<string, unknown> {
+    const metadata = node.metadata && typeof node.metadata === 'object'
+      ? stripRuntimeAgentMetadata(node.metadata as Record<string, unknown>)
+      : {};
+
+    return {
+      ...node,
+      metadata,
+    };
+  }
+
+  private async persistReplayPreRunReport(params: {
+    executionId: string;
+    flowId: string;
+    taskId: string;
+    iteration?: number;
+    replayId: string;
+    validationVersion: number;
+    mode: 'replay_strict' | 'replay_flex' | 'replay_adaptive';
+    eligibility: ReplayEligibilityResult;
+  }): Promise<void> {
+    try {
+      await this.getReplayDriftService().createPreRunReport({
+        executionId: params.executionId,
+        flowId: params.flowId,
+        taskId: params.taskId,
+        iteration: params.iteration ?? 0,
+        replayId: params.replayId,
+        validationVersion: params.validationVersion,
+        mode: params.mode,
+        eligibility: params.eligibility,
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to persist replay report for task ${params.taskId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private async persistReplayStructuralDrift(params: {
+    executionId: string;
+    taskId: string;
+    iteration?: number;
+    output: unknown;
+    toolTrace: FlowToolTraceItem[];
+    reasoningChain: PublicReasoningTraceItem[];
+    semanticMatch?: FlowSemanticMatchSummary | null;
+    replayArtifacts: ResolvedReplayArtifacts;
+    traceMetadata?: Record<string, unknown> | null;
+  }): Promise<void> {
+    try {
+      let traceMetadata = params.traceMetadata ?? {};
+      if (params.replayArtifacts.intentKey && !traceMetadata['observed_intent_key']) {
+        const hasExecutionEvidence = params.toolTrace.length > 0
+          || params.semanticMatch != null
+          || (params.output != null && String(params.output).length > 0);
+        if (hasExecutionEvidence) {
+          traceMetadata = { ...traceMetadata, observed_intent_key: params.replayArtifacts.intentKey };
+        }
+      }
+
+      await this.getReplayDriftService().recordCompletedTaskDrift({
+        executionId: params.executionId,
+        taskId: params.taskId,
+        iteration: params.iteration ?? 0,
+        output: params.output,
+        toolTrace: params.toolTrace,
+        reasoningChain: params.reasoningChain,
+        semanticMatch: params.semanticMatch ?? null,
+        replayArtifacts: params.replayArtifacts,
+        traceMetadata,
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to persist replay structural drift for task ${params.taskId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  private cacheSelectedReplayArtifacts(
+    executionId: string,
+    taskId: string,
+    artifacts: ResolvedReplayArtifacts,
+  ): void {
+    const byTask = this.selectedReplayArtifactsByExecution.get(executionId) ?? new Map();
+    byTask.set(taskId, artifacts);
+    this.selectedReplayArtifactsByExecution.set(executionId, byTask);
+  }
+
+  private trackReplayTask(executionId: string, taskId: string): void {
+    const trackedTasks = this.trackedReplayTasksByExecution.get(executionId) ?? new Set<string>();
+    trackedTasks.add(taskId);
+    this.trackedReplayTasksByExecution.set(executionId, trackedTasks);
+  }
+
+  private getSelectedReplayArtifacts(
+    executionId: string,
+    taskId: string,
+  ): ResolvedReplayArtifacts | null {
+    return this.selectedReplayArtifactsByExecution.get(executionId)?.get(taskId) ?? null;
+  }
+
+  private async resolveReplayArtifactsForCompletedTask(
+    executionId: string,
+    taskId: string,
+    iteration: number,
+  ): Promise<ResolvedReplayArtifacts | null> {
+    const cachedArtifacts = this.getSelectedReplayArtifacts(executionId, taskId);
+    if (cachedArtifacts) {
+      return cachedArtifacts;
+    }
+
+    const trackedTasks = this.trackedReplayTasksByExecution.get(executionId);
+    if (!trackedTasks?.has(taskId)) {
+      return null;
+    }
+
+    const replayReport = await this.replayReportService.findLatestReportForExecutionTask(executionId, taskId, iteration);
+    if (!replayReport?.applied) {
+      return null;
+    }
+
+    this.logger.warn(`Replay artifacts cache miss for execution ${executionId} task ${taskId}; resolving persisted replay artifacts from storage`);
+
+    const taskArtifacts = await this.replayArtifactService.resolveReplayArtifactByIdentity({
+      flowId: replayReport.flowId,
+      taskId,
+      replayId: replayReport.replayId,
+      validationVersion: replayReport.validationVersion,
+    });
+    if (!taskArtifacts) {
+      this.logger.warn(`Replay artifacts cache miss for execution ${executionId} task ${taskId}; persisted replay artifacts unavailable`);
+      return null;
+    }
+
+    this.cacheSelectedReplayArtifacts(executionId, taskId, taskArtifacts);
+    return taskArtifacts;
+  }
+
+  private clearSelectedReplayArtifacts(executionId: string): void {
+    this.selectedReplayArtifactsByExecution.delete(executionId);
+    this.trackedReplayTasksByExecution.delete(executionId);
+  }
+
+  private buildReplayPlanning(
+    artifacts: ResolvedReplayArtifacts,
+    input: {
+      taskId: string;
+      inputContext?: Record<string, unknown>;
+      taskTitle?: string | null;
+      taskDescription?: string | null;
+    },
+  ): ReplayPlanningSummary {
+    const replayPlanService = this.replayPlanService ?? new PlaybookFlowReplayPlanService();
+    return replayPlanService.buildReplayPlanning({
+      taskId: input.taskId,
+      replayId: artifacts.replayId,
+      validationVersion: artifacts.validationVersion,
+      intentKey: artifacts.intentKey,
+      intentLabel: artifacts.intentLabel,
+      contextVariableSchema: artifacts.contextVariableSchema,
+      reasoningOutline: artifacts.reasoningOutline,
+      toolTraceTemplate: artifacts.toolTraceTemplate,
+      semanticChecklist: artifacts.semanticChecklist,
+      toolCalls: artifacts.toolCalls,
+      outputFormatGuide: artifacts.outputFormatGuide,
+      outputContract: artifacts.outputContract,
+      inputContext: input.inputContext,
+      taskTitle: input.taskTitle,
+      taskDescription: input.taskDescription,
+    });
+  }
+
+  private applyReplayPlanningEligibility(
+    mode: 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+    eligibility: ReplayEligibilityResult,
+    planning: ReplayPlanningSummary | null,
+  ): ReplayEligibilityResult {
+    if (!planning || !this.hasUnresolvedRequiredContext(planning)) {
+      return eligibility;
+    }
+
+    const invalidationReasons = Array.from(new Set([
+      ...eligibility.invalidationReasons,
+      'required_context_unresolved',
+    ]));
+
+    return {
+      ...eligibility,
+      applied: false,
+      invalidationReasons,
+      skippedSections: Array.from(new Set([
+        ...eligibility.skippedSections,
+        'decision_invariants',
+        'reasoning_chain',
+        'tool_policy',
+        'tool_trace',
+        'output_contract',
+        'output_format',
+        'quality_checks',
+        'known_failure_modes',
+      ])),
+      appliedSections: mode === 'replay_adaptive' ? eligibility.appliedSections : [],
+    };
+  }
+
+  private hasUnresolvedRequiredContext(planning: ReplayPlanningSummary): boolean {
+    const replayPlanService = this.replayPlanService ?? new PlaybookFlowReplayPlanService();
+    return replayPlanService.hasUnresolvedRequiredContext(planning.contextMapping);
   }
 
   private async recoverQueuedExecutions(): Promise<void> {
@@ -263,6 +518,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     advisorScoringMode?: AdvisorScoringMode,
     executionMode?: string,
     stepExecutionModes?: Record<string, string>,
+    modelIdOverride?: string,
   ): Promise<IFlowExecutionResponse> {
     const flow = await this.flowService.findOne(flowId, ownerId);
 
@@ -283,16 +539,38 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       return valid;
     });
 
-    if (cleanedEdges.length !== flow.controlEdges.length || cleanedBindings.length !== flow.dataBindings.length) {
+    const nodesById = new Map(flow.nodes.map((n) => [n.id, n]));
+    const portCleanedBindings = cleanedBindings.filter((b) => {
+      const targetNode = nodesById.get(b.targetNode);
+      if (!targetNode) return true;
+      const targetPortExists = targetNode.input?.ports?.some((p) => p.id === b.targetPort);
+      if (!targetPortExists) {
+        this.logger.warn(`Cleaning stale data binding ${b.id}: target port ${b.targetNode}.${b.targetPort} no longer exists`);
+        return false;
+      }
+      if (b.sourceKind === 'node-output' && b.sourceNode) {
+        const sourceNode = nodesById.get(b.sourceNode);
+        if (sourceNode) {
+          const sourcePortExists = sourceNode.output?.ports?.some((p) => p.id === b.sourcePort);
+          if (!sourcePortExists) {
+            this.logger.warn(`Cleaning stale data binding ${b.id}: source port ${b.sourceNode}.${b.sourcePort} no longer exists`);
+            return false;
+          }
+        }
+      }
+      return true;
+    });
+
+    if (cleanedEdges.length !== flow.controlEdges.length || portCleanedBindings.length !== flow.dataBindings.length) {
       this.logger.warn(
-        `Cleaned ${flow.controlEdges.length - cleanedEdges.length} orphaned edge(s) and ${flow.dataBindings.length - cleanedBindings.length} orphaned binding(s) for flow ${flowId}`,
+        `Cleaned ${flow.controlEdges.length - cleanedEdges.length} orphaned edge(s) and ${flow.dataBindings.length - portCleanedBindings.length} orphaned binding(s) for flow ${flowId}`,
       );
       const doc = await this.flowService.findById(flowId);
       doc.controlEdges = cleanedEdges as any;
-      doc.dataBindings = cleanedBindings as any;
+      doc.dataBindings = portCleanedBindings as any;
       await doc.save();
       flow.controlEdges = cleanedEdges as any;
-      flow.dataBindings = cleanedBindings as any;
+      flow.dataBindings = portCleanedBindings as any;
     }
 
     this.validatorService.validate(flow.nodes, flow.controlEdges, flow.dataBindings);
@@ -311,6 +589,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const reservation = await this.idempotencyService.reserve(ownerId, idempotencyKey, {
         flowId,
         inputContext: inputContext ?? {},
+        executionMode: executionMode || 'live',
+        stepExecutionModes: stepExecutionModes || {},
+        modelIdOverride: modelIdOverride || undefined,
       });
       if (reservation.type === 'duplicate') {
         const existingExecution = await this.executionModel.findById(reservation.executionId);
@@ -321,6 +602,27 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           );
         }
         return existingExecution.toJSON() as unknown as IFlowExecutionResponse;
+      }
+    }
+
+    if (modelIdOverride) {
+      let validation;
+      try {
+        validation = await this.modelsService.validateModelActive(modelIdOverride);
+      } catch (err) {
+        if (idempotencyKey) {
+          await this.idempotencyService.release(ownerId, idempotencyKey);
+        }
+        throw err;
+      }
+      if (!validation.valid) {
+        if (idempotencyKey) {
+          await this.idempotencyService.release(ownerId, idempotencyKey);
+        }
+        throw new BadRequestException(
+          ErrorCode.MODEL_INACTIVE,
+          `Model override '${modelIdOverride}' is unavailable or inactive.`,
+        );
       }
     }
 
@@ -378,6 +680,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       seededTaskOutputs,
       executionMode: executionMode || 'live',
       stepExecutionModes: stepExecutionModes || {},
+      modelIdOverride: modelIdOverride || undefined,
     });
 
     const saved = await execution.save();
@@ -661,25 +964,114 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       const taskNodeIds = enrichedNodes
         .filter((n: any) => n.kind === 'step' || n.kind === 'iterator')
         .map((n: any) => n.id);
-      const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId executionMode stepExecutionModes').lean().exec();
+      const executionMeta = await this.executionModel.findById(executionId, 'singleStepTaskId executionMode stepExecutionModes modelIdOverride replayPlanningByTask').lean().exec();
+      const executionModelIdOverride = executionMeta?.modelIdOverride;
+      if (executionModelIdOverride && typeof executionModelIdOverride === 'string') {
+        for (const node of enrichedNodes) {
+          node.modelId = executionModelIdOverride;
+          if (node.metadata && typeof node.metadata === 'object') {
+            (node.metadata as Record<string, unknown>).agent_model = executionModelIdOverride;
+          }
+        }
+      }
+      const replayComparableRuntimeFlowSnapshot = this.buildReplayComparableFlowSnapshot({
+        ...(snapshot as FlowSnapshot),
+        nodes: enrichedNodes as unknown as FlowSnapshot['nodes'],
+      });
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
       const globalExecMode = executionMeta?.executionMode || 'live';
       const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
       const nodesEligibleForReplay = singleStepTargetId
         ? [singleStepTargetId]
-        : taskNodeIds;
+          : taskNodeIds;
       const replayArtifacts = await this.replayArtifactService.resolveReplayArtifacts(flowId, nodesEligibleForReplay);
+      const activeOutputFormatTemplates = this.outputFormatService
+        ? await this.outputFormatService.getActiveTemplates(flowId, nodesEligibleForReplay)
+        : new Map<string, { formatGuide?: string | null }>();
+      const replayInputContext = inputContext || {};
+      const runtimeInputContext = {
+        ...replayInputContext,
+        __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
+        __playbook_default_workspace_id: (((snapshotOverride || snapshot) as any).workspaces || [])[0] || '',
+      };
+      const runtimeNodesById = new Map(
+        (enrichedNodes as Array<Record<string, unknown>>).map((entry) => [String(entry.id || ''), entry]),
+      );
 
+      const replayPlanningByTask: Record<string, ReplayPlanningSummary> = {};
+      const VALID_STEP_MODES = new Set(['live', 'replay_strict', 'replay_flex', 'replay_adaptive']);
       const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
       for (const node of enrichedNodes) {
         const taskId = node.id;
-        const stepMode = stepModes[taskId] || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
+        const rawStepMode = stepModes[taskId] || (globalExecMode === 'inherit' ? 'live' : globalExecMode);
+        const stepMode = VALID_STEP_MODES.has(rawStepMode) ? rawStepMode : 'live';
         const isReplayMode = REPLAY_MODES.has(stepMode);
         node.metadata = { ...node.metadata, execution_mode: stepMode };
         if (!isReplayMode) continue;
         const artifacts = replayArtifacts.get(taskId);
         if (!artifacts) continue;
-        const replayPrompt = this.replayPromptService.buildReplayPromptSection(artifacts);
+        const currentNodeSnapshot = this.buildReplayComparableNode(
+          runtimeNodesById.get(taskId) ?? (node as Record<string, unknown>),
+        );
+        const initialEligibility = this.replayEligibilityService.evaluateReplayEligibility({
+          mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+          artifacts,
+          isStale: artifacts.isStale,
+          staleReasons: artifacts.staleReasons,
+          currentFingerprints: this.replayBaselineService.buildCurrentReplayFingerprints({
+            inputContext: replayInputContext,
+            flowSnapshot: replayComparableRuntimeFlowSnapshot,
+            nodeSnapshot: currentNodeSnapshot,
+            outputContract: this.buildCurrentReplayOutputContract({
+              artifacts,
+              currentFormatGuide: activeOutputFormatTemplates.get(taskId)?.formatGuide ?? null,
+              hasActiveTemplate: activeOutputFormatTemplates.has(taskId),
+            }),
+          }),
+        });
+        const replayPlanning = isReplayMode
+          ? this.buildReplayPlanning(artifacts, {
+              taskId,
+              inputContext: replayInputContext,
+              taskTitle: typeof node.label === 'string' ? node.label : null,
+              taskDescription: typeof node.metadata?.description === 'string'
+                ? node.metadata.description as string
+                : null,
+            })
+          : null;
+        if (replayPlanning) {
+          replayPlanningByTask[taskId] = replayPlanning;
+          node.metadata = {
+            ...node.metadata,
+            replay_planning: replayPlanning,
+          };
+        }
+        const eligibility = this.applyReplayPlanningEligibility(
+          stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+          initialEligibility,
+          replayPlanning,
+        );
+        await this.persistReplayPreRunReport({
+          executionId,
+          flowId,
+          taskId,
+          replayId: artifacts.replayId,
+          validationVersion: artifacts.validationVersion,
+          mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+          eligibility,
+        });
+        this.trackReplayTask(executionId, taskId);
+        if (!eligibility.applied) {
+          this.logger.warn(`Replay skipped for task ${taskId}: ${eligibility.invalidationReasons.join(', ')}`);
+          continue;
+        }
+        this.cacheSelectedReplayArtifacts(executionId, taskId, artifacts);
+        const replayPrompt = this.replayPromptService.buildReplayPromptSection({
+          artifacts,
+          mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
+          eligibility,
+          planning: replayPlanning,
+        });
         if (replayPrompt) {
           node.metadata = { ...node.metadata, replay_instructions: replayPrompt };
         }
@@ -690,27 +1082,31 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         {
           startedAt: new Date(),
           queuePosition: 0,
+          replayPlanningByTask,
         },
       ).exec();
       if (!(startResult as { modifiedCount?: number }).modifiedCount) {
+        this.clearSelectedReplayArtifacts(executionId);
         this.logger.warn(`Skipping gRPC start for execution ${executionId} because it is no longer runnable`);
         return;
       }
 
       const executionStartState = await this.executionModel.findById(
         executionId,
-        'singleStepTaskId advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes',
+        'singleStepTaskId advisorAutopilotEnabled advisorAutopilotTargetScore advisorAutopilotMaxTurns reflectionEnabled advisorScoringMode executionMode stepExecutionModes replayPlanningByTask',
       ).lean().exec();
 
       const effectiveExecutionMode = (executionStartState?.executionMode || 'live') as 'live' | 'inherit' | 'replay_strict' | 'replay_flex' | 'replay_adaptive';
       this.streamEvents.emitExecutionStart(executionId, flowId, normalizedOwnerId, {
         executionMode: effectiveExecutionMode,
+        stepExecutionModes: (executionStartState?.stepExecutionModes as Record<string, 'live' | 'replay_strict' | 'replay_flex' | 'replay_adaptive'> | undefined) ?? {},
         reflectionEnabled: executionStartState?.reflectionEnabled,
         advisorScoringMode: executionStartState?.advisorScoringMode,
         advisorAutopilotEnabled: executionStartState?.advisorAutopilotEnabled,
         advisorAutopilotTargetScore: executionStartState?.advisorAutopilotTargetScore,
         advisorAutopilotMaxTurns: executionStartState?.advisorAutopilotMaxTurns,
         singleStepTaskId: executionStartState?.singleStepTaskId ?? null,
+        replayPlanningByTask,
       });
 
     this.logger.log(`Starting playbook flow execution ${executionId} with ${snapshot.nodes.length} nodes, ${agentIds.size} agent IDs found, ${agentMap.size} agents resolved`);
@@ -811,11 +1207,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           max_parallelism: maxParallelism,
         },
       },
-      input_context: toGrpcStruct({
-        ...(inputContext || {}),
-        __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
-        __playbook_default_workspace_id: (((snapshotOverride || snapshot) as any).workspaces || [])[0] || '',
-      }),
+      input_context: toGrpcStruct(runtimeInputContext),
         settings: {
           recursion_limit: recursionLimit,
           max_parallelism: maxParallelism,
@@ -839,10 +1231,6 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           }),
         })),
       };
-
-      const firstNodeMeta = request.snapshot?.nodes?.[0]?.metadata as any;
-      this.logger.warn(`[REPLAY-DEBUG] grpcRequest node0 metadata keys=${JSON.stringify(firstNodeMeta ? Object.keys(firstNodeMeta.fields || firstNodeMeta) : 'no-meta')} has_replay=${!!(firstNodeMeta?.fields?.replay_instructions || firstNodeMeta?.replay_instructions)}`);
-
     const call = this.playbookFlowClient.Run(request);
     let finalized = false;
     let completionEmitted = false;
@@ -850,7 +1238,11 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     const releaseOnce = () => {
       if (finalized) return;
       finalized = true;
+      this.clearSelectedReplayArtifacts(executionId);
       this.drainQueue(ownerId);
+    };
+    const waitForHandledEvents = async () => {
+      await lastHandlePromise;
     };
     call.on('data', (event: Record<string, unknown>) => {
       lastHandlePromise = lastHandlePromise
@@ -867,6 +1259,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     });
     call.on('error', (err: Error) => {
       void (async () => {
+        await waitForHandledEvents();
         this.logger.error(`gRPC stream error for execution ${executionId}: ${err.message}`, err.stack);
         await this.executionModel
           .findByIdAndUpdate(executionId, { status: 'failed', endedAt: new Date(), error: err.message })
@@ -884,7 +1277,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     call.on('end', () => {
       void (async () => {
         this.logger.log(`gRPC stream ended for execution ${executionId}`);
-        await lastHandlePromise;
+        await waitForHandledEvents();
         if (!completionEmitted) {
           const execution = await this.executionModel.findById(executionId).lean();
           const status = String((execution as Record<string, unknown> | null)?.status || '');
@@ -927,6 +1320,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       });
     });
     } catch (err) {
+      this.clearSelectedReplayArtifacts(executionId);
       this.logger.error(`Playbook flow execution ${executionId} failed before gRPC stream`, err instanceof Error ? err.stack : undefined);
       await this.executionModel.findByIdAndUpdate(executionId, {
         status: 'failed',
@@ -1015,6 +1409,13 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     this.logger.debug(`Received playbook flow event ${eventType} for execution ${executionId}`);
 
     if (eventType === 'NodeStarted') {
+      if (this.trackedReplayTasksByExecution.get(executionId)?.has(taskNodeId)) {
+        try {
+          await this.getReplayDriftService().ensureIterationReportMaterialized(executionId, taskNodeId, iteration);
+        } catch (err) {
+          this.logger.warn(`Failed to materialize replay report for execution ${executionId} task ${taskNodeId} iteration ${iteration}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       await this.taskResultModel.updateOne(
         { executionId, taskId: taskNodeId, iteration },
         {
@@ -1084,6 +1485,30 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         },
         { upsert: true },
       );
+      try {
+        const replayArtifacts = await this.resolveReplayArtifactsForCompletedTask(executionId, taskNodeId, iteration);
+        if (replayArtifacts) {
+          await this.persistReplayStructuralDrift({
+            executionId,
+            taskId: taskNodeId,
+            iteration,
+            output: resultPayload.output,
+            toolTrace: resultPayload.toolTrace ?? [],
+            reasoningChain: resultPayload.reasoningChain ?? [],
+            semanticMatch: resultPayload.semanticMatch ?? null,
+            replayArtifacts,
+            traceMetadata: resultPayload.traceMetadata,
+          });
+        } else if (resultPayload.semanticMatch) {
+          try {
+            await this.getReplayDriftService().backfillSemanticMatch(executionId, taskNodeId, iteration, resultPayload.semanticMatch);
+          } catch (smErr) {
+            this.logger.warn(`Failed to backfill semanticMatch for non-applied replay task ${taskNodeId}: ${smErr instanceof Error ? smErr.message : String(smErr)}`);
+          }
+        }
+      } catch (err) {
+        this.logger.warn(`Failed to resolve replay artifacts for task ${taskNodeId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
       this.streamEvents.emitStepComplete(
         executionId,
         taskNodeId,
@@ -1124,6 +1549,81 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         { upsert: true },
       );
       this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, errorMessage, iteration);
+    } else if (eventType === 'NodeSkipped') {
+      await this.taskResultModel.updateOne(
+        { executionId, taskId: taskNodeId, iteration },
+        {
+          $set: {
+            status: 'skipped',
+            endedAt: new Date(),
+          },
+          $setOnInsert: {
+            executionId,
+            taskId: taskNodeId,
+            iteration,
+            startedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+      this.streamEvents.emitStepComplete(executionId, taskNodeId, undefined, undefined, iteration);
+    } else if (eventType === 'NodeSuspended') {
+      const interruptType = String(payload.type || 'human_approval');
+      const interruptMessage = String(payload.message || '');
+      const interruptId = String(payload.interrupt_id || payload.interruptId || '');
+      const taskDescription = String(payload.task_description || '');
+      const result = String(payload.result || '');
+      const payloadJson = String(payload.conversation_json || payload.payloadJson || '');
+      const resumableActions: string[] = Array.isArray(payload.resumable_actions || payload.resumableActions)
+        ? (payload.resumable_actions || payload.resumableActions) as string[]
+        : [];
+
+      await this.taskResultModel.updateOne(
+        { executionId, taskId: taskNodeId, iteration },
+        {
+          $set: {
+            status: 'interrupted',
+          },
+          $setOnInsert: {
+            executionId,
+            taskId: taskNodeId,
+            iteration,
+            startedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      );
+
+      await this.executionModel
+        .updateOne(
+          { _id: executionId, status: { $nin: TERMINAL_STATUSES as unknown as string[] } },
+          {
+            status: 'pending_approval',
+            pendingApproval: {
+              nodeId: taskNodeId,
+              iteration,
+              prompt: interruptMessage,
+              requestedAt: new Date(),
+            },
+          },
+        )
+        .exec();
+
+      this.streamEvents.emitInterrupt(
+        executionId,
+        taskNodeId,
+        interruptMessage,
+        iteration,
+        executionId,
+        {
+          interruptType,
+          interruptId,
+          taskDescription,
+          result,
+          payloadJson,
+          resumableActions,
+        },
+      );
     } else if (eventType === 'RouterDecision') {
       const label = String(payload.label || '');
       await this.routerDecisionModel.create({
@@ -1210,6 +1710,23 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     }
   }
 
+  private buildCurrentReplayOutputContract(params: {
+    artifacts: Pick<ResolvedReplayArtifacts, 'outputContract' | 'referenceOutput' | 'replayConfig'>;
+    currentFormatGuide: string | null;
+    hasActiveTemplate: boolean;
+  }) {
+    if (typeof this.replayBaselineService.buildOutputContractFromReplay !== 'function') {
+      return params.artifacts.outputContract;
+    }
+
+    return this.replayBaselineService.buildOutputContractFromReplay({
+      output: params.artifacts.referenceOutput,
+      preserveOutputFormat: params.hasActiveTemplate || params.artifacts.replayConfig.replayOutputFormat,
+      outputFormatGuide: params.currentFormatGuide,
+      existingOutputContract: params.artifacts.outputContract,
+    });
+  }
+
   async findAll(
     flowId: string,
     ownerId: string,
@@ -1259,9 +1776,10 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
       .sort({ decidedAt: 1 })
       .lean();
 
-    return {
-      ...(execution.toJSON() as unknown as IFlowExecutionResponse),
-      taskResults: taskResults.map((r): IFlowTaskResultResponse => {
+      return {
+        ...(execution.toJSON() as unknown as IFlowExecutionResponse),
+        replayPlanningByTask: ((execution.toJSON() as unknown as IFlowExecutionResponse).replayPlanningByTask ?? null),
+        taskResults: taskResults.map((r): IFlowTaskResultResponse => {
         const doc = r as unknown as Record<string, unknown>;
         return {
           id: doc._id as string,
@@ -1368,7 +1886,7 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     await execution.save();
 
     await this.taskResultModel.updateMany(
-      { executionId, status: { $in: ['pending', 'running'] } },
+      { executionId, status: { $in: ['pending', 'running', 'interrupted'] } },
       { status: 'cancelled' },
     );
 

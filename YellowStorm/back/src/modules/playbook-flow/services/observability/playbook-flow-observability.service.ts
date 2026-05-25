@@ -114,10 +114,10 @@ export class PlaybookFlowObservabilityService {
     toolTraceCount: number,
     promptTraceCount: number,
   ): void {
-    if (payload.tool_trace != null && toolTraceCount === 0) {
+    if (Array.isArray(payload.tool_trace) && payload.tool_trace.length > 0 && toolTraceCount === 0) {
       this.logger.warn(`Dropped invalid tool_trace payload for execution ${context.executionId} task ${context.taskId}`);
     }
-    if (payload.llm_prompt_trace != null && promptTraceCount === 0) {
+    if (Array.isArray(payload.llm_prompt_trace) && payload.llm_prompt_trace.length > 0 && promptTraceCount === 0) {
       this.logger.warn(`Dropped invalid llm_prompt_trace payload for execution ${context.executionId} task ${context.taskId}`);
     }
   }

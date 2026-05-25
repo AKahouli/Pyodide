@@ -26,6 +26,8 @@ import type {
 import { PORT_COLORS } from '../utils/port-colors';
 import { isDataBindingResolved } from '../utils/required-port-validation';
 import { getPortColor } from '../utils/port-colors';
+import { hasArtifactKindMismatch, createCompatibleInputPort } from '../utils/port-compatibility';
+import { ArtifactKindMismatchDialog } from './ArtifactKindMismatchDialog';
 
 type TFunction = (key: string, params?: TranslationParams) => string;
 
@@ -254,7 +256,12 @@ export function PlaybookDataFlowSection({
     [allBindings, targetNodeId, updateDataBindings],
   );
 
-  const connectToNodeOutput = useCallback(
+  const [pendingDataFlowMismatch, setPendingDataFlowMismatch] = useState<{
+    inputPort: TaskInputPort;
+    source: { taskId: string; portId: string; portName: string; artifactKind: ArtifactKind };
+  } | null>(null);
+
+  const commitNodeOutputBinding = useCallback(
     (portId: string, sourceTaskId: string, sourcePortId: string) => {
       const existing = bindingByPort.get(portId);
       const binding: DataBinding = existing
@@ -281,6 +288,25 @@ export function PlaybookDataFlowSection({
       }
     },
     [allBindings, bindingByPort, targetNodeId, updateDataBindings],
+  );
+
+  const connectToNodeOutput = useCallback(
+    (portId: string, sourceTaskId: string, sourcePortId: string) => {
+      const inputPort = inputPorts.find((p) => p.id === portId);
+      const sourceTask = allTasks.find((t) => t.id === sourceTaskId);
+      const sourceOutputPort = sourceTask?.outputPorts?.find((p) => p.id === sourcePortId);
+
+      if (inputPort && sourceOutputPort && hasArtifactKindMismatch(sourceOutputPort.artifactKind, inputPort.artifactKind)) {
+        setPendingDataFlowMismatch({
+          inputPort,
+          source: { taskId: sourceTaskId, portId: sourcePortId, portName: sourceOutputPort.name || sourceOutputPort.id, artifactKind: sourceOutputPort.artifactKind },
+        });
+        return;
+      }
+
+      commitNodeOutputBinding(portId, sourceTaskId, sourcePortId);
+    },
+    [allTasks, inputPorts, commitNodeOutputBinding],
   );
 
   const updateInputPort = useCallback(
@@ -472,6 +498,31 @@ export function PlaybookDataFlowSection({
           )}
         </div>
       </div>
+
+      {pendingDataFlowMismatch && (
+        <ArtifactKindMismatchDialog
+          open
+          onOpenChange={(open) => { if (!open) setPendingDataFlowMismatch(null); }}
+          sourcePortName={pendingDataFlowMismatch.source.portName}
+          sourceArtifactKind={pendingDataFlowMismatch.source.artifactKind}
+          targetPortName={pendingDataFlowMismatch.inputPort.name || pendingDataFlowMismatch.inputPort.id}
+          targetArtifactKind={pendingDataFlowMismatch.inputPort.artifactKind}
+          canModifyPorts={Boolean(canEditPorts && onInputPortsChange)}
+          onCreateCompatibleInput={() => {
+            const source = pendingDataFlowMismatch.source;
+            const newPort = createCompatibleInputPort(source.portName, source.artifactKind);
+            onInputPortsChange?.([...inputPorts, newPort]);
+            commitNodeOutputBinding(newPort.id, source.taskId, source.portId);
+            setPendingDataFlowMismatch(null);
+          }}
+          onUpdateExistingInput={() => {
+            const { inputPort, source } = pendingDataFlowMismatch;
+            updateInputPort(inputPort.id, { artifactKind: source.artifactKind });
+            commitNodeOutputBinding(inputPort.id, source.taskId, source.portId);
+            setPendingDataFlowMismatch(null);
+          }}
+        />
+      )}
     </div>
   );
 }

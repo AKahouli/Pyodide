@@ -27,9 +27,12 @@ export function BaselineBadgePopover({
   const [open, setOpen] = useState(false);
 
   const displayLabel = iterationIndex != null ? `${badgeLabel} #${iterationIndex + 1}` : badgeLabel;
+  const title = replay?.intentKey
+    ? `${displayLabel} (${replay.intentKey}, v${replay.validationVersion})`
+    : displayLabel;
 
   if (!replay?.id) {
-    return <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', toneClassName)}>{displayLabel}</span>;
+    return <span title={title} className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium', toneClassName)}>{displayLabel}</span>;
   }
 
   return (
@@ -41,6 +44,7 @@ export function BaselineBadgePopover({
           'cursor-pointer transition-opacity hover:opacity-90',
           toneClassName,
         )}
+        title={title}
         onClick={(e) => {
           e.stopPropagation();
           setOpen(true);
@@ -57,6 +61,7 @@ export function BaselineBadgePopover({
         replay={replay}
         replayId={replay.id}
         onOpenOutputFormatEditor={onOpenOutputFormatEditor}
+        defaultTab="capture"
       />
     </>
   );

@@ -6,6 +6,21 @@ import json
 from typing import Any
 
 
+def _port_schema_entry(port: dict[str, Any]) -> dict[str, Any]:
+    port_id = str(port.get("id") or "default")
+    kind = str(port.get("type") or "text")
+    entry: dict[str, Any] = {
+        "output_port_id": port_id,
+        "artifact_kind": kind,
+    }
+    if kind == "document":
+        entry["filename"] = "the generated file name including extension"
+        entry["filepath"] = "the storage path of the generated file"
+    else:
+        entry["content"] = "return the value for this port"
+    return entry
+
+
 def build_step_prompt(
     label: str,
     node_id: str,
@@ -53,11 +68,7 @@ def build_step_prompt(
         response_schema = {
             "display_text": "user-visible final answer",
             "outputs": [
-                {
-                    "output_port_id": str(port.get("id") or "default"),
-                    "artifact_kind": str(port.get("type") or "text"),
-                    "content": "return the value for this port",
-                }
+                _port_schema_entry(port)
                 for port in ports
                 if isinstance(port, dict)
             ],
@@ -72,20 +83,22 @@ def build_step_prompt(
             json.dumps(response_schema, indent=2, default=str),
             "`display_text` is the final human-readable answer.",
             "Each item in `outputs` must target one declared output port.",
-            "For file outputs, put filename/url metadata into `content`.",
+            "For document outputs, use `filename` and `filepath` (not `content`).",
+            "For text/code outputs, use `content` for the string payload.",
+            "For data outputs, use `content` for the structured JSON payload.",
             "`reasoning_trace` is an array of objects describing your reasoning steps.",
-            "Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional).",
+            'Each item has: id (string), type (string), label (string), description (string), confidence (number 0-1, optional), it should respect strictly this JSON format : [{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]'
         ])
     else:
         lines.extend([
-            "",
-            "Reasoning Trace:",
-            "After your final answer, **MUST ALWAYS append** a reasoning trace block on a new line using this exact format:",
-            "---PUBLIC_REASONING_TRACE_JSON---",
-            "Followed by a JSON array of objects with keys: id (string), type (string), label (string), description (string), confidence (number 0-1, optional).",
-            "Each item represents one step of your reasoning process.",
-            "Example:",
-            "---PUBLIC_REASONING_TRACE_JSON---",
-            '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',
-        ])
+        "",
+        "Reasoning Trace:",
+        "After your final answer, **MUST ALWAYS append** a reasoning trace block on a new line using this exact format,  it should respect strictly the following JSON format :",       
+        "Example:",
+        "---PUBLIC_REASONING_TRACE_JSON---",
+        '[{"id":"step_1","type":"observation","label":"Analyzed input","description":"Examined the resolved inputs for patterns.","confidence":0.9}]',
+        "where keys: id (string), type (string), label (string), description (string), confidence (number 0-1, optional). Each item represents one step of your reasoning process."  
+        
+
+    ])
     return "\n".join(lines)

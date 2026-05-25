@@ -7,7 +7,7 @@ Behavioral guidelines to reduce common LLM coding mistakes. Bias toward caution 
 - State assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them — don't pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
-- If something is unclear, stop. Name what's confusing. Ask.
+- Ask only when ambiguity affects correctness, safety, scope, external contracts, or irreversible decisions. Otherwise proceed with the smallest reasonable interpretation and state the assumption.
 
 ## 2. Simplicity First
 
@@ -23,7 +23,7 @@ Behavioral guidelines to reduce common LLM coding mistakes. Bias toward caution 
 ## Non-Negotiable Principles
 
 - **SRP** — one file, one class, one function = one reason to change. If you can describe the unit with the word "and", split it.
-- **DRY** — no copy-pasted logic across modules. Extract to a service, util, or hook *the second* time a pattern appears, not the third.
+- **DRY** — no copy-pasted logic across modules. Extract on the second occurrence only when the duplicated logic represents the same domain concept and is likely to change together.
 - **KISS** — prefer the boring solution. No premature abstraction, no generic-for-future-use, no plugin systems unless a second consumer exists today.
 - **YAGNI** — do not add fields, params, options, or branches "in case we need them". Add them when a caller requires them.
 
@@ -39,7 +39,7 @@ Behavioral guidelines to reduce common LLM coding mistakes. Bias toward caution 
 | Nesting depth | **3** levels | 2 |
 
 
-Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibility, not arbitrarily — splitting a 400-line file into two 200-line halves that always change together fails SRP and is rejected.
+Crossing a hard cap is a refactor trigger, not a style nit. Split by responsibility, not arbitrarily — splitting a 400-line file into two 200-line halves that always change together fails SRP and is rejected. Do not refactor oversized existing units unless necessary for the requested change or correctness; for surgical fixes, note the follow-up.
 
 ## Architecture Boundaries
 
@@ -103,7 +103,7 @@ The default is **no comment**. Code names things, comments explain things code c
 ## Errors
 
 - **Never `catch {}`**. Never `catch (e) { /* ignore */ }`.
-- **Never `throw new Error(...)`** in a reachable code path — always `AppException` subclasses with `ErrorCode` (backend) or typed domain errors (Python).
+- **Avoid raw `throw new Error(...)` in reachable domain paths** — use `AppException` subclasses with `ErrorCode` in backend application code, or typed domain errors in Python.
 - **Validate at boundaries only** (DTO at HTTP, proto at gRPC, Zod at form). Internal callers are trusted — do not re-validate.
 - **No defensive `if (!x)` for arguments the type system guarantees.** Trust your types.
 - **Loop-specific:** every router must have a terminal label (one route to `END` or a non-router node). The builder rejects router configs that can only loop.
@@ -233,7 +233,7 @@ The main agent implements. Sub-agents provide bounded specialist work. Their loc
 - `plan`: read-only implementation planning for ambiguous, risky, multi-file, cross-module, API/schema/architecture, or contract work.
 - `frontend-qa`: browser QA gate for frontend-visible UI, runtime, interaction, responsive, accessibility, console, or network changes.
 - `reviewer`: final quality gate for non-trivial code changes.
-- `maintainer`: Obsidian memory updates and explicitly delegated behavior-preserving refactors.
+- `maintainer`: Obsidian memory updates by default; behavior-preserving code refactors require explicit user/build delegation.
 
 Blocking gates:
 - `frontend-qa` blocks frontend-visible changes until PASS or the user accepts the risk.
@@ -253,6 +253,7 @@ Use for typo, formatting, comment-only, config text, or single-line non-runtime 
 Process:
 - Inspect the target file.
 - Make the smallest safe change.
+- Skip Obsidian vault search unless the target file or instruction is unclear.
 - Skip `plan`, `frontend-qa`, `reviewer`, and `maintainer` unless risk appears.
 
 #### Tier 1: Local Code Change
@@ -263,7 +264,7 @@ Process:
 - Inspect relevant code.
 - Use `explore` only if file ownership or call sites are unclear.
 - Run the narrowest useful verification.
-- Use `reviewer` if behavior changed.
+- Use `reviewer` for behavior changes, tests that encode behavior, or runtime changes. Skip only for purely mechanical edits.
 
 #### Tier 2: Standard Change
 
@@ -317,7 +318,7 @@ Skip when:
 
 Use after implementation when:
 - UI, layout, styling, routing, forms, browser runtime, responsive behavior, accessibility, or visible interaction changed.
-- when you don't support image, must always Use `frontend-qa` for testing through browser
+- Use `frontend-qa` for all frontend-visible changes, especially when browser, screenshot, responsive, or interaction validation is needed.
 Skip when:
 - Frontend files changed but no visible runtime behavior changed, such as type-only edits or dead code cleanup.
 
@@ -344,7 +345,7 @@ Skip when:
 Before editing:
 
 1. Classify the task tier.
-2. Must always search the obsidian vault for module boundaries, imports, and dependencies relevant to the task, Must always use Fragment Search Strategies (  "strategy": "semantic")
+2. Must almways search the Obsidian vault for module boundaries, imports, and dependencies relevant to the task. Use Fragment Search Strategies (`strategy: "semantic"`).
 3. Read relevant guideline file per Mandatory Guideline Loading table.
 4. Inspect relevant code directly.
 5. Use `explore` if ownership, call paths, or dependencies are unclear.
@@ -418,7 +419,7 @@ YellowStorm/
 - All timestamps UTC.
 - Content factual and code-derived.
 - Vault interactions go through Obsidian MCP tools, never direct filesystem.
-- `docs/` is passive human reference. Agents must not read or write `docs/` during normal workflow.
+- `docs/` is passive human reference. Agents must not read or write `docs/` for agent memory retrieval unless the user task explicitly targets docs or code references docs as source material.
 
 ### Feature Note Frontmatter
 

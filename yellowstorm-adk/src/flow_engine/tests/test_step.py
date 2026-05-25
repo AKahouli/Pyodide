@@ -23,16 +23,51 @@ sys.modules.setdefault("structlog", fake_structlog)
 
 fake_langgraph = types.ModuleType("langgraph")
 fake_langgraph_config = types.ModuleType("langgraph.config")
+fake_langgraph_types = types.ModuleType("langgraph.types")
 fake_langgraph_config.get_stream_writer = lambda: (lambda event: None)
+fake_langgraph_types.interrupt = lambda *args, **kwargs: None
 sys.modules.setdefault("langgraph", fake_langgraph)
 sys.modules.setdefault("langgraph.config", fake_langgraph_config)
+sys.modules.setdefault("langgraph.types", fake_langgraph_types)
 
 fake_settings = types.ModuleType("src.config.settings")
 fake_settings.get_settings = lambda: SimpleNamespace(
     LITELLM_API_BASE_URL="http://localhost",
     LITELLM_API_SECRET_KEY="test-key",
 )
+fake_settings.Settings = SimpleNamespace
 sys.modules.setdefault("src.config.settings", fake_settings)
+
+fake_step_hitl = types.ModuleType("src.flow_engine.nodes.step_hitl")
+
+
+class _FakeStepHitlResult:
+    def __init__(self, skipped=False, failed=False, updated_description=None, error_msg="", needs_reexec=False):
+        self.skipped = skipped
+        self.failed = failed
+        self.updated_description = updated_description
+        self.error_msg = error_msg
+        self.needs_reexec = needs_reexec
+
+
+async def _fake_handle_hitl(*args, **kwargs):
+    return _FakeStepHitlResult()
+
+
+fake_step_hitl.StepHitlResult = _FakeStepHitlResult
+fake_step_hitl.needs_hitl = lambda metadata: False
+fake_step_hitl.handle_interrupt_before = _fake_handle_hitl
+fake_step_hitl.handle_clarification_before = _fake_handle_hitl
+fake_step_hitl.handle_clarification_after = _fake_handle_hitl
+fake_step_hitl.handle_interrupt_after = _fake_handle_hitl
+sys.modules.setdefault("src.flow_engine.nodes.step_hitl", fake_step_hitl)
+
+fake_step_hitl_handlers = types.ModuleType("src.flow_engine.nodes.step_hitl_handlers")
+fake_step_hitl_handlers.handle_interrupt_before = _fake_handle_hitl
+fake_step_hitl_handlers.handle_clarification_before = _fake_handle_hitl
+fake_step_hitl_handlers.handle_clarification_after = _fake_handle_hitl
+fake_step_hitl_handlers.handle_interrupt_after = _fake_handle_hitl
+sys.modules.setdefault("src.flow_engine.nodes.step_hitl_handlers", fake_step_hitl_handlers)
 
 from src.flow_engine.nodes.step import run_step
 from src.flow_engine.nodes.step_prompt import build_step_prompt
@@ -66,7 +101,7 @@ class TestStepPrompt:
         assert 'Trigger Context:\n{\n  "email": {' in prompt
         assert 'Output Contract:\n{\n  "raw": "Return JSON"' in prompt
         assert "Iteration:\n2" in prompt
-        assert "Complete this node using only the resolved input data and declared output contract." in prompt
+        assert "Complete this node using only the resolved input data (if applicable/available) and declared output contract." in prompt
         assert "---PUBLIC_REASONING_TRACE_JSON---" in prompt
         assert "Reasoning Trace:" in prompt
         assert "reasoning_trace" not in prompt

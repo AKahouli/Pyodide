@@ -16,6 +16,9 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   const nodeActions = useContext(NodeDataActionsContext);
   const childCount = node.childTaskIds?.length || 0;
   const isEmpty = childCount === 0;
+  const selectedClass = selected
+    ? 'border-[#ffcd03] ring-4 ring-inset ring-[#ffcd03]/60 shadow-lg shadow-[#ffcd03]/25'
+    : 'border-border';
   const dragActive = useRef(false);
   const dragStart = useRef({ x: 0, y: 0, width: 0, height: 0 });
   const lastSize = useRef({ width: ITERATOR_MIN_WIDTH, height: ITERATOR_MIN_HEIGHT });
@@ -126,7 +129,7 @@ export function PlaybookIteratorContainerNode({ data, selected }: NodeProps) {
   }, [finishResize, isResizing, queueSizeUpdate]);
 
   return (
-    <div className={`relative h-full w-full overflow-visible rounded-xl border-2 border-dashed transition-colors ${selected ? 'border-primary shadow-lg shadow-primary/20' : 'border-border'} ${isEmpty ? 'bg-muted/35' : 'bg-muted/20'} ${isResizing ? 'shadow-xl shadow-primary/30' : ''}`}>
+    <div className={`relative h-full w-full overflow-visible rounded-xl border-2 border-dashed transition-colors ${selectedClass} ${isEmpty ? 'bg-muted/35' : 'bg-muted/20'} ${isResizing ? 'shadow-xl shadow-primary/30' : ''}`}>
       {(node.inputPorts || []).map((port) => (
         <Handle
           key={port.id}

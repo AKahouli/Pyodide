@@ -1,4 +1,5 @@
 import { PendingApproval } from '../schemas/playbook-flow-execution.schema';
+import type { ReplayPlanningSummary } from './playbook-flow-replay-plan.interface';
 import {
   FlowLlmPromptTraceItem,
   FlowSemanticMatchSummary,
@@ -30,6 +31,7 @@ export interface IFlowExecutionResponse {
   advisorAutopilotEnabled?: boolean;
   advisorAutopilotTargetScore?: number;
   advisorAutopilotMaxTurns?: number;
+  replayPlanningByTask?: Record<string, ReplayPlanningSummary> | null;
   createdAt: Date;
   updatedAt: Date;
 }
