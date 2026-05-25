@@ -1795,7 +1795,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               ? 'Fichier ajouté'
               : `${validFiles.length} fichiers ajoutés`,
           );
-          await get().refreshPageData();
+          await Promise.all([get().refreshPageData(), get().refreshWorkspace(workspaceId)]);
 
           const newFileIds = get()
             .pageFiles.filter((f) => !previousFileIds.has(f.id))
