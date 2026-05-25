@@ -9,13 +9,13 @@ const mockPresets = [
 
 describe('AppKeySelect', () => {
   it('renders with placeholder when no value is provided', () => {
-    render(<AppKeySelect value="" onChange={jest.fn()} presets={mockPresets} />);
+    render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
     expect(screen.getByText('Select or enter app key...')).toBeInTheDocument();
   });
 
   it('displays selected preset app', () => {
     render(
-      <AppKeySelect value="github" onChange={jest.fn()} presets={mockPresets} />,
+      <AppKeySelect value="github" onChange={vi.fn()} presets={mockPresets} />,
     );
     expect(screen.getByText('GitHub')).toBeInTheDocument();
     expect(screen.getByText('(github)')).toBeInTheDocument();
@@ -23,14 +23,14 @@ describe('AppKeySelect', () => {
 
   it('displays custom app key when value is not in presets', () => {
     render(
-      <AppKeySelect value="custom-app" onChange={jest.fn()} presets={mockPresets} />,
+      <AppKeySelect value="custom-app" onChange={vi.fn()} presets={mockPresets} />,
     );
     const input = screen.getByDisplayValue('custom-app');
     expect(input).toBeInTheDocument();
   });
 
   it('opens dropdown on click', () => {
-    render(<AppKeySelect value="" onChange={jest.fn()} presets={mockPresets} />);
+    render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
     const trigger = screen.getByText('Select or enter app key...');
     fireEvent.click(trigger);
     expect(screen.getByText('Preset Apps')).toBeInTheDocument();
@@ -38,7 +38,7 @@ describe('AppKeySelect', () => {
   });
 
   it('selects a preset when clicked', () => {
-    const handleChange = jest.fn();
+    const handleChange = vi.fn();
     render(
       <AppKeySelect value="" onChange={handleChange} presets={mockPresets} />,
     );
@@ -53,7 +53,7 @@ describe('AppKeySelect', () => {
     render(
       <AppKeySelect
         value=""
-        onChange={jest.fn()}
+        onChange={vi.fn()}
         presets={mockPresets}
         existingAppKeys={['github']}
       />,
@@ -65,14 +65,14 @@ describe('AppKeySelect', () => {
   });
 
   it('shows custom input option when available presets exist', () => {
-    render(<AppKeySelect value="" onChange={jest.fn()} presets={mockPresets} />);
+    render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
     const trigger = screen.getByText('Select or enter app key...');
     fireEvent.click(trigger);
     expect(screen.getByText('Custom App Key...')).toBeInTheDocument();
   });
 
   it('switches to custom input mode when custom option is selected', () => {
-    const handleChange = jest.fn();
+    const handleChange = vi.fn();
     render(
       <AppKeySelect value="" onChange={handleChange} presets={mockPresets} />,
     );
@@ -85,7 +85,7 @@ describe('AppKeySelect', () => {
   });
 
   it('updates value when typing in custom input', () => {
-    const handleChange = jest.fn();
+    const handleChange = vi.fn();
     render(
       <AppKeySelect
         value=""
@@ -104,14 +104,14 @@ describe('AppKeySelect', () => {
 
   it('is disabled when disabled prop is true', () => {
     render(
-      <AppKeySelect value="" onChange={jest.fn()} presets={mockPresets} disabled />,
+      <AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} disabled />,
     );
     const trigger = screen.getByText('Select or enter app key...');
     expect(trigger).toBeDisabled();
   });
 
   it('closes dropdown when clicking outside', () => {
-    render(<AppKeySelect value="" onChange={jest.fn()} presets={mockPresets} />);
+    render(<AppKeySelect value="" onChange={vi.fn()} presets={mockPresets} />);
     const trigger = screen.getByText('Select or enter app key...');
     fireEvent.click(trigger);
     expect(screen.getByText('Preset Apps')).toBeInTheDocument();
