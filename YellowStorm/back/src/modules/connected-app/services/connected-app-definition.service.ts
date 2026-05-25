@@ -10,7 +10,7 @@ import { CryptoService } from '@common/services/crypto.service';
 import { LoggerService } from '@modules/logger';
 import { ConflictException, NotFoundException } from '@modules/exceptions';
 import { ErrorCode } from '@modules/exceptions/constants/error-codes';
-import { CreateConnectedAppDefinitionDto } from '../dto/create-connected-app-definition.dto';
+import { CreateConnectedAppDefinitionDto, DEFAULT_COMMON_APP_KEYS } from '../dto/create-connected-app-definition.dto';
 import { UpdateConnectedAppDefinitionDto } from '../dto/update-connected-app-definition.dto';
 import {
   ConnectedAppAdminResponse,
@@ -240,5 +240,88 @@ export class ConnectedAppDefinitionService {
       createdAt: d.createdAt,
       updatedAt: d.updatedAt,
     };
+  }
+
+  private getAppKeysFromEnv(): Record<string, string> {
+    try {
+      const envValue = process.env.COMMON_APP_KEYS;
+      if (!envValue) {
+        this.logger.debug('COMMON_APP_KEYS not in env, using defaults');
+        return DEFAULT_COMMON_APP_KEYS as Record<string, string>;
+      }
+
+      const parsed = JSON.parse(envValue);
+
+      // Handle both array format ["github", "google", ...] and object format {"github":"GitHub", ...}
+      if (Array.isArray(parsed)) {
+        // Array contains lowercase app names, use as both key and display name
+        const result: Record<string, string> = {};
+        parsed.forEach((appName: string) => {
+          const key = appName.toLowerCase();
+          result[key] = appName; // Use exactly as provided in env
+        });
+        this.logger.debug('Loaded COMMON_APP_KEYS from env (array format)', { count: Object.keys(result).length });
+        return result;
+      }
+
+      this.logger.debug('Loaded COMMON_APP_KEYS from env (object format)', { count: Object.keys(parsed).length });
+      return parsed;
+    } catch (error) {
+      this.logger.error('Failed to parse COMMON_APP_KEYS from env, using defaults', String(error));
+      return DEFAULT_COMMON_APP_KEYS as Record<string, string>;
+    }
+  }
+
+  getPresets() {
+    const appKeys = this.getAppKeysFromEnv();
+    return Object.entries(appKeys).map(([key, displayName]) => ({
+      key,
+      displayName,
+      appKey: key,
+    }));
+  }
+
+  async validateAppKey(appKey: string): Promise<{ valid: boolean; exists: boolean; suggestion?: string }> {
+    const formatRegex = /^[a-z0-9-]+$/;
+
+    if (!formatRegex.test(appKey)) {
+      return {
+        valid: false,
+        exists: false,
+        suggestion: appKey.toLowerCase().replace(/[^a-z0-9]/g, '-'),
+      };
+    }
+
+    const existing = await this.definitionModel.findOne({ appKey: appKey.toLowerCase() }).lean().exec();
+
+    return {
+      valid: true,
+      exists: !!existing,
+    };
+  }
+
+  async suggestAppKey(displayName: string): Promise<string> {
+    const slug = displayName
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
+      .replace(/-+/g, '-');
+
+    let baseKey = slug;
+    let counter = 1;
+
+    while (await this.definitionModel.exists({ appKey: baseKey })) {
+      baseKey = `${slug}-${counter}`;
+      counter++;
+    }
+
+    return baseKey;
+  }
+
+  async generateCallbackUrl(appKey: string, backendUrl?: string): Promise<string> {
+    const apiPrefix = process.env.API_PREFIX || 'api';
+    const baseUrl = backendUrl || process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 3000}`;
+    return `${baseUrl}/${apiPrefix}/v1/connected-apps/${appKey}/callback`;
   }
 }
