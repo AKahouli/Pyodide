@@ -548,6 +548,126 @@ def _summarize_tool_result(result: Any, max_length: int = 2000) -> str:
     return f"{text[:max_length]}...[truncated]"
 
 
+
+
+
+def _parse_tool_result(result: Any) -> Any:
+    """Try to parse a tool result as JSON if it's a string, otherwise return as-is.
+
+    MCP tools often return serialized JSON strings rather than Python objects.
+    """
+    if isinstance(result, str):
+        try:
+            return json.loads(result)
+        except (json.JSONDecodeError, ValueError):
+            return result
+    return result
+
+
+def _extract_images_from_result(result: Any) -> List[str]:
+    """Recursively collect all image_base64 values from a tool result."""
+    images = []
+    if isinstance(result, dict):
+        for k, v in result.items():
+            if k == "image_base64" and isinstance(v, str) and v:
+                images.append(v)
+            else:
+                images.extend(_extract_images_from_result(v))
+    elif isinstance(result, list):
+        for item in result:
+            images.extend(_extract_images_from_result(item))
+    return images
+
+
+def _strip_images_from_tool_result(result: Any) -> Any:
+    """Recursively remove image_base64 fields to keep text content lean."""
+    if isinstance(result, dict):
+        return {k: _strip_images_from_tool_result(v) for k, v in result.items() if k != "image_base64"}
+    if isinstance(result, list):
+        return [_strip_images_from_tool_result(item) for item in result]
+    return result
+
+
+def _compress_tool_json(data: Any) -> Any:
+    """Remove redundant verbose block arrays when a summary content string is already present.
+
+    Many search tools return both:
+      - "blocks": [{block_id, block_type, content, page_number, ...}, ...]  (verbose)
+      - "content": "all block text concatenated"                              (compact)
+
+    Keeping both sends the same text twice. Drop "blocks" when "content" exists.
+    Also drops "page_section_id" from top-level dicts as it is already in section IDs.
+    """
+    if isinstance(data, dict):
+        # Drop redundant blocks array when content summary is present
+        if isinstance(data.get("blocks"), list) and isinstance(data.get("content"), str):
+            data = {k: v for k, v in data.items() if k != "blocks"}
+        return {k: _compress_tool_json(v) for k, v in data.items()}
+    if isinstance(data, list):
+        return [_compress_tool_json(item) for item in data]
+    return data
+
+
+def _build_tool_text_content(result: Any) -> str:
+    """Build text-only content for a ToolMessage.
+
+    Images are extracted separately and injected as HumanMessage vision content
+    so Azure counts them as ~1,105 tokens each instead of ~33k when embedded
+    as base64 text inside a ToolMessage JSON blob.
+    """
+    parsed = _parse_tool_result(result)
+    compressed = _compress_tool_json(_strip_images_from_tool_result(parsed))
+    text = str(compressed)
+    logger.info("Tool text content built", text_length=len(text))
+    return text
+
+
+def _cap_images_in_messages(messages: List, max_images: int = 50) -> List:
+    """Enforce a global image cap across all messages, keeping the most recent images.
+
+    Walks messages newest-to-oldest, allocating the image budget to recent messages first.
+    Images in older messages that exceed the cap are replaced with a text note.
+    """
+    # Count images per message
+    def _count_images(msg) -> int:
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            return sum(1 for b in content if isinstance(b, dict) and b.get("type") == "image_url")
+        return 0
+
+    counts = [_count_images(m) for m in messages]
+    total = sum(counts)
+    if total <= max_images:
+        return messages
+
+    # Allocate budget newest-first
+    budget = max_images
+    keep = []
+    for count in reversed(counts):
+        if budget >= count:
+            keep.append(True)
+            budget -= count
+        else:
+            keep.append(False)
+    keep.reverse()
+
+    result = list(messages)
+    dropped = 0
+    for i, (msg, should_keep, count) in enumerate(zip(messages, keep, counts)):
+        if should_keep or count == 0:
+            continue
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            text_blocks = [b for b in content if isinstance(b, dict) and b.get("type") == "text"]
+            text_blocks.append({"type": "text", "text": f"[{count} image(s) removed — global 50-image limit reached]"})
+            result[i] = msg.copy(update={"content": text_blocks})
+        dropped += count
+
+    logger.warning("Global image cap applied", total=total, kept=total - dropped, dropped=dropped)
+    return result
+
+
+
 def _content_to_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -1190,6 +1310,9 @@ async def _execute_with_tools(
                 for message in messages
             ],
         )
+        messages = _cap_images_in_messages(messages)
+        _est = sum(len(str(getattr(m, "content", ""))) for m in messages) // 4
+        logger.info("Pre-LLM token estimate", estimated_tokens=_est, message_count=len(messages))
         if on_progress is not None and stream_final_output:
             response = await _stream_chat_response(
                 llm_with_tools, messages, on_progress
@@ -1296,14 +1419,31 @@ async def _execute_with_tools(
                     }
                 )
 
+        iteration_images: List[str] = []
         for idx in range(len(response.tool_calls)):
             tool_call, result = results_by_index[idx]
             messages.append(
                 ToolMessage(
-                    content=str(result),
+                    content=_build_tool_text_content(result),
                     tool_call_id=tool_call["id"],
                 )
             )
+            parsed = _parse_tool_result(result)
+            iteration_images.extend(_extract_images_from_result(parsed))
+
+        if iteration_images:
+            capped = iteration_images[:50]
+            if len(iteration_images) > 50:
+                logger.warning("Images capped per iteration", total=len(iteration_images), kept=50)
+            vision_blocks: List[Dict[str, Any]] = [
+                {"type": "text", "text": f"Images from tool results ({len(capped)} image(s)):"}
+            ]
+            for b64 in capped:
+                vision_blocks.append(
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                )
+            messages.append(HumanMessage(content=vision_blocks))
+            logger.info("Vision images injected as HumanMessage", image_count=len(capped))
 
         tool_trace.extend(_snapshot_tool_trace(current_tool_entries))
 
