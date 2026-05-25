@@ -38,6 +38,10 @@ import type {
   WorkspaceFile,
   WorkspaceFolder,
   ClassificationRun,
+  ClassifierRule,
+  ClassifierRuleScope,
+  CreateClassifierRuleInput,
+  UpdateClassifierRuleInput,
   CreateWorkspaceFolderInput,
   UpdateWorkspaceFolderInput,
   StartClassificationRunInput,
@@ -167,6 +171,13 @@ interface WorkspaceState {
   loadingPageFiles: boolean;
   lastClassificationRun: ClassificationRun | null;
   isRunningClassification: boolean;
+
+  // ===== Classifier rules =====
+  globalRules: ClassifierRule[];
+  localRules: ClassifierRule[];
+  localRulesLoadedFor: string | null;
+  isLoadingRules: boolean;
+  isSavingRule: boolean;
 }
 
 interface WorkspaceActions {
@@ -272,6 +283,12 @@ interface WorkspaceActions {
   uploadPageFiles: (files: File[], options?: { autoIndex?: boolean }) => Promise<void>;
   runClassification: (input: StartClassificationRunInput) => Promise<void>;
   pollClassificationRun: (runId: string) => Promise<void>;
+
+  // ===== Classifier rules actions =====
+  fetchRules: (scope: ClassifierRuleScope) => Promise<void>;
+  createRule: (input: Omit<CreateClassifierRuleInput, 'workspaceId'>) => Promise<ClassifierRule | null>;
+  updateRule: (ruleId: string, input: UpdateClassifierRuleInput) => Promise<void>;
+  deleteRule: (ruleId: string) => Promise<void>;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -348,6 +365,13 @@ const initialState: WorkspaceState = {
   loadingPageFiles: false,
   lastClassificationRun: null,
   isRunningClassification: false,
+
+  // Classifier rules
+  globalRules: [],
+  localRules: [],
+  localRulesLoadedFor: null,
+  isLoadingRules: false,
+  isSavingRule: false,
 };
 
 // ===== Store =====
@@ -1639,6 +1663,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           pageFiles: workspaceId !== previous ? [] : get().pageFiles,
           pageWorkspaceLoadedFor: workspaceId !== previous ? null : get().pageWorkspaceLoadedFor,
           lastClassificationRun: null,
+          localRules: workspaceId !== previous ? [] : get().localRules,
+          localRulesLoadedFor: workspaceId !== previous ? null : get().localRulesLoadedFor,
         });
         if (workspaceId) {
           if (workspaceId !== previous) {
@@ -1818,6 +1844,92 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           set({ lastClassificationRun: run });
         } catch (err) {
           toast.error(getApiErrorMessage(err, 'Échec de la récupération du run'));
+        }
+      },
+
+      // ===== Classifier rules actions =====
+
+      fetchRules: async (scope) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (scope === 'local' && !workspaceId) return;
+
+        set({ isLoadingRules: true });
+        try {
+          const rules = await pageApi.listRules({
+            scope,
+            workspaceId: scope === 'local' ? workspaceId ?? undefined : undefined,
+          });
+          if (scope === 'global') {
+            set({ globalRules: rules, isLoadingRules: false });
+          } else {
+            set({ localRules: rules, localRulesLoadedFor: workspaceId, isLoadingRules: false });
+          }
+        } catch (err) {
+          set({ isLoadingRules: false });
+          toast.error(getApiErrorMessage(err, 'Échec du chargement des règles'));
+        }
+      },
+
+      createRule: async (input) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (input.scope === 'local' && !workspaceId) {
+          toast.error('Sélectionnez un workspace avant de créer une règle locale');
+          return null;
+        }
+
+        set({ isSavingRule: true });
+        try {
+          const rule = await pageApi.createRule({
+            scope: input.scope,
+            workspaceId: input.scope === 'local' ? workspaceId ?? undefined : undefined,
+            text: input.text,
+            enabled: input.enabled,
+          });
+          if (rule.scope === 'global') {
+            set((s) => ({ globalRules: [rule, ...s.globalRules], isSavingRule: false }));
+          } else {
+            set((s) => ({ localRules: [rule, ...s.localRules], isSavingRule: false }));
+          }
+          return rule;
+        } catch (err) {
+          set({ isSavingRule: false });
+          toast.error(getApiErrorMessage(err, 'Échec de la création de la règle'));
+          return null;
+        }
+      },
+
+      updateRule: async (ruleId, input) => {
+        // Optimistic update on both lists
+        const prevGlobal = get().globalRules;
+        const prevLocal = get().localRules;
+        set((s) => ({
+          globalRules: s.globalRules.map((r) => (r.id === ruleId ? { ...r, ...input } : r)),
+          localRules: s.localRules.map((r) => (r.id === ruleId ? { ...r, ...input } : r)),
+        }));
+        try {
+          const updated = await pageApi.updateRule(ruleId, input);
+          set((s) => ({
+            globalRules: s.globalRules.map((r) => (r.id === ruleId ? updated : r)),
+            localRules: s.localRules.map((r) => (r.id === ruleId ? updated : r)),
+          }));
+        } catch (err) {
+          set({ globalRules: prevGlobal, localRules: prevLocal });
+          toast.error(getApiErrorMessage(err, 'Échec de la mise à jour de la règle'));
+        }
+      },
+
+      deleteRule: async (ruleId) => {
+        const prevGlobal = get().globalRules;
+        const prevLocal = get().localRules;
+        set((s) => ({
+          globalRules: s.globalRules.filter((r) => r.id !== ruleId),
+          localRules: s.localRules.filter((r) => r.id !== ruleId),
+        }));
+        try {
+          await pageApi.deleteRule(ruleId);
+        } catch (err) {
+          set({ globalRules: prevGlobal, localRules: prevLocal });
+          toast.error(getApiErrorMessage(err, 'Échec de la suppression de la règle'));
         }
       },
     }),

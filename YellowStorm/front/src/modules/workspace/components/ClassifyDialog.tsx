@@ -207,7 +207,7 @@ export function ClassifyDialog({ open, onOpenChange }: Props) {
                 className='gap-2'
               >
                 <Sparkles className='h-4 w-4' />
-                Classifier {overwrite ? 'tout' : `${unmapped} fichier(s)`}
+                Lancer la classification {overwrite ? '· tout' : `· ${unmapped} fichier(s)`}
               </Button>
             </>
           )}

@@ -325,6 +325,8 @@ export const API_ENDPOINTS = {
       `/classifier/workspaces/${workspaceId}/files/${documentId}/folder`,
     runs: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/runs`,
     runById: (id: string) => `/classifier/runs/${id}`,
+    rules: '/classifier/rules',
+    ruleById: (id: string) => `/classifier/rules/${id}`,
   },
   evaluation: {
     datasets: '/evaluation/datasets',

@@ -23,6 +23,7 @@ import {
 import { ErrorCode } from '../../exceptions/constants/error-codes';
 import { LoggerService } from '../../logger';
 import { ClassifierAccessService } from './classifier-access.service';
+import { ClassifierRuleService } from './classifier-rule.service';
 
 @Injectable()
 export class ClassifierRunService {
@@ -36,6 +37,7 @@ export class ClassifierRunService {
     @InjectModel(ClassifierFileAssignment.name)
     private readonly assignmentModel: Model<ClassifierFileAssignmentDocument>,
     private readonly access: ClassifierAccessService,
+    private readonly ruleService: ClassifierRuleService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ClassifierRunService.name);
@@ -78,11 +80,14 @@ export class ClassifierRunService {
       if (candidateCount < 0) candidateCount = 0;
     }
 
+    const activeRules = await this.ruleService.getActiveForWorkspace(userId, workspaceId);
+    const composedHint = this.composeHint(dto.hint, activeRules.map((r) => r.text));
+
     const run = await this.runModel.create({
       workspaceId: wsObjectId,
       status: ClassificationRunStatus.QUEUED,
       playbookId: new Types.ObjectId(dto.playbookId),
-      hint: dto.hint?.trim() || undefined,
+      hint: composedHint,
       overwriteExisting: dto.overwrite ?? false,
       totalFiles: candidateCount,
       classifiedFiles: 0,
@@ -172,6 +177,31 @@ export class ClassifierRunService {
   }
 
   // ───────── helpers ─────────
+
+  private composeHint(
+    userHint: string | undefined,
+    activeRuleTexts: string[],
+  ): string | undefined {
+    const trimmedHint = userHint?.trim() || '';
+    const cleanRules = activeRuleTexts
+      .map((r) => r.trim())
+      .filter((r) => r.length > 0);
+
+    if (!trimmedHint && cleanRules.length === 0) {
+      return undefined;
+    }
+
+    const parts: string[] = [];
+    if (trimmedHint) {
+      parts.push(trimmedHint);
+    }
+    if (cleanRules.length > 0) {
+      const rulesBlock = ['Règles à respecter :', ...cleanRules.map((r) => `- ${r}`)].join('\n');
+      parts.push(rulesBlock);
+    }
+
+    return parts.join('\n\n');
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private toResponse(doc: any): IClassificationRunResponse {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, RefreshCw, Search, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, RefreshCw, Search, Shield, Sparkles, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -24,6 +24,7 @@ import { EditFolderDialog } from './EditFolderDialog';
 import { MoveFolderDialog } from './MoveFolderDialog';
 import { MoveFileDialog } from './MoveFileDialog';
 import { ClassifyDialog } from './ClassifyDialog';
+import { RulesDialog } from './RulesDialog';
 import { WorkspaceUploadDropZone } from './WorkspaceUploadDropZone';
 
 const ITEM_MIME = 'application/x-workspace-page-item';
@@ -87,6 +88,7 @@ export function WorkspacePage() {
   const [moveFolderTarget, setMoveFolderTarget] = useState<WorkspaceFolder | null>(null);
   const [mapFile, setMapFile] = useState<WorkspaceFile | null>(null);
   const [classifyOpen, setClassifyOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
   const { enabled: autoIndex, setEnabled: setAutoIndex } = useAutoIndexation();
 
   const breadcrumbs = useMemo(() => {
@@ -204,6 +206,10 @@ export function WorkspacePage() {
               <FolderPlus className='h-4 w-4' />
               Nouveau dossier
             </Button>
+            <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
+              <Shield className='h-4 w-4' />
+              Règles
+            </Button>
             <Separator orientation='vertical' className='h-6' />
             <Button size='sm' className='gap-1.5' onClick={() => setClassifyOpen(true)}>
               <Sparkles className='h-4 w-4' />
@@ -273,6 +279,7 @@ export function WorkspacePage() {
       <MoveFolderDialog open={!!moveFolderTarget} onOpenChange={(o) => !o && setMoveFolderTarget(null)} folder={moveFolderTarget} />
       <MoveFileDialog open={!!mapFile} onOpenChange={(o) => !o && setMapFile(null)} file={mapFile} />
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
+      <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
     </div>
   );
 }
@@ -566,6 +573,8 @@ function EmptyFolderState({ hasSearch, onCreateFolder }: { hasSearch: boolean; o
 }
 
 function EmptyWorkspaceState() {
+  const [rulesOpen, setRulesOpen] = useState(false);
+
   return (
     <div className='relative flex h-screen w-full flex-col items-center justify-center overflow-hidden bg-background p-6'>
       <div
@@ -593,12 +602,21 @@ function EmptyWorkspaceState() {
           <p className='text-xs text-muted-foreground'>Sélectionnez un workspace pour commencer.</p>
         </div>
 
+        <div className='flex items-center justify-center gap-2'>
+          <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
+            <Shield className='h-4 w-4' />
+            Règles globales
+          </Button>
+        </div>
+
         <div className='flex items-center justify-center gap-x-5 gap-y-2 flex-wrap pt-2 text-xs text-muted-foreground'>
           <InfoItem icon={<FolderPlus className='h-3.5 w-3.5' />} label='Hiérarchie décrite' />
           <InfoItem icon={<Link2 className='h-3.5 w-3.5' />} label='Drag & drop' />
           <InfoItem icon={<Sparkles className='h-3.5 w-3.5' />} label='Playbook IA' />
         </div>
       </div>
+
+      <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} globalOnly />
     </div>
   );
 }

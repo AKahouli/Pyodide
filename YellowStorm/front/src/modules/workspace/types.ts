@@ -134,6 +134,31 @@ export interface WorkspaceFile {
   assignmentSource: AssignmentSource;
 }
 
+export type ClassifierRuleScope = 'global' | 'local';
+
+export interface ClassifierRule {
+  id: string;
+  userId: string;
+  scope: ClassifierRuleScope;
+  workspaceId: string | null;
+  text: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateClassifierRuleInput {
+  scope: ClassifierRuleScope;
+  workspaceId?: string;
+  text: string;
+  enabled?: boolean;
+}
+
+export interface UpdateClassifierRuleInput {
+  text?: string;
+  enabled?: boolean;
+}
+
 export type ClassificationRunStatus =
   | 'queued'
   | 'running'

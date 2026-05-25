@@ -2,9 +2,13 @@ import apiClient, { type ApiResponse } from '@/lib/api/client';
 import { API_ENDPOINTS } from '@/lib/api/config';
 import type {
   ClassificationRun,
+  ClassifierRule,
+  ClassifierRuleScope,
+  CreateClassifierRuleInput,
   CreateWorkspaceFolderInput,
   ListWorkspaceFilesQuery,
   StartClassificationRunInput,
+  UpdateClassifierRuleInput,
   UpdateWorkspaceFolderInput,
   WorkspaceFile,
   WorkspaceFolder,
@@ -136,4 +140,44 @@ export async function getRun(runId: string): Promise<ClassificationRun> {
     API_ENDPOINTS.classifier.runById(runId),
   );
   return response.data.data;
+}
+
+// ───────── Rules ─────────
+
+export async function listRules(query: {
+  scope: ClassifierRuleScope;
+  workspaceId?: string;
+}): Promise<ClassifierRule[]> {
+  const params: Record<string, string> = { scope: query.scope };
+  if (query.workspaceId) params.workspaceId = query.workspaceId;
+  const response = await apiClient.get<ApiResponse<ClassifierRule[]>>(
+    API_ENDPOINTS.classifier.rules,
+    { params },
+  );
+  return response.data.data;
+}
+
+export async function createRule(
+  input: CreateClassifierRuleInput,
+): Promise<ClassifierRule> {
+  const response = await apiClient.post<ApiResponse<ClassifierRule>>(
+    API_ENDPOINTS.classifier.rules,
+    input,
+  );
+  return response.data.data;
+}
+
+export async function updateRule(
+  ruleId: string,
+  input: UpdateClassifierRuleInput,
+): Promise<ClassifierRule> {
+  const response = await apiClient.patch<ApiResponse<ClassifierRule>>(
+    API_ENDPOINTS.classifier.ruleById(ruleId),
+    input,
+  );
+  return response.data.data;
+}
+
+export async function deleteRule(ruleId: string): Promise<void> {
+  await apiClient.delete(API_ENDPOINTS.classifier.ruleById(ruleId));
 }
