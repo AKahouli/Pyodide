@@ -41,6 +41,13 @@ vi.mock('@/modules/localization', () => ({
         'replayReport.title': 'replayReport.title',
         'replayReport.notApplicable': 'Replay evaluation is not applicable for this step.',
         'replayReport.pending': 'Replay report is still pending for this step.',
+        'replayReport.postRun.title': 'Replay Evaluation Synthesis',
+        'replayReport.postRun.loading': 'Replay post-run evaluation is in progress.',
+        'replayReport.postRun.notAvailable': 'Post-run evaluation is not available for this run yet.',
+        'replayReport.postRun.summary': 'Summary',
+        'replayReport.postRun.verdict.match': 'Match',
+        'replayReport.postRun.verdict.minor_drift': 'Minor Drift',
+        'replayReport.postRun.action.accept': 'Accept',
         'replayReport.section.verdict': 'Replay verdict',
         'replayReport.section.eligibility': 'Eligibility',
         'replayReport.section.signalStatuses': 'Signal evaluation',
@@ -227,15 +234,33 @@ describe('ReplayReportPanel', () => {
              outputFormatMatch: 100,
              contextDrift: 100,
              dataDrift: null,
-             driftFindings: [
-               { category: 'reasoning', severity: 'warning', reason: 'reasoning_match_below_threshold' },
-               { category: 'argument_shape', severity: 'warning', reason: 'argument_shape_match_below_threshold' },
-             ],
-             blockedBy: [],
-             semanticMatch: null,
-             createdAt: '2025-01-01T00:00:00.000Z',
-             updatedAt: '2025-01-01T00:00:05.000Z',
-          }],
+              driftFindings: [
+                { category: 'reasoning', severity: 'warning', reason: 'reasoning_match_below_threshold' },
+                { category: 'argument_shape', severity: 'warning', reason: 'argument_shape_match_below_threshold' },
+              ],
+              blockedBy: [],
+              semanticMatch: null,
+              postRunEvaluation: {
+                judgeUsed: true,
+                judgeModel: 'gpt-test',
+                evaluatedAt: '2025-01-01T00:00:06.000Z',
+                verdict: 'minor_drift',
+                overallScore: 76,
+                semanticMatchScore: 80,
+                outputFormatScore: 76,
+                toolSequenceScore: 100,
+                reasoningScore: 50,
+                summary: 'Summary',
+                missingPoints: [],
+                changedPoints: [],
+                preservedPoints: [],
+                recommendedAction: 'review',
+                rawJudgeResponse: null,
+                failureReason: null,
+              },
+              createdAt: '2025-01-01T00:00:00.000Z',
+              updatedAt: '2025-01-01T00:00:05.000Z',
+           }],
         },
       });
 
@@ -310,6 +335,24 @@ describe('ReplayReportPanel', () => {
             verdictReasons: ['structural_drift_detected'],
             structuralDriftReasons: [],
             semanticMatch: null,
+            postRunEvaluation: {
+              judgeUsed: true,
+              judgeModel: 'gpt-test',
+              evaluatedAt: '2025-01-01T00:00:06.000Z',
+              verdict: 'match',
+              overallScore: 82,
+              semanticMatchScore: 82,
+              outputFormatScore: 82,
+              toolSequenceScore: 82,
+              reasoningScore: 82,
+              summary: 'Summary',
+              missingPoints: [],
+              changedPoints: [],
+              preservedPoints: [],
+              recommendedAction: 'accept',
+              rawJudgeResponse: null,
+              failureReason: null,
+            },
             createdAt: '2025-01-01T00:00:00.000Z',
             updatedAt: '2025-01-01T00:00:05.000Z',
           }],
@@ -386,6 +429,24 @@ describe('ReplayReportPanel', () => {
             verdictReasons: ['structural_drift_detected'],
             structuralDriftReasons: [],
             semanticMatch: null,
+            postRunEvaluation: {
+              judgeUsed: true,
+              judgeModel: 'gpt-test',
+              evaluatedAt: '2025-01-01T00:00:06.000Z',
+              verdict: 'match',
+              overallScore: 80,
+              semanticMatchScore: 80,
+              outputFormatScore: 80,
+              toolSequenceScore: 80,
+              reasoningScore: 80,
+              summary: 'Summary',
+              missingPoints: [],
+              changedPoints: [],
+              preservedPoints: [],
+              recommendedAction: 'accept',
+              rawJudgeResponse: null,
+              failureReason: null,
+            },
             createdAt: '2025-01-01T00:00:00.000Z',
             updatedAt: '2025-01-01T00:00:05.000Z',
           }],
@@ -641,6 +702,24 @@ describe('ReplayReportPanel', () => {
           toolSequenceStatus: { status: 'not_evaluated', reason: 'tool_trace_missing' },
           argumentShapeStatus: { status: 'not_evaluated', reason: 'argument_shape_not_captured' },
           semanticStatus: { status: 'not_evaluated', reason: 'semantic_evaluation_missing' },
+          postRunEvaluation: {
+            judgeUsed: true,
+            judgeModel: 'gpt-test',
+            evaluatedAt: '2025-01-01T00:00:06.000Z',
+            verdict: 'not_comparable',
+            overallScore: null,
+            semanticMatchScore: null,
+            outputFormatScore: null,
+            toolSequenceScore: null,
+            reasoningScore: null,
+            summary: '',
+            missingPoints: [],
+            changedPoints: [],
+            preservedPoints: [],
+            recommendedAction: 'review',
+            rawJudgeResponse: null,
+            failureReason: 'Pending not comparable',
+          },
           createdAt: '2025-01-01T00:00:00.000Z',
           updatedAt: '2025-01-01T00:00:05.000Z',
         }],
@@ -787,10 +866,101 @@ describe('ReplayReportPanel', () => {
     );
 
     await flushAsyncWork();
-    for (let index = 0; index < 8; index += 1) {
+    for (let index = 0; index < 20; index += 1) {
       await runPendingPoll();
     }
 
     expect(screen.getByText('Replay report is still pending for this step.')).toBeInTheDocument();
+  });
+
+  it('keeps the report visible and polls silently while post-run evaluation is pending', async () => {
+    apiClientMock.get
+      .mockResolvedValueOnce({
+        data: {
+          data: [{
+            id: 'report-9', executionId: 'exec-9', flowId: 'playbook-1', taskId: 'task-9', iteration: 0,
+            replayId: 'replay-9', validationVersion: 2, mode: 'replay_flex', applied: true, confidenceScore: 90,
+            appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
+            outputContractEvaluated: true, outputContractPassed: true, structuralDriftScore: 95, toolPolicyScore: 95,
+            verdict: 'warning', overallScore: 84, verdictReasons: ['evaluation_pending'], structuralDriftReasons: [],
+            semanticMatch: null, postRunEvaluation: null,
+            createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:05.000Z',
+          }],
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          data: [{
+            id: 'report-9', executionId: 'exec-9', flowId: 'playbook-1', taskId: 'task-9', iteration: 0,
+            replayId: 'replay-9', validationVersion: 2, mode: 'replay_flex', applied: true, confidenceScore: 90,
+            appliedSections: [], skippedSections: [], invalidationReasons: [], confidenceFactors: {},
+            outputContractEvaluated: true, outputContractPassed: true, structuralDriftScore: 95, toolPolicyScore: 95,
+            verdict: 'warning', overallScore: 84, verdictReasons: ['evaluation_pending'], structuralDriftReasons: [],
+            semanticMatch: null,
+            postRunEvaluation: {
+              judgeUsed: true,
+              judgeModel: 'gpt-test',
+              evaluatedAt: '2025-01-01T00:00:10.000Z',
+              verdict: 'minor_drift',
+              overallScore: 88,
+              semanticMatchScore: 92,
+              outputFormatScore: 78,
+              toolSequenceScore: 95,
+              reasoningScore: 94,
+              summary: 'The replay preserved the core meaning.',
+              missingPoints: [],
+              changedPoints: [],
+              preservedPoints: ['Core meaning preserved'],
+              recommendedAction: 'accept',
+              rawJudgeResponse: null,
+              failureReason: null,
+            },
+            createdAt: '2025-01-01T00:00:00.000Z', updatedAt: '2025-01-01T00:00:10.000Z',
+          }],
+        },
+      });
+
+    render(
+      <ReplayReportPanel
+        playbookId="playbook-1"
+        taskId="task-9"
+        executionId="exec-9"
+        execution={{
+          id: 'exec-9',
+          playbookId: 'playbook-1',
+          executedBy: 'user-1',
+          executionNumber: 9,
+          status: 'completed',
+          executionMode: 'replay_flex',
+          stepExecutionModes: { 'task-9': 'replay_flex' },
+          replaySourceByTask: null,
+          taskResults: [],
+          threadId: null,
+          interruptPayload: null,
+          error: null,
+          durationMs: null,
+          startedAt: '2025-01-01T00:00:00.000Z',
+          completedAt: '2025-01-01T00:00:08.000Z',
+          singleStepTaskId: null,
+          playbookSnapshot: null,
+          totalInputTokens: 0,
+          totalOutputTokens: 0,
+          totalTokens: 0,
+          createdAt: '2025-01-01T00:00:00.000Z',
+          updatedAt: '2025-01-01T00:00:08.000Z',
+        }}
+      />,
+    );
+
+    await flushAsyncWork();
+
+    expect(screen.getByText('Replay verdict')).toBeInTheDocument();
+    expect(screen.getByText('Replay post-run evaluation is in progress.')).toBeInTheDocument();
+
+    await runPendingPoll();
+
+    expect(screen.getByText('Replay Evaluation Synthesis')).toBeInTheDocument();
+    expect(screen.getByText('Minor Drift')).toBeInTheDocument();
+    expect(screen.getByText('The replay preserved the core meaning.')).toBeInTheDocument();
   });
 });

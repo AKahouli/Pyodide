@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { useModuleTranslation } from '@/modules/localization';
 import { getReplayReports } from '../api';
 import type {
@@ -34,7 +35,7 @@ interface SignalRow {
 const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
 const ACTIVE_EXECUTION_STATUSES = new Set(['queued', 'running', 'pending_approval']);
 const REPORT_POLL_INTERVAL_MS = 1500;
-const REPORT_POLL_MAX_ATTEMPTS = 8;
+const REPORT_POLL_MAX_ATTEMPTS = 20;
 const SCORE_WARNING_THRESHOLD = 80;
 const SCORE_FAIL_THRESHOLD = 60;
 
@@ -235,6 +236,13 @@ function normalizeScore(value: number | null | undefined): number | null {
   return value > 0 && value <= 1 ? value * 100 : value;
 }
 
+function formatJsonPreview(value: Record<string, unknown> | null): string {
+  if (!value) {
+    return '-';
+  }
+  return JSON.stringify(value, null, 2);
+}
+
 function confidenceTone(score: number): string {
   if (score >= SCORE_WARNING_THRESHOLD) return 'bg-emerald-100 text-emerald-700';
   if (score >= SCORE_FAIL_THRESHOLD) return 'bg-amber-100 text-amber-700';
@@ -369,52 +377,83 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pollingExhausted, setPollingExhausted] = useState(false);
+  const [postRunPending, setPostRunPending] = useState(false);
+  const executionStepMode = execution?.stepExecutionModes?.[taskId];
+  const replayEnabled = isReplayEnabledExecution(execution, executionId, taskId);
+  const replayExecutionActive = Boolean(execution && replayEnabled && ACTIVE_EXECUTION_STATUSES.has(execution.status));
+
+  useEffect(() => {
+    setReport(null);
+    setLoading(true);
+    setError(null);
+    setPollingExhausted(false);
+    setPostRunPending(false);
+  }, [playbookId, taskId, executionId, iteration]);
 
   useEffect(() => {
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let attempts = 0;
 
-    const shouldPollForReport = () => {
-      if (!execution || !ACTIVE_EXECUTION_STATUSES.has(execution.status)) return false;
-      return isReplayEnabledExecution(execution, executionId, taskId);
-    };
+    const shouldPollForReport = () => replayExecutionActive;
+    const shouldPollForPostRunEvaluation = (nextReport: ReplayRunReport | null) => Boolean(
+      nextReport
+      && !nextReport.postRunEvaluation
+      && (replayExecutionActive || (nextReport.verdictReasons ?? []).includes('evaluation_pending')),
+    );
 
-    const loadReport = () => {
+    const loadReport = (silent = false) => {
       let pendingRetry = false;
-      setLoading(true);
+      let receivedVisibleReport = false;
+      if (!silent) {
+        setLoading(true);
+      }
       setError(null);
-      setPollingExhausted(false);
       getReplayReports(playbookId, taskId, { executionId, iteration, limit: 1 })
         .then((reports) => {
           if (cancelled) return;
           const nextReport = reports[0] ?? null;
           setReport(nextReport);
-          if (!nextReport && shouldPollForReport() && attempts < REPORT_POLL_MAX_ATTEMPTS) {
+          receivedVisibleReport = Boolean(nextReport);
+          const waitingForReport = !nextReport && shouldPollForReport();
+          const waitingForPostRun = shouldPollForPostRunEvaluation(nextReport);
+
+          if ((waitingForReport || waitingForPostRun) && attempts < REPORT_POLL_MAX_ATTEMPTS) {
             attempts += 1;
             pendingRetry = true;
-            timeoutId = setTimeout(loadReport, REPORT_POLL_INTERVAL_MS);
-          } else if (!nextReport && shouldPollForReport()) {
+            setPostRunPending(waitingForPostRun || waitingForReport);
+            timeoutId = setTimeout(() => loadReport(true), REPORT_POLL_INTERVAL_MS);
+          } else if (waitingForReport || waitingForPostRun) {
+            setPostRunPending(waitingForPostRun || waitingForReport);
             setPollingExhausted(true);
+          } else {
+            setPostRunPending(false);
           }
         })
         .catch((err) => {
           if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load report');
         })
         .finally(() => {
-          if (!cancelled && !pendingRetry) setLoading(false);
+          if (!cancelled && (!pendingRetry || receivedVisibleReport)) setLoading(false);
         });
     };
 
-    loadReport();
+    loadReport(report !== null);
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [playbookId, taskId, executionId, iteration, execution]);
+  }, [playbookId, taskId, executionId, iteration, execution?.status, execution?.executionMode, executionStepMode, replayExecutionActive]);
 
   if (loading) {
-    return <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{t('replayReport.loading' as any)}</div>;
+    return (
+      <div className="rounded-md border border-muted bg-muted/20 p-6">
+        <div className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+          <Loader2 className="h-7 w-7 animate-spin" />
+          <span>{t('replayReport.loading' as any)}</span>
+        </div>
+      </div>
+    );
   }
   if (error) {
     return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.loadFailed' as any)}</div>;
@@ -427,7 +466,14 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
       if (pollingExhausted) {
         return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.pending' as any)}</div>;
       }
-      return <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground"><Loader2 className="h-3 w-3 animate-spin" />{t('replayReport.loading' as any)}</div>;
+      return (
+        <div className="rounded-md border border-muted bg-muted/20 p-6">
+          <div className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <Loader2 className="h-7 w-7 animate-spin" />
+            <span>{t('replayReport.loading' as any)}</span>
+          </div>
+        </div>
+      );
     }
     return <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.empty' as any)}</div>;
   }
@@ -544,8 +590,11 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
           </div>
 
           {postRunEvaluation.summary && (
-            <div className="rounded-md border bg-muted/20 p-3 text-sm text-foreground">
-              {postRunEvaluation.summary}
+            <div className="rounded-md border bg-muted/20 p-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t('replayReport.postRun.summary' as any)}
+              </div>
+              <div className="mt-2 text-sm text-foreground">{postRunEvaluation.summary}</div>
             </div>
           )}
 
@@ -573,14 +622,51 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
             })}
           </div>
 
-          {postRunEvaluation.failureReason && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-              {postRunEvaluation.failureReason}
-            </div>
-          )}
+          <Collapsible defaultOpen={false} className="rounded-md border bg-muted/10 p-3">
+            <CollapsibleTrigger className="group flex w-full items-center justify-between gap-3 text-left">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t('replayReport.postRun.metadataTitle' as any)}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {t('replayReport.postRun.metadataHint' as any)}
+                </div>
+              </div>
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-3 space-y-3 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+              <div className="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2">
+                <div>
+                  <div className="font-medium text-foreground">{t('replayReport.postRun.evaluatedBy' as any)}</div>
+                  <div className="mt-1">{postRunEvaluation.judgeModel ?? '-'}</div>
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">{t('replayReport.postRun.evaluatedAt' as any)}</div>
+                  <div className="mt-1">{postRunEvaluation.evaluatedAt ? new Date(postRunEvaluation.evaluatedAt).toLocaleString() : '-'}</div>
+                </div>
+              </div>
+              {postRunEvaluation.failureReason && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+                  <div className="font-medium">{t('replayReport.postRun.failureReason' as any)}</div>
+                  <div className="mt-1">{postRunEvaluation.failureReason}</div>
+                </div>
+              )}
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {t('replayReport.postRun.rawJudgeResponse' as any)}
+                </div>
+                <pre className="mt-2 overflow-x-auto rounded-md border bg-background p-3 text-[11px] leading-relaxed text-foreground">{formatJsonPreview(postRunEvaluation.rawJudgeResponse)}</pre>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </div>
       ) : (
-        <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.postRun.notAvailable' as any)}</div>
+        <div className="rounded-md border border-muted bg-muted/20 p-6">
+          <div className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <Loader2 className="h-7 w-7 animate-spin" />
+            <span>{postRunPending && !pollingExhausted ? t('replayReport.postRun.loading' as any) : t('replayReport.postRun.notAvailable' as any)}</span>
+          </div>
+        </div>
       )}
 
       <div className="space-y-2 rounded-md border bg-background p-3">
