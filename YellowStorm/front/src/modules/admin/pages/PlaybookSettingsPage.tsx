@@ -58,6 +58,7 @@ export function PlaybookSettingsPage() {
   const [settings, setSettings] = useState<AdminPlaybookSettings>({
     inferenceModelId: null,
     advisorEvaluationModelId: null,
+    replayEvaluationModelId: null,
     nodeSuggestionsMode: 'manual',
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
