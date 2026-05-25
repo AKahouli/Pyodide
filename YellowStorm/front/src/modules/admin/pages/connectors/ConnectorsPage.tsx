@@ -85,7 +85,7 @@ export function ConnectorsPage() {
         description: data.description,
         icon: data.icon || undefined,
         color: data.color || undefined,
-        authType: data.authSourceType === 'connected_app' ? 'oauth2' : data.authSourceType === 'credential' ? 'token' : 'none',
+        authType: data.authType,
         authSourceType: data.authSourceType || undefined,
         connectedAppKey: data.authSourceType === 'connected_app' ? (data.connectedAppKey || undefined) : undefined,
         runtimeAuthConfig: typeof data.runtimeAuthConfig === 'string' ? (data.runtimeAuthConfig.trim() ? JSON.parse(data.runtimeAuthConfig) : undefined) : undefined,

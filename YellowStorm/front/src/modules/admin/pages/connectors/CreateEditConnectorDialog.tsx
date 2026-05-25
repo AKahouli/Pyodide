@@ -580,7 +580,16 @@ export function CreateEditConnectorDialog({
             <div className='grid grid-cols-2 gap-4'>
               <div>
                 <Label>{t('connectors.form.auth.sourceLabel')}</Label>
-                <Select value={form.authSourceType} onValueChange={(value) => setForm({ ...form, authSourceType: value, connectedAppKey: value === 'connected_app' ? form.connectedAppKey : '' })}>
+                <Select value={form.authSourceType} onValueChange={(value) => {
+                  const newConnectedAppKey = value === 'connected_app' ? form.connectedAppKey : '';
+                  const selectedApp = connectedApps.find((app) => app.appKey === newConnectedAppKey);
+                  setForm({
+                    ...form,
+                    authSourceType: value,
+                    connectedAppKey: newConnectedAppKey,
+                    authType: value === 'connected_app' && selectedApp ? selectedApp.authType : value === 'credential' ? 'token' : 'none',
+                  });
+                }}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.sourcePlaceholder')} />
                   </SelectTrigger>
@@ -593,7 +602,15 @@ export function CreateEditConnectorDialog({
               </div>
               <div>
                 <Label>{t('connectors.form.auth.connectedAppLabel')}</Label>
-                <Select value={form.connectedAppKey || '__none__'} onValueChange={(value) => setForm({ ...form, connectedAppKey: value === '__none__' ? '' : value })} disabled={form.authSourceType !== 'connected_app'}>
+                <Select value={form.connectedAppKey || '__none__'} onValueChange={(value) => {
+                  const newConnectedAppKey = value === '__none__' ? '' : value;
+                  const selectedApp = connectedApps.find((app) => app.appKey === newConnectedAppKey);
+                  setForm({
+                    ...form,
+                    connectedAppKey: newConnectedAppKey,
+                    authType: selectedApp?.authType || 'oauth2',
+                  });
+                }} disabled={form.authSourceType !== 'connected_app'}>
                   <SelectTrigger>
                     <SelectValue placeholder={t('connectors.form.auth.connectedAppPlaceholder')} />
                   </SelectTrigger>
