@@ -5,6 +5,7 @@
  */
 
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { useWorkspaceStore, useWorkspaceModalState } from '../../../store';
 import { CreateWorkspaceStep1, type Step1FormValues } from './CreateWorkspaceStep1';
@@ -12,6 +13,7 @@ import { CreateWorkspaceStep2, type Step2FormValues } from './CreateWorkspaceSte
 import { CreateWorkspaceModalHeader } from './CreateWorkspaceModalHeader';
 
 export function CreateWorkspaceModal() {
+  const navigate = useNavigate();
   const { isCreateModalOpen, createModalStep } = useWorkspaceModalState();
   const closeCreateModal = useWorkspaceStore((state) => state.closeCreateModal);
   const setCreateModalStep = useWorkspaceStore((state) => state.setCreateModalStep);
@@ -59,7 +61,7 @@ export function CreateWorkspaceModal() {
           break;
       }
 
-      await createWorkspace({
+      const workspace = await createWorkspace({
         name: step1Data.name,
         description: step1Data.description,
         settings: settingId,
@@ -67,6 +69,7 @@ export function CreateWorkspaceModal() {
 
       setStep1Data(null);
       closeCreateModal();
+      navigate(`/workspace/${workspace.id}`);
     } catch (error) {
       console.error('Failed to create workspace:', error);
     }
