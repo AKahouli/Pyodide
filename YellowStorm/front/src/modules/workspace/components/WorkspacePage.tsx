@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { toast } from 'sonner';
-import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, RefreshCw, Search, Shield, Sparkles, Trash2, X } from 'lucide-react';
+import { ArrowRight, ChevronRight, Download, DownloadCloud, Eye, File as FileIcon, FileText, FilePieChart, Folder, FolderKanban, FolderPlus, HardDrive, Home, Image as ImageIcon, Link2, Loader2, Move, MoreVertical, Pencil, Plus, RefreshCw, Search, Shield, Sparkles, Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -17,8 +18,9 @@ import { isViewableFile, openFileViewer } from '@/modules/file-viewer';
 
 import { useWorkspaceStore } from '../store';
 import * as pageApi from '../page-api';
-import type { WorkspaceFile, WorkspaceFolder } from '../types';
+import type { Workspace, WorkspaceFile, WorkspaceFolder } from '../types';
 import { useAutoIndexation } from '../hooks/useAutoIndexation';
+import { formatFileSize } from '../utils';
 import { WorkspacePicker } from './WorkspacePicker';
 import { CreateFolderDialog } from './CreateFolderDialog';
 import { EditFolderDialog } from './EditFolderDialog';
@@ -63,6 +65,8 @@ function getFileIcon(mime: string) {
 export function WorkspacePage() {
   const { id: routeWorkspaceId } = useParams<{ id?: string }>();
   const selectedWorkspaceId = useWorkspaceStore((s) => s.selectedWorkspaceId);
+  const selectedWorkspace = useWorkspaceStore((s) => s.selectedWorkspace);
+  const selectedWorkspaceRole = useWorkspaceStore((s) => s.selectedWorkspaceRole);
   const selectPageWorkspace = useWorkspaceStore((s) => s.selectPageWorkspace);
   const folders = useWorkspaceStore((s) => s.pageFolders);
   const files = useWorkspaceStore((s) => s.pageFiles);
@@ -195,9 +199,17 @@ export function WorkspacePage() {
             <FolderKanban className='h-5 w-5' />
           </div>
           <div className='min-w-0 flex-1'>
-            <h1 className='text-xl font-semibold leading-tight tracking-tight'>Workspace</h1>
+            {selectedWorkspace ? (
+              <EditableWorkspaceName
+                workspace={selectedWorkspace}
+                canEdit={selectedWorkspaceRole === 'owner' && !selectedWorkspace.isPersonal}
+              />
+            ) : (
+              <h1 className='text-xl font-semibold leading-tight tracking-tight'>Workspace</h1>
+            )}
             <p className='text-xs text-muted-foreground'>Organisez, classez et indexez vos documents au sein d'un workspace.</p>
           </div>
+          {selectedWorkspace && <StorageIndicator workspace={selectedWorkspace} />}
           <WorkspacePicker />
         </div>
       </div>
@@ -320,6 +332,137 @@ export function WorkspacePage() {
       <ClassifyDialog open={classifyOpen} onOpenChange={setClassifyOpen} />
       <RulesDialog open={rulesOpen} onOpenChange={setRulesOpen} />
     </div>
+  );
+}
+
+function EditableWorkspaceName({ workspace, canEdit }: { workspace: Workspace; canEdit: boolean }) {
+  const renameWorkspace = useWorkspaceStore((s) => s.renameWorkspace);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(workspace.name);
+  const [isSaving, setIsSaving] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!isEditing) setDraft(workspace.name);
+  }, [workspace.name, isEditing]);
+
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
+  const commit = useCallback(async () => {
+    if (isSaving) return;
+    const trimmed = draft.trim();
+    if (!trimmed || trimmed === workspace.name) {
+      setIsEditing(false);
+      setDraft(workspace.name);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await renameWorkspace(workspace.id, trimmed);
+      setIsEditing(false);
+    } catch {
+      setDraft(workspace.name);
+      setIsEditing(false);
+    } finally {
+      setIsSaving(false);
+    }
+  }, [draft, isSaving, renameWorkspace, workspace.id, workspace.name]);
+
+  if (!canEdit) {
+    return (
+      <h1 className='text-xl font-semibold leading-tight tracking-tight truncate' title={workspace.name}>
+        {workspace.name}
+      </h1>
+    );
+  }
+
+  if (isEditing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            (e.currentTarget as HTMLInputElement).blur();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setDraft(workspace.name);
+            setIsEditing(false);
+          }
+        }}
+        disabled={isSaving}
+        maxLength={100}
+        aria-label='Renommer le workspace'
+        className='w-full bg-transparent text-xl font-semibold leading-tight tracking-tight outline-none border-b border-primary/40 focus:border-primary disabled:opacity-60'
+      />
+    );
+  }
+
+  return (
+    <button
+      type='button'
+      onClick={() => setIsEditing(true)}
+      title='Cliquez pour renommer'
+      className='group inline-flex max-w-full items-center gap-1.5 rounded-sm text-left'
+    >
+      <span className='truncate text-xl font-semibold leading-tight tracking-tight group-hover:text-primary transition-colors'>
+        {workspace.name}
+      </span>
+      <Pencil className='h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100' />
+    </button>
+  );
+}
+
+function StorageIndicator({ workspace }: { workspace: Workspace }) {
+  const used = Math.max(0, workspace.usedStorage ?? 0);
+  const allocated = Math.max(0, workspace.allocatedStorage ?? 0);
+  const rawPercent = allocated > 0 ? Math.min(100, (used / allocated) * 100) : 0;
+
+  const formatPercent = (p: number): string => {
+    if (used > 0 && p < 0.1) return '<0.1%';
+    if (p < 1) return `${p.toFixed(2)}%`;
+    if (p < 10) return `${p.toFixed(1)}%`;
+    return `${Math.round(p)}%`;
+  };
+  const percentLabel = formatPercent(rawPercent);
+  // Ensure the bar shows a visible sliver as soon as there's any usage
+  const barValue = used > 0 ? Math.max(1.5, rawPercent) : 0;
+
+  const isWarning = rawPercent >= 80 && rawPercent < 95;
+  const isCritical = rawPercent >= 95;
+  const tone = isCritical ? 'text-destructive' : isWarning ? 'text-amber-600 dark:text-amber-500' : 'text-muted-foreground';
+  const barTone = isCritical ? 'bg-destructive' : isWarning ? 'bg-amber-500' : 'bg-primary';
+
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className='hidden md:flex h-9 min-w-[180px] max-w-[240px] items-center gap-2 rounded-md border bg-card/60 px-3' role='group' aria-label='Stockage du workspace'>
+            <HardDrive className={cn('h-3.5 w-3.5 shrink-0', tone)} />
+            <div className='flex-1 min-w-0 space-y-1'>
+              <div className='flex items-baseline justify-between gap-2 text-[11px] tabular-nums leading-none'>
+                <span className={cn('font-medium', tone)}>{formatFileSize(used)}</span>
+                <span className='text-muted-foreground'>{formatFileSize(allocated)}</span>
+              </div>
+              <Progress value={barValue} className='h-1.5' indicatorClassName={barTone} />
+            </div>
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side='bottom' className='text-center'>
+          {allocated > 0
+            ? `${percentLabel} utilisé · ${formatFileSize(Math.max(0, allocated - used))} restant`
+            : 'Stockage illimité'}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -613,6 +756,7 @@ function EmptyFolderState({ hasSearch, onCreateFolder }: { hasSearch: boolean; o
 
 function EmptyWorkspaceState() {
   const [rulesOpen, setRulesOpen] = useState(false);
+  const openCreateModal = useWorkspaceStore((s) => s.openCreateModal);
 
   return (
     <div className='relative flex h-screen w-full flex-col items-center justify-center overflow-hidden bg-background p-6'>
@@ -638,10 +782,14 @@ function EmptyWorkspaceState() {
 
         <div className='space-y-2'>
           <WorkspacePicker variant='hero' />
-          <p className='text-xs text-muted-foreground'>Sélectionnez un workspace pour commencer.</p>
+          <p className='text-xs text-muted-foreground'>Sélectionnez un workspace ou créez-en un nouveau.</p>
         </div>
 
-        <div className='flex items-center justify-center gap-2'>
+        <div className='flex flex-wrap items-center justify-center gap-2'>
+          <Button size='sm' onClick={openCreateModal} className='gap-1.5'>
+            <Plus className='h-4 w-4' />
+            Nouveau workspace
+          </Button>
           <Button variant='outline' size='sm' onClick={() => setRulesOpen(true)} className='gap-1.5'>
             <Shield className='h-4 w-4' />
             Règles globales
