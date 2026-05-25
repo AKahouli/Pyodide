@@ -5,9 +5,11 @@ import { cn } from '@/lib/utils';
 
 import { useWorkspaceStore } from '../store';
 import { ACCEPT_EXTENSIONS, MAX_FILE_SIZE, MAX_FILES_PER_UPLOAD, formatFileSize } from '../utils';
+import { useAutoIndexation } from '../hooks/useAutoIndexation';
 
 export function WorkspaceUploadDropZone() {
   const uploadPageFiles = useWorkspaceStore((s) => s.uploadPageFiles);
+  const { enabled: autoIndex } = useAutoIndexation();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dragCounter = useRef(0);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -15,9 +17,9 @@ export function WorkspaceUploadDropZone() {
   const pushFiles = useCallback(
     (list: FileList | null) => {
       if (!list || list.length === 0) return;
-      void uploadPageFiles(Array.from(list));
+      void uploadPageFiles(Array.from(list), { autoIndex });
     },
-    [uploadPageFiles],
+    [uploadPageFiles, autoIndex],
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
