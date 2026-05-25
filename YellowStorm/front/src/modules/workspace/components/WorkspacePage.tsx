@@ -636,8 +636,8 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
 
   return (
     <div className={cn('group relative pt-2 transition-transform duration-200', 'hover:-translate-y-0.5', isDragging && 'opacity-50')}>
-      <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-secondary border border-b-0 transition-colors', borderClass)} />
-      <div draggable onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-secondary transition-colors', 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
+      <div className={cn('absolute left-4 top-0 h-2.5 w-20 rounded-t-md bg-card border border-b-0 transition-colors', borderClass)} />
+      <div draggable onDragStart={handleDragStart} onDragEnd={() => setIsDragging(false)} onDragOver={handleDragOver} onDragLeave={() => setIsOver(false)} onDrop={handleDrop} className={cn('relative overflow-hidden rounded-md border bg-card text-card-foreground shadow-sm transition-colors', 'cursor-grab active:cursor-grabbing', borderClass, isOver && 'ring-2 ring-primary/30')}>
         <button onClick={onOpen} className='w-full text-left p-4 pb-3'>
           <div className='flex items-start gap-3'>
             <div className='flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary'>
@@ -650,7 +650,7 @@ function FolderCard({ folder, childCount, fileCount, onOpen, onEdit, onMove, onD
           </div>
         </button>
 
-        <div className='flex items-center justify-between border-t border-border/60 bg-background/30 px-4 py-2 text-xs text-muted-foreground'>
+        <div className='flex items-center justify-between border-t border-border/60 bg-muted/40 px-4 py-2 text-xs text-muted-foreground'>
           <div className='flex items-center gap-3'>
             <span className='inline-flex items-center gap-1'>
               <Folder className='h-3 w-3' /> {childCount}
