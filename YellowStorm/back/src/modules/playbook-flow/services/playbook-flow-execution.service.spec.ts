@@ -2633,7 +2633,7 @@ describe('service terminal handling', () => {
     expect(replayBaselineService.buildCurrentReplayFingerprints).toHaveBeenCalledWith(expect.objectContaining({
       nodeSnapshot: expect.objectContaining({
         modelId: 'override-model',
-        metadata: expect.objectContaining({ execution_mode: 'replay_strict' }),
+        metadata: expect.objectContaining({ agent_model: 'override-model' }),
       }),
       flowSnapshot: expect.objectContaining({
         nodes: [expect.objectContaining({
@@ -2642,6 +2642,132 @@ describe('service terminal handling', () => {
         })],
       }),
     }));
+  });
+
+  it('ignores runtime agent enrichment when building replay_flex fingerprints', async () => {
+    const replayReportService = {
+      createPreRunReport: jest.fn().mockResolvedValue(undefined),
+      findLatestReportForExecutionTask: jest.fn().mockResolvedValue(null),
+    };
+    const replayPromptService = { buildReplayPromptSection: jest.fn().mockReturnValue('APPLY_REPLAY') };
+    const replayEligibilityService = {
+      evaluateReplayEligibility: jest.fn().mockReturnValue({
+        applied: true,
+        confidenceScore: 100,
+        confidenceFactors: {
+          nodeSnapshotHash: 30,
+          modelConfigHash: 20,
+          flowSnapshotHash: 5,
+          toolConfigHash: 20,
+          outputContractHash: 15,
+          inputContextHash: 10,
+        },
+        invalidationReasons: [],
+        appliedSections: ['decision_invariants', 'tool_policy'],
+        skippedSections: [],
+      }),
+    };
+    const replayBaselineService = {
+      buildCurrentReplayFingerprints: jest.fn().mockReturnValue({
+        inputContextHash: 'input-a',
+        flowSnapshotHash: 'flow-runtime',
+        nodeSnapshotHash: 'node-runtime',
+        agentConfigHash: null,
+        modelConfigHash: 'model-runtime',
+        toolConfigHash: 'tool-a',
+        outputContractHash: 'contract-a',
+      }),
+    };
+    const snapshot = {
+      settings: {},
+      nodes: [{ id: 'step-1', kind: 'step', metadata: { assignedAgentId: 'agent-1' } }],
+      controlEdges: [],
+      dataBindings: [],
+    };
+    const { service, agentService, replayPromptService: replayPromptSpy, replayBaselineService: replayBaselineSpy, replayReportService: replayReportSpy } = createExecutionServiceForTests({
+      flowService: {
+        findOne: jest.fn().mockResolvedValue({
+          settings: {},
+          nodes: [{ id: 'step-1', kind: 'step', metadata: { assignedAgentId: 'agent-1' } }],
+          controlEdges: [],
+          dataBindings: [],
+        }),
+      },
+      builderService: {
+        buildSnapshot: jest.fn().mockReturnValue(snapshot),
+      },
+      replayArtifactService: {
+        resolveReplayArtifacts: async () => new Map([['step-1', {
+          taskId: 'step-1',
+          replayId: 'replay-1',
+          validationVersion: 3,
+          mode: 'replay_flex',
+          isStale: false,
+          staleReasons: [],
+          referenceOutput: null,
+          outputFormatGuide: null,
+          intentKey: null,
+          intentLabel: null,
+          reasoningOutline: [],
+          stableReasoningRules: [],
+          contextVariableSchema: [],
+          toolTraceTemplate: [],
+          semanticChecklist: [],
+          driftPolicy: null,
+          toolCalls: [],
+          reasoningChain: [],
+          fingerprints: {
+            inputContextHash: 'input-a',
+            flowSnapshotHash: 'flow-baseline',
+            nodeSnapshotHash: 'node-baseline',
+            agentConfigHash: null,
+            modelConfigHash: 'model-baseline',
+            toolConfigHash: 'tool-a',
+            outputContractHash: 'contract-a',
+          },
+          behaviorBaseline: null,
+          toolPolicy: null,
+          outputContract: null,
+          replayConfig: { replayOutputFormat: false, replayToolTrace: false, replayReasoningChain: false },
+        }]]) },
+      executionModel: {
+        updateOne: jest.fn(() => ({ exec: jest.fn().mockResolvedValue({ modifiedCount: 0 }) })),
+        findById: jest.fn(() => ({
+          lean: jest.fn().mockReturnValue({
+            exec: jest.fn().mockResolvedValue({ executionMode: 'replay_flex', stepExecutionModes: { 'step-1': 'replay_flex' }, modelIdOverride: null }),
+          }),
+        })),
+        findByIdAndUpdate: jest.fn(() => ({ exec: jest.fn().mockResolvedValue(undefined) })),
+      },
+      replayPromptService,
+      replayBaselineService,
+      replayEligibilityService,
+      replayReportService,
+    });
+    const run = jest.fn();
+    (service as any).playbookFlowClient = { Run: run };
+    agentService.buildGrpcAgentsForPlaybook.mockResolvedValue([{ id: 'agent-1', name: 'Agent 1', chatbot: { model: 'runtime-model' } }]);
+
+    await (service as any).callGrpcRun('exec-1', 'flow-1', 'owner-1', snapshot, {});
+
+    expect(replayBaselineSpy.buildCurrentReplayFingerprints).toHaveBeenCalledWith(expect.objectContaining({
+      nodeSnapshot: expect.objectContaining({
+        metadata: expect.objectContaining({ assignedAgentId: 'agent-1' }),
+      }),
+      flowSnapshot: expect.objectContaining({
+        nodes: [expect.objectContaining({
+          metadata: expect.objectContaining({ assignedAgentId: 'agent-1' }),
+        })],
+      }),
+    }));
+    expect(replayReportSpy.createPreRunReport).toHaveBeenCalledWith(expect.objectContaining({
+      mode: 'replay_flex',
+      eligibility: expect.objectContaining({
+        applied: true,
+        invalidationReasons: [],
+      }),
+    }));
+    expect(replayPromptSpy.buildReplayPromptSection).toHaveBeenCalled();
   });
 
   it('persists replay drift for queued node completions before a stream error clears tracking', async () => {

@@ -7,6 +7,7 @@ import {
 } from '../schemas/playbook-flow-replay-run-report.schema';
 
 export interface ReplayRunReportLookup {
+  _id: string;
   executionId: string;
   flowId: string;
   taskId: string;
@@ -89,6 +90,7 @@ export class PlaybookFlowReplayReportService {
     }
 
     return {
+      _id: (report as unknown as Record<string, unknown>)._id as string,
       executionId: report.executionId,
       flowId: report.flowId,
       taskId: report.taskId,

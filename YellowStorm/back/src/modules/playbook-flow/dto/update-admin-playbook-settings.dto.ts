@@ -55,6 +55,11 @@ export class UpdateAdminPlaybookSettingsDto {
   @IsString()
   advisorEvaluationModelId?: string | null;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  replayEvaluationModelId?: string | null;
+
   @ApiPropertyOptional({ enum: ['auto', 'manual'] })
   @IsOptional()
   @IsIn(['auto', 'manual'])
@@ -70,4 +75,12 @@ export class UpdateAdminPlaybookSettingsDto {
   @ValidateNested()
   @Type(() => UpdatePlaybookIntentNormalizationLimitsDto)
   intentNormalizationLimits?: UpdatePlaybookIntentNormalizationLimitsDto;
+
+  @ApiPropertyOptional({ minimum: 0, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(100)
+  replayEligibilityConfidenceThreshold?: number;
 }

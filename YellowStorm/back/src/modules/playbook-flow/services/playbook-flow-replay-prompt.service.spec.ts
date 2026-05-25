@@ -30,6 +30,7 @@ function makeArtifacts(overrides: Partial<ResolvedReplayArtifacts> = {}): Resolv
       replayToolTrace: false,
       replayReasoningChain: true,
     },
+    semanticChecklist: overrides.semanticChecklist ?? [],
   };
 }
 

@@ -409,6 +409,109 @@ describe('usePlaybookCanvas', () => {
     expect(storeFns.updateControlEdges).not.toHaveBeenCalled();
   });
 
+  it('creates a compatible input port and binding when dropping on a node body', () => {
+    currentPlaybookState.value = makePlaybook({
+      tasks: [
+        makeTask({
+          id: 'task-1',
+          executionOrder: 0,
+          outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+        }),
+        makeTask({
+          id: 'task-2',
+          executionOrder: 1,
+          inputPorts: [],
+        }),
+      ],
+      edges: [],
+      dataBindings: [],
+    });
+
+    const { result } = renderHook(() => usePlaybookCanvas());
+
+    const originalElementsFromPoint = (document as Document & { elementsFromPoint?: typeof document.elementsFromPoint }).elementsFromPoint;
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: vi.fn(() => [
+        {
+          classList: { contains: (value: string) => value === 'react-flow__node' },
+          getAttribute: (name: string) => (name === 'data-id' ? 'task-2' : null),
+          closest: () => null,
+        } as any,
+      ]),
+    });
+
+    act(() => {
+      result.current.setNodes([
+        {
+          id: 'task-1',
+          type: 'playbookStep',
+          position: { x: 20, y: 20 },
+          width: 160,
+          height: 100,
+          data: makeTask({
+            id: 'task-1',
+            executionOrder: 0,
+            outputPorts: [{ id: 'draft', name: 'Draft', artifactKind: 'text' }],
+          }),
+        } as any,
+        {
+          id: 'task-2',
+          type: 'playbookStep',
+          position: { x: 240, y: 20 },
+          width: 160,
+          height: 100,
+          data: makeTask({
+            id: 'task-2',
+            executionOrder: 1,
+            inputPorts: [],
+          }),
+        } as any,
+      ]);
+      result.current.onConnectStart(
+        {} as any,
+        { nodeId: 'task-1', handleId: 'draft', handleType: 'source' } as any,
+      );
+      result.current.onConnectEnd({ clientX: 260, clientY: 40 } as any, null as any);
+    });
+
+    act(() => vi.runAllTimers());
+
+    const targetNode = result.current.nodes.find((node) => node.id === 'task-2');
+    const createdPort = (targetNode?.data as any)?.inputPorts?.[0];
+
+    expect(createdPort).toMatchObject({
+      name: 'Draft',
+      artifactKind: 'text',
+      required: false,
+    });
+    expect(storeFns.updateDataBindings).toHaveBeenLastCalledWith([
+      {
+        id: `db-task-1-draft-task-2-${createdPort.id}`,
+        targetNode: 'task-2',
+        targetPort: createdPort.id,
+        sourceKind: 'node-output',
+        sourceNode: 'task-1',
+        sourcePort: 'draft',
+        iteration: 'current',
+      },
+    ]);
+    expect(storeFns.updateEdges).toHaveBeenLastCalledWith([
+      {
+        id: `e-task-1-draft-task-2-${createdPort.id}`,
+        sourceId: 'task-1',
+        targetId: 'task-2',
+        sourceOutputPortId: 'draft',
+        targetInputPortId: createdPort.id,
+      },
+    ]);
+
+    Object.defineProperty(document, 'elementsFromPoint', {
+      configurable: true,
+      value: originalElementsFromPoint,
+    });
+  });
+
   it('replaces the existing binding when reconnecting the same target port', () => {
     currentPlaybookState.value = makePlaybook({
       tasks: [

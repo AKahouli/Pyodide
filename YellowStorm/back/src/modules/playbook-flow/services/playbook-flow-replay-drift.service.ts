@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { LoggerService } from '@modules/logger';
@@ -33,6 +33,7 @@ import { PlaybookFlowReplayReportService } from './playbook-flow-replay-report.s
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.service';
 import { PlaybookFlowReplaySemanticEvaluatorService } from './playbook-flow-replay-semantic-evaluator.service';
+import { PlaybookFlowReplaySemanticJudgeService } from './playbook-flow-replay-semantic-judge.service';
 import {
   averageReplayScores,
   deriveReplayFlexDriftAssessment,
@@ -159,6 +160,7 @@ export class PlaybookFlowReplayDriftService {
     private readonly outputContractService: PlaybookFlowOutputContractService,
     private readonly replayPlanService: PlaybookFlowReplayPlanService,
     private readonly logger: LoggerService,
+    @Optional() private readonly semanticJudge?: PlaybookFlowReplaySemanticJudgeService,
   ) {
     this.logger.setContext('PlaybookFlowReplayDriftService');
   }
@@ -290,10 +292,11 @@ export class PlaybookFlowReplayDriftService {
     const replayPlanning = await this.loadReplayPlanning(params.executionId, params.taskId);
     const observedIntentKey = this.resolveObservedIntentKeyFromTraceMetadata(params.traceMetadata)
       ?? this.inferObservedIntentKey(intentKey, params.toolTrace, params.semanticMatch);
-    const semanticMatch = this.replaySemanticEvaluator.evaluate({
-      output: stringifyReplayOutput(params.output),
-      planning: replayPlanning,
-    }) ?? params.semanticMatch ?? null;
+    const semanticMatch = await this.evaluateSemanticMatch(
+      stringifyReplayOutput(params.output),
+      replayPlanning,
+      params.semanticMatch,
+    );
     const validation = this.outputContractService.validateOutputContract({
       output: params.output,
       outputContract: params.replayArtifacts.outputContract ?? null,
@@ -493,6 +496,26 @@ export class PlaybookFlowReplayDriftService {
   private resolveObservedIntentKeyFromTraceMetadata(traceMetadata?: Record<string, unknown> | null): string | null {
     const observedIntentKey = traceMetadata?.['observed_intent_key'];
     return typeof observedIntentKey === 'string' && observedIntentKey !== '' ? observedIntentKey : null;
+  }
+
+  private async evaluateSemanticMatch(
+    output: string,
+    planning: ReplayPlanningSummary | null,
+    fallbackSemanticMatch: FlowTaskSemanticMatch | null | undefined,
+  ): Promise<FlowTaskSemanticMatch | null> {
+    if (!planning || planning.executionPlan.semanticChecklist.length === 0) {
+      return fallbackSemanticMatch ?? null;
+    }
+
+    if (this.semanticJudge) {
+      const contextMappingJson = JSON.stringify(planning.contextMapping, null, 2);
+      const judgeResult = await this.semanticJudge.evaluate({ output, planning, contextMappingJson });
+      if (judgeResult) {
+        return judgeResult;
+      }
+    }
+
+    return this.replaySemanticEvaluator.evaluate({ output, planning }) ?? fallbackSemanticMatch ?? null;
   }
 
   private inferObservedIntentKey(

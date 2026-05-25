@@ -30,6 +30,9 @@ export class PlaybookFlowSettingsService {
     const advisorEvaluationModelId = patch.advisorEvaluationModelId === undefined
       ? current.advisorEvaluationModelId
       : patch.advisorEvaluationModelId?.trim() || null;
+    const replayEvaluationModelId = patch.replayEvaluationModelId === undefined
+      ? current.replayEvaluationModelId
+      : patch.replayEvaluationModelId?.trim() || null;
 
     if (patch.inferenceModelId !== undefined && inferenceModelId) {
       const validation = await this.modelsService.validateModelActive(inferenceModelId);
@@ -41,9 +44,15 @@ export class PlaybookFlowSettingsService {
       if (!validation.valid) throw new BadRequestException(ErrorCode.MODEL_INACTIVE, 'Advisor evaluation model is unavailable.');
     }
 
+    if (patch.replayEvaluationModelId !== undefined && replayEvaluationModelId) {
+      const validation = await this.modelsService.validateModelActive(replayEvaluationModelId);
+      if (!validation.valid) throw new BadRequestException(ErrorCode.MODEL_INACTIVE, 'Replay evaluation model is unavailable.');
+    }
+
     return this.systemService.setPlaybookSettings({
       inferenceModelId,
       advisorEvaluationModelId,
+      replayEvaluationModelId,
       nodeSuggestionsMode: patch.nodeSuggestionsMode ?? current.nodeSuggestionsMode,
       approvalSuggestionMode: patch.approvalSuggestionMode ?? current.approvalSuggestionMode,
       intentNormalizationLimits: {
@@ -53,6 +62,7 @@ export class PlaybookFlowSettingsService {
         maxIteratorBodySteps: patch.intentNormalizationLimits?.maxIteratorBodySteps ?? current.intentNormalizationLimits.maxIteratorBodySteps,
         maxIteratorBodyEdges: patch.intentNormalizationLimits?.maxIteratorBodyEdges ?? current.intentNormalizationLimits.maxIteratorBodyEdges,
       },
+      replayEligibilityConfidenceThreshold: patch.replayEligibilityConfidenceThreshold ?? current.replayEligibilityConfidenceThreshold,
     });
   }
 
@@ -70,6 +80,31 @@ export class PlaybookFlowSettingsService {
       }
 
       throw new BadRequestException(ErrorCode.MODEL_INACTIVE, 'Advisor evaluation model is unavailable.');
+    }
+
+    const defaultModel = await this.modelsService.getDefaultModel();
+    const fallbackIdentifier = this.modelsService.getModelIdentifier(defaultModel);
+    if (!fallbackIdentifier) {
+      throw new ServiceUnavailableException(ErrorCode.AI_SERVICE_ERROR);
+    }
+
+    return fallbackIdentifier;
+  }
+
+  async resolveReplayEvaluationModelId(): Promise<string> {
+    const adminSettings = await this.getAdminSettings();
+    const configuredModelId = adminSettings.replayEvaluationModelId?.trim() || null;
+
+    if (configuredModelId) {
+      const validation = await this.modelsService.validateModelActive(configuredModelId);
+      if (validation.valid && validation.model) {
+        const identifier = this.modelsService.getModelIdentifier(validation.model);
+        if (identifier) {
+          return identifier;
+        }
+      }
+
+      throw new BadRequestException(ErrorCode.MODEL_INACTIVE, 'Replay evaluation model is unavailable.');
     }
 
     const defaultModel = await this.modelsService.getDefaultModel();
@@ -135,11 +170,13 @@ export class PlaybookFlowSettingsService {
     return {
       inferenceModelId: resolvedInferenceModelId,
       advisorEvaluationModelId: adminSettings.advisorEvaluationModelId,
+      replayEvaluationModelId: adminSettings.replayEvaluationModelId,
       nodeSuggestionsMode: normalized.nodeSuggestionsMode === 'inherit'
         ? adminSettings.nodeSuggestionsMode : normalized.nodeSuggestionsMode,
       approvalSuggestionMode: normalized.approvalSuggestionMode === 'inherit'
         ? adminSettings.approvalSuggestionMode : normalized.approvalSuggestionMode,
       intentNormalizationLimits: adminSettings.intentNormalizationLimits,
+      replayEligibilityConfidenceThreshold: adminSettings.replayEligibilityConfidenceThreshold,
       resolvedInferenceModelId,
       recursionLimit: normalized.recursionLimit,
       maxParallelism: normalized.maxParallelism,

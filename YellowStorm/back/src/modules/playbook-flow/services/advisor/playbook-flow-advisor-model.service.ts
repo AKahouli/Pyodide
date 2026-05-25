@@ -9,4 +9,8 @@ export class PlaybookFlowAdvisorModelService {
   async resolveEvaluationModel(_scoringMode: AdvisorScoringMode): Promise<string> {
     return this.settingsService.resolveAdvisorEvaluationModelId();
   }
+
+  async resolveReplayEvaluationModel(): Promise<string> {
+    return this.settingsService.resolveReplayEvaluationModelId();
+  }
 }

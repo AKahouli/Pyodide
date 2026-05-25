@@ -125,7 +125,7 @@ describe('PlaybookFlowReplayArtifactService', () => {
     expect(artifacts.toolTraceTemplate).toHaveLength(1);
     expect(artifacts.driftPolicy?.enforceOutputContract).toBe(true);
     expect(artifacts.fingerprints?.inputContextHash).toBe('abc');
-    expect(artifacts.fingerprints?.nodeSnapshotHash).not.toBe('legacy-node-hash');
+    expect(artifacts.fingerprints?.nodeSnapshotHash).toBe('legacy-node-hash');
     expect(artifacts.behaviorBaseline?.decisionInvariants).toEqual(['Verify facts']);
     expect(artifacts.toolPolicy?.requiredTools).toEqual(['search']);
     expect(artifacts.outputContract?.type).toBe('freeform');

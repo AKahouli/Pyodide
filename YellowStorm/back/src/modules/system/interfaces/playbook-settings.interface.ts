@@ -11,9 +11,11 @@ export interface PlaybookIntentNormalizationLimits {
 export interface AdminPlaybookSettings {
   inferenceModelId: string | null;
   advisorEvaluationModelId: string | null;
+  replayEvaluationModelId: string | null;
   nodeSuggestionsMode: SuggestionMode;
   approvalSuggestionMode: SuggestionMode;
   intentNormalizationLimits: PlaybookIntentNormalizationLimits;
+  replayEligibilityConfidenceThreshold: number;
 }
 
 export const DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS: PlaybookIntentNormalizationLimits = {
@@ -27,7 +29,9 @@ export const DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS: PlaybookIntentNormali
 export const DEFAULT_ADMIN_PLAYBOOK_SETTINGS: AdminPlaybookSettings = {
   inferenceModelId: null,
   advisorEvaluationModelId: null,
+  replayEvaluationModelId: null,
   nodeSuggestionsMode: 'manual',
   approvalSuggestionMode: 'auto',
   intentNormalizationLimits: DEFAULT_PLAYBOOK_INTENT_NORMALIZATION_LIMITS,
+  replayEligibilityConfidenceThreshold: 70,
 };

@@ -5,6 +5,7 @@ import { useModuleTranslation } from '@/modules/localization';
 import { getReplayReports } from '../api';
 import type {
   PlaybookExecution,
+  ReplayPostRunEvaluation,
   ReplayRunReport,
   ReplaySemanticFinding,
   ReplaySignalEvaluationStatus,
@@ -273,6 +274,30 @@ function isEvaluated(status: ReplaySignalStatus | null | undefined): boolean {
   return status?.status === 'passed' || status?.status === 'warning' || status?.status === 'failed';
 }
 
+function postRunVerdictTone(verdict: ReplayPostRunEvaluation['verdict']): string {
+  switch (verdict) {
+    case 'match':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'minor_drift':
+      return 'bg-amber-100 text-amber-700';
+    case 'major_drift':
+      return 'bg-red-100 text-red-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+}
+
+function postRunActionTone(action: ReplayPostRunEvaluation['recommendedAction']): string {
+  switch (action) {
+    case 'accept':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'review':
+      return 'bg-amber-100 text-amber-700';
+    case 'reject':
+      return 'bg-red-100 text-red-700';
+  }
+}
+
 function deriveFallbackScoreStatus(score: number | null | undefined, failReason: string): ReplaySignalStatus {
   if (score === null || score === undefined) {
     return { status: 'not_evaluated', reason: 'evaluation_pending' };
@@ -449,6 +474,56 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
     <div className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm">
       <div className="font-medium">{t('replayReport.title' as any)}</div>
 
+      {report.postRunEvaluation ? (
+        <div className="space-y-2 rounded-md border bg-background p-3">
+          <div className="font-medium">{t('replayReport.postRun.title' as any)}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className={postRunVerdictTone(report.postRunEvaluation.verdict)}>
+              {t(`replayReport.postRun.verdict.${report.postRunEvaluation.verdict}` as any)}
+            </Badge>
+            {report.postRunEvaluation.overallScore !== null && (
+              <ReplayConfidenceBadge
+                label={t('replayReport.postRun.overallScore' as any)}
+                value={formatScore(report.postRunEvaluation.overallScore)}
+              />
+            )}
+            <Badge variant="outline" className={postRunActionTone(report.postRunEvaluation.recommendedAction)}>
+              {t(`replayReport.postRun.action.${report.postRunEvaluation.recommendedAction}` as any)}
+            </Badge>
+          </div>
+          <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+            {report.postRunEvaluation.semanticMatchScore !== null && (
+              <div><div className="font-medium">{t('replayReport.postRun.semanticMatch' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(report.postRunEvaluation.semanticMatchScore)}</div></div>
+            )}
+            {report.postRunEvaluation.outputFormatScore !== null && (
+              <div><div className="font-medium">{t('replayReport.postRun.outputFormat' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(report.postRunEvaluation.outputFormatScore)}</div></div>
+            )}
+            {report.postRunEvaluation.toolSequenceScore !== null && (
+              <div><div className="font-medium">{t('replayReport.postRun.toolSequence' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(report.postRunEvaluation.toolSequenceScore)}</div></div>
+            )}
+            {report.postRunEvaluation.reasoningScore !== null && (
+              <div><div className="font-medium">{t('replayReport.postRun.reasoning' as any)}</div><div className="mt-1 text-sm text-foreground">{formatScore(report.postRunEvaluation.reasoningScore)}</div></div>
+            )}
+          </div>
+          {report.postRunEvaluation.summary && (
+            <div className="text-xs text-muted-foreground">{report.postRunEvaluation.summary}</div>
+          )}
+          {report.postRunEvaluation.preservedPoints.length > 0 && (
+            <div className="text-xs text-muted-foreground"><span className="font-medium">{t('replayReport.postRun.preserved' as any)}:</span> {report.postRunEvaluation.preservedPoints.join(', ')}</div>
+          )}
+          {report.postRunEvaluation.missingPoints.length > 0 && (
+            <div className="text-xs text-muted-foreground"><span className="font-medium">{t('replayReport.postRun.missing' as any)}:</span> {report.postRunEvaluation.missingPoints.join(', ')}</div>
+          )}
+          {report.postRunEvaluation.changedPoints.length > 0 && (
+            <div className="text-xs text-muted-foreground"><span className="font-medium">{t('replayReport.postRun.changed' as any)}:</span> {report.postRunEvaluation.changedPoints.join(', ')}</div>
+          )}
+        </div>
+      ) : (
+        <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">{t('replayReport.postRun.notAvailable' as any)}</div>
+      )}
+
+      <div className="space-y-2 rounded-md border bg-background p-3">
+        <div className="font-medium">{t('replayReport.postRun.detailsTitle' as any)}</div>
       <div className="space-y-2 rounded-md border bg-background p-3">
         <div className="font-medium">{t('replayReport.section.verdict' as any)}</div>
         <div className="flex flex-wrap items-center gap-2">
@@ -623,6 +698,7 @@ export function ReplayReportPanel({ playbookId, taskId, executionId, iteration =
       <div className="space-y-2 rounded-md border bg-background p-3">
         <div className="font-medium">{t('replayReport.section.actions' as any)}</div>
         <div className="text-xs text-muted-foreground">{t('replayReport.actionsHint' as any)}</div>
+      </div>
       </div>
     </div>
   );

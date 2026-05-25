@@ -73,7 +73,10 @@ export class PlaybookFlowReplayEligibilityService {
       }
     }
 
-    const threshold = params.mode === 'replay_strict' ? 90 : params.mode === 'replay_flex' ? 70 : 40;
+    const modeDefault = params.mode === 'replay_strict' ? 90 : params.mode === 'replay_flex' ? 70 : 40;
+    const threshold = typeof params.eligibilityThreshold === 'number'
+      ? params.eligibilityThreshold
+      : modeDefault;
     const hardFailReasons = this.resolveHardFailReasons(params.mode, invalidationReasons);
     const applied = hardFailReasons.length === 0 && totalScore >= threshold;
 

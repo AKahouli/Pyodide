@@ -61,6 +61,7 @@ export function PlaybookSettingsPage() {
     nodeSuggestionsMode: 'manual',
     approvalSuggestionMode: 'auto',
     intentNormalizationLimits: DEFAULT_INTENT_NORMALIZATION_LIMITS,
+    replayEligibilityConfidenceThreshold: 70,
   });
 
   useEffect(() => {
@@ -111,6 +112,15 @@ export function PlaybookSettingsPage() {
   const selectedAdvisorEvalModel = useMemo(
     () => models.find((model) => model.id === settings.advisorEvaluationModelId) || null,
     [models, settings.advisorEvaluationModelId],
+  );
+  const selectedReplayEvalModelValue = settings.replayEvaluationModelId || GLOBAL_DEFAULT_MODEL;
+  const selectableReplayModels = useMemo(
+    () => buildSelectableModels(models, settings.replayEvaluationModelId),
+    [models, settings.replayEvaluationModelId],
+  );
+  const selectedReplayEvalModel = useMemo(
+    () => models.find((model) => model.id === settings.replayEvaluationModelId) || null,
+    [models, settings.replayEvaluationModelId],
   );
 
   const handleSave = async () => {
@@ -237,6 +247,37 @@ export function PlaybookSettingsPage() {
               </div>
 
               <div className="space-y-2">
+                <Label htmlFor="replay-eval-model">{t('playbookSettings.fields.replayEvalModel.label')}</Label>
+                <Select
+                  value={selectedReplayEvalModelValue}
+                  onValueChange={(value) => setSettings((prev) => ({
+                    ...prev,
+                    replayEvaluationModelId: value === GLOBAL_DEFAULT_MODEL ? null : value,
+                  }))}
+                >
+                  <SelectTrigger id="replay-eval-model">
+                    <SelectValue placeholder={t('playbookSettings.fields.replayEvalModel.placeholder')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={GLOBAL_DEFAULT_MODEL}>{t('playbookSettings.fields.replayEvalModel.globalDefault')}</SelectItem>
+                    {selectableReplayModels.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.name}
+                        {model.isActive ? '' : ` ${t('playbookSettings.fields.inactiveSuffix')}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {selectedReplayEvalModel
+                    ? selectedReplayEvalModel.isActive
+                      ? t('playbookSettings.fields.replayEvalModel.selectedHelp', { model: selectedReplayEvalModel.name })
+                      : t('playbookSettings.fields.replayEvalModel.inactiveHelp', { model: selectedReplayEvalModel.name })
+                    : t('playbookSettings.fields.replayEvalModel.globalHelp')}
+                </p>
+              </div>
+
+              <div className="space-y-2">
                 <Label htmlFor="node-suggestions-mode">{t('playbookSettings.fields.nodeSuggestionsMode.label')}</Label>
                 <Select
                   value={settings.nodeSuggestionsMode}
@@ -309,6 +350,51 @@ export function PlaybookSettingsPage() {
                     </p>
                   </div>
                 ))}
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => void handleSave()} disabled={saving}>
+                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  {t('playbookSettings.actions.save')}
+                </Button>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>{t('playbookSettings.replay.title')}</CardTitle>
+          <CardDescription>{t('playbookSettings.replay.description')}</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>{t('playbookSettings.loading')}</span>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="replay-eligibility-threshold">{t('playbookSettings.fields.replayEligibilityThreshold.label')}</Label>
+                <Input
+                  id="replay-eligibility-threshold"
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={settings.replayEligibilityConfidenceThreshold}
+                  onChange={(event) => {
+                    const parsed = Number.parseInt(event.target.value, 10);
+                    const clamped = Number.isFinite(parsed)
+                      ? Math.min(100, Math.max(0, parsed))
+                      : 70;
+                    setSettings((prev) => ({ ...prev, replayEligibilityConfidenceThreshold: clamped }));
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('playbookSettings.fields.replayEligibilityThreshold.help')}
+                </p>
               </div>
 
               <div className="flex justify-end">

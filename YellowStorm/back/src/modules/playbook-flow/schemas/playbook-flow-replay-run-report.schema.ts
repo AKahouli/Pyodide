@@ -127,6 +127,57 @@ export class FlowReplaySemanticChecklistItem {
   source!: ReplaySemanticChecklistItem['source'];
 }
 
+@Schema({ _id: false })
+export class FlowReplayPostRunEvaluation {
+  @Prop({ required: true, type: Boolean })
+  judgeUsed!: boolean;
+
+  @Prop({ required: false, type: String, default: null })
+  judgeModel!: string | null;
+
+  @Prop({ required: true, type: Date })
+  evaluatedAt!: Date;
+
+  @Prop({ required: true, type: String, enum: ['match', 'minor_drift', 'major_drift', 'not_comparable'] })
+  verdict!: 'match' | 'minor_drift' | 'major_drift' | 'not_comparable';
+
+  @Prop({ required: false, type: Number, default: null })
+  overallScore!: number | null;
+
+  @Prop({ required: false, type: Number, default: null })
+  semanticMatchScore!: number | null;
+
+  @Prop({ required: false, type: Number, default: null })
+  outputFormatScore!: number | null;
+
+  @Prop({ required: false, type: Number, default: null })
+  toolSequenceScore!: number | null;
+
+  @Prop({ required: false, type: Number, default: null })
+  reasoningScore!: number | null;
+
+  @Prop({ required: true, type: String })
+  summary!: string;
+
+  @Prop({ required: false, type: [String], default: [] })
+  missingPoints!: string[];
+
+  @Prop({ required: false, type: [String], default: [] })
+  changedPoints!: string[];
+
+  @Prop({ required: false, type: [String], default: [] })
+  preservedPoints!: string[];
+
+  @Prop({ required: true, type: String, enum: ['accept', 'review', 'reject'] })
+  recommendedAction!: 'accept' | 'review' | 'reject';
+
+  @Prop({ required: false, type: Object, default: null })
+  rawJudgeResponse!: Record<string, unknown> | null;
+
+  @Prop({ required: false, type: String, default: null })
+  failureReason!: string | null;
+}
+
 @Schema({ timestamps: true, collection: 'playbook_flow_replay_run_reports' })
 export class FlowReplayRunReport {
   @Prop({ required: true, type: String, index: true })
@@ -263,6 +314,9 @@ export class FlowReplayRunReport {
 
   @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplaySignalStatus), default: { status: 'not_evaluated', reason: 'evaluation_pending' } })
   contextSubstitutionStatus!: FlowReplaySignalStatus;
+
+  @Prop({ required: false, type: SchemaFactory.createForClass(FlowReplayPostRunEvaluation), default: null })
+  postRunEvaluation?: FlowReplayPostRunEvaluation | null;
 }
 
 export const FlowReplayRunReportSchema = SchemaFactory.createForClass(FlowReplayRunReport);

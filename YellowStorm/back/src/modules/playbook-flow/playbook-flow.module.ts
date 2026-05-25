@@ -96,6 +96,8 @@ import { PlaybookFlowReplayReportService } from './services/playbook-flow-replay
 import { PlaybookFlowReplayDriftService } from './services/playbook-flow-replay-drift.service';
 import { PlaybookFlowReplayPlanService } from './services/playbook-flow-replay-plan.service';
 import { PlaybookFlowOutputContractService } from './services/playbook-flow-output-contract.service';
+import { PlaybookFlowReplaySemanticJudgeService } from './services/playbook-flow-replay-semantic-judge.service';
+import { PlaybookFlowReplayPostRunEvaluationService } from './services/playbook-flow-replay-post-run-evaluation.service';
 
 @Module({
   imports: [
@@ -193,6 +195,8 @@ import { PlaybookFlowOutputContractService } from './services/playbook-flow-outp
     PlaybookFlowReplayDriftService,
     PlaybookFlowReplayPlanService,
     PlaybookFlowOutputContractService,
+    PlaybookFlowReplaySemanticJudgeService,
+    PlaybookFlowReplayPostRunEvaluationService,
   ],
   exports: [
     PlaybookFlowService,

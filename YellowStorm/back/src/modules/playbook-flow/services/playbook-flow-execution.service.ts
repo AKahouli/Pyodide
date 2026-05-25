@@ -50,6 +50,7 @@ import { PlaybookFlowReplayPlanService } from './playbook-flow-replay-plan.servi
 import { PlaybookFlowOutputContractService } from './playbook-flow-output-contract.service';
 import { PlaybookFlowOutputFormatService } from './playbook-flow-output-format.service';
 import { ModelsService } from '@modules/models/models.service';
+import { SystemService } from '@modules/system/system.service';
 import type { ReplayEligibilityResult } from '../interfaces/playbook-flow-replay-eligibility.interface';
 import type { ResolvedReplayArtifacts } from '../interfaces/playbook-flow-replay-artifact.interface';
 import type { ReplayPlanningSummary } from '../interfaces/playbook-flow-replay-plan.interface';
@@ -65,6 +66,7 @@ import {
   FlowCompletedResultPayload,
 } from '../interfaces/playbook-flow-observability.interface';
 import { PublicReasoningTraceItem } from '../interfaces/playbook-flow-reasoning.interface';
+import { PlaybookFlowReplayPostRunEvaluationService } from './playbook-flow-replay-post-run-evaluation.service';
 
 export function toGrpcValue(value: unknown): Record<string, unknown> {
   if (value === null || value === undefined) {
@@ -205,6 +207,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     @Optional() private readonly outputFormatService?: PlaybookFlowOutputFormatService,
     @Optional() private readonly replayPlanService?: PlaybookFlowReplayPlanService,
     @Optional() private readonly replayDriftService?: PlaybookFlowReplayDriftService,
+    @Optional() private readonly postRunEvaluationService?: PlaybookFlowReplayPostRunEvaluationService,
+    @Optional() private readonly systemService?: SystemService,
   ) {}
 
   private getReplayDriftService(): PlaybookFlowReplayDriftService {
@@ -317,6 +321,58 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
     } catch (err) {
       this.logger.warn(`Failed to persist replay structural drift for task ${params.taskId}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+
+  private async triggerPostRunEvaluation(
+    executionId: string,
+    replayArtifacts: ResolvedReplayArtifacts,
+    taskId: string,
+    iteration: number,
+    resultPayload: { output?: unknown; toolTrace?: unknown[]; reasoningChain?: unknown[] },
+  ): Promise<void> {
+    if (!this.postRunEvaluationService) return;
+
+    const REPLAY_MODES = new Set(['replay_strict', 'replay_flex', 'replay_adaptive']);
+    if (!REPLAY_MODES.has(replayArtifacts.mode)) return;
+
+    const report = await this.replayReportService.findLatestReportForExecutionTask(executionId, taskId, iteration);
+    if (!report || !report.replayId) return;
+
+    const taskNode = await this.executionModel.findById(executionId).select('+snapshot').lean();
+    let taskTitle = taskId;
+    let taskDescription: string | null = null;
+    if (taskNode?.snapshot) {
+      const nodes = (taskNode.snapshot as Record<string, unknown>)?.nodes;
+      if (Array.isArray(nodes)) {
+        const matched = nodes.find((n: Record<string, unknown>) => n.id === taskId) as Record<string, unknown> | undefined;
+        if (matched) {
+          taskTitle = typeof matched.label === 'string' && matched.label.trim() ? matched.label.trim() : taskId;
+          const metadata = matched.metadata as Record<string, unknown> | undefined;
+          if (metadata?.description && typeof metadata.description === 'string') {
+            taskDescription = metadata.description.trim() || null;
+          }
+        }
+      }
+    }
+
+    await this.postRunEvaluationService.evaluateCompletedReplayRun({
+      executionId,
+      flowId: replayArtifacts.flowId ?? '',
+      taskId,
+      iteration,
+      replayReportId: report._id,
+      baselineOutput: replayArtifacts.referenceOutput ?? null,
+      newOutput: resultPayload.output != null ? String(resultPayload.output) : null,
+      baselineReasoningChain: replayArtifacts.reasoningChain ?? null,
+      newReasoningChain: resultPayload.reasoningChain ?? null,
+      baselineToolCalls: replayArtifacts.toolCalls ?? null,
+      newToolCalls: resultPayload.toolTrace ?? null,
+      outputFormatGuide: replayArtifacts.outputFormatGuide ?? null,
+      replayPlanningSummary: null,
+      taskTitle,
+      taskDescription,
+      replayMode: replayArtifacts.mode,
+    });
   }
 
   private cacheSelectedReplayArtifacts(
@@ -974,13 +1030,28 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
           }
         }
       }
-      const replayComparableRuntimeFlowSnapshot = this.buildReplayComparableFlowSnapshot({
-        ...(snapshot as FlowSnapshot),
-        nodes: enrichedNodes as unknown as FlowSnapshot['nodes'],
-      });
       const singleStepTargetId = executionMeta?.singleStepTaskId ?? null;
       const globalExecMode = executionMeta?.executionMode || 'live';
       const stepModes: Record<string, string> = (executionMeta?.stepExecutionModes as Record<string, string>) || {};
+      const replayFingerprintNodes = ((snapshot.nodes as Array<Record<string, unknown>> | undefined) || []).map((node) => {
+        if (!executionModelIdOverride || typeof executionModelIdOverride !== 'string') {
+          return { ...node };
+        }
+
+        const metadata = node.metadata && typeof node.metadata === 'object'
+          ? { ...(node.metadata as Record<string, unknown>), agent_model: executionModelIdOverride }
+          : { agent_model: executionModelIdOverride };
+
+        return {
+          ...node,
+          modelId: executionModelIdOverride,
+          metadata,
+        };
+      });
+      const replayComparableRuntimeFlowSnapshot = this.buildReplayComparableFlowSnapshot({
+        ...(snapshot as FlowSnapshot),
+        nodes: replayFingerprintNodes as unknown as FlowSnapshot['nodes'],
+      });
       const nodesEligibleForReplay = singleStepTargetId
         ? [singleStepTargetId]
           : taskNodeIds;
@@ -994,8 +1065,8 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         __playbook_workspace_ids: ((snapshotOverride || snapshot) as any).workspaces || [],
         __playbook_default_workspace_id: (((snapshotOverride || snapshot) as any).workspaces || [])[0] || '',
       };
-      const runtimeNodesById = new Map(
-        (enrichedNodes as Array<Record<string, unknown>>).map((entry) => [String(entry.id || ''), entry]),
+      const replayFingerprintNodesById = new Map(
+        replayFingerprintNodes.map((entry) => [String((entry as any).id || ''), entry]),
       );
 
       const replayPlanningByTask: Record<string, ReplayPlanningSummary> = {};
@@ -1010,14 +1081,16 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
         if (!isReplayMode) continue;
         const artifacts = replayArtifacts.get(taskId);
         if (!artifacts) continue;
-        const currentNodeSnapshot = this.buildReplayComparableNode(
-          runtimeNodesById.get(taskId) ?? (node as Record<string, unknown>),
-        );
+        const currentNodeSnapshot = replayFingerprintNodesById.get(taskId) ?? { ...node };
+        const eligibilityThreshold = this.systemService
+          ? (await this.systemService.getPlaybookSettings().catch(() => null))?.replayEligibilityConfidenceThreshold
+          : undefined;
         const initialEligibility = this.replayEligibilityService.evaluateReplayEligibility({
           mode: stepMode as 'replay_strict' | 'replay_flex' | 'replay_adaptive',
           artifacts,
           isStale: artifacts.isStale,
           staleReasons: artifacts.staleReasons,
+          eligibilityThreshold,
           currentFingerprints: this.replayBaselineService.buildCurrentReplayFingerprints({
             inputContext: replayInputContext,
             flowSnapshot: replayComparableRuntimeFlowSnapshot,
@@ -1498,6 +1571,9 @@ export class PlaybookFlowExecutionService implements OnModuleInit {
             semanticMatch: resultPayload.semanticMatch ?? null,
             replayArtifacts,
             traceMetadata: resultPayload.traceMetadata,
+          });
+          this.triggerPostRunEvaluation(executionId, replayArtifacts, taskNodeId, iteration, resultPayload).catch((postErr) => {
+            this.logger.warn(`Post-run evaluation failed for ${executionId}:${taskNodeId}: ${postErr instanceof Error ? postErr.message : String(postErr)}`);
           });
         } else if (resultPayload.semanticMatch) {
           try {

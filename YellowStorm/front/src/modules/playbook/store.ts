@@ -1222,10 +1222,19 @@ export const usePlaybookStore = create<PlaybookStore>()(
             const playbook = state.currentPlaybook;
             const sortedTasks = [...playbook.tasks].sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0));
             const runningTaskId = data?.singleStepTaskId || sortedTasks[0]?.id || null;
-            const taskResults = buildExecutionTaskResultsFromTasks(playbook.tasks, {
-              runningTaskId,
-              markAllPending: !data?.singleStepTaskId,
-            });
+            let taskResults: PlaybookExecution['taskResults'];
+            if (data?.singleStepTaskId && state.currentExecution?.playbookId === id && state.currentExecution.taskResults.length > 0) {
+              taskResults = state.currentExecution.taskResults.map((tr) =>
+                tr.taskId === data.singleStepTaskId
+                  ? { ...clearTaskResultStaleState(tr), status: 'running' as const, output: null, error: null, durationMs: null, startedAt: new Date().toISOString(), completedAt: null }
+                  : tr,
+              );
+            } else {
+              taskResults = buildExecutionTaskResultsFromTasks(playbook.tasks, {
+                runningTaskId,
+                markAllPending: !data?.singleStepTaskId,
+              });
+            }
             const now = new Date().toISOString();
             const optimisticExecution: PlaybookExecution = {
               id: result.executionId,
@@ -2167,71 +2176,81 @@ export const usePlaybookStore = create<PlaybookStore>()(
       // ===== SSE Handlers =====
 
       onExecutionStart: (data: PlaybookExecutionStartEvent) => {
-        const taskResults = data.taskResults ?? [];
-        const newExecution: PlaybookExecution = {
-          id: data.executionId,
-          playbookId: data.playbookId,
-          executedBy: '',
-          executionNumber: data.executionNumber,
-          status: data.status as any,
-          executionMode: data.executionMode || 'live',
-          stepExecutionModes: data.stepExecutionModes ?? {},
-          executionTrigger: 'manual',
-          reflectionEnabled: data.reflectionEnabled !== false,
-          advisorScoringMode: data.advisorScoringMode ?? 'llm',
-          advisorAutopilotEnabled: data.advisorAutopilotEnabled === true,
-          advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 90,
-          advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 4,
-          advisorAutopilotStatus: data.advisorAutopilotStatus || 'idle',
-          advisorAutopilotTaskId: data.advisorAutopilotTaskId ?? null,
-          advisorAutopilotAttemptCount: data.advisorAutopilotAttemptCount ?? 0,
-          advisorAutopilotLastError: data.advisorAutopilotLastError ?? null,
-          judgeSummaryStatus: 'idle',
-          judgeSummary: null,
-          replaySourceByTask: data.replaySourceByTask || null,
-          replayPlanningByTask: data.replayPlanningByTask || null,
-          taskResults,
-          threadId: null,
-          interruptPayload: null,
-          waitingForHumanInput: false,
-          currentInterruptId: null,
-          currentInterruptTaskId: null,
-          hitlHistory: [],
-          error: null,
-          durationMs: null,
-          startedAt: new Date().toISOString(),
-          completedAt: null,
-          singleStepTaskId: data.singleStepTaskId ?? null,
-          playbookSnapshot: null,
-          totalInputTokens: 0,
-          totalOutputTokens: 0,
-          totalTokens: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        const newSummary: PlaybookExecutionSummary = {
-          id: data.executionId,
-          playbookId: data.playbookId,
-          executedBy: '',
-          executionNumber: data.executionNumber,
-          status: data.status as any,
-          executionTrigger: 'manual',
-          error: null,
-          durationMs: null,
-          startedAt: new Date().toISOString(),
-          completedAt: null,
-          singleStepTaskId: data.singleStepTaskId ?? null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
-        // Auto-select the first pending task (lowest order)
-        const sorted = [...taskResults].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-        const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
+        const incomingTaskResults = data.taskResults ?? [];
         set((state) => {
+          let taskResults = incomingTaskResults;
+          if (data.singleStepTaskId) {
+            const previous = state.currentExecution?.playbookId === data.playbookId
+              ? state.currentExecution
+              : state.executionCache[state.currentExecution?.id ?? ''] ?? null;
+            if (previous && previous.taskResults.length > 0) {
+              taskResults = previous.taskResults.map((tr) =>
+                tr.taskId === data.singleStepTaskId
+                  ? { ...clearTaskResultStaleState(tr), status: 'running' as const, output: null, error: null, durationMs: null, startedAt: new Date().toISOString(), completedAt: null }
+                  : tr,
+              );
+            }
+          }
+          const newExecution: PlaybookExecution = {
+            id: data.executionId,
+            playbookId: data.playbookId,
+            executedBy: '',
+            executionNumber: data.executionNumber,
+            status: data.status as any,
+            executionMode: data.executionMode || 'live',
+            stepExecutionModes: data.stepExecutionModes ?? {},
+            executionTrigger: 'manual',
+            reflectionEnabled: data.reflectionEnabled !== false,
+            advisorScoringMode: data.advisorScoringMode ?? 'llm',
+            advisorAutopilotEnabled: data.advisorAutopilotEnabled === true,
+            advisorAutopilotTargetScore: data.advisorAutopilotTargetScore ?? 90,
+            advisorAutopilotMaxTurns: data.advisorAutopilotMaxTurns ?? 4,
+            advisorAutopilotStatus: data.advisorAutopilotStatus || 'idle',
+            advisorAutopilotTaskId: data.advisorAutopilotTaskId ?? null,
+            advisorAutopilotAttemptCount: data.advisorAutopilotAttemptCount ?? 0,
+            advisorAutopilotLastError: data.advisorAutopilotLastError ?? null,
+            judgeSummaryStatus: 'idle',
+            judgeSummary: null,
+            replaySourceByTask: data.replaySourceByTask || null,
+            replayPlanningByTask: data.replayPlanningByTask || null,
+            taskResults,
+            threadId: null,
+            interruptPayload: null,
+            waitingForHumanInput: false,
+            currentInterruptId: null,
+            currentInterruptTaskId: null,
+            hitlHistory: [],
+            error: null,
+            durationMs: null,
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            singleStepTaskId: data.singleStepTaskId ?? null,
+            playbookSnapshot: null,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalTokens: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          const newSummary: PlaybookExecutionSummary = {
+            id: data.executionId,
+            playbookId: data.playbookId,
+            executedBy: '',
+            executionNumber: data.executionNumber,
+            status: data.status as any,
+            executionTrigger: 'manual',
+            error: null,
+            durationMs: null,
+            startedAt: new Date().toISOString(),
+            completedAt: null,
+            singleStepTaskId: data.singleStepTaskId ?? null,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          const sorted = [...taskResults].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+          const firstStep = sorted.find((tr) => tr.status === 'running') ?? sorted.find((tr) => tr.status === 'pending') ?? sorted[0];
+          const shouldSetCurrent = state.currentPlaybook?.id === data.playbookId;
           const executionCache = evictCache({ ...state.executionCache, [data.executionId]: newExecution });
-          // Only replace currentExecution if the user is viewing this playbook
-          const shouldSetCurrent =
-            state.currentPlaybook?.id === data.playbookId;
           return {
             executingPlaybookIds: state.executingPlaybookIds.includes(data.playbookId)
               ? state.executingPlaybookIds
