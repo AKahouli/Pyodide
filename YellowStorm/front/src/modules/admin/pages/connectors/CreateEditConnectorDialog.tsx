@@ -217,8 +217,14 @@ export function CreateEditConnectorDialog({
   }, [connectedApps, form.connectedAppKey]);
 
   const isCurrentAppConnected = useCallback(() => {
-    return form.connectedAppKey ? connectionStatus[form.connectedAppKey] ?? false : false;
-  }, [connectionStatus, form.connectedAppKey]);
+    if (!form.connectedAppKey) return false;
+
+    const app = getCurrentConnectedApp();
+    // For API key type, always consider as connected
+    if (app?.authType === 'api_key') return true;
+
+    return connectionStatus[form.connectedAppKey] ?? false;
+  }, [connectionStatus, form.connectedAppKey, getCurrentConnectedApp]);
 
   useEffect(() => {
     if (open) {
@@ -806,6 +812,21 @@ export function CreateEditConnectorDialog({
                 const app = getCurrentConnectedApp();
                 const isConnected = isCurrentAppConnected();
                 if (!app) return null;
+
+                // For API key type, don't show connect/disconnect buttons
+                if (app.authType === 'api_key') {
+                  return (
+                    <Button
+                      type='button'
+                      variant='default'
+                      className='flex items-center gap-2 bg-green-600 hover:bg-green-700'
+                      disabled
+                    >
+                      <Github className='h-4 w-4' />
+                      {t('connectors.form.auth.connectedAction', { app: app.displayName })}
+                    </Button>
+                  );
+                }
 
                 return (
                   <>
