@@ -15,18 +15,12 @@ export { formatFileSize, formatDate, getFileTypeLabel, validateFiles, ALLOWED_MI
 // Store
 export { useWorkspaceStore, useWorkspaces, useDocuments, useSelectedWorkspace, useCurrentWorkspaceSettings, useSettingsTargetWorkspace, useWorkspaceModalState, useWorkspaceLoading, useWorkspacePagination, useDocumentPagination, useUploadQueue, useUploadState, useHasActiveUploads } from './store';
 
-// Hooks
-export { useDocumentSelection } from './hooks';
+// Page (was modules/classifier)
+export { WorkspacePage } from './components/WorkspacePage';
 
 // Components
 export { WorkspaceButton } from './components/WorkspaceButton';
-export { WorkspaceModal } from './components/Modals/WorkspaceModal';
-export { WorkspaceSidebar } from './components/WorkspaceSidebar';
-export { WorkspaceItem } from './components/WorkspaceItem';
-export { WorkspaceContent } from './components/WorkspaceContent';
-export { DocumentsTable } from './components/DocumentsTable';
-export { default as DocumentRow } from './components/DocumentRow';
-export { FloatingActionBar } from './components/FloatingActionBar';
+export { WorkspaceSelect } from './components/WorkspaceSelect';
 export { CreateWorkspaceModal } from './components/Modals/CreateWorkspaceModal';
 export { CreateWorkspaceStep1 } from './components/Modals/CreateWorkspaceModal/CreateWorkspaceStep1';
 export { CreateWorkspaceStep2 } from './components/Modals/CreateWorkspaceModal/CreateWorkspaceStep2';
@@ -35,6 +29,6 @@ export { CreateTemplateStep1 } from './components/Modals/CreateTemplateModal/Cre
 export { CreateTemplateStep2 } from './components/Modals/CreateTemplateModal/CreateTemplateStep2';
 export { WorkspaceSettingsModal } from './components/Modals/WorkspaceSettingsModal';
 export { StepIndicator } from './components/StepIndicator';
-export { UploadDropZone } from './components/UploadDropZone';
-export { UploadButton } from './components/UploadButton';
 export { UploadProgress } from './components/UploadProgress';
+export { ShareWorkspaceDialog } from './components/ShareWorkspaceDialog';
+export { useShareNotifications } from './hooks/useShareNotifications';

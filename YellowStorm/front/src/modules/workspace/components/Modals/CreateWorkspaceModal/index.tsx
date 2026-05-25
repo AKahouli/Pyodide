@@ -59,7 +59,7 @@ export function CreateWorkspaceModal() {
           break;
       }
 
-      await createWorkspace({
+      const workspace = await createWorkspace({
         name: step1Data.name,
         description: step1Data.description,
         settings: settingId,
@@ -67,6 +67,7 @@ export function CreateWorkspaceModal() {
 
       setStep1Data(null);
       closeCreateModal();
+      window.location.hash = `/workspace/${workspace.id}`;
     } catch (error) {
       console.error('Failed to create workspace:', error);
     }

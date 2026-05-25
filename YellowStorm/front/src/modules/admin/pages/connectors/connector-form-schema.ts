@@ -1,3 +1,12 @@
+import type { ConnectorActionResponse, ConnectorDynamicHeaderSource } from '../../types';
+
+export interface DynamicHeaderRow {
+  id: string;
+  headerName: string;
+  source: ConnectorDynamicHeaderSource;
+  enabled: boolean;
+}
+
 export interface ConnectorFormValues {
   slug: string;
   name: string;
@@ -15,7 +24,10 @@ export interface ConnectorFormValues {
   runtimeEnvMappings: Array<{ id: string; key: string; value: string }>;
   mcpTransportType: string;
   mcpServerUrl: string;
+  githubPatToken: string;
   mcpServerConfig: string;
+  dynamicHeaders: DynamicHeaderRow[];
+  actions?: ConnectorActionResponse[];
   actionsJson: string;
   referencedSkillIds: string[];
   isActive: boolean;
@@ -38,7 +50,10 @@ export const defaultConnectorFormValues: ConnectorFormValues = {
   runtimeEnvMappings: [],
   mcpTransportType: 'streamable_http',
   mcpServerUrl: '',
+  githubPatToken: '',
   mcpServerConfig: '',
+  dynamicHeaders: [],
+  actions: [],
   actionsJson: '',
   referencedSkillIds: [],
   isActive: true,

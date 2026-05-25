@@ -42,4 +42,9 @@ export class CreateConversationDto {
   @IsString()
   @MaxLength(100)
   ownerJob?: string;
+
+  @ApiPropertyOptional({ description: 'Project ID to attach the conversation to' })
+  @IsOptional()
+  @IsMongoId()
+  projectId?: string;
 }

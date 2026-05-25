@@ -82,6 +82,8 @@ export class IndexingService {
     if (document.indexingStatus !== IndexingStatus.PENDING) {
       document.indexingStatus = IndexingStatus.PENDING;
       document.indexingError = undefined;
+      document.indexingTaskName = undefined;
+      document.indexingTaskId = undefined;
       await document.save();
     }
 
@@ -131,6 +133,8 @@ export class IndexingService {
     // Mark as processing
     document.indexingStatus = IndexingStatus.PROCESSING;
     document.indexingError = undefined;
+    document.indexingTaskName = undefined;
+    document.indexingTaskId = undefined;
     document.indexingStartedAt = new Date();
     await document.save();
 
@@ -286,6 +290,8 @@ export class IndexingService {
     documentId: string;
     indexingStatus: string;
     indexingError?: string;
+    indexingTaskName?: string;
+    indexingTaskId?: string;
     lastIndexedAt?: Date;
   }> {
     const document = await this.documentModel.findOne({
@@ -362,10 +368,18 @@ export class IndexingService {
     documentId: string,
     status: string,
     detectedLanguage?: string,
+    details: {
+      processingStatus?: string;
+      processingTaskName?: string;
+      processingTaskId?: string;
+      errorMessage?: string;
+    } = {},
   ): Promise<void> {
     this.logger.debug('Webhook received', {
       documentId,
       status,
+      processingStatus: details.processingStatus,
+      processingTaskName: details.processingTaskName,
     });
 
     const document = await this.documentModel.findById(documentId);
@@ -384,18 +398,31 @@ export class IndexingService {
     // Save detected language from webhook
     document.detected_language = detectedLanguage || 'fr';
 
+    if (details.processingTaskName) {
+      document.indexingTaskName = details.processingTaskName;
+    }
+    if (details.processingTaskId) {
+      document.indexingTaskId = details.processingTaskId;
+    }
+
     // Update document status based on webhook
-    if (status === 'FINISH') {
+ if (status === 'START' || status === 'PROCESSING' || details.processingStatus === 'PROCESSING') {
+      document.indexingStatus = IndexingStatus.PROCESSING;
+      document.indexingError = undefined;
+    } else if (status === 'FINISH') {
       document.indexingStatus = IndexingStatus.READY;
       document.lastIndexedAt = new Date();
       document.indexingError = undefined;
+      document.indexingTaskName = undefined;
+      document.indexingTaskId = undefined;
     } else {
       document.indexingStatus = IndexingStatus.FAILED;
-      document.indexingError = 'Document indexing failed. Please try again later.';
+      document.indexingError = details.errorMessage || 'Document indexing failed. Please try again later.';
       this.logger.warn('Webhook reported indexing failure', {
         documentId,
         workspaceId,
         rawStatus: status,
+        error: document.indexingError,
       });
     }
 
@@ -457,8 +484,12 @@ export class IndexingService {
           workspaceId: document.workspaceId.toString(),
           indexingStatus: status,
           indexingError: document.indexingError,
+          indexingTaskName: document.indexingTaskName,
+          indexingTaskId: document.indexingTaskId,
           lastIndexedAt: document.lastIndexedAt?.toISOString(),
           originalName: document.originalName,
+          detected_language: document.detected_language,
+          chunk_size: document.chunk_size,
         },
         metadata: {
           sourceModule: 'indexing',

@@ -33,6 +33,7 @@ export const API_ENDPOINTS = {
   users: {
     me: '/users/me',
     completeProfile: '/users/me/complete-profile',
+    search: '/users/search',
   },
   health: {
     check: '/health',
@@ -69,6 +70,12 @@ export const API_ENDPOINTS = {
     create: '/workspaces',
     byId: (id: string) => `/workspaces/${id}`,
     byAlias: (alias: string) => `/workspaces/alias/${alias}`,
+    sharedWithMe: '/workspaces/shared-with-me',
+  },
+  workspaceShares: {
+    list: (workspaceId: string) => `/workspaces/${workspaceId}/shares`,
+    byId: (workspaceId: string, shareId: string) =>
+      `/workspaces/${workspaceId}/shares/${shareId}`,
   },
   workspaceDocuments: {
     list: (workspaceId: string) => `/workspaces/${workspaceId}/documents`,
@@ -183,6 +190,11 @@ export const API_ENDPOINTS = {
     byId: (id: string) => `/admin/connectors/${id}`,
     inspect: '/admin/connectors/inspect',
     importMcp: '/admin/connectors/import-mcp',
+    authorize: (id: string) => `/admin/connectors/${id}/authorize`,
+    inspectConnector: (id: string) => `/admin/connectors/${id}/inspect`,
+    oauthAuthorize: (appKey: string) => `/admin/connectors/oauth/${appKey}/authorize`,
+    oauthStatus: (appKey: string) => `/admin/connectors/oauth/${appKey}/status`,
+    oauthDisconnect: (appKey: string) => `/admin/connectors/oauth/${appKey}/connection`,
   },
   connectors: {
     list: '/connectors',
@@ -299,6 +311,24 @@ export const API_ENDPOINTS = {
     clearDefault: (id: string) => `/admin/models/${id}/clear-default`,
     sync: '/admin/models/sync',
     default: '/admin/models/default',
+  },
+  projects: {
+    list: '/projects',
+    create: '/projects',
+    byId: (id: string) => `/projects/${id}`,
+  },
+  classifier: {
+    folders: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/folders`,
+    folderById: (id: string) => `/classifier/folders/${id}`,
+    folderMove: (id: string) => `/classifier/folders/${id}/move`,
+    files: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/files`,
+    fileFolder: (workspaceId: string, documentId: string) =>
+      `/classifier/workspaces/${workspaceId}/files/${documentId}/folder`,
+    runs: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/runs`,
+    runById: (id: string) => `/classifier/runs/${id}`,
+    rules: '/classifier/rules',
+    ruleById: (id: string) => `/classifier/rules/${id}`,
+    sync: (workspaceId: string) => `/classifier/workspaces/${workspaceId}/sync`,
   },
   evaluation: {
     datasets: '/evaluation/datasets',

@@ -1,17 +1,83 @@
 import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../logger';
 import { ConnectedAppTokenService } from '../connected-app/services/connected-app-token.service';
+import { UserService } from '../user/user.service';
 import { ConnectorCredentialService } from './connector-credential.service';
-import { ConnectorAuthService } from './interfaces/connector-auth.interface';
+import { ConnectorAuthService, ConnectorDynamicHeaderConfig } from './interfaces/connector-auth.interface';
+import { DynamicHeaderSource } from './schemas/connector.schema';
 
 @Injectable()
 export class ConnectorAuthServiceImpl implements ConnectorAuthService {
   constructor(
     private readonly connectedAppTokenService: ConnectedAppTokenService,
     private readonly credentialService: ConnectorCredentialService,
+    private readonly userService: UserService,
     private readonly logger: LoggerService,
   ) {
     this.logger.setContext(ConnectorAuthServiceImpl.name);
+  }
+
+  async resolveDynamicHeaders(
+    userId: string,
+    dynamicHeaders: ConnectorDynamicHeaderConfig[],
+  ): Promise<Record<string, string>> {
+    const enabled = (dynamicHeaders || []).filter((h) => h?.headerName && h?.enabled !== false);
+    if (enabled.length === 0 || !userId) {
+      return {};
+    }
+
+    let user: { _id: { toString(): string }; email?: string; profile?: { firstName?: string; lastName?: string } } | null = null;
+    try {
+      user = (await this.userService.findById(userId)) as any;
+    } catch (error) {
+      this.logger.warn('Failed to load user for dynamic header resolution', {
+        userId,
+        error: (error as Error).message,
+      });
+    }
+
+    if (!user) {
+      return {};
+    }
+
+    const firstName = user.profile?.firstName || '';
+    const lastName = user.profile?.lastName || '';
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+
+    const headers: Record<string, string> = {};
+    for (const row of enabled) {
+      const value = this.resolveSourceValue(row.source, {
+        userId: user._id.toString(),
+        email: user.email || '',
+        firstName,
+        lastName,
+        fullName,
+      });
+      if (value) {
+        headers[row.headerName] = value;
+      }
+    }
+    return headers;
+  }
+
+  private resolveSourceValue(
+    source: string,
+    ctx: { userId: string; email: string; firstName: string; lastName: string; fullName: string },
+  ): string {
+    switch (source) {
+      case DynamicHeaderSource.USER_ID:
+        return ctx.userId;
+      case DynamicHeaderSource.USER_EMAIL:
+        return ctx.email;
+      case DynamicHeaderSource.USER_FIRST_NAME:
+        return ctx.firstName;
+      case DynamicHeaderSource.USER_LAST_NAME:
+        return ctx.lastName;
+      case DynamicHeaderSource.USER_FULL_NAME:
+        return ctx.fullName;
+      default:
+        return '';
+    }
   }
 
   async resolveRuntimeAuth(

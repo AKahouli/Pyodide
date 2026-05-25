@@ -33,6 +33,7 @@ export class ConnectedAppCallbackController {
     @Query('error') error: string,
     @Res() res: Response,
   ) {
+
     if (error) {
       const html = this.oauthService.buildCallbackHtml(appKey, false, error);
       return res.send(html);

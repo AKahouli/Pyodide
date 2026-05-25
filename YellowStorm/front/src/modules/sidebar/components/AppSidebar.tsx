@@ -1,25 +1,105 @@
 import { useEffect, useState, useCallback, memo } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { Folder, History } from 'lucide-react';
+import { History, Sparkles } from 'lucide-react';
 import { ChatBubbleIcon } from '@radix-ui/react-icons';
+import { toast } from 'sonner';
 
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarMenuSkeleton, SidebarRail, SidebarTrigger } from '@/components/ui/sidebar';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSkeleton,
+  SidebarRail,
+  SidebarTrigger,
+} from '@/components/ui/sidebar';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { ProfileMenu } from '@/components/ui/profile-menu';
 import { AppLogo } from '@/components/icons';
-import { useConversationStore, useConversations, useConversationsLoading, useConversationsHasMore, useHistoryPanelOpen, useToggleHistoryPanel, DEFAULT_CONVERSATIONS_LIMIT } from '@/modules/conversation/store';
+import { cn } from '@/lib/utils';
+import {
+  useConversationStore,
+  useHistoryConversations,
+  useConversationsLoading,
+  useConversationsHasMore,
+  useHistoryPanelOpen,
+  useToggleHistoryPanel,
+  DEFAULT_CONVERSATIONS_LIMIT,
+} from '@/modules/conversation/store';
 import { WorkspaceButton } from '@/modules/workspace';
 import { AgentButton } from '@/modules/agent';
 import { PlaybookButton } from '@/modules/playbook/components/PlaybookButton';
 import { ConnectedAppButton } from '@/modules/connected-app';
 import { AdminButton } from '@/modules/admin';
 import { useModuleTranslation } from '@/modules/localization';
+import { useProjectStore } from '@/modules/project';
+import { CreateProjectDialog } from '@/modules/project';
 
 import { ShareDialog } from '@/modules/conversation/components/ShareDialog';
 import { ConversationItem } from './ConversationItem';
+import { ProjectsSection } from './ProjectsSection';
 import { useAutoCollapse } from '../hooks/useAutoCollapse';
 import { useAuth } from '@/modules/auth';
+import { decodeConversationDrag, hasConversationDrag } from './drag-types';
+
+function HistoryDropZone({
+  children,
+  className,
+  onDropConversation,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  onDropConversation: (conversationId: string, sourceProjectId: string | null) => void;
+}) {
+  const [isOver, setIsOver] = useState(false);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (!hasConversationDrag(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setIsOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    // Only clear if we're leaving the zone itself, not a child
+    if (e.currentTarget === e.target) {
+      setIsOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      setIsOver(false);
+      const payload = decodeConversationDrag(
+        e.dataTransfer.getData('application/x-yellowstorm-conversation'),
+      );
+      if (!payload) return;
+      e.preventDefault();
+      // History drop is only meaningful when the conversation comes from a project
+      if (!payload.sourceProjectId) return;
+      onDropConversation(payload.conversationId, payload.sourceProjectId);
+    },
+    [onDropConversation],
+  );
+
+  return (
+    <div
+      className={cn(className, isOver && 'rounded-md ring-1 ring-primary/40 bg-primary/5')}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {children}
+    </div>
+  );
+}
 
 export const AppSidebar = memo(function AppSidebar() {
   const { state, toggleSidebar } = useAutoCollapse();
@@ -27,7 +107,7 @@ export const AppSidebar = memo(function AppSidebar() {
   const { t } = useModuleTranslation('sidebar');
   const { user } = useAuth();
 
-  const conversations = useConversations();
+  const historyConversations = useHistoryConversations();
   const conversationsLoading = useConversationsLoading();
   const hasMore = useConversationsHasMore();
   const historyPanelOpen = useHistoryPanelOpen();
@@ -35,16 +115,40 @@ export const AppSidebar = memo(function AppSidebar() {
   const fetchConversations = useConversationStore((s) => s.fetchConversations);
   const deleteConversation = useConversationStore((s) => s.deleteConversation);
   const updateConversation = useConversationStore((s) => s.updateConversation);
+  const moveConversationToProject = useConversationStore((s) => s.moveConversationToProject);
   const currentConversationId = useConversationStore((s) => s.currentConversationId);
+
+  const createProject = useProjectStore((s) => s.createProject);
+
+  const [historySearch, setHistorySearch] = useState('');
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [pendingMoveConvId, setPendingMoveConvId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchConversations({ reset: true, limit: DEFAULT_CONVERSATIONS_LIMIT });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      const trimmed = historySearch.trim();
+      fetchConversations({
+        reset: true,
+        limit: DEFAULT_CONVERSATIONS_LIMIT,
+        search: trimmed || undefined,
+      });
+    }, 300);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historySearch]);
+
   const handleLoadMore = useCallback(() => {
-    fetchConversations({ limit: DEFAULT_CONVERSATIONS_LIMIT });
-  }, [fetchConversations]);
+    const trimmed = historySearch.trim();
+    fetchConversations({
+      limit: DEFAULT_CONVERSATIONS_LIMIT,
+      search: trimmed || undefined,
+    });
+  }, [fetchConversations, historySearch]);
 
   const handleDelete = useCallback(
     async (id: string) => {
@@ -72,28 +176,43 @@ export const AppSidebar = memo(function AppSidebar() {
     setShareOpen(true);
   }, []);
 
+  const handleNewProjectFromMove = useCallback((conversationId: string) => {
+    setPendingMoveConvId(conversationId);
+    setCreateProjectOpen(true);
+  }, []);
+
+  const handleProjectCreatedForMove = useCallback(
+    async (name: string) => {
+      const project = await createProject(name);
+      if (pendingMoveConvId) {
+        await moveConversationToProject(pendingMoveConvId, project.id);
+        setPendingMoveConvId(null);
+      }
+    },
+    [createProject, moveConversationToProject, pendingMoveConvId],
+  );
+
+  const handleHistoryDrop = useCallback(
+    async (conversationId: string, _sourceProjectId: string | null) => {
+      try {
+        await moveConversationToProject(conversationId, null);
+        toast.success(t('projects.toasts.conversationMoved'));
+      } catch {
+        // store handles error toast
+      }
+    },
+    [moveConversationToProject, t],
+  );
+
   return (
     <Sidebar collapsible='icon' className='shrink-0 z-30'>
       <SidebarHeader className='pt-8 gap-0 duration-500 ease-linear '>
-        <NavLink to='/' className='flex items-center h-12 mb-4 overflow-hidden  duration-500 ease-linear group-data-[collapsible=icon]:w-0  group-data-[collapsible=icon]:opacity-0'>
+        <NavLink
+          to='/'
+          className='flex items-center h-12 mb-4 overflow-hidden duration-500 ease-linear group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0'
+        >
           <AppLogo className='h-12 shrink-0' />
         </NavLink>
-        {/*
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Search"
-              variant="outline"
-              className="h-10 rounded-full font-normal text-muted-foreground group-data-[collapsible=icon]:rounded-md group-data-[collapsible=icon]:shadow-none group-data-[collapsible=icon]:bg-transparent"
-              onClick={() => {
-                if (state === 'collapsed') toggleSidebar();
-              }}
-            >
-              <Search />
-              <span>Search...</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>*/}
       </SidebarHeader>
 
       <SidebarContent className='my-3 w-full min-h-0 overflow-hidden'>
@@ -107,9 +226,9 @@ export const AppSidebar = memo(function AppSidebar() {
             </SidebarMenuItem>
 
             <SidebarMenuItem>
-              <SidebarMenuButton tooltip={t('actions.projects.tooltip')} disabled>
-                <Folder />
-                <span>{t('actions.projects.label')}</span>
+              <SidebarMenuButton tooltip='Manus Agent (v2)' onClick={() => navigate('/conversation-v2')}>
+                <Sparkles />
+                <span>Manus (v2)</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
 
@@ -125,16 +244,19 @@ export const AppSidebar = memo(function AppSidebar() {
           </SidebarMenu>
         </SidebarGroup>
 
+        {state !== 'collapsed' && <ProjectsSection />}
+
         <SidebarGroup className='flex-1 min-h-0 overflow-hidden'>
           <Collapsible
             className='flex flex-1 min-h-0 flex-col overflow-hidden'
             open={historyPanelOpen && state !== 'collapsed'}
-            onOpenChange={(open) => {
+            onOpenChange={() => {
               if (state === 'collapsed') {
                 toggleSidebar();
               }
               toggleHistoryPanel();
-            }}>
+            }}
+          >
             <SidebarMenu>
               <SidebarMenuItem>
                 <CollapsibleTrigger asChild>
@@ -146,9 +268,22 @@ export const AppSidebar = memo(function AppSidebar() {
               </SidebarMenuItem>
             </SidebarMenu>
             <CollapsibleContent className='flex min-h-0 flex-1 flex-col'>
-              <div className='flex-1 min-h-0 overflow-y-auto pr-1'>
+              {(historyConversations.length > 0 || historySearch.trim().length > 0) && (
+                <div className='px-2 pb-2'>
+                  <Input
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    placeholder={t('history.searchPlaceholder')}
+                    className='h-8 text-xs'
+                  />
+                </div>
+              )}
+              <HistoryDropZone
+                className='flex-1 min-h-0 overflow-y-auto pr-1'
+                onDropConversation={handleHistoryDrop}
+              >
                 <SidebarMenu>
-                  {conversations.map((conv) => {
+                  {historyConversations.map((conv) => {
                     const mentionCount =
                       conv.groupMeta?.members?.find((m) => m.userId === user?.id)?.mentions?.filter((m) => !m.seenAt).length || 0;
 
@@ -157,11 +292,14 @@ export const AppSidebar = memo(function AppSidebar() {
                         key={conv.id}
                         id={conv.id}
                         title={conv.title}
+                        projectId={conv.projectId ?? null}
                         isGroup={!!conv.groupMeta?.isGroup}
                         mentionCount={mentionCount}
                         onRename={(newTitle) => handleRename(conv.id, newTitle)}
                         onDelete={() => handleDelete(conv.id)}
                         onShare={() => handleShare(conv.id, conv.title)}
+                        onMove={(targetProjectId) => moveConversationToProject(conv.id, targetProjectId)}
+                        onNewProject={() => handleNewProjectFromMove(conv.id)}
                       />
                     );
                   })}
@@ -172,15 +310,25 @@ export const AppSidebar = memo(function AppSidebar() {
                       <SidebarMenuSkeleton index={2} />
                     </>
                   )}
+                  {!conversationsLoading && historyConversations.length === 0 && (
+                    <li className='px-2 py-1 text-xs text-muted-foreground'>{t('history.empty')}</li>
+                  )}
                   {hasMore && !conversationsLoading && (
                     <SidebarMenuItem>
-                      <Button variant='ghost' size='sm' className='w-full text-xs text-muted-foreground text-start bg-transparent hover:bg-transparent' onClick={handleLoadMore}>
-                        <p className='w-full text-xs text-muted-foreground text-start underline cursor-pointer'>{t('history.showMore')}</p>
+                      <Button
+                        variant='ghost'
+                        size='sm'
+                        className='w-full text-xs text-muted-foreground text-start bg-transparent hover:bg-transparent'
+                        onClick={handleLoadMore}
+                      >
+                        <p className='w-full text-xs text-muted-foreground text-start underline cursor-pointer'>
+                          {t('history.showMore')}
+                        </p>
                       </Button>
                     </SidebarMenuItem>
                   )}
                 </SidebarMenu>
-              </div>
+              </HistoryDropZone>
             </CollapsibleContent>
           </Collapsible>
         </SidebarGroup>
@@ -191,7 +339,24 @@ export const AppSidebar = memo(function AppSidebar() {
         <SidebarTrigger />
       </SidebarFooter>
 
-      {shareConversation && <ShareDialog open={shareOpen} onOpenChange={setShareOpen} conversationId={shareConversation.id} conversationTitle={shareConversation.title} />}
+      {shareConversation && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          conversationId={shareConversation.id}
+          conversationTitle={shareConversation.title}
+        />
+      )}
+
+      <CreateProjectDialog
+        open={createProjectOpen}
+        onOpenChange={(open) => {
+          setCreateProjectOpen(open);
+          if (!open) setPendingMoveConvId(null);
+        }}
+        onCreate={handleProjectCreatedForMove}
+      />
+      <SidebarRail />
     </Sidebar>
   );
 });

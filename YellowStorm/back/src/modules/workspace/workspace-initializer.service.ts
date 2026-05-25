@@ -105,6 +105,7 @@ export class WorkspaceInitializerService {
       allocatedStorage: workspace.allocatedStorage,
       isSystem: workspace.isSystem || false,
       isPersonal: workspace.isPersonal || false,
+      shareCount: workspace.shareCount || 0,
       createdAt: workspace.createdAt.toISOString(),
       updatedAt: workspace.updatedAt.toISOString(),
     };

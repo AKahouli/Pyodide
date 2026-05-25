@@ -8,7 +8,7 @@ import { JwtPayload } from '../../auth/interfaces/jwt-payload.interface';
 import { AuthService } from '../../auth/auth.service';
 
 interface RequestWithSseUser extends Request {
-  sseUser?: JwtPayload;
+  sseUser?: JwtPayload & { id: string };
 }
 
 /**
@@ -62,7 +62,8 @@ export class SseAuthGuard implements CanActivate {
       }
 
       // Attach user info to request for controller access
-      request.sseUser = payload;
+      // JWT uses `sub` for user ID; normalise to `id` so controllers can use user.id uniformly
+      request.sseUser = { ...payload, id: payload.sub };
       return true;
     } catch (error) {
       if (error instanceof UnauthorizedException) {

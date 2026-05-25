@@ -7,6 +7,10 @@ export const configValidationSchema = Joi.object({
   PORT: Joi.number().default(3000),
   API_PREFIX: Joi.string().default('api'),
   FRONTEND_URL: Joi.string().uri().default('http://localhost:5173'),
+  BACKEND_URL: Joi.string().uri().optional(),
+  GITHUB_CLIENT_ID: Joi.string().optional(),
+  GITHUB_CLIENT_SECRET: Joi.string().optional(),
+  GITHUB_CALLBACK_URL: Joi.string().uri().optional(),
   LOG_LEVEL: Joi.string().valid('error', 'warn', 'info', 'debug', 'verbose').default('info'),
   MEMORY_LIMIT_MB: Joi.number().min(64).default(512),
 
@@ -138,6 +142,14 @@ export const configValidationSchema = Joi.object({
   CONVERSATION_MAX_FILES_PER_MESSAGE: Joi.number().min(1).max(20).default(5),
   CONVERSATION_SHARE_EXPIRY_DAYS: Joi.number().min(1).max(365).default(30),
   CONVERSATION_SYSTEM_WORKSPACE_STORAGE_BYTES: Joi.number().min(1048576).default(52428800),
+
+  // Conversation V2 (Manus)
+  CONVERSATION_V2_GRPC_URL: Joi.string().default('localhost:50051'),
+  CONVERSATION_V2_GRPC_UNARY_DEADLINE_MS: Joi.number().default(5000),
+  CONVERSATION_V2_GRPC_STREAM_DEADLINE_MS: Joi.number().default(900000),
+  CONVERSATION_V2_SSE_HEARTBEAT_MS: Joi.number().default(15000),
+  CONVERSATION_V2_MAX_MESSAGE_LENGTH: Joi.number().default(16384),
+  CONVERSATION_V2_GRPC_MAX_MESSAGE_BYTES: Joi.number().default(16 * 1024 * 1024),
 
   // LiteLLM
   LITELLM_API_URL: Joi.string().uri().optional(),

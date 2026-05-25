@@ -401,8 +401,8 @@ function mapChartComponent(data: Record<string, unknown>) {
   return {
     type: 'chart' as const,
     title: payload.title || '',
-    data: chartData,
-    config,
+    data: parseChartData(payload.data ?? payload.chartData),
+    config: parseJsonValue<Record<string, { label?: string; color?: string }>>(payload.config, {}),
     xAxisKey: payload.xAxisKey || '',
     yAxisKey: payload.yAxisKey || '',
     nameKey: payload.nameKey || '',

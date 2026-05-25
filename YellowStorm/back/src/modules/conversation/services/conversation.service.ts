@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { Conversation, ConversationDocument } from '../schemas/conversation.schema';
+import { Message, MessageDocument } from '../schemas/message.schema';
 import { SharedConversation, SharedConversationDocument } from '../schemas/shared-conversation.schema';
 import { User, UserDocument } from '../../user/schemas/user.schema';
 import {
@@ -31,6 +32,8 @@ export class ConversationService {
   constructor(
     @InjectModel(Conversation.name)
     private readonly conversationModel: Model<ConversationDocument>,
+    @InjectModel(Message.name)
+    private readonly messageModel: Model<MessageDocument>,
     @InjectModel(SharedConversation.name)
     private readonly sharedConversationModel: Model<SharedConversationDocument>,
     @InjectModel(User.name)
@@ -67,6 +70,7 @@ export class ConversationService {
       isArchived: false,
       isShared: false,
       ...(groupMeta ? { groupMeta } : {}),
+      ...(data.projectId ? { projectId: new Types.ObjectId(data.projectId) } : {}),
     });
 
     this.logger.log('Conversation created', {
@@ -128,6 +132,8 @@ export class ConversationService {
       sortBy = 'lastMessageAt',
       sortOrder = 'desc',
       isArchived,
+      projectId,
+      searchScope,
     } = params;
 
     const skip = (page - 1) * limit;
@@ -143,8 +149,31 @@ export class ConversationService {
       query.isArchived = isArchived;
     }
 
+    if (projectId === 'none') {
+      query.projectId = { $in: [null, undefined] };
+    } else if (projectId) {
+      query.projectId = new Types.ObjectId(projectId);
+    }
+
     if (search) {
-      query.title = { $regex: escapeRegex(search), $options: 'i' };
+      const escaped = escapeRegex(search);
+      if (searchScope === 'fulltext') {
+        // Match by title OR by message content of conversations the user can see
+        const matchingConvIds = await this.messageModel.distinct('conversationId', {
+          content: { $regex: escaped, $options: 'i' },
+        });
+
+        query.$and = [
+          {
+            $or: [
+              { title: { $regex: escaped, $options: 'i' } },
+              { _id: { $in: matchingConvIds } },
+            ],
+          },
+        ];
+      } else {
+        query.title = { $regex: escaped, $options: 'i' };
+      }
     }
 
     const sort: Record<string, 1 | -1> = {
@@ -198,6 +227,10 @@ export class ConversationService {
 
     if (data.workspaces !== undefined) {
       conversation.workspaces = data.workspaces.map((id) => new Types.ObjectId(id));
+    }
+
+    if (data.projectId !== undefined) {
+      conversation.projectId = data.projectId ? new Types.ObjectId(data.projectId) : null;
     }
 
     if (data.isFirstMessage !== undefined) {
@@ -878,6 +911,7 @@ export class ConversationService {
       createdAt: toISO(conversation.createdAt),
       updatedAt: toISO(conversation.updatedAt),
       groupMeta,
+      projectId: conversation.projectId ? toStr(conversation.projectId) : null,
     };
   }
 

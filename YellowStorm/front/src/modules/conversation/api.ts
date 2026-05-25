@@ -25,7 +25,7 @@ export async function fetchConversations(params?: ConversationListParams): Promi
   };
 }
 
-export async function createConversation(data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string }): Promise<Conversation> {
+export async function createConversation(data?: { title?: string; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; ownerJob?: string; projectId?: string }): Promise<Conversation> {
   const response = await apiClient.post<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.create, data || {});
   return response.data.data;
 }
@@ -35,7 +35,7 @@ export async function fetchConversation(id: string): Promise<Conversation> {
   return response.data.data;
 }
 
-export async function updateConversation(id: string, data: { title?: string; isArchived?: boolean; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }> }): Promise<Conversation> {
+export async function updateConversation(id: string, data: { title?: string; isArchived?: boolean; workspaces?: string[]; participantEmails?: string[]; participants?: Array<{ email: string; job?: string }>; projectId?: string | null }): Promise<Conversation> {
   const response = await apiClient.patch<ApiResponse<Conversation>>(API_ENDPOINTS.conversations.byId(id), data);
   return response.data.data;
 }

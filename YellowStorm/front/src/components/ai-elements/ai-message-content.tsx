@@ -211,13 +211,6 @@ const AIMessagePart = ({ part, isStreaming = false }: AIMessagePartProps) => {
     case 'checkpoint':
       return <CheckpointPartRenderer label={part.label} />;
     case 'chart':
-      console.debug('[AIMessageContent][chart][render]', {
-        title: part.title,
-        kind: part.kind,
-        dataLength: Array.isArray(part.data) ? part.data.length : 'not array',
-        seriesLength: Array.isArray(part.series) ? part.series.length : 'not array',
-        configKeys: part.config && typeof part.config === 'object' ? Object.keys(part.config) : [],
-      });
       return <ChartPartRenderer type='chart' kind={part.kind} title={part.title} data={part.data} config={part.config} xAxisKey={part.xAxisKey} yAxisKey={part.yAxisKey} nameKey={part.nameKey} zAxisKey={part.zAxisKey} stacked={part.stacked} layout={part.layout} innerRadius={part.innerRadius} showLegend={part.showLegend} showGrid={part.showGrid} series={part.series} />;
     case 'task':
       return <TaskPartRenderer title={part.title} items={part.items} status={part.status} isStreaming={isStreaming} />;

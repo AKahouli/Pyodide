@@ -34,6 +34,7 @@ export interface Workspace {
   allocatedStorage: number;
   isSystem: boolean;
   isPersonal: boolean;
+  shareCount: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -82,25 +83,19 @@ export interface WorkspaceDocument {
   metadata?: Record<string, string>;
   indexingStatus: IndexingStatus;
   indexingError?: string;
+  indexingTaskName?: string;
+  indexingTaskId?: string;
   lastIndexedAt?: string;
   parentId?: string;
   isFolder: boolean;
   folderName?: string;
+  detected_language?: string;
+  chunk_size?: number;
   createdAt: string;
   updatedAt: string;
 }
 
 // ===== Folder Types =====
-
-export interface WorkspaceFolder {
-  id: string;
-  folderName: string;
-  parentId?: string;
-  createdAt: string;
-  isExpanded?: boolean;
-  isFolder: true;
-  children: (WorkspaceDocument | WorkspaceFolder)[];
-}
 
 export interface CreateFolderData {
   name: string;
@@ -109,6 +104,107 @@ export interface CreateFolderData {
 
 export interface RenameFolderData {
   name: string;
+}
+
+// ===== Workspace Page (folders/files/classification) =====
+
+export interface WorkspaceFolder {
+  id: string;
+  workspaceId: string;
+  parentId: string | null;
+  name: string;
+  description: string;
+  createdBy: string;
+  childCount: number;
+  fileCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type AssignmentSource = 'manual' | 'playbook' | null;
+
+export interface WorkspaceFile {
+  id: string;
+  workspaceId: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  uploadedAt: string | null;
+  folderId: string | null;
+  assignmentSource: AssignmentSource;
+}
+
+export type ClassifierRuleScope = 'global' | 'local';
+
+export interface ClassifierRule {
+  id: string;
+  userId: string;
+  scope: ClassifierRuleScope;
+  workspaceId: string | null;
+  text: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateClassifierRuleInput {
+  scope: ClassifierRuleScope;
+  workspaceId?: string;
+  text: string;
+  enabled?: boolean;
+}
+
+export interface UpdateClassifierRuleInput {
+  text?: string;
+  enabled?: boolean;
+}
+
+export type ClassificationRunStatus =
+  | 'queued'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'cancelled';
+
+export interface ClassificationRun {
+  id: string;
+  workspaceId: string;
+  status: ClassificationRunStatus;
+  playbookId: string;
+  playbookExecutionId: string | null;
+  hint: string | null;
+  overwrite: boolean;
+  totalFiles: number;
+  classifiedFiles: number;
+  error: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+  triggeredBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateWorkspaceFolderInput {
+  name: string;
+  description: string;
+  parentId?: string | null;
+}
+
+export interface UpdateWorkspaceFolderInput {
+  name?: string;
+  description?: string;
+}
+
+export interface StartClassificationRunInput {
+  playbookId: string;
+  hint?: string;
+  overwrite?: boolean;
+}
+
+export interface ListWorkspaceFilesQuery {
+  folderId?: string;
+  unclassified?: boolean;
+  search?: string;
 }
 
 export interface DocumentQueryParams {
@@ -251,6 +347,94 @@ export interface ReportProgressRequest {
   progress: number;
   status: UploadFileStatus;
   error?: string;
+}
+
+// ===== Workspace Share Types =====
+
+export type WorkspacePermission = 'read' | 'readwrite';
+
+export type WorkspaceRole = 'owner' | WorkspacePermission;
+
+export type WorkspaceTab = 'personal' | 'shared';
+
+export interface SharedUserInfo {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export interface WorkspaceShareResponse {
+  id: string;
+  workspaceId: string;
+  user: SharedUserInfo;
+  permission: WorkspacePermission;
+  sharedBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShareWorkspaceEntry {
+  email: string;
+  permission: WorkspacePermission;
+}
+
+export interface ShareWorkspaceDto {
+  shares: ShareWorkspaceEntry[];
+}
+
+export interface ShareResult {
+  shared: WorkspaceShareResponse[];
+  notFound: string[];
+  invalid: string[];
+}
+
+export interface PaginatedShares {
+  shares: WorkspaceShareResponse[];
+  pagination: PaginationInfo;
+}
+
+export interface SharedWorkspaceResponse {
+  id: string;
+  name: string;
+  alias: string;
+  description?: string;
+  owner: {
+    id: string;
+    email: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  permission: WorkspacePermission;
+  shareId: string;
+  documentCount: number;
+  usedStorage: number;
+  allocatedStorage: number;
+  sharedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaginatedSharedWorkspaces {
+  workspaces: SharedWorkspaceResponse[];
+  pagination: PaginationInfo;
+}
+
+export interface UserSearchResult {
+  id: string;
+  email: string;
+  firstName?: string;
+  lastName?: string;
+}
+
+export type WorkspaceListItem = Workspace | SharedWorkspaceResponse;
+
+export function isWorkspace(item: WorkspaceListItem): item is Workspace {
+  return 'createdBy' in item;
+}
+
+export function isSharedWorkspace(item: WorkspaceListItem): item is SharedWorkspaceResponse {
+  return 'shareId' in item;
 }
 
 // Local upload tracking (for UI state)

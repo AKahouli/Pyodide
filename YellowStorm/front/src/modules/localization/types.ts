@@ -6,6 +6,7 @@ import type agent from '../agent/locales/en.json';
 import type auth from '../auth/locales/en.json';
 import type connectedApp from '../connected-app/locales/en.json';
 import type conversation from '../conversation/locales/en.json';
+import type conversationV2 from '../conversation-v2/locales/en.json';
 import type fileViewer from '../file-viewer/locales/en.json';
 import type models from '../models/locales/en.json';
 import type notifications from '../notifications/locales/en.json';
@@ -26,6 +27,7 @@ export type NamespaceResourceMap = {
   auth: typeof auth;
   'connected-app': typeof connectedApp;
   conversation: typeof conversation;
+  'conversation-v2': typeof conversationV2;
   'file-viewer': typeof fileViewer;
   models: typeof models;
   notifications: typeof notifications;

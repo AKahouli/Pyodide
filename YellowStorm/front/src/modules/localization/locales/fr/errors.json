@@ -99,5 +99,18 @@
   "ERR_2506": "L'exécution du playbook a échoué.",
   "ERR_2507": "L'exécution du playbook a expiré par inactivité.",
   "ERR_2508": "Le playbook ne contient aucune tâche à exécuter.",
-  "ERR_2509": "Échec de la génération du playbook. Veuillez réessayer."
+  "ERR_2509": "Échec de la génération du playbook. Veuillez réessayer.",
+  "ERR_2700": "Projet introuvable.",
+  "ERR_2701": "Un projet avec ce nom existe déjà.",
+  "ERR_2702": "Vous n'avez pas accès à ce projet.",
+  "ERR_2800": "Dossier de classification introuvable.",
+  "ERR_2801": "Un dossier portant ce nom existe déjà à cet emplacement.",
+  "ERR_2802": "Vous n'avez pas accès à ce dossier de classification.",
+  "ERR_2803": "Impossible de déplacer un dossier dans lui-même ou un de ses descendants.",
+  "ERR_2804": "Dossier parent invalide.",
+  "ERR_2810": "Fichier introuvable dans ce workspace.",
+  "ERR_2811": "Vous n'avez pas accès à ce fichier.",
+  "ERR_2820": "Run de classification introuvable.",
+  "ERR_2821": "Vous n'avez pas accès à ce run de classification.",
+  "ERR_2822": "Le playbook sélectionné est invalide ou inaccessible."
 }

@@ -13,6 +13,7 @@ import healthConfig from './config/health.config';
 import workspaceConfig from './config/workspace.config';
 import litellmConfig from './config/litellm.config';
 import conversationConfig from './config/conversation.config';
+import conversationV2Config from './config/conversation-v2.config';
 import playbookFlowConfig from './config/playbook-flow.config';
 
 // Global Modules
@@ -37,6 +38,7 @@ import { WorkspaceModule } from './modules/workspace';
 import { IndexingModule } from './modules/indexing';
 import { ModelsModule } from './modules/models';
 import { ConversationModule } from './modules/conversation';
+import { ConversationV2Module } from './modules/conversation-v2/conversation-v2.module';
 import { ToolModule } from './modules/tool';
 import { AgentTypeModule } from './modules/agent-type/agent-type.module';
 import { AgentModule } from './modules/agent/agent.module';
@@ -47,6 +49,8 @@ import { SkillModule } from './modules/skill/skill.module';
 import { AuthProviderModule } from './modules/auth-provider/auth-provider.module';
 import { ConnectedAppModule } from './modules/connected-app/connected-app.module';
 import { ConnectorModule } from './modules/connector/connector.module';
+import { ProjectModule } from './modules/project';
+import { ClassifierModule } from './modules/classifier';
 
 @Module({
   imports: [
@@ -54,7 +58,7 @@ import { ConnectorModule } from './modules/connector/connector.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: ['.env'],
-      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, playbookFlowConfig],
+      load: [appConfig, jwtConfig, authConfig, microsoftConfig, healthConfig, workspaceConfig, litellmConfig, conversationConfig, conversationV2Config, playbookFlowConfig],
       validationSchema: configValidationSchema,
       validationOptions: {
         abortEarly: true,
@@ -84,6 +88,7 @@ import { ConnectorModule } from './modules/connector/connector.module';
     WorkspaceModule,
     IndexingModule,
     ConversationModule,
+    ConversationV2Module,
     ModelsModule,
     ToolModule,
     SkillModule,
@@ -94,6 +99,8 @@ import { ConnectorModule } from './modules/connector/connector.module';
     AnalyticsModule,
     ConnectedAppModule,
     ConnectorModule,
+    ProjectModule,
+    ClassifierModule,
     HealthModule,
     EvaluationModule,
   ],

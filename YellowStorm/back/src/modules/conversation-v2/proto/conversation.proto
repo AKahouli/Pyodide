@@ -1,0 +1,140 @@
+syntax = "proto3";
+
+package yellostorm.manus.v1;
+
+service ConversationV2 {
+  rpc CreateSession   (CreateSessionRequest)   returns (CreateSessionResponse);
+  rpc GetSession      (GetSessionRequest)      returns (GetSessionResponse);
+  rpc StopSession     (StopSessionRequest)     returns (StopSessionResponse);
+  rpc Chat            (ChatRequest)            returns (stream Event);
+  rpc GetVncSignedUrl (GetVncSignedUrlRequest) returns (GetVncSignedUrlResponse);
+  rpc PauseSession    (PauseSessionRequest)    returns (PauseSessionResponse);
+  rpc ResumeSession   (ResumeSessionRequest)   returns (ResumeSessionResponse);
+}
+
+message GetVncSignedUrlRequest  { string user_id = 1; string session_id = 2; }
+message GetVncSignedUrlResponse { string url = 1; int64 expires_at = 2; }
+
+message PauseSessionRequest   { string user_id = 1; string session_id = 2; }
+message PauseSessionResponse  {}
+message ResumeSessionRequest  { string user_id = 1; string session_id = 2; }
+message ResumeSessionResponse {}
+
+message CreateSessionRequest  { string user_id = 1; }
+message CreateSessionResponse { string session_id = 1; }
+
+message GetSessionRequest  { string user_id = 1; string session_id = 2; }
+message GetSessionResponse {
+  string session_id = 1;
+  string title = 2;
+  string status = 3;
+  bool   is_shared = 4;
+  repeated Event events = 5;
+}
+
+message StopSessionRequest  { string user_id = 1; string session_id = 2; }
+message StopSessionResponse {}
+
+message ChatRequest {
+  string user_id    = 1;
+  string session_id = 2;
+  string message    = 3;
+  optional string event_id = 4;
+  optional int64  timestamp = 5;
+}
+
+message Event {
+  string event_id  = 1;
+  int64  timestamp = 2;
+  oneof payload {
+    MessageEvent message = 10;
+    ToolEvent    tool    = 11;
+    StepEvent    step    = 12;
+    PlanEvent    plan    = 13;
+    TitleEvent   title   = 14;
+    DoneEvent    done    = 15;
+    WaitEvent    wait    = 16;
+    ErrorEvent   error   = 17;
+  }
+}
+
+message MessageEvent {
+  string role = 1;          // "user" | "assistant"
+  string content = 2;
+  repeated FileInfo attachments = 3;
+}
+
+message ToolEvent {
+  string tool_call_id = 1;
+  string name = 2;
+  string status = 3;        // matches Manus ToolStatus
+  string function = 4;
+  string args_json = 5;     // JSON-encoded Dict[str, Any]
+  ToolContent content = 6;
+}
+
+message StepEvent {
+  string id = 1;
+  string status = 2;
+  string description = 3;
+}
+
+message PlanEvent {
+  repeated StepEvent steps = 1;
+}
+
+message TitleEvent { string title = 1; }
+message DoneEvent  {}
+message WaitEvent  {}
+message ErrorEvent { string error = 1; }
+
+message ToolContent {
+  oneof variant {
+    BrowserToolContent browser = 1;
+    ShellToolContent   shell   = 2;
+    FileToolContent    file    = 3;
+    SearchToolContent  search  = 4;
+    McpToolContent     mcp     = 5;
+    GenericToolContent generic = 99;
+  }
+}
+
+message BrowserToolContent {
+  string screenshot_url = 1;
+  string url            = 2;
+  string title          = 3;
+}
+message ShellToolContent {
+  string command        = 1;
+  string output         = 2;
+  int32  exit_code      = 3;
+  string session_handle = 4;
+}
+message FileToolContent {
+  string path      = 1;
+  string content   = 2;
+  string language  = 3;
+  string operation = 4;
+}
+message SearchToolContent {
+  string query              = 1;
+  repeated SearchResult results = 2;
+}
+message SearchResult {
+  string title   = 1;
+  string url     = 2;
+  string snippet = 3;
+}
+message McpToolContent {
+  string server      = 1;
+  string tool        = 2;
+  string result_json = 3;
+}
+message GenericToolContent { string json = 1; }
+
+message FileInfo {
+  string id = 1;
+  string name = 2;
+  string content_type = 3;
+  string url = 4;
+}

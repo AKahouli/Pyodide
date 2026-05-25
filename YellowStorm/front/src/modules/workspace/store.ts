@@ -8,11 +8,44 @@ import { devtools } from 'zustand/middleware';
 import { useShallow } from 'zustand/react/shallow';
 import { toast } from 'sonner';
 import * as workspaceApi from './api';
-import { DEFAULT_PAGE_LIMIT } from './utils';
+import * as pageApi from './page-api';
+import { DEFAULT_PAGE_LIMIT, validateFiles } from './utils';
 import { getErrorMessage } from '@/lib/error-codes';
 import type { ApiError } from '@/lib/api/client';
 import type { ModuleTranslationKey, TranslationParams } from '@/modules/localization';
-import type { Workspace, WorkspaceDocument, WorkspaceSetting, CreateWorkspaceData, UpdateWorkspaceData, CreateWorkspaceSettingData, UpdateWorkspaceSettingData, BulkDeleteResult, UploadQueueItem, UploadFileStatus, CreateFolderData, RenameFolderData, DocumentQueryParams } from './types';
+import type {
+  Workspace,
+  WorkspaceDocument,
+  WorkspaceSetting,
+  CreateWorkspaceData,
+  UpdateWorkspaceData,
+  CreateWorkspaceSettingData,
+  UpdateWorkspaceSettingData,
+  BulkDeleteResult,
+  UploadQueueItem,
+  UploadFileStatus,
+  CreateFolderData,
+  RenameFolderData,
+  DocumentQueryParams,
+  ShareWorkspaceDto,
+  ShareResult,
+  WorkspaceShareResponse,
+  WorkspacePermission,
+  WorkspaceRole,
+  WorkspaceTab,
+  SharedWorkspaceResponse,
+  UserSearchResult,
+  WorkspaceFile,
+  WorkspaceFolder,
+  ClassificationRun,
+  ClassifierRule,
+  ClassifierRuleScope,
+  CreateClassifierRuleInput,
+  UpdateClassifierRuleInput,
+  CreateWorkspaceFolderInput,
+  UpdateWorkspaceFolderInput,
+  StartClassificationRunInput,
+} from './types';
 
 /**
  * Extract user-friendly error message from API error
@@ -64,6 +97,26 @@ interface WorkspaceState {
   // Selected workspace
   selectedWorkspaceId: string | null;
   selectedWorkspace: Workspace | null;
+  selectedWorkspaceRole: WorkspaceRole;
+  selectedSharedWorkspaceInfo: {
+    owner: { id: string; email: string; firstName?: string; lastName?: string };
+    permission: WorkspacePermission;
+    shareId: string;
+  } | null;
+
+  // Shared workspaces (cached by page)
+  sharedWorkspaces: Map<number, SharedWorkspaceResponse[]>;
+  sharedCurrentPage: number;
+  sharedTotalPages: number;
+  totalSharedWorkspaces: number;
+  activeTab: WorkspaceTab;
+
+  // Share modal + share list
+  isShareModalOpen: boolean;
+  shareModalWorkspace: Workspace | null;
+  workspaceShares: WorkspaceShareResponse[];
+  isLoadingShares: boolean;
+  isSharingInProgress: boolean;
 
   // Documents with page caching
   documents: Map<number, WorkspaceDocument[]>;
@@ -107,6 +160,24 @@ interface WorkspaceState {
   uploadQueue: UploadQueueItem[];
   isUploading: boolean;
   uploadSessionId: string | null;
+
+  // ===== Workspace Page (folders + files + classification runs) =====
+  pageCurrentFolderId: string | null;
+  pageSearch: string;
+  pageFolders: WorkspaceFolder[];
+  pageFiles: WorkspaceFile[];
+  pageWorkspaceLoadedFor: string | null;
+  loadingPageFolders: boolean;
+  loadingPageFiles: boolean;
+  lastClassificationRun: ClassificationRun | null;
+  isRunningClassification: boolean;
+
+  // ===== Classifier rules =====
+  globalRules: ClassifierRule[];
+  localRules: ClassifierRule[];
+  localRulesLoadedFor: string | null;
+  isLoadingRules: boolean;
+  isSavingRule: boolean;
 }
 
 interface WorkspaceActions {
@@ -143,7 +214,7 @@ interface WorkspaceActions {
   deleteAllDocuments: (workspaceId: string) => Promise<void>;
   getDownloadUrl: (workspaceId: string, docId: string) => Promise<string>;
   reindexDocument: (workspaceId: string, docId: string) => Promise<void>;
-  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string) => void;
+  updateDocumentIndexingStatus: (documentId: string, indexingStatus: string, indexingError?: string, lastIndexedAt?: string, indexingTaskName?: string, indexingTaskId?: string, detected_language?: string, chunk_size?: number) => void;
 
   // Template operations
   fetchTemplates: () => Promise<void>;
@@ -183,6 +254,41 @@ interface WorkspaceActions {
   getFolderContents: (workspaceId: string, folderId: string, params?: DocumentQueryParams) => Promise<void>;
   moveDocuments: (workspaceId: string, documentIds: string[], targetFolderId?: string) => Promise<{ moved: number; failed: string[] }>;
   getPersonalWorkspace: () => Promise<void>;
+
+  // Shared workspaces (recipient side)
+  setActiveTab: (tab: WorkspaceTab) => void;
+  fetchSharedWorkspaces: (page?: number) => Promise<void>;
+  selectSharedWorkspace: (workspaceId: string, shareId: string) => Promise<void>;
+  invalidateSharedWorkspaceCache: () => void;
+
+  // Share management (owner side)
+  openShareModal: (workspace?: Workspace) => void;
+  closeShareModal: () => void;
+  shareWorkspace: (workspaceId: string, data: ShareWorkspaceDto) => Promise<ShareResult>;
+  fetchWorkspaceShares: (workspaceId: string, params?: { page?: number; limit?: number }) => Promise<void>;
+  updateSharePermission: (workspaceId: string, shareId: string, permission: WorkspacePermission) => Promise<void>;
+  revokeShare: (workspaceId: string, shareId: string) => Promise<void>;
+  searchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>;
+
+  // ===== Workspace Page actions =====
+  selectPageWorkspace: (workspaceId: string | null) => Promise<void>;
+  navigateToPageFolder: (folderId: string | null) => void;
+  setPageSearch: (value: string) => void;
+  refreshPageData: () => Promise<void>;
+  createPageFolder: (input: CreateWorkspaceFolderInput) => Promise<WorkspaceFolder | null>;
+  updatePageFolder: (id: string, input: UpdateWorkspaceFolderInput) => Promise<void>;
+  deletePageFolder: (id: string) => Promise<void>;
+  movePageFolder: (id: string, newParentId: string | null) => Promise<void>;
+  setFileFolderAssignment: (fileId: string, folderId: string | null) => Promise<void>;
+  uploadPageFiles: (files: File[], options?: { autoIndex?: boolean }) => Promise<void>;
+  runClassification: (input: StartClassificationRunInput) => Promise<void>;
+  pollClassificationRun: (runId: string) => Promise<void>;
+
+  // ===== Classifier rules actions =====
+  fetchRules: (scope: ClassifierRuleScope) => Promise<void>;
+  createRule: (input: Omit<CreateClassifierRuleInput, 'workspaceId'>) => Promise<ClassifierRule | null>;
+  updateRule: (ruleId: string, input: UpdateClassifierRuleInput) => Promise<void>;
+  deleteRule: (ruleId: string) => Promise<void>;
 }
 
 export type WorkspaceStore = WorkspaceState & WorkspaceActions;
@@ -198,6 +304,20 @@ const initialState: WorkspaceState = {
 
   selectedWorkspaceId: null,
   selectedWorkspace: null,
+  selectedWorkspaceRole: 'owner',
+  selectedSharedWorkspaceInfo: null,
+
+  sharedWorkspaces: new Map(),
+  sharedCurrentPage: 1,
+  sharedTotalPages: 0,
+  totalSharedWorkspaces: 0,
+  activeTab: 'personal',
+
+  isShareModalOpen: false,
+  shareModalWorkspace: null,
+  workspaceShares: [],
+  isLoadingShares: false,
+  isSharingInProgress: false,
 
   documents: new Map(),
   documentsCurrentPage: 1,
@@ -234,6 +354,24 @@ const initialState: WorkspaceState = {
   uploadQueue: [],
   isUploading: false,
   uploadSessionId: null,
+
+  // Workspace page
+  pageCurrentFolderId: null,
+  pageSearch: '',
+  pageFolders: [],
+  pageFiles: [],
+  pageWorkspaceLoadedFor: null,
+  loadingPageFolders: false,
+  loadingPageFiles: false,
+  lastClassificationRun: null,
+  isRunningClassification: false,
+
+  // Classifier rules
+  globalRules: [],
+  localRules: [],
+  localRulesLoadedFor: null,
+  isLoadingRules: false,
+  isSavingRule: false,
 };
 
 // ===== Store =====
@@ -358,16 +496,6 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             isLoadingWorkspaces: false,
           });
 
-          const { selectedWorkspaceId } = get();
-          // Auto-select first workspace (personal) when no workspace is selected
-          // This ensures the personal workspace is selected by default when modal opens
-          if (!selectedWorkspaceId && allWorkspaces.length > 0) {
-            get()
-              .selectWorkspace(allWorkspaces[0].id)
-              .catch((err) => {
-                console.error('Failed to auto-select workspace', err);
-              });
-          }
         } catch (err) {
           const fallback = tError('fetchWorkspaces', 'Failed to fetch workspaces');
           const message = err instanceof Error ? err.message : fallback;
@@ -405,6 +533,8 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         set({
           selectedWorkspaceId: workspaceId,
           selectedWorkspace: cachedWorkspace,
+          selectedWorkspaceRole: 'owner',
+          selectedSharedWorkspaceInfo: null,
           isLoadingDocuments: true,
           documents: new Map(),
           documentsCurrentPage: 1,
@@ -745,7 +875,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
         }
       },
 
-      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt) => {
+      updateDocumentIndexingStatus: (documentId, indexingStatus, indexingError, lastIndexedAt, indexingTaskName, indexingTaskId, detected_language, chunk_size) => {
         const state = get();
         const newCache = new Map(state.documents);
         newCache.forEach((documents, page) => {
@@ -757,6 +887,10 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
               indexingStatus: indexingStatus as WorkspaceDocument['indexingStatus'],
               indexingError,
               lastIndexedAt,
+              indexingTaskName,
+              indexingTaskId,
+              detected_language,
+              chunk_size,
             };
             newCache.set(page, updatedDocuments);
           }
@@ -1296,6 +1430,527 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
           set({ error: message });
         }
       },
+
+      // ===== Shared workspaces =====
+      setActiveTab: (tab) => set({ activeTab: tab }),
+
+      invalidateSharedWorkspaceCache: () =>
+        set({ sharedWorkspaces: new Map(), sharedCurrentPage: 1 }),
+
+      fetchSharedWorkspaces: async (page = 1) => {
+        const state = get();
+
+        if (state.sharedWorkspaces.has(page)) {
+          set({ sharedCurrentPage: page });
+          return;
+        }
+
+        set({ isLoadingWorkspaces: true, error: null });
+
+        try {
+          const result = await workspaceApi.getSharedWorkspaces({
+            page,
+            limit: DEFAULT_PAGE_LIMIT,
+          });
+
+          const newCache = new Map(state.sharedWorkspaces);
+          newCache.set(page, result.workspaces);
+
+          set({
+            sharedWorkspaces: newCache,
+            sharedCurrentPage: page,
+            sharedTotalPages: result.pagination.totalPages,
+            totalSharedWorkspaces: result.pagination.total,
+            isLoadingWorkspaces: false,
+          });
+        } catch (err) {
+          const fallback = tError('fetchSharedWorkspaces', 'Failed to fetch shared workspaces');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingWorkspaces: false });
+        }
+      },
+
+      selectSharedWorkspace: async (workspaceId, shareId) => {
+        const state = get();
+
+        if (state.selectedWorkspaceId === workspaceId) {
+          return;
+        }
+
+        let cached: SharedWorkspaceResponse | null = null;
+        for (const workspaces of state.sharedWorkspaces.values()) {
+          const found = workspaces.find((w) => w.id === workspaceId);
+          if (found) {
+            cached = found;
+            break;
+          }
+        }
+
+        set({
+          selectedWorkspaceId: workspaceId,
+          selectedWorkspace: cached
+            ? {
+                id: cached.id,
+                name: cached.name,
+                alias: cached.alias,
+                description: cached.description,
+                createdBy: cached.owner.id,
+                documentCount: cached.documentCount,
+                usedStorage: cached.usedStorage,
+                allocatedStorage: cached.allocatedStorage,
+                isSystem: false,
+                isPersonal: false,
+                shareCount: 0,
+                createdAt: cached.createdAt,
+                updatedAt: cached.updatedAt,
+              }
+            : null,
+          selectedWorkspaceRole: cached?.permission || 'read',
+          selectedSharedWorkspaceInfo: cached
+            ? { owner: cached.owner, permission: cached.permission, shareId }
+            : null,
+          isLoadingDocuments: true,
+          documents: new Map(),
+          documentsCurrentPage: 1,
+          documentSearchQuery: '',
+        });
+
+        try {
+          const fresh = await workspaceApi.getWorkspace(workspaceId);
+          await get().fetchDocuments(workspaceId, 1);
+          set({ selectedWorkspace: fresh });
+        } catch (err) {
+          const fallback = tError('loadWorkspace', 'Failed to load workspace');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingDocuments: false });
+        }
+      },
+
+      // ===== Share modal + management =====
+      openShareModal: (workspace) =>
+        set({
+          isShareModalOpen: true,
+          shareModalWorkspace: workspace || get().selectedWorkspace,
+        }),
+
+      closeShareModal: () =>
+        set({
+          isShareModalOpen: false,
+          shareModalWorkspace: null,
+          workspaceShares: [],
+        }),
+
+      shareWorkspace: async (workspaceId, data) => {
+        set({ isSharingInProgress: true, error: null });
+
+        try {
+          const result = await workspaceApi.shareWorkspace(workspaceId, data);
+          const { isShareModalOpen, shareModalWorkspace } = get();
+          const shouldSyncShares = isShareModalOpen && shareModalWorkspace?.id === workspaceId;
+
+          if (shouldSyncShares && result.shared.length > 0) {
+            set((state) => {
+              const newIds = new Set(result.shared.map((s) => s.id));
+              const existing = state.workspaceShares.filter((s) => !newIds.has(s.id));
+              return { workspaceShares: [...result.shared, ...existing] };
+            });
+          }
+
+          set({ isSharingInProgress: false });
+
+          if (result.shared.length > 0) {
+            toast.success(tToast('sharing.shareSuccess', 'Workspace shared'), {
+              description: tToast('sharing.sharedWith', 'Shared with {{count}} user(s).', {
+                count: result.shared.length,
+              }),
+            });
+          }
+          if (result.notFound.length > 0) {
+            toast.warning(
+              tToast('sharing.notFound', '{{count}} user(s) not found', {
+                count: result.notFound.length,
+              }),
+              { description: result.notFound.join(', ') },
+            );
+          }
+          if (result.invalid.length > 0) {
+            toast.warning(tToast('sharing.invalid', 'Some shares were invalid'));
+          }
+
+          get().refreshWorkspace(workspaceId).catch(() => {});
+
+          return result;
+        } catch (err) {
+          const fallback = tError('shareWorkspace', 'Failed to share workspace');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isSharingInProgress: false });
+          throw err;
+        }
+      },
+
+      fetchWorkspaceShares: async (workspaceId, params = {}) => {
+        set({ isLoadingShares: true, error: null });
+
+        try {
+          const result = await workspaceApi.getWorkspaceShares(workspaceId, params);
+          set({ workspaceShares: result.shares, isLoadingShares: false });
+        } catch (err) {
+          const fallback = tError('fetchWorkspaceShares', 'Failed to fetch workspace shares');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingShares: false });
+          throw err;
+        }
+      },
+
+      updateSharePermission: async (workspaceId, shareId, permission) => {
+        set({ isLoadingShares: true, error: null });
+
+        try {
+          const updated = await workspaceApi.updateSharePermission(workspaceId, shareId, {
+            permission,
+          });
+
+          set((state) => ({
+            workspaceShares: state.workspaceShares.map((s) => {
+              if (s.id !== shareId) return s;
+              return { ...s, permission: updated.permission, updatedAt: updated.updatedAt };
+            }),
+            isLoadingShares: false,
+          }));
+
+          toast.success(tToast('sharing.permissionUpdated', 'Permission updated'));
+        } catch (err) {
+          const fallback = tError('updateSharePermission', 'Failed to update permission');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingShares: false });
+          throw err;
+        }
+      },
+
+      revokeShare: async (workspaceId, shareId) => {
+        set({ isLoadingShares: true, error: null });
+
+        try {
+          await workspaceApi.revokeShare(workspaceId, shareId);
+
+          set((state) => ({
+            workspaceShares: state.workspaceShares.filter((s) => s.id !== shareId),
+            isLoadingShares: false,
+          }));
+
+          toast.success(tToast('sharing.revokeSuccess', 'Access revoked'));
+          await get().refreshWorkspace(workspaceId);
+        } catch (err) {
+          const fallback = tError('revokeShare', 'Failed to revoke access');
+          const message = getApiErrorMessage(err, fallback);
+          set({ error: message, isLoadingShares: false });
+          throw err;
+        }
+      },
+
+      searchUsers: async (query, limit = 10) => {
+        return workspaceApi.searchUsers(query, limit);
+      },
+
+      // ===== Workspace Page actions =====
+
+      selectPageWorkspace: async (workspaceId) => {
+        const previous = get().selectedWorkspaceId;
+        set({
+          pageCurrentFolderId: null,
+          pageSearch: '',
+          pageFolders: workspaceId !== previous ? [] : get().pageFolders,
+          pageFiles: workspaceId !== previous ? [] : get().pageFiles,
+          pageWorkspaceLoadedFor: workspaceId !== previous ? null : get().pageWorkspaceLoadedFor,
+          lastClassificationRun: null,
+          localRules: workspaceId !== previous ? [] : get().localRules,
+          localRulesLoadedFor: workspaceId !== previous ? null : get().localRulesLoadedFor,
+        });
+        if (workspaceId) {
+          if (workspaceId !== previous) {
+            await get().selectWorkspace(workspaceId);
+          }
+          await get().refreshPageData();
+        } else {
+          set({
+            selectedWorkspaceId: null,
+            selectedWorkspace: null,
+          });
+        }
+      },
+
+      navigateToPageFolder: (folderId) => set({ pageCurrentFolderId: folderId }),
+
+      setPageSearch: (value) => set({ pageSearch: value }),
+
+      refreshPageData: async () => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        set({ loadingPageFolders: true, loadingPageFiles: true });
+        try {
+          const [folders, files] = await Promise.all([
+            pageApi.listFolders(workspaceId),
+            pageApi.listFiles(workspaceId),
+          ]);
+          set({
+            pageFolders: folders,
+            pageFiles: files,
+            pageWorkspaceLoadedFor: workspaceId,
+            loadingPageFolders: false,
+            loadingPageFiles: false,
+          });
+        } catch (err) {
+          set({ loadingPageFolders: false, loadingPageFiles: false });
+          toast.error(getApiErrorMessage(err, 'Impossible de charger le workspace'));
+        }
+      },
+
+      createPageFolder: async (input) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return null;
+        try {
+          const folder = await pageApi.createFolder(workspaceId, input);
+          set((s) => ({ pageFolders: [folder, ...s.pageFolders] }));
+          return folder;
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la création du dossier'));
+          return null;
+        }
+      },
+
+      updatePageFolder: async (folderId, input) => {
+        try {
+          const updated = await pageApi.updateFolder(folderId, input);
+          set((s) => ({
+            pageFolders: s.pageFolders.map((f) => (f.id === folderId ? updated : f)),
+          }));
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la mise à jour du dossier'));
+        }
+      },
+
+      deletePageFolder: async (folderId) => {
+        try {
+          await pageApi.deleteFolder(folderId);
+          await get().refreshPageData();
+          if (get().pageCurrentFolderId === folderId) {
+            set({ pageCurrentFolderId: null });
+          }
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la suppression du dossier'));
+        }
+      },
+
+      movePageFolder: async (folderId, newParentId) => {
+        const previous = get().pageFolders;
+        set((s) => ({
+          pageFolders: s.pageFolders.map((f) =>
+            f.id === folderId ? { ...f, parentId: newParentId } : f,
+          ),
+        }));
+        try {
+          const updated = await pageApi.moveFolder(folderId, newParentId);
+          set((s) => ({
+            pageFolders: s.pageFolders.map((f) => (f.id === folderId ? updated : f)),
+          }));
+        } catch (err) {
+          set({ pageFolders: previous });
+          toast.error(getApiErrorMessage(err, 'Échec du déplacement du dossier'));
+        }
+      },
+
+      setFileFolderAssignment: async (fileId, folderId) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        const previous = get().pageFiles;
+        set((s) => ({
+          pageFiles: s.pageFiles.map((f) => (f.id === fileId ? { ...f, folderId } : f)),
+        }));
+        try {
+          const updated = await pageApi.assignFileToFolder(workspaceId, fileId, folderId);
+          set((s) => ({
+            pageFiles: s.pageFiles.map((f) => (f.id === fileId ? updated : f)),
+          }));
+        } catch (err) {
+          set({ pageFiles: previous });
+          toast.error(getApiErrorMessage(err, 'Échec du déplacement du fichier'));
+        }
+      },
+
+      uploadPageFiles: async (files, options) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId || files.length === 0) return;
+
+        const { validFiles } = validateFiles(files);
+        if (validFiles.length === 0) return;
+
+        const previousFileIds = new Set(get().pageFiles.map((f) => f.id));
+        const targetFolderId = get().pageCurrentFolderId;
+
+        get().addFilesToQueue(validFiles, workspaceId);
+        try {
+          await get().startUpload();
+          toast.success(
+            validFiles.length === 1
+              ? 'Fichier ajouté'
+              : `${validFiles.length} fichiers ajoutés`,
+          );
+          await Promise.all([get().refreshPageData(), get().refreshWorkspace(workspaceId)]);
+
+          const newFileIds = get()
+            .pageFiles.filter((f) => !previousFileIds.has(f.id))
+            .map((f) => f.id);
+
+          if (targetFolderId && newFileIds.length > 0) {
+            const assignResults = await Promise.allSettled(
+              newFileIds.map((fileId) =>
+                pageApi.assignFileToFolder(workspaceId, fileId, targetFolderId),
+              ),
+            );
+            const assignFailed = assignResults.filter((r) => r.status === 'rejected').length;
+            if (assignFailed > 0) {
+              toast.warning(
+                assignFailed === newFileIds.length
+                  ? 'Les fichiers n’ont pas pu être assignés au dossier courant'
+                  : `${assignFailed} fichier(s) n’ont pas pu être assignés au dossier courant`,
+              );
+            }
+            // Refresh again so pageFiles reflects new folder assignments
+            await get().refreshPageData();
+          }
+
+          if (options?.autoIndex) {
+            if (newFileIds.length > 0) {
+              const results = await Promise.allSettled(
+                newFileIds.map((fileId) => workspaceApi.reindexDocument(workspaceId, fileId)),
+              );
+              const failed = results.filter((r) => r.status === 'rejected').length;
+              if (failed === 0) {
+                toast.success(
+                  newFileIds.length === 1
+                    ? 'Indexation lancée'
+                    : `Indexation lancée pour ${newFileIds.length} fichiers`,
+                );
+              } else if (failed === newFileIds.length) {
+                toast.error("Échec du lancement de l'indexation");
+              } else {
+                toast.warning(`Indexation partielle : ${failed} échec(s)`);
+              }
+            }
+          }
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, "Échec de l'upload"));
+        }
+      },
+
+      runClassification: async ({ playbookId, hint, overwrite }) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (!workspaceId) return;
+        set({ isRunningClassification: true });
+        try {
+          const run = await pageApi.startRun(workspaceId, { playbookId, hint, overwrite });
+          set({ lastClassificationRun: run, isRunningClassification: false });
+          await get().refreshPageData();
+        } catch (err) {
+          set({ isRunningClassification: false });
+          toast.error(getApiErrorMessage(err, 'Échec du lancement de la classification'));
+        }
+      },
+
+      pollClassificationRun: async (runId) => {
+        try {
+          const run = await pageApi.getRun(runId);
+          set({ lastClassificationRun: run });
+        } catch (err) {
+          toast.error(getApiErrorMessage(err, 'Échec de la récupération du run'));
+        }
+      },
+
+      // ===== Classifier rules actions =====
+
+      fetchRules: async (scope) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (scope === 'local' && !workspaceId) return;
+
+        set({ isLoadingRules: true });
+        try {
+          const rules = await pageApi.listRules({
+            scope,
+            workspaceId: scope === 'local' ? workspaceId ?? undefined : undefined,
+          });
+          if (scope === 'global') {
+            set({ globalRules: rules, isLoadingRules: false });
+          } else {
+            set({ localRules: rules, localRulesLoadedFor: workspaceId, isLoadingRules: false });
+          }
+        } catch (err) {
+          set({ isLoadingRules: false });
+          toast.error(getApiErrorMessage(err, 'Échec du chargement des règles'));
+        }
+      },
+
+      createRule: async (input) => {
+        const workspaceId = get().selectedWorkspaceId;
+        if (input.scope === 'local' && !workspaceId) {
+          toast.error('Sélectionnez un workspace avant de créer une règle locale');
+          return null;
+        }
+
+        set({ isSavingRule: true });
+        try {
+          const rule = await pageApi.createRule({
+            scope: input.scope,
+            workspaceId: input.scope === 'local' ? workspaceId ?? undefined : undefined,
+            text: input.text,
+            enabled: input.enabled,
+          });
+          if (rule.scope === 'global') {
+            set((s) => ({ globalRules: [rule, ...s.globalRules], isSavingRule: false }));
+          } else {
+            set((s) => ({ localRules: [rule, ...s.localRules], isSavingRule: false }));
+          }
+          return rule;
+        } catch (err) {
+          set({ isSavingRule: false });
+          toast.error(getApiErrorMessage(err, 'Échec de la création de la règle'));
+          return null;
+        }
+      },
+
+      updateRule: async (ruleId, input) => {
+        // Optimistic update on both lists
+        const prevGlobal = get().globalRules;
+        const prevLocal = get().localRules;
+        set((s) => ({
+          globalRules: s.globalRules.map((r) => (r.id === ruleId ? { ...r, ...input } : r)),
+          localRules: s.localRules.map((r) => (r.id === ruleId ? { ...r, ...input } : r)),
+        }));
+        try {
+          const updated = await pageApi.updateRule(ruleId, input);
+          set((s) => ({
+            globalRules: s.globalRules.map((r) => (r.id === ruleId ? updated : r)),
+            localRules: s.localRules.map((r) => (r.id === ruleId ? updated : r)),
+          }));
+        } catch (err) {
+          set({ globalRules: prevGlobal, localRules: prevLocal });
+          toast.error(getApiErrorMessage(err, 'Échec de la mise à jour de la règle'));
+        }
+      },
+
+      deleteRule: async (ruleId) => {
+        const prevGlobal = get().globalRules;
+        const prevLocal = get().localRules;
+        set((s) => ({
+          globalRules: s.globalRules.filter((r) => r.id !== ruleId),
+          localRules: s.localRules.filter((r) => r.id !== ruleId),
+        }));
+        try {
+          await pageApi.deleteRule(ruleId);
+        } catch (err) {
+          set({ globalRules: prevGlobal, localRules: prevLocal });
+          toast.error(getApiErrorMessage(err, 'Échec de la suppression de la règle'));
+        }
+      },
     }),
     { name: 'workspace-store' },
   ),
@@ -1403,3 +2058,34 @@ export const useWorkspacePagination = () => {
   const totalPages = useWorkspaceStore((state) => state.totalPages) ?? 1;
   return { currentPage, totalPages };
 };
+
+export const useActiveTab = () => useWorkspaceStore((state) => state.activeTab);
+
+export const useSelectedWorkspaceRole = () =>
+  useWorkspaceStore((state) => state.selectedWorkspaceRole);
+
+export const useCanWriteWorkspace = () =>
+  useWorkspaceStore((state) => state.selectedWorkspaceRole !== 'read');
+
+export const useSharedWorkspaces = () => {
+  const sharedWorkspaces = useWorkspaceStore((state) => state.sharedWorkspaces);
+  const sharedCurrentPage = useWorkspaceStore((state) => state.sharedCurrentPage);
+  return sharedWorkspaces.get(sharedCurrentPage) ?? [];
+};
+
+export const useSharedPagination = () => {
+  const currentPage = useWorkspaceStore((state) => state.sharedCurrentPage) ?? 1;
+  const totalPages = useWorkspaceStore((state) => state.sharedTotalPages) ?? 1;
+  return { currentPage, totalPages };
+};
+
+export const useWorkspaceShares = () =>
+  useWorkspaceStore((state) => state.workspaceShares);
+
+export const useShareLoading = () =>
+  useWorkspaceStore(
+    useShallow((state) => ({
+      isLoadingShares: state.isLoadingShares,
+      isSharingInProgress: state.isSharingInProgress,
+    })),
+  );

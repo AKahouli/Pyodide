@@ -43,6 +43,8 @@ export interface DocumentResponse {
   metadata?: Record<string, string>;
   indexingStatus: IndexingStatus;
   indexingError?: string;
+  indexingTaskName?: string;
+  indexingTaskId?: string;
   lastIndexedAt?: string;
   detected_language?: string;
   chunk_size?: number;

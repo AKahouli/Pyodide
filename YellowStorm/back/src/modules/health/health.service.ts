@@ -8,6 +8,7 @@ import { UsageService, UsageType } from '../usage';
 import { ModelsService } from '../models';
 import { LiteLLMConnectionService } from '../models/litellm-connection.service';
 import { StreamService } from '../conversation/services/stream.service';
+import { ConversationV2GrpcClientService } from '../conversation-v2/services/conversation-v2.grpc-client.service';
 
 @Injectable()
 export class HealthService {
@@ -24,6 +25,7 @@ export class HealthService {
     private readonly modelsService: ModelsService,
     private readonly litellmConnection: LiteLLMConnectionService,
     private readonly streamService: StreamService,
+    private readonly conversationV2Grpc: ConversationV2GrpcClientService,
   ) {
     const memoryLimitMb = this.configService.get<number>('app.memoryLimitMb', 512);
     this.memoryLimitBytes = memoryLimitMb * 1024 * 1024;
@@ -31,7 +33,7 @@ export class HealthService {
 
   async check(userId?:string): Promise<HealthCheckResult> {
     // Run all checks in parallel — network pings are independent
-    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc] =
+    const [memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc] =
       await Promise.all([
         this.checkMemory(),
         this.checkEventLoop(),
@@ -40,10 +42,11 @@ export class HealthService {
         this.checkEmail(),
         this.checkLiteLLM(),
         this.checkConversationGrpc(),
+        this.checkConversationV2Grpc(),
       ]);
 
     const checks: Record<string, HealthCheckDetail> = {
-      memory, eventLoop, database, storage, email, litellm, conversationGrpc,
+      memory, eventLoop, database, storage, email, litellm, conversationGrpc, conversationV2Grpc,
     };
 
     const allUp = Object.values(checks).every((c) => c.status === 'up');
@@ -89,6 +92,9 @@ export class HealthService {
 
     const conversationGrpcCheck = await this.checkConversationGrpc();
     checks.conversationGrpc = conversationGrpcCheck.status === 'up';
+
+    const conversationV2GrpcCheck = await this.checkConversationV2Grpc();
+    checks.conversationV2Grpc = conversationV2GrpcCheck.status === 'up';
 
     const allReady = Object.values(checks).every(Boolean);
 
@@ -299,6 +305,32 @@ export class HealthService {
     } else {
       status = 'down';
       message = healthStatus.error || 'Conversation service not configured';
+    }
+
+    return {
+      status,
+      responseTime: Date.now() - startTime,
+      message,
+      lastChecked: healthStatus.lastCheckedAt?.toISOString() || new Date().toISOString(),
+    };
+  }
+
+  private async checkConversationV2Grpc(): Promise<HealthCheckDetail> {
+    const startTime = Date.now();
+    const healthStatus = this.conversationV2Grpc.getHealthStatus();
+
+    let status: 'up' | 'down' | 'degraded';
+    let message: string;
+
+    if (healthStatus.connected) {
+      status = 'up';
+      message = `ConversationV2 (Manus) gRPC operational at ${healthStatus.grpcUrl}`;
+    } else if (healthStatus.available) {
+      status = 'down';
+      message = healthStatus.error || 'ConversationV2 gRPC unavailable';
+    } else {
+      status = 'down';
+      message = healthStatus.error || 'ConversationV2 gRPC not configured';
     }
 
     return {
